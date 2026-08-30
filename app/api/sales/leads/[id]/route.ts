@@ -36,6 +36,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     "country",
     "assigned_to",
     "status",
+    "lead_status",
     "follow_up_date",
     "remarks",
     "lead_date",

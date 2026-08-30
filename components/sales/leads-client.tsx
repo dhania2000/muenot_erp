@@ -10,6 +10,13 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Table,
   TableBody,
   TableCell,
@@ -43,6 +50,7 @@ export type LeadRow = {
   assigned_to: number | null
   assigned_to_name: string | null
   status: string
+  lead_status: "Open" | "Won" | "Lost" | "Follow Up"
   follow_up_date: string | null
   last_contact_date: string | null
   lead_health_score: number
@@ -51,7 +59,7 @@ export type LeadRow = {
 }
 
 const FILTERS = [
-  { key: "all", label: "All" },
+  { key: "all", label: "Lead" },
   { key: "followups", label: "Follow-ups" },
   { key: "won", label: "Won" },
   { key: "lost", label: "Lost" },
@@ -68,6 +76,15 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   Lost: "destructive",
 }
 
+const LEAD_STATUS_OPTIONS = ["Open", "Won", "Lost", "Follow Up"] as const
+
+const LEAD_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  Open: "outline",
+  Won: "default",
+  Lost: "destructive",
+  "Follow Up": "secondary",
+}
+
 export function LeadsClient({ canManage }: { canManage: boolean }) {
   const { data, isLoading, mutate } = useSWR<{ leads: LeadRow[] }>("/api/sales/leads", fetcher)
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all")
@@ -79,9 +96,10 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
 
   const filtered = useMemo(() => {
     let rows = leads
-    if (filter === "followups") rows = rows.filter((l) => l.status === "Follow Up 1" || l.status === "Follow Up 2")
-    else if (filter === "won") rows = rows.filter((l) => l.status === "Won")
-    else if (filter === "lost") rows = rows.filter((l) => l.status === "Lost")
+    if (filter === "all") rows = rows.filter((l) => l.lead_status === "Open")
+    else if (filter === "followups") rows = rows.filter((l) => l.lead_status === "Follow Up")
+    else if (filter === "won") rows = rows.filter((l) => l.lead_status === "Won")
+    else if (filter === "lost") rows = rows.filter((l) => l.lead_status === "Lost")
 
     const q = search.trim().toLowerCase()
     if (q) {
@@ -96,13 +114,27 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
 
   const counts = useMemo(
     () => ({
-      all: leads.length,
-      followups: leads.filter((l) => l.status === "Follow Up 1" || l.status === "Follow Up 2").length,
-      won: leads.filter((l) => l.status === "Won").length,
-      lost: leads.filter((l) => l.status === "Lost").length,
+      all: leads.filter((l) => l.lead_status === "Open").length,
+      followups: leads.filter((l) => l.lead_status === "Follow Up").length,
+      won: leads.filter((l) => l.lead_status === "Won").length,
+      lost: leads.filter((l) => l.lead_status === "Lost").length,
     }),
     [leads],
   )
+
+  async function updateLeadStatus(lead: LeadRow, nextStatus: (typeof LEAD_STATUS_OPTIONS)[number]) {
+    const res = await fetch(`/api/sales/leads/${lead.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lead_status: nextStatus }),
+    })
+    if (res.ok) {
+      toast.success(`Lead marked as ${nextStatus}`)
+      mutate()
+    } else {
+      toast.error("Unable to update lead status")
+    }
+  }
 
   async function deleteLead(lead: LeadRow) {
     if (!confirm(`Delete lead for ${lead.company_name}? This cannot be undone.`)) return
@@ -165,6 +197,7 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
               <TableHead>Company</TableHead>
               <TableHead>Source</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Lead Status</TableHead>
               <TableHead>Health</TableHead>
               <TableHead>Follow-up</TableHead>
               <TableHead>Assigned</TableHead>
@@ -174,14 +207,14 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
                   Loading leads...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
                   No leads match this view.
                 </TableCell>
               </TableRow>
@@ -205,6 +238,29 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
                 <TableCell className="text-muted-foreground">{lead.lead_source || "—"}</TableCell>
                 <TableCell>
                   <Badge variant={STATUS_VARIANT[lead.status] || "outline"}>{lead.status}</Badge>
+                </TableCell>
+                <TableCell>
+                  {canManage ? (
+                    <Select
+                      value={lead.lead_status}
+                      onValueChange={(value) =>
+                        updateLeadStatus(lead, value as (typeof LEAD_STATUS_OPTIONS)[number])
+                      }
+                    >
+                      <SelectTrigger size="sm" className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {LEAD_STATUS_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant={LEAD_STATUS_VARIANT[lead.lead_status] || "outline"}>{lead.lead_status}</Badge>
+                  )}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">

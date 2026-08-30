@@ -98,6 +98,7 @@ CREATE TABLE `sales_leads` (
   `country` VARCHAR(100) DEFAULT NULL,
   `assigned_to` INT UNSIGNED DEFAULT NULL,
   `status` ENUM('New','Follow Up 1','Follow Up 2','In Discussion','Proposal Sent','Ready','Won','Lost') NOT NULL DEFAULT 'New',
+  `lead_status` ENUM('Open','Won','Lost','Follow Up') NOT NULL DEFAULT 'Open',
   `follow_up_date` DATETIME DEFAULT NULL,
   `last_contact_date` DATETIME DEFAULT NULL,
   `lead_health_score` TINYINT UNSIGNED NOT NULL DEFAULT 0,
@@ -108,6 +109,7 @@ CREATE TABLE `sales_leads` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_lead_code` (`lead_code`),
   KEY `idx_leads_status` (`status`),
+  KEY `idx_leads_lead_status` (`lead_status`),
   KEY `idx_leads_assigned` (`assigned_to`),
   CONSTRAINT `fk_leads_assigned` FOREIGN KEY (`assigned_to`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_leads_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
@@ -330,17 +332,17 @@ INSERT INTO `features` (`module_id`, `name`, `slug`, `description`, `sort_order`
 -- -------------------------------------------------------------
 
 INSERT INTO `sales_leads`
-(`lead_code`, `lead_date`, `contact_person`, `contact_number`, `email`, `designation`, `lead_source`, `company_name`, `industry`, `website`, `company_email`, `country`, `status`, `follow_up_date`, `last_contact_date`, `lead_health_score`, `remarks`, `created_by`) VALUES
-('MLD-001', '2026-08-19', 'Sandeep Kumar', '6377809826', 'sandeep@muenot.co.in', 'Director', 'LinkedIn', 'Muenot', 'Ed-Tech', 'www.muenot.com', 'contact@muenot.co.in', 'India', 'Proposal Sent', NULL, NULL, 10, NULL, 1),
-('MLD-002', '2026-08-19', 'Ashutosh Garg', NULL, 'ashutosh@zeuslearning.com', 'Director', 'Referral', 'Zeus Learning', 'Ed-Tech', NULL, NULL, 'India', 'Proposal Sent', '2026-09-05 10:21:30', '2026-08-21 10:21:30', 10, NULL, 1),
-('MLD-003', '2026-08-19', 'Atul Gupta', '8800463339', 'atul.gupta@mheducation.com', 'VP Content', 'Website', 'McGraw-Hill Education', 'Ed-Tech', NULL, NULL, 'United States', 'In Discussion', '2026-09-05 10:28:42', '2026-08-21 10:28:42', 50, NULL, 1),
-('MLD-004', '2026-08-19', 'Bhavik Rathod', NULL, 'bhavik.rathod@scale.com', 'VP, Regional Head India', 'LinkedIn', 'Scale AI', 'AI Solutions', NULL, NULL, 'United States', 'Ready', '2026-09-06 11:32:28', '2026-08-22 11:32:28', 0, NULL, 1),
-('MLD-005', '2026-08-19', 'Manana Hakobyan', NULL, 'manana.hakobyan@scale.com', 'Strategic Projects Lead, Gen AI', 'LinkedIn', 'Scale AI', 'AI Solutions', NULL, NULL, 'United States', 'Ready', '2026-09-06 11:42:52', '2026-08-22 11:42:52', 0, NULL, 1),
-('MLD-021', '2026-08-20', 'Priya Nair', '9820011223', 'priya.nair@telusdigital.com', 'Project Coordinator', 'LinkedIn', 'Telus Digital', 'AI Solutions', NULL, NULL, 'Canada', 'Follow Up 1', '2026-09-10 09:00:00', '2026-08-25 09:00:00', 20, 'Interested in QA pilot', 1),
-('MLD-022', '2026-08-21', 'Karan Mehta', NULL, 'karan.mehta@byjus.com', 'Head of Content', 'Website', 'BYJU''S', 'Ed-Tech', 'www.byjus.com', NULL, 'India', 'Follow Up 2', '2026-09-12 09:00:00', '2026-08-27 09:00:00', 35, NULL, 1),
-('MLD-029', '2026-08-19', 'Anuj Mishra', '8605521578', 'anuj.mishra@hurix.com', 'Director, Projects', 'LinkedIn', 'HurixDigital', 'Ed-Tech', NULL, NULL, 'India', 'Won', '2026-09-06 11:26:36', '2026-08-22 11:26:36', 100, 'Signed annual contract', 1),
-('MLD-033', '2026-08-19', 'Reena Shah', 'NA', 'reena.shah@hurix.com', 'Vice President Delivery', 'LinkedIn', 'HurixDigital', 'Ed-Tech', NULL, NULL, 'India', 'Lost', NULL, NULL, 0, 'Budget frozen this quarter', 1),
-('MLD-041', '2026-08-24', 'Vikram Singh', NULL, 'vikram.singh@multiverse.io', 'Head of Learning Ops', 'Referral', 'Multiverse', 'Ed-Tech', 'www.multiverse.io', NULL, 'United Kingdom', 'New', NULL, NULL, 5, NULL, 1);
+(`lead_code`, `lead_date`, `contact_person`, `contact_number`, `email`, `designation`, `lead_source`, `company_name`, `industry`, `website`, `company_email`, `country`, `status`, `lead_status`, `follow_up_date`, `last_contact_date`, `lead_health_score`, `remarks`, `created_by`) VALUES
+('MLD-001', '2026-08-19', 'Sandeep Kumar', '6377809826', 'sandeep@muenot.co.in', 'Director', 'LinkedIn', 'Muenot', 'Ed-Tech', 'www.muenot.com', 'contact@muenot.co.in', 'India', 'Proposal Sent', 'Open', NULL, NULL, 10, NULL, 1),
+('MLD-002', '2026-08-19', 'Ashutosh Garg', NULL, 'ashutosh@zeuslearning.com', 'Director', 'Referral', 'Zeus Learning', 'Ed-Tech', NULL, NULL, 'India', 'Proposal Sent', 'Open', '2026-09-05 10:21:30', '2026-08-21 10:21:30', 10, NULL, 1),
+('MLD-003', '2026-08-19', 'Atul Gupta', '8800463339', 'atul.gupta@mheducation.com', 'VP Content', 'Website', 'McGraw-Hill Education', 'Ed-Tech', NULL, NULL, 'United States', 'In Discussion', 'Open', '2026-09-05 10:28:42', '2026-08-21 10:28:42', 50, NULL, 1),
+('MLD-004', '2026-08-19', 'Bhavik Rathod', NULL, 'bhavik.rathod@scale.com', 'VP, Regional Head India', 'LinkedIn', 'Scale AI', 'AI Solutions', NULL, NULL, 'United States', 'Ready', 'Open', '2026-09-06 11:32:28', '2026-08-22 11:32:28', 0, NULL, 1),
+('MLD-005', '2026-08-19', 'Manana Hakobyan', NULL, 'manana.hakobyan@scale.com', 'Strategic Projects Lead, Gen AI', 'LinkedIn', 'Scale AI', 'AI Solutions', NULL, NULL, 'United States', 'Ready', 'Open', '2026-09-06 11:42:52', '2026-08-22 11:42:52', 0, NULL, 1),
+('MLD-021', '2026-08-20', 'Priya Nair', '9820011223', 'priya.nair@telusdigital.com', 'Project Coordinator', 'LinkedIn', 'Telus Digital', 'AI Solutions', NULL, NULL, 'Canada', 'Follow Up 1', 'Follow Up', '2026-09-10 09:00:00', '2026-08-25 09:00:00', 20, 'Interested in QA pilot', 1),
+('MLD-022', '2026-08-21', 'Karan Mehta', NULL, 'karan.mehta@byjus.com', 'Head of Content', 'Website', 'BYJU''S', 'Ed-Tech', 'www.byjus.com', NULL, 'India', 'Follow Up 2', 'Follow Up', '2026-09-12 09:00:00', '2026-08-27 09:00:00', 35, NULL, 1),
+('MLD-029', '2026-08-19', 'Anuj Mishra', '8605521578', 'anuj.mishra@hurix.com', 'Director, Projects', 'LinkedIn', 'HurixDigital', 'Ed-Tech', NULL, NULL, 'India', 'Won', 'Won', '2026-09-06 11:26:36', '2026-08-22 11:26:36', 100, 'Signed annual contract', 1),
+('MLD-033', '2026-08-19', 'Reena Shah', 'NA', 'reena.shah@hurix.com', 'Vice President Delivery', 'LinkedIn', 'HurixDigital', 'Ed-Tech', NULL, NULL, 'India', 'Lost', 'Lost', NULL, NULL, 0, 'Budget frozen this quarter', 1),
+('MLD-041', '2026-08-24', 'Vikram Singh', NULL, 'vikram.singh@multiverse.io', 'Head of Learning Ops', 'Referral', 'Multiverse', 'Ed-Tech', 'www.multiverse.io', NULL, 'United Kingdom', 'New', 'Open', NULL, NULL, 5, NULL, 1);
 
 INSERT INTO `sales_companies`
 (`company_code`, `company_date`, `company_name`, `industry`, `website`, `country`, `company_type`, `status`, `priority`, `founded_year`, `employee_count`, `created_by`) VALUES

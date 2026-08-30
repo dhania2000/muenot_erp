@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getUserAccessibleModules } from "@/lib/permissions"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,6 +16,7 @@ const moduleIcons: Record<string, React.ComponentType<{ className?: string }>> =
 
 export default async function DashboardPage() {
   const session = await getSession()
+  if (session!.role === "admin") redirect("/admin")
   const modules = await getUserAccessibleModules(session!.userId, session!.role)
 
   return (

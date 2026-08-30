@@ -1,65 +1,70 @@
-import { redirect } from "next/navigation"
-import { getSession } from "@/lib/auth"
-import { LoginForm } from "./login-form"
+import Image from "next/image"
+import { LoginForm } from "@/components/login-form"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2 } from "lucide-react"
 
-export default async function LoginPage() {
-  const session = await getSession()
-  if (session) redirect("/")
+const modules = [
+  { name: "HR", icon: Users2 },
+  { name: "Sales", icon: TrendingUp },
+  { name: "Finance", icon: Wallet },
+  { name: "Recruitment", icon: UserPlus },
+  { name: "Operations", icon: Settings2 },
+]
 
+export default function LoginPage() {
   return (
-    <main className="grid min-h-svh lg:grid-cols-2">
-      {/* Brand panel */}
-      <div className="relative hidden flex-col justify-between bg-sidebar p-10 text-sidebar-foreground lg:flex">
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-9 items-center justify-center rounded-md bg-sidebar-primary font-mono text-sm font-bold text-sidebar-primary-foreground">
-            M
-          </div>
-          <span className="text-lg font-semibold tracking-tight">Muenot ERP</span>
+    <main className="flex min-h-svh flex-col lg:flex-row">
+      <section className="relative hidden flex-1 flex-col justify-between overflow-hidden bg-sidebar p-10 text-sidebar-foreground lg:flex">
+        <div className="flex items-center rounded-md bg-white px-3 py-2 w-fit">
+          <Image src="/muenot-logo.png" alt="Muenot" width={160} height={40} className="h-8 w-auto" priority />
         </div>
 
-        <div className="max-w-md">
-          <h1 className="text-balance text-3xl font-semibold leading-tight">
-            One suite for HR, Sales, Finance, Recruitment & Operations.
+        <div className="flex flex-col gap-8">
+          <h1 className="max-w-md text-balance text-4xl font-semibold leading-tight tracking-tight">
+            One workspace to run every part of the business.
           </h1>
-          <p className="mt-4 text-pretty text-sm leading-relaxed text-sidebar-foreground/70">
-            Role-based access keeps every team focused on exactly the modules and features they need — controlled
-            entirely by your administrator.
+          <p className="max-w-md text-pretty text-sm leading-relaxed text-sidebar-foreground/70">
+            Muenot brings HR, Sales, Finance, Recruitment, and Operations together, with permissions your admin
+            controls down to the feature level.
           </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            {modules.map((m) => (
+              <div
+                key={m.name}
+                className="flex items-center gap-2.5 rounded-md border border-sidebar-border bg-sidebar-accent/40 px-3 py-2.5"
+              >
+                <m.icon className="size-4 text-sidebar-primary" />
+                <span className="text-sm font-medium">{m.name}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-x-6 gap-y-2 font-mono text-xs text-sidebar-foreground/60">
-          <span>HR</span>
-          <span>SALES</span>
-          <span>FINANCE</span>
-          <span>RECRUITMENT</span>
-          <span>OPERATIONS</span>
-        </div>
-      </div>
+        <p className="text-xs text-sidebar-foreground/50">
+          Access is granted per employee, per feature — configured by your administrator.
+        </p>
+      </section>
 
-      {/* Form panel */}
-      <div className="flex items-center justify-center p-6 sm:p-10">
+      <section className="flex flex-1 items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-sm">
-          <div className="mb-8 flex items-center gap-2.5 lg:hidden">
-            <div className="flex size-9 items-center justify-center rounded-md bg-primary font-mono text-sm font-bold text-primary-foreground">
-              M
+          <div className="mb-8 flex flex-col gap-1 lg:hidden">
+            <div className="mb-4">
+              <Image src="/muenot-logo.png" alt="Muenot" width={160} height={40} className="h-9 w-auto" priority />
             </div>
-            <span className="text-lg font-semibold tracking-tight">Muenot ERP</span>
           </div>
 
-          <h2 className="text-2xl font-semibold tracking-tight">Sign in</h2>
-          <p className="mt-1.5 mb-8 text-sm text-muted-foreground">
-            Enter your credentials to access your workspace.
-          </p>
+          <div className="mb-8 flex flex-col gap-1.5">
+            <h2 className="text-2xl font-semibold tracking-tight">Sign in</h2>
+            <p className="text-sm text-muted-foreground">Enter your credentials to access your workspace.</p>
+          </div>
 
           <LoginForm />
 
-          <p className="mt-8 rounded-md border border-border bg-muted/50 px-3 py-2.5 font-mono text-xs leading-relaxed text-muted-foreground">
-            Demo admin — admin@muenot.co.in / admin123
-            <br />
-            (available after running the DB setup script)
+          <p className="mt-8 text-center text-xs text-muted-foreground">
+            Don&apos;t have access? Ask your administrator to create an account for you.
           </p>
         </div>
-      </div>
+      </section>
     </main>
   )
 }

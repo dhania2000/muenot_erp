@@ -1,34 +1,42 @@
 import mysql from "mysql2/promise"
 
-// A single shared connection pool, cached across hot reloads in dev.
-const globalForDb = globalThis as unknown as { _mysqlPool?: mysql.Pool }
+// MySQL connection pool.
+// Configure these via environment variables (.env.local locally,
+// or your Hostinger hosting panel / .env file in production).
+//
+// Required env vars:
+//   DB_HOST     - e.g. localhost or your Hostinger MySQL host
+//   DB_PORT     - default 3306
+//   DB_USER     - your MySQL username
+//   DB_PASSWORD - your MySQL password
+//   DB_NAME     - your MySQL database name
 
-export function getPool(): mysql.Pool {
-  if (!globalForDb._mysqlPool) {
-    const url = process.env.DATABASE_URL
-    if (!url) {
-      throw new Error("DATABASE_URL is not set. Add your MySQL connection string in Project Settings > Vars.")
-    }
-    globalForDb._mysqlPool = mysql.createPool({
-      uri: url,
-      connectionLimit: 10,
-      namedPlaceholders: true,
-      dateStrings: true,
-      // Allow multiple statements for the schema setup script.
-      multipleStatements: true,
-    })
-  }
-  return globalForDb._mysqlPool
+declare global {
+  // eslint-disable-next-line no-var
+  var __mysqlPool: mysql.Pool | undefined
 }
 
-// Typed query helper returning an array of rows.
-export async function query<T = any>(sql: string, params?: any): Promise<T[]> {
-  const [rows] = await getPool().execute(sql, params)
-  return rows as T[]
+function createPool() {
+  return mysql.createPool({
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT || 3306),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    dateStrings: true,
+  })
 }
 
-// Execute helper for inserts/updates, returns the OkPacket.
-export async function execute(sql: string, params?: any): Promise<mysql.ResultSetHeader> {
-  const [result] = await getPool().execute(sql, params)
-  return result as mysql.ResultSetHeader
+// Reuse the pool across hot-reloads / serverless invocations.
+export const pool = globalThis.__mysqlPool ?? createPool()
+if (process.env.NODE_ENV !== "production") {
+  globalThis.__mysqlPool = pool
+}
+
+export async function query<T = any>(sql: string, params: any[] = []): Promise<T> {
+  const [rows] = await pool.query(sql, params)
+  return rows as T
 }

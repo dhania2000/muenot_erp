@@ -61,7 +61,111 @@ export async function ensureEmailTables() {
       KEY idx_events_email (email_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+
+  // --- Threading columns (added idempotently so existing installs upgrade) ---
+  // thread_id groups every email to the same lead/recipient into one conversation.
+  // message_id / in_reply_to / references_header carry the RFC 5322 headers that
+  // make mail clients (Gmail, Outlook, etc.) stack follow-ups in the same thread.
+  await ensureColumn("sales_emails", "message_id", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("sales_emails", "in_reply_to", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("sales_emails", "references_header", "TEXT DEFAULT NULL")
+  await ensureColumn("sales_emails", "thread_id", "VARCHAR(120) DEFAULT NULL")
+  await ensureIndex("sales_emails", "idx_emails_thread", "thread_id")
+
+  // Backfill a stable thread_id for any legacy rows that predate threading.
+  await query(
+    `UPDATE sales_emails
+     SET thread_id = CASE
+       WHEN lead_id IS NOT NULL THEN CONCAT('lead:', lead_id)
+       ELSE CONCAT('addr:', LOWER(to_email))
+     END
+     WHERE thread_id IS NULL`,
+  )
+
   tablesEnsured = true
+}
+
+/** Add a column only if it doesn't already exist (MySQL has no ADD COLUMN IF NOT EXISTS). */
+async function ensureColumn(table: string, column: string, definition: string) {
+  const rows = await query<any[]>(
+    `SELECT 1 FROM information_schema.columns
+     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  )
+  if (rows.length === 0) {
+    await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`)
+  }
+}
+
+/** Add an index only if it doesn't already exist. */
+async function ensureIndex(table: string, indexName: string, column: string) {
+  const rows = await query<any[]>(
+    `SELECT 1 FROM information_schema.statistics
+     WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? LIMIT 1`,
+    [table, indexName],
+  )
+  if (rows.length === 0) {
+    await query(`ALTER TABLE \`${table}\` ADD INDEX \`${indexName}\` (\`${column}\`)`)
+  }
+}
+
+/** Build a stable thread key so all mail to the same lead/recipient groups together. */
+export function buildThreadId(leadId: number | string | null | undefined, toEmail: string) {
+  if (leadId) return `lead:${leadId}`
+  return `addr:${toEmail.trim().toLowerCase()}`
+}
+
+/** Resolve the domain used inside generated Message-ID headers. */
+function resolveMailDomain() {
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || ""
+  const match = from.match(/@([^\s>]+)/)
+  if (match) return match[1]
+  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL
+  if (appUrl) {
+    try {
+      return new URL(appUrl).hostname
+    } catch {
+      /* ignore */
+    }
+  }
+  return "muenot.local"
+}
+
+/** Generate a globally-unique RFC 5322 Message-ID for an outgoing email. */
+export function buildMessageId(token: string) {
+  return `<${token}.${Date.now()}@${resolveMailDomain()}>`
+}
+
+export type ThreadContext = {
+  inReplyTo: string
+  references: string
+  rootSubject: string
+}
+
+/** Strip any leading "Re:" prefixes so we can build a single clean threaded subject. */
+export function baseSubject(subject: string) {
+  return subject.replace(/^(\s*re\s*:\s*)+/i, "").trim()
+}
+
+/**
+ * Look up the prior messages in a thread so a follow-up can reference them.
+ * Returns null when this is the first email in the thread.
+ */
+export async function getThreadContext(threadId: string): Promise<ThreadContext | null> {
+  const rows = await query<any[]>(
+    `SELECT message_id, subject FROM sales_emails
+     WHERE thread_id = ? AND message_id IS NOT NULL
+     ORDER BY sent_at ASC, id ASC`,
+    [threadId],
+  )
+  if (rows.length === 0) return null
+  const messageIds = rows.map((r) => r.message_id).filter(Boolean)
+  const last = rows[rows.length - 1]
+  return {
+    inReplyTo: last.message_id,
+    references: messageIds.join(" "),
+    rootSubject: rows[0].subject,
+  }
 }
 
 // SMTP transport configured via environment variables.
@@ -132,6 +236,10 @@ export async function sendEmail(opts: {
   from?: string
   subject: string
   html: string
+  /** RFC 5322 threading headers — set these to keep follow-ups in one conversation. */
+  messageId?: string
+  inReplyTo?: string
+  references?: string
 }) {
   const from = opts.from || process.env.SMTP_FROM || process.env.SMTP_USER
   const info = await getTransporter().sendMail({
@@ -139,6 +247,9 @@ export async function sendEmail(opts: {
     to: opts.to,
     subject: opts.subject,
     html: opts.html,
+    messageId: opts.messageId,
+    inReplyTo: opts.inReplyTo,
+    references: opts.references,
   })
   return info
 }

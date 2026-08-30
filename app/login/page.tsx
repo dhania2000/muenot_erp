@@ -15,7 +15,7 @@ export default function LoginPage() {
     <main className="flex min-h-svh flex-col lg:flex-row">
       <section className="relative hidden flex-1 flex-col justify-between overflow-hidden bg-sidebar p-10 text-sidebar-foreground lg:flex">
         <div className="flex items-center rounded-md bg-white px-3 py-2 w-fit">
-          <Image src="/muenot-logo.png" alt="Muenot" width={160} height={40} className="h-8 w-auto" priority />
+          <Image src="/muenot-logo.png" alt="Muenot" width={160} height={40} className="h-8 w-auto" style={{ height: "auto" }} priority />
         </div>
 
         <div className="flex flex-col gap-8">
@@ -49,7 +49,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           <div className="mb-8 flex flex-col gap-1 lg:hidden">
             <div className="mb-4">
-              <Image src="/muenot-logo.png" alt="Muenot" width={160} height={40} className="h-9 w-auto" priority />
+              <Image src="/muenot-logo.png" alt="Muenot" width={160} height={40} className="h-9 w-auto" style={{ height: "auto" }} priority />
             </div>
           </div>
 

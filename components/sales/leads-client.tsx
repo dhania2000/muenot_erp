@@ -93,6 +93,7 @@ export type LeadRow = {
   contact_number: string | null
   email: string | null
   designation: string | null
+  source_url: string | null
   lead_source: string | null
   company_name: string | null
   industry: string | null

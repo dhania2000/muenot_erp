@@ -2,6 +2,7 @@ import { query } from "@/lib/db"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2, UsersRound } from "lucide-react"
 import Link from "next/link"
+import { Settings } from "lucide-react"
 
 const moduleIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   hr: Users2,
@@ -71,13 +72,18 @@ export default async function AdminOverviewPage() {
           <CardTitle className="text-base">Get started</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
-          <p>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <p>
             Head over to{" "}
             <Link href="/admin/employees" className="font-medium text-primary underline-offset-4 hover:underline">
               Employees
             </Link>{" "}
             to invite new team members and assign exactly which module features each person can use.
-          </p>
+            </p>
+            <Link href="/admin/settings" className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted">
+              <Settings className="size-4" /> Settings
+            </Link>
+          </div>
         </CardContent>
       </Card>
     </div>

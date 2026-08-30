@@ -37,6 +37,7 @@ type FormState = {
   contact_number: string
   email: string
   designation: string
+  source_url: string
   lead_source: string
   company_name: string
   industry: string
@@ -55,6 +56,7 @@ const EMPTY: FormState = {
   contact_number: "",
   email: "",
   designation: "",
+  source_url: "",
   lead_source: "",
   company_name: "",
   industry: "",
@@ -93,6 +95,7 @@ export function LeadDialog({
         contact_number: lead.contact_number || "",
         email: lead.email || "",
         designation: lead.designation || "",
+        source_url: lead.source_url || "",
         lead_source: lead.lead_source || "",
         company_name: lead.company_name || "",
         industry: lead.industry || "",
@@ -105,7 +108,7 @@ export function LeadDialog({
         remarks: lead.remarks || "",
       })
     } else {
-      setForm(EMPTY)
+      setForm({ ...EMPTY, lead_date: new Date().toISOString().slice(0, 10) })
     }
   }, [open, lead])
 
@@ -158,7 +161,19 @@ export function LeadDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex flex-col gap-4 py-4">
+            <div className="flex flex-col gap-4 py-4">
+            {lead && (
+              <div className="grid grid-cols-2 gap-4">
+                <Field>
+                  <FieldLabel htmlFor="lead_code">Lead ID</FieldLabel>
+                  <Input id="lead_code" value={lead.lead_code} readOnly aria-readonly="true" />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="edit_lead_date">Date</FieldLabel>
+                  <Input id="edit_lead_date" type="date" value={form.lead_date} readOnly aria-readonly="true" />
+                </Field>
+              </div>
+            )}
             {error && (
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
@@ -166,6 +181,13 @@ export function LeadDialog({
             )}
 
             <FieldGroup>
+              {!lead && (
+                <Field>
+                  <FieldLabel htmlFor="lead_date">Date</FieldLabel>
+                  <Input id="lead_date" type="date" value={form.lead_date} readOnly aria-readonly="true" />
+                </Field>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <Field>
                   <FieldLabel htmlFor="contact_person">Contact person</FieldLabel>
@@ -246,6 +268,16 @@ export function LeadDialog({
               </div>
 
               <div className="grid grid-cols-2 gap-4">
+                <Field>
+                  <FieldLabel htmlFor="source_url">Source URL (if available)</FieldLabel>
+                  <Input
+                    id="source_url"
+                    type="url"
+                    placeholder="https://example.com"
+                    value={form.source_url}
+                    onChange={(e) => update("source_url", e.target.value)}
+                  />
+                </Field>
                 <Field>
                   <FieldLabel htmlFor="lead_source">Lead source</FieldLabel>
                   <Select value={form.lead_source} onValueChange={(v) => update("lead_source", v)}>

@@ -102,7 +102,7 @@ export function AppShell({
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex items-center px-5 py-5">
           <div className="flex items-center rounded-md bg-white px-2.5 py-1.5">
-            <Image src="/muenot-logo.png" alt="Muenot" width={140} height={36} className="h-6 w-auto" priority />
+            <Image src="/muenot-logo.png" alt="Muenot" width={140} height={36} className="h-6 w-auto" style={{ height: "auto" }} priority />
           </div>
         </div>
 
@@ -158,7 +158,7 @@ export function AppShell({
       <div className="flex min-h-svh flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3 md:hidden">
           <div className="flex items-center rounded-md bg-white px-2 py-1">
-            <Image src="/muenot-logo.png" alt="Muenot" width={120} height={30} className="h-5 w-auto" />
+            <Image src="/muenot-logo.png" alt="Muenot" width={120} height={30} className="h-5 w-auto" style={{ height: "auto" }} />
           </div>
           <Button variant="ghost" size="icon-sm" onClick={handleLogout} aria-label="Sign out">
             <LogOut className="size-4" />

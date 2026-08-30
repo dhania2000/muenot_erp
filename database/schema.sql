@@ -90,6 +90,7 @@ CREATE TABLE `sales_leads` (
   `contact_number` VARCHAR(40) DEFAULT NULL,
   `email` VARCHAR(190) DEFAULT NULL,
   `designation` VARCHAR(150) DEFAULT NULL,
+  `source_url` VARCHAR(500) DEFAULT NULL,
   `lead_source` VARCHAR(80) DEFAULT NULL,
   `company_name` VARCHAR(190) DEFAULT NULL,
   `industry` VARCHAR(100) DEFAULT NULL,

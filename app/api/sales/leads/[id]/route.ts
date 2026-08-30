@@ -28,6 +28,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     "contact_number",
     "email",
     "designation",
+    "source_url",
     "lead_source",
     "company_name",
     "industry",
@@ -39,7 +40,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     "lead_status",
     "follow_up_date",
     "remarks",
-    "lead_date",
   ]
 
   for (const key of allowed) {

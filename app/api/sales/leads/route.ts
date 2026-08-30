@@ -32,17 +32,18 @@ export async function POST(request: Request) {
 
   const result = await query<any>(
     `INSERT INTO sales_leads
-     (lead_code, lead_date, contact_person, contact_number, email, designation, lead_source,
+     (lead_code, lead_date, contact_person, contact_number, email, designation, source_url, lead_source,
       company_name, industry, website, company_email, country, assigned_to, status,
       follow_up_date, remarks, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       leadCode,
-      body.lead_date || new Date().toISOString().slice(0, 10),
+      new Date(),
       contact_person,
       body.contact_number || null,
       email || null,
       body.designation || null,
+      body.source_url || null,
       body.lead_source || null,
       company_name,
       body.industry || null,

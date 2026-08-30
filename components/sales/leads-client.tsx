@@ -85,6 +85,22 @@ const LEAD_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive
   "Follow Up": "secondary",
 }
 
+type LeadStatus = (typeof LEAD_STATUS_OPTIONS)[number]
+
+// Derive the effective lead status. On databases where the `lead_status`
+// column hasn't been populated yet (e.g. migration not run), we fall back to
+// deriving it from the pipeline `status` so leads still appear in the tabs.
+function effectiveLeadStatus(lead: LeadRow): LeadStatus {
+  if (lead.lead_status && LEAD_STATUS_OPTIONS.includes(lead.lead_status as LeadStatus)) {
+    return lead.lead_status as LeadStatus
+  }
+  const s = lead.status || ""
+  if (s === "Won") return "Won"
+  if (s === "Lost") return "Lost"
+  if (s.startsWith("Follow Up")) return "Follow Up"
+  return "Open"
+}
+
 export function LeadsClient({ canManage }: { canManage: boolean }) {
   const { data, isLoading, mutate } = useSWR<{ leads: LeadRow[] }>("/api/sales/leads", fetcher)
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all")
@@ -96,10 +112,10 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
 
   const filtered = useMemo(() => {
     let rows = leads
-    if (filter === "all") rows = rows.filter((l) => l.lead_status === "Open")
-    else if (filter === "followups") rows = rows.filter((l) => l.lead_status === "Follow Up")
-    else if (filter === "won") rows = rows.filter((l) => l.lead_status === "Won")
-    else if (filter === "lost") rows = rows.filter((l) => l.lead_status === "Lost")
+    if (filter === "all") rows = rows.filter((l) => effectiveLeadStatus(l) === "Open")
+    else if (filter === "followups") rows = rows.filter((l) => effectiveLeadStatus(l) === "Follow Up")
+    else if (filter === "won") rows = rows.filter((l) => effectiveLeadStatus(l) === "Won")
+    else if (filter === "lost") rows = rows.filter((l) => effectiveLeadStatus(l) === "Lost")
 
     const q = search.trim().toLowerCase()
     if (q) {
@@ -114,10 +130,10 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
 
   const counts = useMemo(
     () => ({
-      all: leads.filter((l) => l.lead_status === "Open").length,
-      followups: leads.filter((l) => l.lead_status === "Follow Up").length,
-      won: leads.filter((l) => l.lead_status === "Won").length,
-      lost: leads.filter((l) => l.lead_status === "Lost").length,
+      all: leads.filter((l) => effectiveLeadStatus(l) === "Open").length,
+      followups: leads.filter((l) => effectiveLeadStatus(l) === "Follow Up").length,
+      won: leads.filter((l) => effectiveLeadStatus(l) === "Won").length,
+      lost: leads.filter((l) => effectiveLeadStatus(l) === "Lost").length,
     }),
     [leads],
   )
@@ -231,7 +247,7 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-col">
-                    <span>{lead.company_name || "—"}</span>
+                    <span>{lead.company_name || "���"}</span>
                     <span className="text-xs text-muted-foreground">{lead.industry || "—"}</span>
                   </div>
                 </TableCell>
@@ -242,7 +258,7 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
                 <TableCell>
                   {canManage ? (
                     <Select
-                      value={lead.lead_status}
+                      value={effectiveLeadStatus(lead)}
                       onValueChange={(value) =>
                         updateLeadStatus(lead, value as (typeof LEAD_STATUS_OPTIONS)[number])
                       }
@@ -259,7 +275,9 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Badge variant={LEAD_STATUS_VARIANT[lead.lead_status] || "outline"}>{lead.lead_status}</Badge>
+                    <Badge variant={LEAD_STATUS_VARIANT[effectiveLeadStatus(lead)] || "outline"}>
+                      {effectiveLeadStatus(lead)}
+                    </Badge>
                   )}
                 </TableCell>
                 <TableCell>

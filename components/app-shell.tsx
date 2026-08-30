@@ -13,7 +13,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 export type NavItem = {
   label: string
   href: string
-  icon: React.ComponentType<{ className?: string }>
+  icon: React.ReactNode
 }
 
 function initials(name: string) {
@@ -66,7 +66,7 @@ export function AppShell({
                     : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
                 )}
               >
-                <item.icon className="size-4" />
+                <span className="size-4 shrink-0">{item.icon}</span>
                 {item.label}
               </Link>
             )

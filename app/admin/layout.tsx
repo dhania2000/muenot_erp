@@ -4,8 +4,8 @@ import { AppShell, type NavItem } from "@/components/app-shell"
 import { LayoutDashboard, Users } from "lucide-react"
 
 const navItems: NavItem[] = [
-  { label: "Overview", href: "/admin", icon: LayoutDashboard },
-  { label: "Employees", href: "/admin/employees", icon: Users },
+  { label: "Overview", href: "/admin", icon: <LayoutDashboard className="size-4" /> },
+  { label: "Employees", href: "/admin/employees", icon: <Users className="size-4" /> },
 ]
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

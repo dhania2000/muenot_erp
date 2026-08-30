@@ -59,7 +59,32 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "No fields to update" }, { status: 400 })
   }
 
-  await query(`UPDATE sales_leads SET ${fields.join(", ")} WHERE id = ?`, [...values, id])
+  const sql = `UPDATE sales_leads SET ${fields.join(", ")} WHERE id = ?`
+  const sqlValues = [...values, id]
+
+  try {
+    await query(sql, sqlValues)
+  } catch (error: any) {
+    // Self-heal: older databases created before the `lead_status` migration
+    // was run don't have the column yet, which throws ER_BAD_FIELD_ERROR
+    // ("Unknown column 'lead_status'"). Add it on the fly and retry once
+    // instead of failing the request.
+    const missingColumn = error?.code === "ER_BAD_FIELD_ERROR" && "lead_status" in body
+    if (!missingColumn) throw error
+
+    await query(
+      "ALTER TABLE sales_leads ADD COLUMN lead_status ENUM('Open','Won','Lost','Follow Up') NOT NULL DEFAULT 'Open' AFTER status",
+    ).catch(() => {})
+    await query("ALTER TABLE sales_leads ADD KEY idx_leads_lead_status (lead_status)").catch(() => {})
+    await query("UPDATE sales_leads SET lead_status = 'Won' WHERE status = 'Won'").catch(() => {})
+    await query("UPDATE sales_leads SET lead_status = 'Lost' WHERE status = 'Lost'").catch(() => {})
+    await query(
+      "UPDATE sales_leads SET lead_status = 'Follow Up' WHERE status IN ('Follow Up 1', 'Follow Up 2')",
+    ).catch(() => {})
+
+    await query(sql, sqlValues)
+  }
+
   return NextResponse.json({ success: true })
 }
 

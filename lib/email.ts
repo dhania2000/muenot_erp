@@ -1,5 +1,68 @@
 import nodemailer from "nodemailer"
 import crypto from "crypto"
+import { query } from "@/lib/db"
+
+let tablesEnsured = false
+
+/**
+ * Self-healing: create the email feature tables if they don't exist yet.
+ * This keeps the feature working even when the SQL migration hasn't been
+ * run manually in phpMyAdmin. Safe to call on every request (it short-circuits
+ * after the first success within a process).
+ */
+export async function ensureEmailTables() {
+  if (tablesEnsured) return
+  await query(
+    `CREATE TABLE IF NOT EXISTS sales_email_templates (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      name VARCHAR(150) NOT NULL,
+      subject VARCHAR(255) NOT NULL,
+      body MEDIUMTEXT NOT NULL,
+      category VARCHAR(80) DEFAULT NULL,
+      created_by INT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_email_templates_created_by (created_by)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+  await query(
+    `CREATE TABLE IF NOT EXISTS sales_emails (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      lead_id INT UNSIGNED DEFAULT NULL,
+      template_id INT UNSIGNED DEFAULT NULL,
+      to_email VARCHAR(190) NOT NULL,
+      to_name VARCHAR(190) DEFAULT NULL,
+      subject VARCHAR(255) NOT NULL,
+      body MEDIUMTEXT NOT NULL,
+      tracking_token VARCHAR(64) NOT NULL,
+      status ENUM('Sent','Failed','Opened') NOT NULL DEFAULT 'Sent',
+      error_message VARCHAR(500) DEFAULT NULL,
+      open_count INT UNSIGNED NOT NULL DEFAULT 0,
+      first_opened_at DATETIME DEFAULT NULL,
+      last_opened_at DATETIME DEFAULT NULL,
+      sent_by INT UNSIGNED DEFAULT NULL,
+      sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uniq_email_token (tracking_token),
+      KEY idx_emails_lead (lead_id),
+      KEY idx_emails_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+  await query(
+    `CREATE TABLE IF NOT EXISTS sales_email_events (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      email_id INT UNSIGNED NOT NULL,
+      event_type VARCHAR(30) NOT NULL DEFAULT 'open',
+      user_agent VARCHAR(400) DEFAULT NULL,
+      ip_address VARCHAR(60) DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_events_email (email_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+  tablesEnsured = true
+}
 
 // SMTP transport configured via environment variables.
 // Add these to .env.local (locally) or your Hostinger hosting panel:

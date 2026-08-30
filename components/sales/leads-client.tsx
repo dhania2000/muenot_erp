@@ -32,6 +32,58 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { LeadDialog } from "@/components/sales/lead-dialog"
+import { ExcelImportButton } from "@/components/sales/excel-import-button"
+
+const LEAD_IMPORT_ALIASES = {
+  contact_person: ["contactperson", "name", "contact"],
+  contact_number: ["contactnumber", "phone", "phonenumber", "mobile"],
+  email: ["email", "emailaddress"],
+  designation: ["designation", "title", "jobtitle"],
+  lead_source: ["leadsource", "source"],
+  company_name: ["companyname", "company"],
+  industry: ["industry"],
+  website: ["website", "url"],
+  company_email: ["companyemail"],
+  country: ["country"],
+  status: ["status"],
+  lead_date: ["leaddate", "date"],
+  follow_up_date: ["followupdate", "followup"],
+  remarks: ["remarks", "notes"],
+} satisfies Record<string, string[]>
+
+const LEAD_IMPORT_HEADERS = [
+  "Contact Person",
+  "Contact Number",
+  "Email",
+  "Designation",
+  "Lead Source",
+  "Company Name",
+  "Industry",
+  "Website",
+  "Company Email",
+  "Country",
+  "Status",
+  "Lead Date",
+  "Follow Up Date",
+  "Remarks",
+]
+
+const LEAD_IMPORT_SAMPLE = [
+  "Jane Doe",
+  "9876543210",
+  "jane@example.com",
+  "Procurement Manager",
+  "LinkedIn",
+  "Acme Corp",
+  "Manufacturing",
+  "https://acme.example.com",
+  "info@acme.example.com",
+  "India",
+  "New",
+  "2026-08-30",
+  "",
+  "Interested in bulk pricing",
+]
 
 export type LeadRow = {
   id: number
@@ -191,6 +243,16 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
               className="w-56 pl-8"
             />
           </div>
+          {canManage && (
+            <ExcelImportButton
+              endpoint="/api/sales/leads/import"
+              aliases={LEAD_IMPORT_ALIASES}
+              templateFilename="leads-template.xlsx"
+              templateHeaders={LEAD_IMPORT_HEADERS}
+              templateSample={LEAD_IMPORT_SAMPLE}
+              onImported={() => mutate()}
+            />
+          )}
           {canManage && (
             <Button
               onClick={() => {

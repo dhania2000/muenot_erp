@@ -23,6 +23,49 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { CompanyDialog } from "@/components/sales/company-dialog"
+import { ExcelImportButton } from "@/components/sales/excel-import-button"
+
+const COMPANY_IMPORT_ALIASES = {
+  company_name: ["companyname", "company", "name"],
+  industry: ["industry"],
+  website: ["website", "url"],
+  linkedin_url: ["linkedinurl", "linkedin"],
+  company_email: ["companyemail", "email"],
+  country: ["country"],
+  company_type: ["companytype", "type"],
+  status: ["status"],
+  priority: ["priority"],
+  founded_year: ["foundedyear", "founded"],
+  employee_count: ["employeecount", "employees"],
+} satisfies Record<string, string[]>
+
+const COMPANY_IMPORT_HEADERS = [
+  "Company Name",
+  "Industry",
+  "Website",
+  "LinkedIn URL",
+  "Company Email",
+  "Country",
+  "Company Type",
+  "Status",
+  "Priority",
+  "Founded Year",
+  "Employee Count",
+]
+
+const COMPANY_IMPORT_SAMPLE = [
+  "Acme Corp",
+  "Manufacturing",
+  "https://acme.example.com",
+  "https://linkedin.com/company/acme",
+  "info@acme.example.com",
+  "India",
+  "Client",
+  "New",
+  "High",
+  "2010",
+  "250",
+]
 
 export type CompanyRow = {
   id: number
@@ -98,15 +141,25 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
           />
         </div>
         {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Add company
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExcelImportButton
+              endpoint="/api/sales/companies/import"
+              aliases={COMPANY_IMPORT_ALIASES}
+              templateFilename="companies-template.xlsx"
+              templateHeaders={COMPANY_IMPORT_HEADERS}
+              templateSample={COMPANY_IMPORT_SAMPLE}
+              onImported={() => mutate()}
+            />
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus data-icon="inline-start" />
+              Add company
+            </Button>
+          </div>
         )}
       </div>
 

@@ -16,10 +16,10 @@ function encrypt(value: string) {
   const iv = randomBytes(12)
   const cipher = createCipheriv("aes-256-gcm", key(), iv)
   const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()])
-  return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString("base64")
+  return Buffer.concat([iv, cipher.getAuthTag(), encrypted])
 }
 function decrypt(value: Buffer | string) {
-  const payload = Buffer.from(value)
+  const payload = Buffer.isBuffer(value) ? value : Buffer.from(value, "base64")
   const decipher = createDecipheriv("aes-256-gcm", key(), payload.subarray(0, 32))
   decipher.setAuthTag(payload.subarray(12, 28))
   return Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]).toString("utf8")
@@ -48,7 +48,12 @@ export async function POST(request: Request) {
     const body = await request.json(); const name = String(body.name || "").trim(); const value = String(body.value || ""); const category = String(body.category || "General").trim() || "General"; const isSecret = body.isSecret !== false
     if (!/^[A-Z][A-Z0-9_]{1,119}$/.test(name) || !value) return NextResponse.json({ error: "Use a valid variable name and non-empty value" }, { status: 400 })
     await ensureTable(); await query("INSERT INTO environment_variables (name, category, value_encrypted, is_secret) VALUES (?, ?, ?, ?)", [name, category, encrypt(value), isSecret ? 1 : 0]); return NextResponse.json({ ok: true }, { status: 201 })
-  } catch (error: any) { return NextResponse.json({ error: error?.code === "ER_DUP_ENTRY" ? "Variable already exists" : "Unable to save variable" }, { status: error?.code === "ER_DUP_ENTRY" ? 409 : 500 }) }
+  } catch (error: any) {
+    console.error("[v0] env POST failed", error)
+    const status = error?.code === "ER_DUP_ENTRY" ? 409 : 500
+    const message = error?.code === "ER_DUP_ENTRY" ? "Variable already exists" : "Unable to save variable. Please apply the environment_variables database table migration."
+    return NextResponse.json({ error: message }, { status })
+  }
 }
 
 export async function PATCH(request: Request) {

@@ -30,12 +30,13 @@ export async function POST(request: Request) {
   )
   const leadCode = `MLD-${String(next).padStart(3, "0")}`
 
+  try {
   const result = await query<any>(
     `INSERT INTO sales_leads
      (lead_code, lead_date, contact_person, contact_number, email, designation, source_url, lead_source,
       company_name, industry, website, company_email, country, assigned_to, status,
-      follow_up_date, remarks, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      remarks, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       leadCode,
       new Date(),
@@ -52,11 +53,14 @@ export async function POST(request: Request) {
       body.country || null,
       body.assigned_to || null,
       body.status || "New",
-      body.follow_up_date || null,
       body.remarks || null,
       session.userId,
     ],
   )
 
-  return NextResponse.json({ id: result.insertId, lead_code: leadCode })
+    return NextResponse.json({ id: result.insertId, lead_code: leadCode })
+  } catch (error) {
+    console.error("[lead-save] database insert failed", error)
+    return NextResponse.json({ error: "Unable to save lead. Please verify the database migration is applied." }, { status: 500 })
+  }
 }

@@ -7,6 +7,7 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { ChevronDown, LogOut, ShieldCheck } from "lucide-react"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -156,13 +157,14 @@ export function AppShell({
       </aside>
 
       <div className="flex min-h-svh flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3 md:hidden">
-          <div className="flex items-center rounded-md bg-white px-2 py-1">
-            <Image src="/muenot-logo.png" alt="Muenot" width={120} height={30} className="h-5 w-auto" style={{ height: "auto" }} />
+        <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
+          <span className="text-sm font-medium text-muted-foreground">{user.role === "admin" ? "Administrator portal" : "Employee portal"}</span>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={handleLogout} aria-label="Sign out">
+              <LogOut className="size-4" />
+            </Button>
           </div>
-          <Button variant="ghost" size="icon-sm" onClick={handleLogout} aria-label="Sign out">
-            <LogOut className="size-4" />
-          </Button>
         </header>
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>

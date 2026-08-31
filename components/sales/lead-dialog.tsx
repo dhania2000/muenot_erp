@@ -46,7 +46,6 @@ type FormState = {
   country: string
   assigned_to: string
   status: string
-  follow_up_date: string
   remarks: string
 }
 
@@ -65,7 +64,6 @@ const EMPTY: FormState = {
   country: "",
   assigned_to: "",
   status: "New",
-  follow_up_date: "",
   remarks: "",
 }
 
@@ -104,7 +102,6 @@ export function LeadDialog({
         country: lead.country || "",
         assigned_to: lead.assigned_to ? String(lead.assigned_to) : "",
         status: lead.status || "New",
-        follow_up_date: toDateInputValue(lead.follow_up_date),
         remarks: lead.remarks || "",
       })
     } else {
@@ -335,15 +332,6 @@ export function LeadDialog({
                       </SelectGroup>
                     </SelectContent>
                   </Select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="follow_up_date">Follow-up date</FieldLabel>
-                  <Input
-                    id="follow_up_date"
-                    type="date"
-                    value={form.follow_up_date}
-                    onChange={(e) => update("follow_up_date", e.target.value)}
-                  />
                 </Field>
               </div>
 

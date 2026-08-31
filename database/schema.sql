@@ -305,7 +305,8 @@ INSERT INTO `features` (`module_id`, `name`, `slug`, `description`, `sort_order`
 (2, 'Manage Quotations', 'sales.manage_quotations', 'Create and update quotations', 9),
 (2, 'View Contracts', 'sales.view_contracts', 'View signed and active contracts', 10),
 (2, 'Manage Contracts', 'sales.manage_contracts', 'Create and update contracts', 11),
-(2, 'Manage Client Onboarding', 'sales.manage_onboarding', 'Track and update client onboarding stages', 12);
+  (2, 'Manage Client Onboarding', 'sales.manage_onboarding', 'Track and update client onboarding stages', 12),
+  (2, 'Get Email Name', 'sales.get_email_name', 'Find publicly listed company emails by name and domain', 13);
 
 -- Features: Finance (module_id = 3)
 INSERT INTO `features` (`module_id`, `name`, `slug`, `description`, `sort_order`) VALUES

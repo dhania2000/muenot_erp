@@ -2,7 +2,7 @@ import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getUserAccessibleModules, getUserFeatureSlugs } from "@/lib/permissions"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { LayoutDashboard, Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck } from "lucide-react"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck } from "lucide-react"
 
 const moduleIcons: Record<string, NavItem["icon"]> = {
   hr: <Users2 className="size-4" />,
@@ -24,6 +24,7 @@ const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Emails", href: "/modules/sales/emails", feature: "sales.send_emails" },
   { label: "Onboarding", href: "/modules/sales/onboarding", feature: "sales.manage_onboarding" },
   { label: "Forecast", href: "/modules/sales/forecast", feature: "sales.view_dashboard" },
+  { label: "Get Email Name", href: "/modules/sales/get-email-name", feature: "sales.get_email_name" },
 ]
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -38,7 +39,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const navItems: NavItem[] = [
     ...(session.role === "admin"
       ? [{ label: "Admin panel", href: "/admin", icon: <ShieldCheck className="size-4" /> }]
-      : [{ label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="size-4" /> }]),
+      : []),
     ...modules.map((m) => {
       const item: NavItem = {
         label: m.name,

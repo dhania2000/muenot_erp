@@ -35,7 +35,7 @@ export async function POST(request: Request) {
      (lead_code, lead_date, contact_person, contact_number, email, designation, source_url, lead_source,
       company_name, industry, website, company_email, country, assigned_to, status,
       follow_up_date, remarks, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       leadCode,
       new Date(),

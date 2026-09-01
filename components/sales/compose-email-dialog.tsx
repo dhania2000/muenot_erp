@@ -57,11 +57,13 @@ export function ComposeEmailDialog({
   onOpenChange,
   onSent,
   emailConfigured,
+  initialLead,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSent: () => void
   emailConfigured: boolean
+  initialLead?: LeadRow | null
 }) {
   const { data: leadsData } = useSWR<{ leads: LeadRow[] }>(open ? "/api/sales/leads" : null, fetcher)
   const { data: templatesData } = useSWR<{ templates: EmailTemplateRow[] }>(
@@ -77,9 +79,9 @@ export function ComposeEmailDialog({
 
   useEffect(() => {
     if (!open) return
-    setForm(EMPTY)
+    setForm(initialLead ? { ...EMPTY, lead_id: String(initialLead.id), to_email: initialLead.email || "", to_name: initialLead.contact_person || "" } : EMPTY)
     setError(null)
-  }, [open])
+  }, [open, initialLead])
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))

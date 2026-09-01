@@ -13,6 +13,7 @@ import {
   resolveBaseUrl,
   sendEmail,
   withTrackingPixel,
+  hydrateDepartmentSMTP,
 } from "@/lib/email"
 
 export async function GET() {
@@ -40,11 +41,13 @@ export async function POST(request: Request) {
   await ensureEmailTables()
   const body = await request.json()
   const { lead_id, template_id, to_email, to_name, subject, body: content } = body
+  const department = body.department === "hr" || body.department === "finance" ? body.department : "sales"
+  await hydrateDepartmentSMTP(department)
 
   if (!to_email || !subject || !content) {
     return NextResponse.json({ error: "Recipient, subject, and body are required" }, { status: 400 })
   }
-  if (!isEmailConfigured()) {
+  if (!isEmailConfigured(department)) {
     return NextResponse.json(
       { error: "Email is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS in your environment." },
       { status: 400 },
@@ -98,6 +101,7 @@ export async function POST(request: Request) {
       messageId,
       inReplyTo: inReplyTo || undefined,
       references: references || undefined,
+      department,
     })
   } catch (err: any) {
     status = "Failed"

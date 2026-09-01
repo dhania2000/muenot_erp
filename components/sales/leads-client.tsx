@@ -30,8 +30,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { Mail, MoreHorizontal, Plus, Search } from "lucide-react"
 import { LeadDialog } from "@/components/sales/lead-dialog"
+import { ComposeEmailDialog } from "@/components/sales/compose-email-dialog"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
 
 const LEAD_IMPORT_ALIASES = {
@@ -160,6 +161,8 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
   const [search, setSearch] = useState("")
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<LeadRow | null>(null)
+  const [emailLead, setEmailLead] = useState<LeadRow | null>(null)
+  const [emailOpen, setEmailOpen] = useState(false)
 
   const leads = data?.leads ?? []
 
@@ -278,7 +281,7 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
               <TableHead>Status</TableHead>
               <TableHead>Lead Status</TableHead>
               <TableHead>Health</TableHead>
-              <TableHead>Follow-up</TableHead>
+              <TableHead>Email</TableHead>
               <TableHead>Assigned</TableHead>
               {canManage && <TableHead className="text-right">Actions</TableHead>}
             </TableRow>
@@ -349,8 +352,18 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
                     <span className="text-xs text-muted-foreground">{lead.lead_health_score}%</span>
                   </div>
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {lead.follow_up_date ? formatDateTime(lead.follow_up_date) : "—"}
+                <TableCell>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!lead.email}
+                    onClick={() => {
+                      setEmailLead(lead)
+                      setEmailOpen(true)
+                    }}
+                  >
+                    <Mail data-icon="inline-start" /> Email
+                  </Button>
                 </TableCell>
                 <TableCell className="text-muted-foreground">{lead.assigned_to_name || "Unassigned"}</TableCell>
                 {canManage && (
@@ -380,6 +393,14 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
           </TableBody>
         </Table>
       </div>
+
+      <ComposeEmailDialog
+        open={emailOpen}
+        onOpenChange={setEmailOpen}
+        onSent={() => mutate()}
+        emailConfigured={true}
+        initialLead={emailLead}
+      />
 
       <LeadDialog
         open={dialogOpen}

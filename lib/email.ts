@@ -179,24 +179,50 @@ export async function getThreadContext(threadId: string): Promise<ThreadContext 
 //   APP_URL       - public base URL of this app, used to build the tracking
 //                   pixel link, e.g. https://erp.muenot.co.in
 
-let transporter: nodemailer.Transporter | null = null
+const transporters = new Map<string, nodemailer.Transporter>()
 
-export function isEmailConfigured() {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
+type Department = "sales" | "hr" | "finance"
+
+export async function hydrateDepartmentSMTP(department: Department = "sales") {
+  const prefix = department.toUpperCase()
+  const names = [`${prefix}_SMTP_HOST`, `${prefix}_SMTP_PORT`, `${prefix}_SMTP_SECURE`, `${prefix}_SMTP_USER`, `${prefix}_SMTP_PASS`, `${prefix}_SMTP_FROM`]
+  const rows = await query<any[]>(`SELECT name, value_encrypted FROM environment_variables WHERE name IN (${names.map(() => "?").join(",")})`, names)
+  const secret = process.env.SETTINGS_ENCRYPTION_KEY
+  if (!secret) return
+  const key = crypto.createHash("sha256").update(secret).digest()
+  for (const row of rows) {
+    const payload = Buffer.isBuffer(row.value_encrypted) ? row.value_encrypted : Buffer.from(row.value_encrypted, "base64")
+    if (payload.length < 28) continue
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, payload.subarray(0, 12))
+    decipher.setAuthTag(payload.subarray(12, 28))
+    process.env[row.name] = Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]).toString("utf8")
+  }
+}
+function smtpConfig(department: Department = "sales") {
+  const prefix = department.toUpperCase()
+  return {
+    host: process.env[`${prefix}_SMTP_HOST`] || process.env.SMTP_HOST,
+    port: Number(process.env[`${prefix}_SMTP_PORT`] || process.env.SMTP_PORT || 587),
+    secure: String(process.env[`${prefix}_SMTP_SECURE`] || process.env.SMTP_SECURE || "false") === "true",
+    user: process.env[`${prefix}_SMTP_USER`] || process.env.SMTP_USER,
+    pass: process.env[`${prefix}_SMTP_PASS`] || process.env.SMTP_PASS,
+    from: process.env[`${prefix}_SMTP_FROM`] || process.env.SMTP_FROM,
+  }
 }
 
-function getTransporter() {
-  if (transporter) return transporter
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: String(process.env.SMTP_SECURE || "false") === "true",
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  })
-  return transporter
+export function isEmailConfigured(department: Department = "sales") {
+  const config = smtpConfig(department)
+  return Boolean(config.host && config.user && config.pass)
+}
+
+function getTransporter(department: Department = "sales") {
+  const config = smtpConfig(department)
+  const cacheKey = `${department}:${config.host}:${config.port}:${config.user}`
+  const existing = transporters.get(cacheKey)
+  if (existing) return existing
+  const created = nodemailer.createTransport({ host: config.host, port: config.port, secure: config.secure, auth: { user: config.user, pass: config.pass } })
+  transporters.set(cacheKey, created)
+  return created
 }
 
 export function generateTrackingToken() {
@@ -240,9 +266,11 @@ export async function sendEmail(opts: {
   messageId?: string
   inReplyTo?: string
   references?: string
+  department?: Department
 }) {
-  const from = opts.from || process.env.SMTP_FROM || process.env.SMTP_USER
-  const info = await getTransporter().sendMail({
+  const config = smtpConfig(opts.department)
+  const from = opts.from || config.from || config.user
+  const info = await getTransporter(opts.department).sendMail({
     from,
     to: opts.to,
     subject: opts.subject,

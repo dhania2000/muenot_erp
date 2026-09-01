@@ -20,7 +20,8 @@ function encrypt(value: string) {
 }
 function decrypt(value: Buffer | string) {
   const payload = Buffer.isBuffer(value) ? value : Buffer.from(value, "base64")
-  const decipher = createDecipheriv("aes-256-gcm", key(), payload.subarray(0, 32))
+  if (payload.length < 28) throw new Error("Invalid encrypted environment variable")
+  const decipher = createDecipheriv("aes-256-gcm", key(), payload.subarray(0, 12))
   decipher.setAuthTag(payload.subarray(12, 28))
   return Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]).toString("utf8")
 }
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json(); const name = String(body.name || "").trim(); const value = String(body.value || ""); const category = String(body.category || "General").trim() || "General"; const isSecret = body.isSecret !== false
     if (!/^[A-Z][A-Z0-9_]{1,119}$/.test(name) || !value) return NextResponse.json({ error: "Use a valid variable name and non-empty value" }, { status: 400 })
-    await ensureTable(); await query("INSERT INTO environment_variables (name, category, value_encrypted, is_secret) VALUES (?, ?, ?, ?)", [name, category, encrypt(value), isSecret ? 1 : 0]); return NextResponse.json({ ok: true }, { status: 201 })
+    await ensureTable(); await query("INSERT INTO environment_variables (name, category, value_encrypted, is_secret) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE category = VALUES(category), value_encrypted = VALUES(value_encrypted), is_secret = VALUES(is_secret)", [name, category, encrypt(value), isSecret ? 1 : 0]); return NextResponse.json({ ok: true }, { status: 200 })
   } catch (error: any) {
     console.error("[v0] env POST failed", error)
     const status = error?.code === "ER_DUP_ENTRY" ? 409 : 500

@@ -97,7 +97,7 @@ export function PermissionsDialog({
           </div>
         ) : (
           <Tabs defaultValue={modules[0]?.slug} className="w-full">
-            <TabsList className="flex w-full max-w-full flex-nowrap justify-start gap-1 overflow-x-auto overflow-y-hidden p-1">
+            <TabsList className="flex w-full max-w-full flex-nowrap justify-start gap-1 overflow-x-scroll overflow-y-hidden rounded-md p-1 pb-2 [scrollbar-color:hsl(var(--muted-foreground))_hsl(var(--muted))] [scrollbar-width:auto]">
               {modules.map((m) => {
                 const Icon = moduleIcons[m.slug] ?? Settings2
                 const grantedCount = m.features.filter((f) => selected.has(f.id)).length

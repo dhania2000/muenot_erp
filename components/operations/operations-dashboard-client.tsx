@@ -216,8 +216,8 @@ function OperationsOverview() {
   )
 }
 
-export function OperationsDashboardClient() {
-  const [kind, setKind] = useState("resources")
+export function OperationsDashboardClient({ initialModule = "resources" }: { initialModule?: string }) {
+  const [kind, setKind] = useState(initialModule)
   const [form, setForm] = useState<any>({})
   const { data, mutate } = useSWR(`/api/operations?kind=${kind}`, fetcher)
   const c = configs[kind]

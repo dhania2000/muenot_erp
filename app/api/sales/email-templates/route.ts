@@ -23,15 +23,15 @@ export async function POST(request: Request) {
 
   await ensureEmailTables()
   const body = await request.json()
-  const { name, subject, body: content, category } = body
+  const { name, subject, body: content, category, attachment } = body
   if (!name || !subject || !content) {
     return NextResponse.json({ error: "Name, subject, and body are required" }, { status: 400 })
   }
 
   const result = await query<any>(
-    `INSERT INTO sales_email_templates (name, subject, body, category, created_by)
-     VALUES (?, ?, ?, ?, ?)`,
-    [name, subject, content, category || null, session.userId],
+    `INSERT INTO sales_email_templates (name, subject, body, category, attachment_pathname, attachment_name, attachment_type, attachment_size, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, subject, content, category || null, attachment?.pathname || null, attachment?.filename || null, attachment?.contentType || null, attachment?.size || null, session.userId],
   )
   return NextResponse.json({ id: result.insertId })
 }

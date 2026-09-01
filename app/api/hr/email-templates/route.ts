@@ -11,8 +11,8 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const { name, subject, body, status = "Active" } = await request.json()
+  const { name, subject, body, status = "Active", attachment } = await request.json()
   if (!name || !subject || !body) return NextResponse.json({ error: "Name, subject and body are required" }, { status: 400 })
-  await query("INSERT INTO hr_email_templates (name,subject,body,status) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE subject=VALUES(subject),body=VALUES(body),status=VALUES(status)", [name, subject, body, status])
+  await query("INSERT INTO hr_email_templates (name,subject,body,status,attachment_pathname,attachment_name,attachment_type,attachment_size) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE subject=VALUES(subject),body=VALUES(body),status=VALUES(status),attachment_pathname=VALUES(attachment_pathname),attachment_name=VALUES(attachment_name),attachment_type=VALUES(attachment_type),attachment_size=VALUES(attachment_size)", [name, subject, body, status, attachment?.pathname || null, attachment?.filename || null, attachment?.contentType || null, attachment?.size || null])
   return NextResponse.json({ ok: true })
 }

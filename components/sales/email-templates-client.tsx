@@ -34,6 +34,10 @@ export type EmailTemplateRow = {
   created_by_name: string | null
   created_at: string
   updated_at: string
+  attachment_pathname?: string | null
+  attachment_name?: string | null
+  attachment_type?: string | null
+  attachment_size?: number | null
 }
 
 export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {

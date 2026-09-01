@@ -103,8 +103,8 @@ export function AppShell({
     <div className="flex h-svh overflow-hidden">
       <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex items-center px-5 py-5">
-          <div className="flex items-center rounded-md bg-white px-2.5 py-1.5">
-            <Image src="/muenot-logo.png" alt="Muenot" width={140} height={36} className="h-6 w-auto" style={{ height: "auto" }} priority />
+          <div className="flex items-center px-1 py-1">
+            <Image src="/muenot-logo-transparent.png" alt="Muenot" width={112} height={25} className="h-5 w-auto object-contain" priority />
           </div>
         </div>
 

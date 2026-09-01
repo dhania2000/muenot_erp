@@ -14,6 +14,6 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const body = await request.json()
   if (!body.name || !body.subject || !body.body) return NextResponse.json({ error: "Name, subject and body are required" }, { status: 400 })
-  const result = await query<any>("INSERT INTO operations_email_templates (name, subject, body) VALUES (?, ?, ?)", [body.name, body.subject, body.body])
+  const result = await query<any>("INSERT INTO operations_email_templates (name, subject, body, attachment_pathname, attachment_name, attachment_type, attachment_size) VALUES (?, ?, ?, ?, ?, ?, ?)", [body.name, body.subject, body.body, body.attachment?.pathname || null, body.attachment?.filename || null, body.attachment?.contentType || null, body.attachment?.size || null])
   return NextResponse.json({ id: result.insertId }, { status: 201 })
 }

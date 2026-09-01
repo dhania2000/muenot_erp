@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2Icon } from "lucide-react"
+import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
 import type { EmailTemplateRow } from "@/components/sales/email-templates-client"
 
 type FormState = {
@@ -22,9 +23,10 @@ type FormState = {
   category: string
   subject: string
   body: string
+  attachment: EmailAttachment | null
 }
 
-const EMPTY: FormState = { name: "", category: "", subject: "", body: "" }
+const EMPTY: FormState = { name: "", category: "", subject: "", body: "", attachment: null }
 
 export function EmailTemplateDialog({
   open,
@@ -50,6 +52,7 @@ export function EmailTemplateDialog({
         category: template.category || "",
         subject: template.subject || "",
         body: template.body || "",
+        attachment: (template as any).attachment_pathname ? { pathname: (template as any).attachment_pathname, filename: (template as any).attachment_name, contentType: (template as any).attachment_type, size: (template as any).attachment_size } : null,
       })
     } else {
       setForm(EMPTY)
@@ -152,6 +155,7 @@ export function EmailTemplateDialog({
                 </FieldDescription>
               </Field>
             </FieldGroup>
+            <EmailAttachmentPicker value={form.attachment} onChange={(attachment) => update("attachment", attachment)} />
           </div>
 
           <DialogFooter>

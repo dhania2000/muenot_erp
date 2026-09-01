@@ -7,21 +7,9 @@ export const metadata: Metadata = {
   title: 'Email Engagement Tracker',
   description: 'Track email engagement, campaigns, and performance from one workspace.',
   icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-    apple: '/apple-icon.png',
+    icon: '/muenot-favicon.png',
+    shortcut: '/muenot-favicon.png',
+    apple: '/muenot-favicon.png',
   },
 }
 

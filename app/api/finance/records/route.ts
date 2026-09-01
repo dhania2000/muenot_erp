@@ -3,7 +3,7 @@ import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 
 const modules = new Set(["sales-invoices","purchase-bills","expenses","fte-invoices","freelance-invoices","bank-transactions","bank-cash","chart-of-accounts","customers-vendors"])
-const fields = ["module_key","reference_no","record_date","party_name","account_name","record_type","amount","debit","credit","status","description"]
+const fields = ["module_key","reference_no","record_date","party_name","account_name","record_type","amount","debit","credit","status","reconciliation_status","description"]
 
 export async function GET(req: NextRequest) {
   const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

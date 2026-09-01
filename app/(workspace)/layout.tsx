@@ -13,6 +13,46 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
 }
 
 // Sales sub-pages shown in the sidebar dropdown, each gated by a feature slug.
+const HR_CHILDREN: { label: string; href: string; feature: string }[] = [
+  { label: "Employees", href: "/modules/hr/employees", feature: "hr.view_employees" },
+  { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_employees" },
+  { label: "Attendance", href: "/modules/hr/attendance", feature: "hr.view_attendance" },
+  { label: "Attendance Regularisation", href: "/modules/hr/attendance-regularisation", feature: "hr.view_regularisation" },
+  { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
+  { label: "Offboarding", href: "/modules/hr/offboarding", feature: "hr.view_offboarding" },
+  { label: "Leave Requests", href: "/modules/hr/leave-requests", feature: "hr.view_leave_requests" },
+  { label: "Leave Balances", href: "/modules/hr/leave-balances", feature: "hr.view_leave_balances" },
+  { label: "Leave Quota History", href: "/modules/hr/leave-quota-history", feature: "hr.view_leave_quota_history" },
+  { label: "Leave Types", href: "/modules/hr/leave-types", feature: "hr.view_leave_types" },
+  { label: "Shifts", href: "/modules/hr/shifts", feature: "hr.view_shifts" },
+  { label: "Shift Change Requests", href: "/modules/hr/shift-workflows?kind=requests", feature: "hr.view_shift_change_requests" },
+  { label: "Shift Assignments", href: "/modules/hr/shift-workflows?kind=assignments", feature: "hr.view_shift_assignments" },
+  { label: "Shift Rotations", href: "/modules/hr/shift-workflows?kind=rotations", feature: "hr.view_shift_rotations" },
+  { label: "Rotation Sequences", href: "/modules/hr/shift-workflows?kind=sequences", feature: "hr.view_rotation_sequences" },
+  { label: "Rotation Employees", href: "/modules/hr/shift-workflows?kind=employees", feature: "hr.view_rotation_employees" },
+  { label: "Promotions", href: "/modules/hr/master-data?kind=promotions", feature: "hr.view_master_data" },
+  { label: "Awards", href: "/modules/hr/master-data?kind=awards", feature: "hr.view_master_data" },
+  { label: "Appreciations", href: "/modules/hr/master-data?kind=appreciations", feature: "hr.view_master_data" },
+  { label: "Passport Visa", href: "/modules/hr/master-data?kind=passport-visa", feature: "hr.view_master_data" },
+  { label: "Holidays", href: "/modules/hr/master-data?kind=holidays", feature: "hr.view_master_data" },
+  { label: "Departments", href: "/modules/hr/master-data?kind=departments", feature: "hr.view_master_data" },
+  { label: "Designations", href: "/modules/hr/master-data?kind=designations", feature: "hr.view_master_data" },
+  { label: "HR Emails", href: "/modules/hr/emails", feature: "hr.view_emails" },
+  { label: "HR Email Templates", href: "/modules/hr/email-templates", feature: "hr.view_email_templates" },
+]
+
+const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
+  { label: "Dashboard", href: "/modules/finance", feature: "finance.view_dashboard" },
+  { label: "Emails", href: "/modules/finance/emails", feature: "finance.send_emails" },
+  { label: "Email Templates", href: "/modules/finance/email-templates", feature: "finance.view_email_templates" },
+]
+
+const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = [
+  { label: "Operations Dashboard", href: "/modules/operations", feature: "operations.view_dashboard" },
+  { label: "Emails", href: "/modules/operations/emails", feature: "operations.send_emails" },
+  { label: "Email Templates", href: "/modules/operations/email-templates", feature: "operations.view_email_templates" },
+]
+
 const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Dashboard", href: "/modules/sales/dashboard", feature: "sales.view_dashboard" },
   { label: "Leads", href: "/modules/sales/leads", feature: "sales.view_leads" },
@@ -46,8 +86,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: `/modules/${m.slug}`,
         icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
       }
-      if (m.slug === "sales") {
-        const children: NavChild[] = SALES_CHILDREN.filter((c) => canAccess(c.feature)).map((c) => ({
+      if (m.slug === "hr" || m.slug === "sales" || m.slug === "finance" || m.slug === "operations") {
+        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : SALES_CHILDREN
+        const children: NavChild[] = source.filter((c) => canAccess(c.feature)).map((c) => ({
           label: c.label,
           href: c.href,
         }))

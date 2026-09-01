@@ -1,0 +1,21 @@
+"use client"
+import useSWR from "swr"
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+
+const fetcher = (url: string) => fetch(url).then((r) => r.json())
+const modules = [
+  ["sales-invoices", "Sales Invoices"], ["purchase-bills", "Purchase Bills"], ["expenses", "Expenses"],
+  ["fte-invoices", "FTE Invoices"], ["freelance-invoices", "Freelance Invoices"], ["bank-transactions", "Bank Transactions"],
+  ["bank-cash", "Bank & Cash"], ["chart-of-accounts", "Chart of Accounts"], ["customers-vendors", "Customer / Vendor"],
+] as const
+
+export function FinanceDashboardClient() {
+  const [module, setModule] = useState<string>("sales-invoices")
+  const [form, setForm] = useState({ reference_no: "", record_date: "", party_name: "", account_name: "", record_type: "", amount: "", debit: "", credit: "", status: "Draft", description: "" })
+  const { data, mutate } = useSWR(`/api/finance/records?module=${module}`, fetcher)
+  async function save(e: React.FormEvent) { e.preventDefault(); await fetch("/api/finance/records", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, module_key: module }) }); setForm({ reference_no: "", record_date: "", party_name: "", account_name: "", record_type: "", amount: "", debit: "", credit: "", status: "Draft", description: "" }); mutate() }
+  return <main className="space-y-6 p-6"><div><p className="text-sm text-muted-foreground">Finance management</p><h1 className="text-3xl font-semibold tracking-tight">Finance Dashboard</h1></div><div className="grid gap-4 md:grid-cols-4"><Card><CardHeader><CardTitle className="text-sm">Records</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{data?.summary?.total_records ?? 0}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Total amount</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">₹{Number(data?.summary?.total_amount ?? 0).toLocaleString()}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Debit</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">₹{Number(data?.summary?.total_debit ?? 0).toLocaleString()}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Credit</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">₹{Number(data?.summary?.total_credit ?? 0).toLocaleString()}</CardContent></Card></div><div className="flex flex-wrap gap-2">{modules.map(([key, label]) => <Button key={key} variant={module === key ? "default" : "outline"} onClick={() => setModule(key)}>{label}</Button>)}</div><Card><CardHeader><CardTitle>Add {modules.find(([key]) => key === module)?.[1]}</CardTitle></CardHeader><CardContent><form onSubmit={save} className="grid gap-3 md:grid-cols-4">{Object.entries(form).map(([key, value]) => <Input key={key} placeholder={key.replaceAll("_", " ")} type={key === "record_date" ? "date" : key === "amount" || key === "debit" || key === "credit" ? "number" : "text"} value={value} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))} />)}<Button type="submit">Save record</Button></form></CardContent></Card><Card><CardHeader><CardTitle>{modules.find(([key]) => key === module)?.[1]} records</CardTitle></CardHeader><CardContent><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="p-2">Reference</th><th className="p-2">Date</th><th className="p-2">Party</th><th className="p-2">Type</th><th className="p-2">Amount</th><th className="p-2">Status</th></tr></thead><tbody>{(data?.rows ?? []).map((row: any) => <tr key={row.record_id} className="border-b"><td className="p-2">{row.reference_no || "—"}</td><td className="p-2">{row.record_date || "—"}</td><td className="p-2">{row.party_name || row.account_name || "—"}</td><td className="p-2">{row.record_type || "—"}</td><td className="p-2">₹{Number(row.amount || row.debit || row.credit || 0).toLocaleString()}</td><td className="p-2">{row.status}</td></tr>)}</tbody></table></div></CardContent></Card></main>
+}

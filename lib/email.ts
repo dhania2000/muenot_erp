@@ -181,7 +181,7 @@ export async function getThreadContext(threadId: string): Promise<ThreadContext 
 
 const transporters = new Map<string, nodemailer.Transporter>()
 
-type Department = "sales" | "hr" | "finance"
+type Department = "sales" | "hr" | "finance" | "operations"
 
 export async function hydrateDepartmentSMTP(department: Department = "sales") {
   const prefix = department.toUpperCase()
@@ -269,7 +269,10 @@ export async function sendEmail(opts: {
   department?: Department
 }) {
   const config = smtpConfig(opts.department)
-  const from = opts.from || config.from || config.user
+  const configuredFrom = opts.from || config.from || config.user
+  const from = opts.department === "sales" && configuredFrom && !configuredFrom.includes("<")
+    ? `Muenot Business Team <${configuredFrom}>`
+    : configuredFrom
   const info = await getTransporter(opts.department).sendMail({
     from,
     to: opts.to,

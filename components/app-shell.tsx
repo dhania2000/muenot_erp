@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import { ChevronDown, LogOut, ShieldCheck } from "lucide-react"
+import { Bell, ChevronDown, Clock3, FileText, LogOut, Plus, Search, Settings, ShieldCheck, UserPlus } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -91,6 +91,7 @@ export function AppShell({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  const [profileOpen, setProfileOpen] = useState(false)
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" })
@@ -131,14 +132,28 @@ export function AppShell({
           })}
         </nav>
 
-        <div className="border-t border-sidebar-border p-3">
+        <div className="relative border-t border-sidebar-border p-3">
+          {profileOpen && (
+            <div className="absolute bottom-20 left-3 z-30 w-72 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-xl">
+              <div className="flex items-center gap-3 border-b border-border pb-4">
+                <Avatar className="size-11"><AvatarFallback className="bg-primary text-primary-foreground">{initials(user.name)}</AvatarFallback></Avatar>
+                <div className="min-w-0"><p className="truncate font-semibold">{user.name}</p><p className="truncate text-xs text-muted-foreground">{user.role === "admin" ? "Administrator" : "Employee"}</p></div>
+                <Link href="/profile" className="ml-auto rounded-md p-2 text-muted-foreground hover:bg-muted" aria-label="Edit profile"><FileText className="size-4" /></Link>
+              </div>
+              <div className="flex flex-col gap-1 pt-3">
+                {user.role === "admin" && <Link href="/admin/employees" className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted"><UserPlus className="size-4" /> Invite member</Link>}
+                <div className="flex items-center justify-between rounded-md px-2 py-2 text-sm"><span className="flex items-center gap-3"><ThemeToggle /> Dark mode</span></div>
+                <button type="button" onClick={handleLogout} className="flex items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted"><LogOut className="size-4" /> Logout</button>
+              </div>
+            </div>
+          )}
           {user.role === "admin" && (
             <div className="mb-3 flex items-center gap-2 rounded-md bg-sidebar-primary/10 px-3 py-2 text-xs font-medium text-sidebar-primary">
               <ShieldCheck className="size-3.5" />
               Administrator
             </div>
           )}
-          <div className="flex items-center gap-2.5 px-1">
+          <button type="button" onClick={() => setProfileOpen((v) => !v)} aria-expanded={profileOpen} className="flex w-full items-center gap-2.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-sidebar-accent/60">
             <Avatar className="size-8">
               <AvatarFallback className="bg-sidebar-accent text-sidebar-accent-foreground text-xs">
                 {initials(user.name)}
@@ -148,7 +163,7 @@ export function AppShell({
               <span className="truncate text-sm font-medium">{user.name}</span>
               <span className="truncate text-xs text-sidebar-foreground/60">{user.email}</span>
             </div>
-          </div>
+          </button>
           <Button variant="ghost" size="sm" className="mt-2 w-full justify-start gap-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground" onClick={handleLogout}>
             <LogOut className="size-3.5" />
             Sign out
@@ -157,13 +172,12 @@ export function AppShell({
       </aside>
 
       <div className="flex min-h-svh flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
-          <span className="text-sm font-medium text-muted-foreground">{user.role === "admin" ? "Administrator portal" : "Employee portal"}</span>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
-            <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={handleLogout} aria-label="Sign out">
-              <LogOut className="size-4" />
-            </Button>
+        <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
+          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span><span className="hidden text-sm text-muted-foreground sm:inline">Home <span className="mx-1">•</span> Dashboard</span></div>
+          <div className="flex items-center gap-1">
+            {[{label:"Search", icon:Search},{label:"Messages", icon:FileText},{label:"Activity", icon:Clock3},{label:"Create", icon:Plus},{label:"Notifications", icon:Bell}].map(({label,icon:Icon}) => <Button key={label} variant="ghost" size="icon-sm" aria-label={label} className="text-muted-foreground hover:bg-primary/10 hover:text-primary"><Icon className="size-5" /></Button>)}
+            <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/admin/settings")} aria-label="Settings"><Settings className="size-5" /></Button>
+            <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={handleLogout} aria-label="Sign out"><LogOut className="size-4" /></Button>
           </div>
         </header>
         <main className="flex-1 overflow-y-auto">{children}</main>

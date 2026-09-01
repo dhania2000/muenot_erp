@@ -246,10 +246,10 @@ function FinanceOverview() {
   )
 }
 
-export function FinanceDashboardClient({ initialModule = "sales-invoices" }: { initialModule?: string }) {
+export function FinanceDashboardClient({ initialModule = "overview" }: { initialModule?: string }) {
   const [module, setModule] = useState<string>(initialModule)
   const [form, setForm] = useState(emptyForm)
-  const { data, mutate } = useSWR(`/api/finance/records?module=${module}`, fetcher)
+  const { data, mutate } = useSWR(module === "overview" ? null : `/api/finance/records?module=${module}`, fetcher)
 
   async function save(e: React.FormEvent) {
     e.preventDefault()
@@ -273,15 +273,7 @@ export function FinanceDashboardClient({ initialModule = "sales-invoices" }: { i
 
       <FinanceOverview />
 
-      <div className="flex flex-wrap gap-2">
-        {modules.map(([key, label]) => (
-          <Button key={key} variant={module === key ? "default" : "outline"} onClick={() => setModule(key)}>
-            {label}
-          </Button>
-        ))}
-      </div>
-
-      <Card>
+      {module !== "overview" && <Card>
         <CardHeader>
           <CardTitle>Add {modules.find(([key]) => key === module)?.[1]}</CardTitle>
         </CardHeader>
@@ -301,9 +293,9 @@ export function FinanceDashboardClient({ initialModule = "sales-invoices" }: { i
             <Button type="submit">Save record</Button>
           </form>
         </CardContent>
-      </Card>
+      </Card>}
 
-      <Card>
+      {module !== "overview" && <Card>
         <CardHeader>
           <CardTitle>{modules.find(([key]) => key === module)?.[1]} records</CardTitle>
         </CardHeader>
@@ -337,7 +329,7 @@ export function FinanceDashboardClient({ initialModule = "sales-invoices" }: { i
             </table>
           </div>
         </CardContent>
-      </Card>
+      </Card>}
     </main>
   )
 }

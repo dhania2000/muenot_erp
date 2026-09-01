@@ -241,15 +241,7 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
 
       <OperationsOverview />
 
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(configs).map(([key, value]) => (
-          <Button key={key} variant={kind === key ? "default" : "outline"} onClick={() => setKind(key)}>
-            {value.title}
-          </Button>
-        ))}
-      </div>
-
-      <section className="rounded-xl border bg-card p-5">
+      {kind !== "overview" && <section className="rounded-xl border bg-card p-5">
         <h2 className="mb-4 text-lg font-semibold">Add {c.title}</h2>
         <div className="grid gap-3 md:grid-cols-3">
           {c.fields.map((field: string) => (
@@ -265,9 +257,9 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
         <Button className="mt-4" onClick={save}>
           Save record
         </Button>
-      </section>
+      </section>}
 
-      <section className="overflow-x-auto rounded-xl border bg-card">
+      {kind !== "overview" && <section className="overflow-x-auto rounded-xl border bg-card">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b text-muted-foreground">
@@ -293,7 +285,7 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
             ))}
           </tbody>
         </table>
-      </section>
+      </section>}
     </main>
   )
 }

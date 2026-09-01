@@ -83,8 +83,8 @@ export function PermissionsDialog({
 
   return (
     <Dialog open={!!employee} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-3xl overflow-hidden">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[calc(100vh-2rem)] w-[calc(100vw-1rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:w-[calc(100vw-2rem)]">
+        <DialogHeader className="shrink-0 px-6 pt-6">
           <DialogTitle>Permissions {employee ? `— ${employee.name}` : ""}</DialogTitle>
           <DialogDescription>
             Choose exactly which features this employee can access in each module.
@@ -96,8 +96,8 @@ export function PermissionsDialog({
             <Loader2 className="size-5 animate-spin" />
           </div>
         ) : (
-          <Tabs defaultValue={modules[0]?.slug} className="w-full">
-            <TabsList className="flex w-full max-w-full flex-nowrap justify-start gap-1 overflow-x-scroll overflow-y-hidden rounded-md p-1 pb-2 [scrollbar-color:hsl(var(--muted-foreground))_hsl(var(--muted))] [scrollbar-width:auto]">
+          <Tabs defaultValue={modules[0]?.slug} className="flex min-h-0 w-full flex-1 flex-col overflow-hidden px-6 pt-4">
+            <TabsList className="flex h-auto w-full max-w-full shrink-0 justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-md p-1 pb-2 [scrollbar-color:hsl(var(--muted-foreground))_hsl(var(--muted))] [scrollbar-width:auto]">
               {modules.map((m) => {
                 const Icon = moduleIcons[m.slug] ?? Settings2
                 const grantedCount = m.features.filter((f) => selected.has(f.id)).length
@@ -118,7 +118,7 @@ export function PermissionsDialog({
             {modules.map((m) => {
               const allChecked = m.features.length > 0 && m.features.every((f) => selected.has(f.id))
               return (
-                <TabsContent key={m.slug} value={m.slug} className="flex flex-col gap-3">
+                <TabsContent key={m.slug} value={m.slug} className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
                   <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2">
                     <span className="text-xs font-medium text-muted-foreground">
                       {m.features.length} feature{m.features.length === 1 ? "" : "s"} in {m.name}
@@ -132,7 +132,7 @@ export function PermissionsDialog({
                     </label>
                   </div>
 
-                  <div className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+                  <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
                     {m.features.map((f) => (
                       <label
                         key={f.id}
@@ -158,7 +158,7 @@ export function PermissionsDialog({
           </Tabs>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="mt-0 shrink-0 border-t bg-background px-6 py-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

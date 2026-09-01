@@ -83,7 +83,7 @@ export function PermissionsDialog({
 
   return (
     <Dialog open={!!employee} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-3xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Permissions {employee ? `— ${employee.name}` : ""}</DialogTitle>
           <DialogDescription>
@@ -97,12 +97,12 @@ export function PermissionsDialog({
           </div>
         ) : (
           <Tabs defaultValue={modules[0]?.slug} className="w-full">
-            <TabsList className="w-full flex-wrap">
+            <TabsList className="flex w-full max-w-full flex-nowrap justify-start gap-1 overflow-x-auto overflow-y-hidden p-1">
               {modules.map((m) => {
                 const Icon = moduleIcons[m.slug] ?? Settings2
                 const grantedCount = m.features.filter((f) => selected.has(f.id)).length
                 return (
-                  <TabsTrigger key={m.slug} value={m.slug} className="gap-1.5">
+                  <TabsTrigger key={m.slug} value={m.slug} className="shrink-0 gap-1.5 whitespace-nowrap">
                     <Icon className="size-3.5" />
                     {m.name}
                     {grantedCount > 0 && (

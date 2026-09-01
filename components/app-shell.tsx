@@ -141,7 +141,7 @@ export function AppShell({
                 <Link href="/profile" className="ml-auto rounded-md p-2 text-muted-foreground hover:bg-muted" aria-label="Edit profile"><FileText className="size-4" /></Link>
               </div>
               <div className="flex flex-col gap-1 pt-3">
-                {user.role === "admin" && <Link href="/admin/employees" className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted"><UserPlus className="size-4" /> Invite member</Link>}
+                {user.role === "admin" && <Link href="/modules/hr/employees" className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted"><UserPlus className="size-4" /> Add employee</Link>}
                 <div className="flex items-center justify-between rounded-md px-2 py-2 text-sm"><span className="flex items-center gap-3"><ThemeToggle /> Dark mode</span></div>
                 <button type="button" onClick={handleLogout} className="flex items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted"><LogOut className="size-4" /> Logout</button>
               </div>
@@ -173,7 +173,7 @@ export function AppShell({
 
       <div className="flex h-full flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
-          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span><span className="hidden text-sm text-muted-foreground sm:inline">Home <span className="mx-1">•</span> Dashboard</span></div>
+          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span><span className="hidden text-sm text-muted-foreground sm:inline">Home <span className="mx-1">���</span> Dashboard</span></div>
           <div className="flex items-center gap-1">
             {[{label:"Search", icon:Search},{label:"Messages", icon:FileText},{label:"Activity", icon:Clock3},{label:"Create", icon:Plus},{label:"Notifications", icon:Bell}].map(({label,icon:Icon}) => <Button key={label} variant="ghost" size="icon-sm" aria-label={label} className="text-muted-foreground hover:bg-primary/10 hover:text-primary"><Icon className="size-5" /></Button>)}
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/admin/settings")} aria-label="Settings"><Settings className="size-5" /></Button>

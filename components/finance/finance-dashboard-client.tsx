@@ -37,6 +37,8 @@ const modules = [
   ["sales-invoices", "Sales Invoices"], ["purchase-bills", "Purchase Bills"], ["expenses", "Expenses"],
   ["fte-invoices", "FTE Invoices"], ["freelance-invoices", "Freelance Invoices"], ["bank-transactions", "Bank Transactions"],
   ["bank-cash", "Bank & Cash"], ["chart-of-accounts", "Chart of Accounts"], ["customers-vendors", "Customer / Vendor"],
+  ["gst-filing", "GST Filing"], ["tds-filing", "TDS Filing"], ["journal-entries", "Journal Entries"],
+  ["general-ledger", "General Ledger"], ["financial-reports", "Financial Reports"],
 ] as const
 
 const emptyForm = {
@@ -244,8 +246,8 @@ function FinanceOverview() {
   )
 }
 
-export function FinanceDashboardClient() {
-  const [module, setModule] = useState<string>("sales-invoices")
+export function FinanceDashboardClient({ initialModule = "sales-invoices" }: { initialModule?: string }) {
+  const [module, setModule] = useState<string>(initialModule)
   const [form, setForm] = useState(emptyForm)
   const { data, mutate } = useSWR(`/api/finance/records?module=${module}`, fetcher)
 
@@ -286,7 +288,7 @@ export function FinanceDashboardClient() {
         <CardContent>
           <form onSubmit={save} className="grid gap-3 md:grid-cols-4">
             {Object.entries(form)
-              .filter(([key]) => key !== "reconciliation_status" || isBankTransactions)
+              .filter(([key]) => (key !== "reconciliation_status" || isBankTransactions) && key !== "reference_no")
               .map(([key, value]) => (
                 <Input
                   key={key}

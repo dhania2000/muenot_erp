@@ -2,7 +2,7 @@ import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getAllModulesWithFeatures } from "@/lib/permissions"
 import { AppShell, type NavItem } from "@/components/app-shell"
-import { LayoutDashboard, Users, Users2, TrendingUp, Wallet, UserPlus, Settings2, Settings } from "lucide-react"
+import { LayoutDashboard, Users2, TrendingUp, Wallet, UserPlus, Settings2, Settings } from "lucide-react"
 
 const moduleIcons: Record<string, NavItem["icon"]> = {
   hr: <Users2 className="size-4" />,
@@ -21,7 +21,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const navItems: NavItem[] = [
     { label: "Overview", href: "/admin", icon: <LayoutDashboard className="size-4" /> },
-    { label: "Employees", href: "/admin/employees", icon: <Users className="size-4" /> },
     { label: "Settings", href: "/admin/settings", icon: <Settings className="size-4" />, children: [{ label: "Environment variables", href: "/admin/settings" }] },
     ...modules.map((m) => ({
       label: m.name,

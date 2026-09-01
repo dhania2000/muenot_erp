@@ -2,7 +2,7 @@ import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getUserAccessibleModules, getUserFeatureSlugs } from "@/lib/permissions"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck } from "lucide-react"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package } from "lucide-react"
 
 const moduleIcons: Record<string, NavItem["icon"]> = {
   hr: <Users2 className="size-4" />,
@@ -10,6 +10,9 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
   finance: <Wallet className="size-4" />,
   recruitment: <UserPlus className="size-4" />,
   operations: <Settings2 className="size-4" />,
+  clients: <BriefcaseBusiness className="size-4" />,
+  tickets: <TicketCheck className="size-4" />,
+  products: <Package className="size-4" />,
 }
 
 // Sales sub-pages shown in the sidebar dropdown, each gated by a feature slug.
@@ -43,6 +46,11 @@ const HR_CHILDREN: { label: string; href: string; feature: string }[] = [
 
 const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Dashboard", href: "/modules/finance", feature: "finance.view_dashboard" },
+  { label: "GST Filing", href: "/modules/finance/gst-filing", feature: "finance.gst_filing" },
+  { label: "TDS Filing", href: "/modules/finance/tds-filing", feature: "finance.tds_filing" },
+  { label: "Journal Entries", href: "/modules/finance/journal-entries", feature: "finance.journal_entries" },
+  { label: "General Ledger", href: "/modules/finance/general-ledger", feature: "finance.general_ledger" },
+  { label: "Financial Reports", href: "/modules/finance/financial-reports", feature: "finance.financial_reports" },
   { label: "Emails", href: "/modules/finance/emails", feature: "finance.send_emails" },
   { label: "Email Templates", href: "/modules/finance/email-templates", feature: "finance.view_email_templates" },
 ]
@@ -51,6 +59,21 @@ const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = 
   { label: "Operations Dashboard", href: "/modules/operations", feature: "operations.view_dashboard" },
   { label: "Emails", href: "/modules/operations/emails", feature: "operations.send_emails" },
   { label: "Email Templates", href: "/modules/operations/email-templates", feature: "operations.view_email_templates" },
+]
+
+const CLIENTS_CHILDREN = [
+  { label: "Dashboard", href: "/modules/clients", feature: "clients.view_dashboard" },
+  { label: "Clients", href: "/modules/clients/clients", feature: "clients.view_clients" },
+]
+
+const TICKETS_CHILDREN = [
+  { label: "Dashboard", href: "/modules/tickets", feature: "tickets.view_dashboard" },
+  { label: "All Tickets", href: "/modules/tickets/all", feature: "tickets.view_tickets" },
+]
+
+const PRODUCTS_CHILDREN = [
+  { label: "Dashboard", href: "/modules/products", feature: "products.view_dashboard" },
+  { label: "Product Catalog", href: "/modules/products/catalog", feature: "products.view_products" },
 ]
 
 const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
@@ -86,8 +109,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: `/modules/${m.slug}`,
         icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
       }
-      if (m.slug === "hr" || m.slug === "sales" || m.slug === "finance" || m.slug === "operations") {
-        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : SALES_CHILDREN
+      if (["hr", "sales", "finance", "operations", "clients", "tickets", "products"].includes(m.slug)) {
+        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "tickets" ? TICKETS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : SALES_CHILDREN
         const children: NavChild[] = source.filter((c) => canAccess(c.feature)).map((c) => ({
           label: c.label,
           href: c.href,

@@ -257,6 +257,26 @@ export function renderTemplate(text: string, vars: Record<string, string | null 
   })
 }
 
+/** Extract the bare email address out of either "user@x.com" or "Name <user@x.com>". */
+function extractEmailAddress(value: string | undefined | null) {
+  if (!value) return ""
+  const match = value.match(/<([^>]+)>/)
+  return (match ? match[1] : value).trim()
+}
+
+/**
+ * Build the RFC 5322 "From" header. Sales mail always displays as
+ * "Muenot Business Team" regardless of whatever display name (or none) is
+ * stored in the SMTP "from" setting — only the underlying mailbox address
+ * is kept. Other departments keep whatever display name is configured.
+ */
+function buildFromHeader(department: Department | undefined, configuredFrom: string | undefined) {
+  const address = extractEmailAddress(configuredFrom)
+  if (!address) return configuredFrom
+  if (department === "sales") return `Muenot Business Team <${address}>`
+  return configuredFrom
+}
+
 export async function sendEmail(opts: {
   to: string
   from?: string
@@ -270,9 +290,7 @@ export async function sendEmail(opts: {
 }) {
   const config = smtpConfig(opts.department)
   const configuredFrom = opts.from || config.from || config.user
-  const from = opts.department === "sales" && configuredFrom && !configuredFrom.includes("<")
-    ? `Muenot Business Team <${configuredFrom}>`
-    : configuredFrom
+  const from = buildFromHeader(opts.department, configuredFrom)
   const info = await getTransporter(opts.department).sendMail({
     from,
     to: opts.to,

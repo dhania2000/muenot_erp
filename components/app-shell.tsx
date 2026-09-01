@@ -100,15 +100,15 @@ export function AppShell({
   }
 
   return (
-    <div className="flex min-h-svh">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
+    <div className="flex h-svh overflow-hidden">
+      <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex items-center px-5 py-5">
           <div className="flex items-center rounded-md bg-white px-2.5 py-1.5">
             <Image src="/muenot-logo.png" alt="Muenot" width={140} height={36} className="h-6 w-auto" style={{ height: "auto" }} priority />
           </div>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3">
+        <nav className="min-h-0 flex-1 flex flex-col gap-1 overflow-y-auto px-3">
           {navItems.map((item) => {
             if (item.children && item.children.length > 0) {
               return <NavGroup key={item.href} item={item} pathname={pathname} />
@@ -171,8 +171,8 @@ export function AppShell({
         </div>
       </aside>
 
-      <div className="flex min-h-svh flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
+      <div className="flex h-full flex-1 flex-col overflow-hidden">
+        <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
           <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span><span className="hidden text-sm text-muted-foreground sm:inline">Home <span className="mx-1">•</span> Dashboard</span></div>
           <div className="flex items-center gap-1">
             {[{label:"Search", icon:Search},{label:"Messages", icon:FileText},{label:"Activity", icon:Clock3},{label:"Create", icon:Plus},{label:"Notifications", icon:Bell}].map(({label,icon:Icon}) => <Button key={label} variant="ghost" size="icon-sm" aria-label={label} className="text-muted-foreground hover:bg-primary/10 hover:text-primary"><Icon className="size-5" /></Button>)}
@@ -180,7 +180,7 @@ export function AppShell({
             <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={handleLogout} aria-label="Sign out"><LogOut className="size-4" /></Button>
           </div>
         </header>
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
     </div>
   )

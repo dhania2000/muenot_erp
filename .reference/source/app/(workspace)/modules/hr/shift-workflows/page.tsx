@@ -1,0 +1,2 @@
+import { ShiftWorkflowsClient } from "@/components/hr/shift-workflows-client"
+export default async function ShiftWorkflowsPage({ searchParams }: { searchParams: Promise<{ kind?: string }> }) { const { kind = "requests" } = await searchParams; const allowed = ["requests","assignments","rotations","sequences","employees"] as const; return <ShiftWorkflowsClient kind={(allowed.includes(kind as any) ? kind : "requests") as any} /> }

@@ -57,6 +57,36 @@ export function mapRow<T extends string>(
   return result
 }
 
+/**
+ * Parses a date cell coming from an uploaded spreadsheet into a MySQL-safe
+ * "YYYY-MM-DD" string. Accepts values already in that format, common
+ * Indian-style "DD/MM/YYYY" or "DD-MM-YYYY" text, and raw Excel serial date
+ * numbers (which SheetJS returns when a cell is formatted as a date).
+ * Returns null when the value is empty or cannot be parsed.
+ */
+export function parseSpreadsheetDate(value: string): string | null {
+  const trimmed = (value || "").trim()
+  if (!trimmed) return null
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+
+  const slashOrDash = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
+  if (slashOrDash) {
+    const [, day, month, year] = slashOrDash
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
+  }
+
+  if (/^\d{4,6}$/.test(trimmed)) {
+    const serial = Number(trimmed)
+    const parsed = XLSX.SSF?.parse_date_code(serial)
+    if (parsed?.y) {
+      return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`
+    }
+  }
+
+  return null
+}
+
 /** Downloads a starter .xlsx template so users know which columns to fill in. */
 export function downloadExcelTemplate(filename: string, headers: string[], sampleRow?: string[]) {
   const worksheet = XLSX.utils.aoa_to_sheet(sampleRow ? [headers, sampleRow] : [headers])

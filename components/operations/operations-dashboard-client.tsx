@@ -236,10 +236,12 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
     <main className="space-y-8 p-6">
       <div>
         <p className="text-sm text-muted-foreground">Delivery cockpit</p>
-        <h1 className="text-3xl font-semibold tracking-tight">Operations</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">
+          {kind === "overview" ? "Operations" : c?.title ?? "Operations"}
+        </h1>
       </div>
 
-      <OperationsOverview />
+      {kind === "overview" && <OperationsOverview />}
 
       {kind !== "overview" && <section className="rounded-xl border bg-card p-5">
         <h2 className="mb-4 text-lg font-semibold">Add {c.title}</h2>

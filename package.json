@@ -40,5 +40,10 @@
     "postcss": "^8.5",
     "tailwindcss": "^4.3.3",
     "typescript": "5.7.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "lru.min": "1.1.4"
+    }
   }
 }

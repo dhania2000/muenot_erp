@@ -62,6 +62,15 @@ export async function ensureEmailTables() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
 
+  // --- Attachment columns on templates (added idempotently) ---
+  // Templates can carry a single stored attachment (referenced by its
+  // /api/email-attachments/<id> pathname) that travels with every email sent
+  // from the template.
+  await ensureColumn("sales_email_templates", "attachment_pathname", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("sales_email_templates", "attachment_name", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("sales_email_templates", "attachment_type", "VARCHAR(150) DEFAULT NULL")
+  await ensureColumn("sales_email_templates", "attachment_size", "INT UNSIGNED DEFAULT NULL")
+
   // --- Threading columns (added idempotently so existing installs upgrade) ---
   // thread_id groups every email to the same lead/recipient into one conversation.
   // message_id / in_reply_to / references_header carry the RFC 5322 headers that
@@ -201,6 +210,29 @@ export async function getThreadContext(threadId: string): Promise<ThreadContext 
   }
 }
 
+export type OutgoingAttachment = { filename: string; content: Buffer; contentType?: string }
+
+/**
+ * Load a stored attachment (uploaded via /api/email-attachments) by its
+ * public pathname, e.g. "/api/email-attachments/<uuid>". Returns a
+ * nodemailer-ready attachment, or null when the file can't be found.
+ */
+export async function loadAttachment(
+  pathname: string | null | undefined,
+): Promise<OutgoingAttachment | null> {
+  if (!pathname) return null
+  const id = pathname.split("/").filter(Boolean).pop()
+  if (!id) return null
+  const rows = await query<any[]>(
+    `SELECT filename, content_type, data FROM email_attachments WHERE id = ? LIMIT 1`,
+    [id],
+  )
+  const row = rows[0]
+  if (!row) return null
+  const content = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data)
+  return { filename: row.filename, content, contentType: row.content_type || undefined }
+}
+
 // SMTP transport configured via environment variables.
 // Add these to .env.local (locally) or your Hostinger hosting panel:
 //   SMTP_HOST     - e.g. smtp.hostinger.com
@@ -322,6 +354,8 @@ export async function sendEmail(opts: {
   /** Extra RFC 5322 headers, e.g. X-Entity-Ref-ID to control Gmail thread grouping. */
   headers?: Record<string, string>
   department?: Department
+  /** File attachments to include with the email. */
+  attachments?: OutgoingAttachment[]
   /** Attach a calendar invite so mail clients show an "Add to calendar" card. */
   icalEvent?: { method: string; content: string; filename?: string }
 }) {
@@ -337,6 +371,9 @@ export async function sendEmail(opts: {
     inReplyTo: opts.inReplyTo,
     references: opts.references,
     headers: opts.headers,
+    attachments: opts.attachments?.length
+      ? opts.attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType }))
+      : undefined,
     icalEvent: opts.icalEvent
       ? {
           method: opts.icalEvent.method,

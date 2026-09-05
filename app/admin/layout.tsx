@@ -17,7 +17,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!session) redirect("/login")
   if (session.role !== "admin") redirect("/dashboard")
 
-  const modules = await getAllModulesWithFeatures()
+  const HIDDEN_MODULES = new Set(["biolinks", "biometric", "letter", "monitor-center", "monitor center"])
+  const modules = (await getAllModulesWithFeatures()).filter(
+    (m) => !HIDDEN_MODULES.has(m.slug.toLowerCase()) && !HIDDEN_MODULES.has(m.name.toLowerCase()),
+  )
 
   const navItems: NavItem[] = [
     { label: "Overview", href: "/admin", icon: <LayoutDashboard className="size-4" /> },

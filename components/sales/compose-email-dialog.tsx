@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Loader2Icon } from "lucide-react"
+import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
 import type { EmailTemplateRow } from "@/components/sales/email-templates-client"
 
 type LeadRow = {
@@ -45,6 +46,7 @@ type FormState = {
   to_name: string
   subject: string
   body: string
+  attachment: EmailAttachment | null
 }
 
 const EMPTY: FormState = {
@@ -55,6 +57,7 @@ const EMPTY: FormState = {
   to_name: "",
   subject: "",
   body: "",
+  attachment: null,
 }
 
 export function ComposeEmailDialog({
@@ -111,6 +114,16 @@ export function ComposeEmailDialog({
       template_id: v,
       subject: tpl ? tpl.subject : prev.subject,
       body: tpl ? tpl.body : prev.body,
+      attachment: tpl
+        ? (tpl as any).attachment_pathname
+          ? {
+              pathname: (tpl as any).attachment_pathname,
+              filename: (tpl as any).attachment_name,
+              contentType: (tpl as any).attachment_type,
+              size: (tpl as any).attachment_size,
+            }
+          : null
+        : prev.attachment,
     }))
   }
 
@@ -138,6 +151,7 @@ export function ComposeEmailDialog({
           to_name: form.to_name.trim() || null,
           subject: form.subject,
           body: form.body,
+          attachment: form.attachment,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -287,6 +301,15 @@ export function ComposeEmailDialog({
             <FieldDescription>
               Placeholders like {"{{contact_person}}"} and {"{{company_name}}"} are filled from the linked lead.
             </FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel>Attachment</FieldLabel>
+            <EmailAttachmentPicker
+              value={form.attachment}
+              onChange={(attachment) => update("attachment", attachment)}
+            />
+            <FieldDescription>Sent along with the email. Prefilled from the selected template.</FieldDescription>
           </Field>
         </FieldGroup>
 

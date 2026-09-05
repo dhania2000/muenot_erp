@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
-import { FINANCE_REPORTS, FINANCE_REPORT_MAP } from "@/lib/finance-reports"
+import { FINANCE_ONLY_REPORTS, FINANCE_ONLY_REPORT_MAP } from "@/lib/finance-reports"
 
 // One route serves every Financial Report. Without a `report` param it returns
 // the report catalogue (used to build the picker); with one it runs that
@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams
   const reportKey = params.get("report")
 
-  const catalogue = FINANCE_REPORTS.map((r) => ({
+  const catalogue = FINANCE_ONLY_REPORTS.map((r) => ({
     key: r.key,
     label: r.label,
     group: r.group,
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ reports: catalogue })
   }
 
-  const def = FINANCE_REPORT_MAP[reportKey]
+  const def = FINANCE_ONLY_REPORT_MAP[reportKey]
   if (!def) return NextResponse.json({ error: "Unknown report" }, { status: 404 })
 
   const from = params.get("from") || ""

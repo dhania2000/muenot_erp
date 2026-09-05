@@ -11,6 +11,7 @@ import {
   getLatestThreadId,
   getThreadContext,
   isEmailConfigured,
+  loadAttachment,
   renderTemplate,
   resolveBaseUrl,
   sendEmail,
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
 
   await ensureEmailTables()
   const body = await request.json()
-  const { lead_id, template_id, to_email, to_name, subject, body: content } = body
+  const { lead_id, template_id, to_email, to_name, subject, body: content, attachment } = body
   // "new" starts a fresh conversation; "followup" continues the recipient's latest thread.
   const mailType = body.mail_type === "followup" ? "followup" : "new"
   const department = body.department === "hr" || body.department === "finance" ? body.department : "sales"
@@ -113,6 +114,18 @@ export async function POST(request: Request) {
   //              reply reliably groups with the last email sent to this recipient.
   const entityRefId = mailType === "followup" ? threadId : `${threadId}:${token}`
 
+  // Resolve the file to attach. An explicit attachment pathname from the
+  // composer wins; otherwise fall back to the selected template's stored file.
+  let attachmentPathname: string | null = attachment?.pathname || null
+  if (!attachmentPathname && template_id) {
+    const tplRows = await query<any[]>(
+      `SELECT attachment_pathname FROM sales_email_templates WHERE id = ? LIMIT 1`,
+      [template_id],
+    )
+    attachmentPathname = tplRows[0]?.attachment_pathname || null
+  }
+  const outgoingAttachment = await loadAttachment(attachmentPathname)
+
   let status: "Sent" | "Failed" = "Sent"
   let errorMessage: string | null = null
   try {
@@ -125,6 +138,7 @@ export async function POST(request: Request) {
       references: references || undefined,
       headers: { "X-Entity-Ref-ID": entityRefId },
       department,
+      attachments: outgoingAttachment ? [outgoingAttachment] : undefined,
     })
   } catch (err: any) {
     status = "Failed"

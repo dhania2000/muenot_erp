@@ -282,3 +282,17 @@ export const FINANCE_REPORTS: ReportDef[] = [
 export const FINANCE_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
   FINANCE_REPORTS.map((r) => [r.key, r]),
 )
+
+// The reports hub is split into two facilities: finance-domain reports stay
+// under the Finance module's "Financial Reports" page, while every cross-
+// department report (Sales / HR / Operations) lives under the standalone
+// "Reports" facility. Membership is derived from the report's `group`.
+export const FINANCE_ONLY_REPORTS = FINANCE_REPORTS.filter((r) => r.group === "Finance")
+export const GENERAL_REPORTS = FINANCE_REPORTS.filter((r) => r.group !== "Finance")
+
+export const FINANCE_ONLY_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
+  FINANCE_ONLY_REPORTS.map((r) => [r.key, r]),
+)
+export const GENERAL_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
+  GENERAL_REPORTS.map((r) => [r.key, r]),
+)

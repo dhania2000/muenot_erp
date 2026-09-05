@@ -10,14 +10,27 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   await ensureEmailTables()
   const { id } = await params
   const body = await request.json()
-  const { name, subject, body: content, category } = body
+  const { name, subject, body: content, category, attachment } = body
   if (!name || !subject || !content) {
     return NextResponse.json({ error: "Name, subject, and body are required" }, { status: 400 })
   }
 
   await query(
-    `UPDATE sales_email_templates SET name = ?, subject = ?, body = ?, category = ? WHERE id = ?`,
-    [name, subject, content, category || null, id],
+    `UPDATE sales_email_templates
+       SET name = ?, subject = ?, body = ?, category = ?,
+           attachment_pathname = ?, attachment_name = ?, attachment_type = ?, attachment_size = ?
+     WHERE id = ?`,
+    [
+      name,
+      subject,
+      content,
+      category || null,
+      attachment?.pathname || null,
+      attachment?.filename || null,
+      attachment?.contentType || null,
+      attachment?.size || null,
+      id,
+    ],
   )
   return NextResponse.json({ ok: true })
 }

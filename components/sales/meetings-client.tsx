@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
@@ -22,7 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { MoreHorizontal, Plus, Search, Video } from "lucide-react"
 import { MeetingDialog } from "@/components/sales/meeting-dialog"
 
 export type MeetingRow = {
@@ -45,6 +45,34 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
   const [search, setSearch] = useState("")
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<MeetingRow | null>(null)
+
+  const { data: google, mutate: mutateGoogle } = useSWR<{
+    oauthConfigured: boolean
+    connected: boolean
+    email: string | null
+  }>("/api/sales/google/status", fetcher)
+
+  // Surface the OAuth redirect result (?google=...) as a toast, then clean the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const status = params.get("google")
+    if (!status) return
+    if (status === "connected") toast.success("Google account connected")
+    else if (status === "notconfigured")
+      toast.error("Google is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.")
+    else if (status === "noretoken") toast.error("Google did not grant access. Please try connecting again.")
+    else toast.error("Could not connect your Google account")
+    params.delete("google")
+    const qs = params.toString()
+    window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""))
+    mutateGoogle()
+  }, [mutateGoogle])
+
+  async function disconnectGoogle() {
+    await fetch("/api/sales/google/disconnect", { method: "POST" })
+    toast.success("Google account disconnected")
+    mutateGoogle()
+  }
 
   const meetings = data?.meetings ?? []
 
@@ -91,6 +119,33 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
           </Button>
         )}
       </div>
+
+      {canManage && google?.oauthConfigured && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-4 py-3">
+          <div className="flex items-start gap-2 text-sm">
+            <Video className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            {google.connected ? (
+              <span>
+                Google connected as <span className="font-medium">{google.email}</span>. New meetings create a Meet
+                link and email invitations from your account.
+              </span>
+            ) : (
+              <span className="text-muted-foreground">
+                Connect your Google account to schedule Meet calls and auto-send invitations to attendees.
+              </span>
+            )}
+          </div>
+          {google.connected ? (
+            <Button variant="outline" size="sm" onClick={disconnectGoogle}>
+              Disconnect
+            </Button>
+          ) : (
+            <Button size="sm" onClick={() => (window.location.href = "/api/sales/google/connect")}>
+              Connect Google
+            </Button>
+          )}
+        </div>
+      )}
 
       <div className="rounded-md border border-border bg-card">
         <Table>
@@ -169,6 +224,8 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         meeting={editing}
+        googleConfigured={Boolean(google?.oauthConfigured)}
+        googleConnected={Boolean(google?.connected)}
         onSaved={() => {
           setDialogOpen(false)
           toast.success(editing ? "Meeting updated" : "Meeting scheduled")

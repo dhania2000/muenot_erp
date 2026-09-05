@@ -2,16 +2,11 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import {
-  hydrateDepartmentSMTP,
-  isEmailConfigured,
-  sendEmail,
-} from "@/lib/email"
-import {
-  buildICS,
-  createMeetEvent,
-  isGoogleCalendarConfigured,
+  createMeetEventForUser,
+  isGoogleOAuthConfigured,
   DEFAULT_TIME_ZONE,
 } from "@/lib/google-calendar"
+import { getGoogleAccount } from "@/lib/google-accounts"
 
 let columnsEnsured = false
 
@@ -68,7 +63,7 @@ export async function GET() {
   )
   return NextResponse.json({
     meetings,
-    googleConfigured: isGoogleCalendarConfigured(),
+    googleConfigured: isGoogleOAuthConfigured(),
   })
 }
 
@@ -88,10 +83,23 @@ export async function POST(request: Request) {
   const durationMinutes = Math.max(5, Math.min(480, Number(body.duration_minutes) || 30))
 
   // Validate Meet prerequisites up front so we fail before inserting.
+  let googleAccount: Awaited<ReturnType<typeof getGoogleAccount>> = null
   if (createMeet) {
-    if (!isGoogleCalendarConfigured()) {
+    if (!isGoogleOAuthConfigured()) {
       return NextResponse.json(
-        { error: "Google Meet is not configured. Add the GOOGLE_* environment variables first." },
+        {
+          error:
+            "Google Meet is not configured. Add the GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables first.",
+        },
+        { status: 400 },
+      )
+    }
+    // The meeting is created in — and invitations are sent from — the signed-in
+    // executive's own Google account, so it must be connected first.
+    googleAccount = await getGoogleAccount(session.userId)
+    if (!googleAccount) {
+      return NextResponse.json(
+        { error: "Connect your Google account first using the Connect Google button on the Meetings page." },
         { status: 400 },
       )
     }
@@ -106,7 +114,7 @@ export async function POST(request: Request) {
   let meetLink: string | null = null
   let googleEventId: string | null = null
 
-  if (createMeet) {
+  if (createMeet && googleAccount) {
     const time = normalizeTime(body.meeting_time)
     // IST is a fixed +05:30 offset (no DST), so we can anchor the instant safely.
     const startDate = new Date(`${body.meeting_date}T${time}+05:30`)
@@ -123,80 +131,29 @@ export async function POST(request: Request) {
     const title = `${body.meeting_type || "Meeting"} with ${body.company_name}`
 
     try {
-      const result = await createMeetEvent({
+      // Created in the executive's own calendar. sendInvites → sendUpdates: "all"
+      // makes Google email a calendar invitation to every attendee directly
+      // from the executive's account (no separate SMTP email needed).
+      const result = await createMeetEventForUser(googleAccount.refresh_token, {
         summary: title,
         description: body.agenda || undefined,
         startDateTime,
         endDateTime,
         timeZone: DEFAULT_TIME_ZONE,
         attendees,
+        sendInvites: true,
       })
       meetLink = result.meetLink
       googleEventId = result.eventId
     } catch (err: any) {
       console.error("[v0] Google Meet creation failed:", err?.message || err)
       return NextResponse.json(
-        { error: "Could not create the Google Meet. Check the Google credentials and try again." },
+        {
+          error:
+            "Could not create the Google Meet. Please reconnect your Google account from the Meetings page and try again.",
+        },
         { status: 502 },
       )
-    }
-
-    // Send the branded invitation email with an .ics attachment to each attendee.
-    await hydrateDepartmentSMTP("sales")
-    if (isEmailConfigured("sales")) {
-      const organizerEmail =
-        process.env.GOOGLE_ORGANIZER_EMAIL ||
-        (process.env.SALES_SMTP_FROM || process.env.SMTP_FROM || "sales@muenot.co.in")
-          .match(/<([^>]+)>/)?.[1] ||
-        process.env.SALES_SMTP_USER ||
-        "sales@muenot.co.in"
-
-      const ics = buildICS({
-        uid: googleEventId || `${Date.now()}@muenot`,
-        summary: title,
-        description: [body.agenda, meetLink ? `Join: ${meetLink}` : ""].filter(Boolean).join("\n"),
-        location: meetLink || undefined,
-        start: startDate,
-        end: endDate,
-        organizerEmail,
-        organizerName: "Muenot Business Team",
-        attendees,
-      })
-
-      const when = startDate.toLocaleString("en-IN", {
-        dateStyle: "full",
-        timeStyle: "short",
-        timeZone: DEFAULT_TIME_ZONE,
-      })
-      const html = `
-        <div style="font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.6;">
-          <h2 style="margin:0 0 12px;">You're invited to a meeting</h2>
-          <p style="margin:0 0 4px;"><strong>${title}</strong></p>
-          <p style="margin:0 0 4px;">${when} (IST)</p>
-          ${body.agenda ? `<p style="margin:12px 0;"><strong>Agenda:</strong> ${body.agenda}</p>` : ""}
-          ${
-            meetLink
-              ? `<p style="margin:16px 0;">
-                   <a href="${meetLink}" style="background:#1a73e8;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Join Google Meet</a>
-                 </p>
-                 <p style="margin:0 0 4px;color:#555;font-size:13px;">Or open: <a href="${meetLink}">${meetLink}</a></p>`
-              : ""
-          }
-          <p style="margin:16px 0 0;color:#888;font-size:12px;">A calendar invitation is attached to this email.</p>
-        </div>`
-
-      try {
-        await sendEmail({
-          to: attendees.join(", "),
-          subject: `Invitation: ${title}`,
-          html,
-          department: "sales",
-          icalEvent: { method: "REQUEST", content: ics, filename: "invite.ics" },
-        })
-      } catch (err: any) {
-        console.error("[v0] Meeting invite email failed:", err?.message || err)
-        // The meeting + Meet link still exist; surface a soft warning instead of failing.
-      }
     }
   }
 

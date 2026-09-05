@@ -3,6 +3,9 @@ import { getSession } from "@/lib/auth"
 import { getUserAccessibleModules } from "@/lib/permissions"
 import { WorkspaceModuleClient } from "@/components/workspace-module-client"
 import { MessagesClient } from "@/components/messages-client"
+import { NoticeBoardClient } from "@/components/notice-board-client"
+import { KnowledgeBaseClient } from "@/components/knowledge-base-client"
+import { EventsClient } from "@/components/events-client"
 import { CalendarDays, FileText, Link2, MessageSquare, Monitor, Newspaper, Package, ScanFace, Users2, TrendingUp, Wallet, UserPlus, Settings2, Ticket } from "lucide-react"
 
 const moduleIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -28,7 +31,10 @@ export default async function ModulePage({ params }: { params: Promise<{ slug: s
   const Icon = moduleIcons[currentModule.slug] ?? Settings2
 
   if (slug === "messages") return <MessagesClient />
-  if (["calendar", "events", "notice-board", "knowledge-base", "assets", "biolinks", "biometric", "letter", "monitor-center"].includes(slug)) {
+  if (slug === "notice-board") return <NoticeBoardClient />
+  if (slug === "knowledge-base") return <KnowledgeBaseClient />
+  if (slug === "events") return <EventsClient />
+  if (["calendar", "assets", "biolinks", "biometric", "letter", "monitor-center"].includes(slug)) {
     return <WorkspaceModuleClient slug={slug} name={currentModule.name ?? slug} description={currentModule.description ?? "Workspace module"} />
   }
 

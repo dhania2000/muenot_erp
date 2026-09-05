@@ -91,17 +91,14 @@ const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = 
 ]
 
 const CLIENTS_CHILDREN = [
-  { label: "Dashboard", href: "/modules/clients", feature: "clients.view_dashboard" },
   { label: "Clients", href: "/modules/clients/clients", feature: "clients.view_clients" },
 ]
 
 const TICKETS_CHILDREN = [
-  { label: "Dashboard", href: "/modules/tickets", feature: "tickets.view_dashboard" },
   { label: "All Tickets", href: "/modules/tickets/all", feature: "tickets.view_tickets" },
 ]
 
 const PRODUCTS_CHILDREN = [
-  { label: "Dashboard", href: "/modules/products", feature: "products.view_dashboard" },
   { label: "Product Catalog", href: "/modules/products/catalog", feature: "products.view_products" },
 ]
 
@@ -123,7 +120,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const session = await getSession()
   if (!session) redirect("/login")
 
-  const modules = await getUserAccessibleModules(session.userId, session.role)
+  const HIDDEN_MODULES = new Set(["biolinks", "biometric", "letter", "monitor-center", "monitor center"])
+  const modules = (await getUserAccessibleModules(session.userId, session.role)).filter(
+    (m) => !HIDDEN_MODULES.has(m.slug.toLowerCase()) && !HIDDEN_MODULES.has(m.name.toLowerCase()),
+  )
 
   const granted = session.role === "admin" ? null : new Set(await getUserFeatureSlugs(session.userId))
   const canAccess = (feature: string) => session.role === "admin" || granted!.has(feature)
@@ -138,8 +138,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: `/modules/${m.slug}`,
         icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
       }
-      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "tickets", "products"].includes(m.slug)) {
-        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "tickets" ? TICKETS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : SALES_CHILDREN
+      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products"].includes(m.slug)) {
+        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : SALES_CHILDREN
         const children: NavChild[] = source.filter((c) => canAccess(c.feature)).map((c) => ({
           label: c.label,
           href: c.href,

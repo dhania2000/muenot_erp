@@ -1,5 +1,5 @@
-import { SimpleModuleDashboard } from "@/components/simple-module-dashboard"
+import { TicketsClient } from "@/components/tickets-client"
 
 export default function TicketsPage() {
-  return <SimpleModuleDashboard module="tickets" />
+  return <TicketsClient />
 }

@@ -15,13 +15,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Plus, FilterX, Pencil, Eye, Trash2,
+  Plus, FilterX, Pencil, Eye, Trash2, Upload,
   Receipt, Coins, Wallet, Clock, Landmark, FileText, Users, TrendingUp,
   Banknote, BookOpen, CreditCard, ArrowLeftRight,
 } from "lucide-react"
 import { inr, inr0 } from "@/lib/finance-calc"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import { FinanceModuleDialog } from "@/components/finance/finance-module-dialog"
+import { FinanceImportDialog } from "@/components/finance/finance-import-dialog"
 import type { BadgeVariant, ModuleConfig, TableColumn } from "@/lib/finance-schema"
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -56,6 +57,7 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
   )
   const [filters, setFilters] = useState(emptyFilters)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [editing, setEditing] = useState<Row | null>(null)
   const [viewing, setViewing] = useState<Row | null>(null)
 
@@ -96,10 +98,18 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
           <p className="text-sm text-muted-foreground">{cfg.subtitle}</p>
           <h1 className="text-3xl font-semibold tracking-tight text-balance">{cfg.label}</h1>
         </div>
-        <Button onClick={openNew}>
-          <Plus data-icon="inline-start" />
-          {cfg.addLabel}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {cfg.importSpec && (
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload data-icon="inline-start" />
+              Import statement
+            </Button>
+          )}
+          <Button onClick={openNew}>
+            <Plus data-icon="inline-start" />
+            {cfg.addLabel}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -232,6 +242,15 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
           mutate()
         }}
       />
+
+      {cfg.importSpec && (
+        <FinanceImportDialog
+          cfg={cfg}
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          onImported={() => mutate()}
+        />
+      )}
 
       <DetailDialog cfg={cfg} row={viewing} onClose={() => setViewing(null)} />
     </main>

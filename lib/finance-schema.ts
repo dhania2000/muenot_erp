@@ -39,6 +39,32 @@ export type TableColumn = {
 
 export type Kpi = { label: string; key: string; money?: boolean; icon?: string }
 
+/** A single column recognised by the statement / spreadsheet importer. */
+export type ImportColumn = {
+  /** Canonical column key in the module's table. */
+  key: string
+  /** Human label shown in the mapping/preview UI and template header. */
+  label: string
+  /** Normalized header aliases (lowercase, alphanumeric only) matched in the upload. */
+  aliases: string[]
+  type?: "date" | "number" | "text"
+  required?: boolean
+}
+
+/** Optional bulk-import capability for a module (e.g. bank statement upload). */
+export type ImportSpec = {
+  title: string
+  description: string
+  /** Filename used for the downloadable starter template. */
+  templateName: string
+  /**
+   * When true the importer asks the user to pick a bank/cash account first and
+   * stamps every imported row with that account (account_name + id).
+   */
+  accountBound?: boolean
+  columns: ImportColumn[]
+}
+
 export type FilterDef =
   | { type: "search"; key: "search"; placeholder: string }
   | { type: "select"; key: string; label: string; options: string[] }
@@ -78,4 +104,6 @@ export type ModuleConfig = {
   kpis: Kpi[]
   /** SQL aggregate list whose aliases match kpi.key values. */
   summarySelect: string
+  /** Enables the "Import" action and drives the bulk upload mapping. */
+  importSpec?: ImportSpec
 }

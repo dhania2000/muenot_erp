@@ -401,6 +401,22 @@ const bankTransactions: ModuleConfig = {
   ],
   summarySelect:
     "COALESCE(SUM(debit),0) total_debit, COALESCE(SUM(credit),0) total_credit, COALESCE(SUM(credit),0) - COALESCE(SUM(debit),0) net_movement, COUNT(*) total_rows",
+  importSpec: {
+    title: "Import bank statement",
+    description:
+      "Upload an .xlsx or .csv statement exported from your bank. Pick the account, map the columns and review before importing.",
+    templateName: "bank-statement-template.xlsx",
+    accountBound: true,
+    columns: [
+      { key: "transaction_date", label: "Transaction date", type: "date", required: true, aliases: ["transactiondate", "date", "txndate", "transdate", "postingdate", "postdate"] },
+      { key: "value_date", label: "Value date", type: "date", aliases: ["valuedate", "valuedt", "valuedate"] },
+      { key: "reference_no", label: "Reference / Cheque no.", type: "text", aliases: ["referenceno", "refno", "reference", "chequeno", "chqno", "instrumentno", "utr", "utrno", "chequeutrreference"] },
+      { key: "party_name", label: "Party", type: "text", aliases: ["partyname", "party", "payee", "payer", "beneficiary"] },
+      { key: "narration", label: "Narration / Description", type: "text", aliases: ["narration", "description", "particulars", "remarks", "details", "transactiondetails", "transactionremarks", "naration"] },
+      { key: "debit", label: "Debit / Withdrawal", type: "number", aliases: ["debit", "withdrawal", "withdrawalamt", "withdrawalamount", "withdrawals", "dr", "dramount", "paidout", "paymentamount", "debitamount"] },
+      { key: "credit", label: "Credit / Deposit", type: "number", aliases: ["credit", "deposit", "depositamt", "depositamount", "deposits", "cr", "cramount", "paidin", "receiptamount", "creditamount"] },
+    ],
+  },
 }
 
 // ---------------------------------------------------------------------------

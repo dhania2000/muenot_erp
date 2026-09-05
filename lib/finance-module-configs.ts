@@ -895,6 +895,306 @@ const generalLedger: ModuleConfig = {
     "COALESCE(SUM(debit),0) total_debit, COALESCE(SUM(credit),0) total_credit, COALESCE(SUM(credit),0) - COALESCE(SUM(debit),0) net_movement, COUNT(*) total_rows",
 }
 
+// ---------------------------------------------------------------------------
+// 13. Credit Notes — issued against sales invoices (CN-#### id)
+// ---------------------------------------------------------------------------
+const creditNotes: ModuleConfig = {
+  key: "credit-notes",
+  table: "credit_notes",
+  label: "Credit Notes",
+  subtitle: "Finance management",
+  addLabel: "New credit note",
+  idColumn: "credit_note_id",
+  idPrefix: "CN",
+  editableId: true,
+  dateColumn: "note_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "status",
+  searchColumns: ["credit_note_id", "client_name", "original_invoice_no", "project_name", "reason", "description"],
+  fields: [
+    fld("Credit note", "credit_note_id", "Credit note ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Credit note", "note_date", "Note date", "date", { required: true }),
+    fld("Credit note", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+    fld("Credit note", "original_invoice_no", "Original invoice no.", "text"),
+    fld("Credit note", "reason", "Reason", "select", { options: ["Sales Return", "Rate Difference", "Discount", "Cancellation", "Damaged Goods", "Other"], optional: true }),
+    fld("Party", "client_id", "Client ID", "text"),
+    fld("Party", "client_name", "Client name", "text", { required: true }),
+    fld("Party", "project_id", "Project ID", "text"),
+    fld("Party", "project_name", "Project name", "text"),
+    fld("Party", "description", "Description", "textarea"),
+    fld("Line & tax", "hsn_sac", "HSN / SAC", "text"),
+    fld("Line & tax", "quantity", "Quantity", "number"),
+    fld("Line & tax", "unit", "Unit", "select", { options: UNITS, optional: true }),
+    fld("Line & tax", "rate", "Rate", "number"),
+    fld("Line & tax", "discount", "Discount", "number"),
+    fld("Line & tax", "taxable_amount", "Taxable amount", "number", { placeholder: "auto from qty × rate" }),
+    fld("Line & tax", "cgst_percent", "CGST %", "number"),
+    fld("Line & tax", "sgst_percent", "SGST %", "number"),
+    fld("Line & tax", "igst_percent", "IGST %", "number"),
+    fld("Line & tax", "other_tax_cess", "Other tax / cess", "number"),
+    fld("Line & tax", "cgst_amount", "CGST amount", "number", { computed: true, money: true }),
+    fld("Line & tax", "sgst_amount", "SGST amount", "number", { computed: true, money: true }),
+    fld("Line & tax", "igst_amount", "IGST amount", "number", { computed: true, money: true }),
+    fld("Line & tax", "credit_note_total", "Credit note total", "number", { computed: true, money: true }),
+    fld("Adjustment", "adjusted_amount", "Adjusted amount", "number"),
+    fld("Adjustment", "balance_amount", "Balance amount", "number", { computed: true, money: true }),
+    fld("Adjustment", "adjustment_status", "Adjustment status", "select", { options: ["Open", "Partially Adjusted", "Adjusted", "Refunded"], optional: true }),
+    fld("Adjustment", "refund_date", "Refund date", "date"),
+    fld("Adjustment", "refund_reference", "Refund reference", "text"),
+    fld("Status", "status", "Status", "select", { options: ["Draft", "Issued", "Cancelled"] }),
+    fld("Status", "notes", "Notes", "textarea"),
+  ],
+  compute: (v) => {
+    const qty = num(v.quantity), rate = num(v.rate), discount = num(v.discount)
+    const base = qty > 0 && rate > 0 ? qty * rate : num(v.taxable_amount) + discount
+    const taxable = round2(Math.max(base - discount, 0))
+    const cgst = round2((taxable * num(v.cgst_percent)) / 100)
+    const sgst = round2((taxable * num(v.sgst_percent)) / 100)
+    const igst = round2((taxable * num(v.igst_percent)) / 100)
+    const cess = round2(num(v.other_tax_cess))
+    const total = round2(taxable + cgst + sgst + igst + cess)
+    const adjusted = round2(num(v.adjusted_amount))
+    return {
+      taxable_amount: taxable, cgst_amount: cgst, sgst_amount: sgst, igst_amount: igst, other_tax_cess: cess,
+      credit_note_total: total, adjusted_amount: adjusted, balance_amount: round2(total - adjusted),
+      financial_year: v.financial_year || financialYearFor(v.note_date),
+    }
+  },
+  tableColumns: [
+    { key: "credit_note_id", label: "Credit Note ID", mono: true },
+    { key: "note_date", label: "Date" },
+    { key: "client_name", label: "Client", sub: "original_invoice_no" },
+    { key: "credit_note_total", label: "Total", align: "right", money: true },
+    { key: "balance_amount", label: "Balance", align: "right", money: true },
+    { key: "adjustment_status", label: "Adjustment", badge: { Adjusted: "default", "Partially Adjusted": "secondary", Refunded: "default", Open: "outline" } },
+    { key: "status", label: "Status", badge: { Issued: "default", Draft: "secondary", Cancelled: "destructive" } },
+  ],
+  kpis: [
+    { label: "Total Credit", key: "total_credit", money: true, icon: "Receipt" },
+    { label: "Adjusted", key: "total_adjusted", money: true, icon: "Wallet" },
+    { label: "Balance", key: "total_balance", money: true, icon: "Clock" },
+    { label: "Notes", key: "total_rows", icon: "FileText" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(credit_note_total),0) total_credit, COALESCE(SUM(adjusted_amount),0) total_adjusted, COALESCE(SUM(balance_amount),0) total_balance, COUNT(*) total_rows",
+}
+
+// ---------------------------------------------------------------------------
+// 14. Payments — inbound / outbound settlement ledger (PAY-#### id)
+// ---------------------------------------------------------------------------
+const payments: ModuleConfig = {
+  key: "payments",
+  table: "payments",
+  label: "Payments",
+  subtitle: "Finance management",
+  addLabel: "New payment",
+  idColumn: "payment_id",
+  idPrefix: "PAY",
+  editableId: true,
+  dateColumn: "payment_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "status",
+  searchColumns: ["payment_id", "party_name", "reference_no", "project_name", "cheque_utr_reference"],
+  fields: [
+    fld("Payment", "payment_id", "Payment ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Payment", "payment_date", "Payment date", "date", { required: true }),
+    fld("Payment", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+    fld("Payment", "payment_direction", "Direction", "select", { options: ["Inbound", "Outbound"] }),
+    fld("Payment", "party_type", "Party type", "select", { options: ["Customer", "Vendor", "Employee", "Freelancer", "Other"], optional: true }),
+    fld("Payment", "party_id", "Party ID", "text"),
+    fld("Payment", "party_name", "Party name", "text", { required: true }),
+    fld("Reference", "reference_type", "Reference type", "select", { options: ["Invoice", "Purchase Bill", "Advance", "Expense", "Credit Note", "Order", "Other"], optional: true }),
+    fld("Reference", "reference_no", "Reference no.", "text"),
+    fld("Reference", "project_id", "Project ID", "text"),
+    fld("Reference", "project_name", "Project name", "text"),
+    fld("Amount", "payment_mode", "Payment mode", "select", { options: PAYMENT_MODES, optional: true }),
+    fld("Amount", "bank_cash_account", "Bank / Cash account", "text"),
+    fld("Amount", "amount", "Amount", "number", { required: true }),
+    fld("Amount", "tds_deducted", "TDS deducted", "number"),
+    fld("Amount", "other_charges", "Other charges", "number"),
+    fld("Amount", "net_amount", "Net amount", "number", { computed: true, money: true }),
+    fld("Amount", "currency", "Currency", "select", { options: CURRENCIES, optional: true }),
+    fld("Amount", "exchange_rate", "Exchange rate", "number"),
+    fld("Settlement", "cheque_utr_reference", "Cheque / UTR reference", "text"),
+    fld("Settlement", "clearance_date", "Clearance date", "date"),
+    fld("Settlement", "status", "Status", "select", { options: ["Pending", "Cleared", "Bounced", "Cancelled"] }),
+    fld("Settlement", "notes", "Notes", "textarea"),
+  ],
+  compute: (v) => {
+    const amount = round2(num(v.amount))
+    const tds = round2(num(v.tds_deducted))
+    const charges = round2(num(v.other_charges))
+    return {
+      amount, tds_deducted: tds, other_charges: charges,
+      net_amount: round2(amount - tds - charges),
+      financial_year: v.financial_year || financialYearFor(v.payment_date),
+    }
+  },
+  tableColumns: [
+    { key: "payment_id", label: "Payment ID", mono: true },
+    { key: "payment_date", label: "Date" },
+    { key: "party_name", label: "Party", sub: "reference_no" },
+    { key: "payment_direction", label: "Direction", badge: { Inbound: "default", Outbound: "secondary" } },
+    { key: "net_amount", label: "Net Amount", align: "right", money: true },
+    { key: "payment_mode", label: "Mode" },
+    { key: "status", label: "Status", badge: { Cleared: "default", Pending: "secondary", Bounced: "destructive", Cancelled: "outline" } },
+  ],
+  kpis: [
+    { label: "Inbound", key: "total_inbound", money: true, icon: "TrendingUp" },
+    { label: "Outbound", key: "total_outbound", money: true, icon: "ArrowLeftRight" },
+    { label: "Net Flow", key: "net_flow", money: true, icon: "Wallet" },
+    { label: "Payments", key: "total_rows", icon: "CreditCard" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(CASE WHEN payment_direction='Inbound' THEN net_amount ELSE 0 END),0) total_inbound, COALESCE(SUM(CASE WHEN payment_direction='Outbound' THEN net_amount ELSE 0 END),0) total_outbound, COALESCE(SUM(CASE WHEN payment_direction='Inbound' THEN net_amount ELSE -net_amount END),0) net_flow, COUNT(*) total_rows",
+}
+
+// ---------------------------------------------------------------------------
+// 15. Proposals & Estimates — pre-sales quotes (PRO-#### id)
+// ---------------------------------------------------------------------------
+const proposals: ModuleConfig = {
+  key: "proposals",
+  table: "proposals",
+  label: "Proposals & Estimates",
+  subtitle: "Finance management",
+  addLabel: "New proposal",
+  idColumn: "proposal_id",
+  idPrefix: "PRO",
+  editableId: true,
+  dateColumn: "proposal_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "stage",
+  searchColumns: ["proposal_id", "client_name", "title", "project_name", "description"],
+  fields: [
+    fld("Proposal", "proposal_id", "Proposal ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Proposal", "proposal_date", "Proposal date", "date", { required: true }),
+    fld("Proposal", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+    fld("Proposal", "valid_till", "Valid till", "date"),
+    fld("Proposal", "title", "Title", "text", { required: true }),
+    fld("Party", "client_id", "Client ID", "text"),
+    fld("Party", "client_name", "Client name", "text", { required: true }),
+    fld("Party", "project_id", "Project ID", "text"),
+    fld("Party", "project_name", "Project name", "text"),
+    fld("Party", "owner", "Owner", "text"),
+    fld("Party", "description", "Description", "textarea"),
+    fld("Amounts", "currency", "Currency", "select", { options: CURRENCIES, optional: true }),
+    fld("Amounts", "subtotal", "Subtotal", "number"),
+    fld("Amounts", "discount", "Discount", "number"),
+    fld("Amounts", "tax_percent", "Tax %", "number"),
+    fld("Amounts", "tax_amount", "Tax amount", "number", { computed: true, money: true }),
+    fld("Amounts", "grand_total", "Grand total", "number", { computed: true, money: true }),
+    fld("Status", "stage", "Stage", "select", { options: ["Draft", "Sent", "Under Review", "Accepted", "Rejected", "Expired"] }),
+    fld("Status", "acceptance_date", "Acceptance date", "date"),
+    fld("Status", "converted_invoice_no", "Converted invoice no.", "text"),
+    fld("Status", "notes", "Notes", "textarea"),
+  ],
+  compute: (v) => {
+    const subtotal = round2(num(v.subtotal))
+    const discount = round2(num(v.discount))
+    const taxable = Math.max(subtotal - discount, 0)
+    const tax = round2((taxable * num(v.tax_percent)) / 100)
+    return {
+      subtotal, discount, tax_amount: tax, grand_total: round2(taxable + tax),
+      financial_year: v.financial_year || financialYearFor(v.proposal_date),
+    }
+  },
+  tableColumns: [
+    { key: "proposal_id", label: "Proposal ID", mono: true },
+    { key: "proposal_date", label: "Date" },
+    { key: "client_name", label: "Client", sub: "title" },
+    { key: "grand_total", label: "Grand Total", align: "right", money: true },
+    { key: "valid_till", label: "Valid Till" },
+    { key: "stage", label: "Stage", badge: { Accepted: "default", Sent: "secondary", "Under Review": "secondary", Draft: "outline", Rejected: "destructive", Expired: "destructive" } },
+  ],
+  kpis: [
+    { label: "Total Value", key: "total_value", money: true, icon: "FileText" },
+    { label: "Accepted Value", key: "accepted_value", money: true, icon: "TrendingUp" },
+    { label: "Open Value", key: "open_value", money: true, icon: "Clock" },
+    { label: "Proposals", key: "total_rows", icon: "BookOpen" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(grand_total),0) total_value, COALESCE(SUM(CASE WHEN stage='Accepted' THEN grand_total ELSE 0 END),0) accepted_value, COALESCE(SUM(CASE WHEN stage IN ('Draft','Sent','Under Review') THEN grand_total ELSE 0 END),0) open_value, COUNT(*) total_rows",
+}
+
+// ---------------------------------------------------------------------------
+// 16. Orders — sales / purchase orders (ORD-#### id). Powers the top-level
+// Orders module via the shared config-driven CRUD engine.
+// ---------------------------------------------------------------------------
+const orders: ModuleConfig = {
+  key: "orders",
+  table: "orders",
+  label: "Orders",
+  subtitle: "Order management",
+  addLabel: "New order",
+  idColumn: "order_id",
+  idPrefix: "ORD",
+  editableId: true,
+  dateColumn: "order_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "fulfillment_status",
+  searchColumns: ["order_id", "party_name", "reference_no", "project_name", "item_summary"],
+  fields: [
+    fld("Order", "order_id", "Order ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Order", "order_date", "Order date", "date", { required: true }),
+    fld("Order", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+    fld("Order", "order_type", "Order type", "select", { options: ["Sales Order", "Purchase Order", "Service Order"] }),
+    fld("Order", "reference_no", "Reference no.", "text"),
+    fld("Party", "party_type", "Party type", "select", { options: ["Customer", "Vendor"], optional: true }),
+    fld("Party", "party_id", "Party ID", "text"),
+    fld("Party", "party_name", "Party name", "text", { required: true }),
+    fld("Party", "project_id", "Project ID", "text"),
+    fld("Party", "project_name", "Project name", "text"),
+    fld("Items", "item_summary", "Item summary", "textarea"),
+    fld("Items", "quantity", "Quantity", "number"),
+    fld("Items", "unit", "Unit", "select", { options: UNITS, optional: true }),
+    fld("Items", "rate", "Rate", "number"),
+    fld("Items", "subtotal", "Subtotal", "number", { placeholder: "auto from qty × rate" }),
+    fld("Items", "discount", "Discount", "number"),
+    fld("Items", "tax_percent", "Tax %", "number"),
+    fld("Items", "tax_amount", "Tax amount", "number", { computed: true, money: true }),
+    fld("Items", "total_amount", "Total amount", "number", { computed: true, money: true }),
+    fld("Fulfillment & payment", "expected_date", "Expected date", "date"),
+    fld("Fulfillment & payment", "delivery_date", "Delivery date", "date"),
+    fld("Fulfillment & payment", "fulfillment_status", "Fulfillment status", "select", { options: ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"] }),
+    fld("Fulfillment & payment", "amount_received", "Amount received", "number"),
+    fld("Fulfillment & payment", "outstanding_amount", "Outstanding amount", "number", { computed: true, money: true }),
+    fld("Fulfillment & payment", "payment_status", "Payment status", "select", { options: PAYMENT_STATUSES, optional: true, emptyLabel: "Auto" }),
+    fld("Fulfillment & payment", "notes", "Notes", "textarea"),
+  ],
+  compute: (v) => {
+    const qty = num(v.quantity), rate = num(v.rate), discount = num(v.discount)
+    const base = qty > 0 && rate > 0 ? qty * rate : num(v.subtotal)
+    const subtotal = round2(base)
+    const taxable = Math.max(subtotal - discount, 0)
+    const tax = round2((taxable * num(v.tax_percent)) / 100)
+    const total = round2(taxable + tax)
+    const received = round2(num(v.amount_received))
+    return {
+      subtotal, tax_amount: tax, total_amount: total,
+      amount_received: received, outstanding_amount: round2(total - received),
+      payment_status: autoPaymentStatus(total, received, v.payment_status),
+      financial_year: v.financial_year || financialYearFor(v.order_date),
+    }
+  },
+  tableColumns: [
+    { key: "order_id", label: "Order ID", mono: true },
+    { key: "order_date", label: "Date" },
+    { key: "party_name", label: "Party", sub: "order_type" },
+    { key: "total_amount", label: "Total", align: "right", money: true },
+    { key: "outstanding_amount", label: "Outstanding", align: "right", money: true },
+    { key: "fulfillment_status", label: "Fulfillment", badge: { Delivered: "default", Shipped: "secondary", Processing: "secondary", Pending: "outline", Cancelled: "destructive" } },
+    { key: "payment_status", label: "Payment", badge: { ...PAYMENT_BADGE } },
+  ],
+  kpis: [
+    { label: "Order Value", key: "total_value", money: true, icon: "Receipt" },
+    { label: "Received", key: "total_received", money: true, icon: "Wallet" },
+    { label: "Outstanding", key: "total_outstanding", money: true, icon: "Clock" },
+    { label: "Orders", key: "total_rows", icon: "FileText" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(total_amount),0) total_value, COALESCE(SUM(amount_received),0) total_received, COALESCE(SUM(outstanding_amount),0) total_outstanding, COUNT(*) total_rows",
+}
+
 export const FINANCE_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "purchase-bills": purchaseBills,
   "expenses": expenses,
@@ -908,4 +1208,8 @@ export const FINANCE_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "tds-filing": tdsFiling,
   "journal-entries": journalEntries,
   "general-ledger": generalLedger,
+  "credit-notes": creditNotes,
+  "payments": payments,
+  "proposals": proposals,
+  "orders": orders,
 }

@@ -1,0 +1,63 @@
+-- Dedicated Sales Invoices table for the Finance module.
+-- Sales invoices carry far more structure than the shared finance_records
+-- table can hold (GST breakup, TDS, payment tracking, e-invoice / e-way refs),
+-- so they get their own table while still using the INV-#### id sequence.
+
+CREATE TABLE IF NOT EXISTS sales_invoices (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  invoice_id VARCHAR(40) NOT NULL,
+  invoice_date DATE DEFAULT NULL,
+  invoice_type VARCHAR(40) NOT NULL DEFAULT 'Tax Invoice',
+  financial_year VARCHAR(12) DEFAULT NULL,
+  client_id VARCHAR(40) DEFAULT NULL,
+  client_name VARCHAR(190) DEFAULT NULL,
+  project_id VARCHAR(40) DEFAULT NULL,
+  project_name VARCHAR(190) DEFAULT NULL,
+  billing_period_from DATE DEFAULT NULL,
+  billing_period_to DATE DEFAULT NULL,
+  description TEXT,
+  hsn_sac VARCHAR(20) DEFAULT NULL,
+  quantity DECIMAL(14,2) NOT NULL DEFAULT 0,
+  unit VARCHAR(20) DEFAULT NULL,
+  rate DECIMAL(14,2) NOT NULL DEFAULT 0,
+  taxable_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  discount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  cgst_percent DECIMAL(6,2) NOT NULL DEFAULT 0,
+  cgst_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  sgst_percent DECIMAL(6,2) NOT NULL DEFAULT 0,
+  sgst_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  igst_percent DECIMAL(6,2) NOT NULL DEFAULT 0,
+  igst_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  other_tax_cess DECIMAL(14,2) NOT NULL DEFAULT 0,
+  invoice_total DECIMAL(14,2) NOT NULL DEFAULT 0,
+  tds_applicable TINYINT(1) NOT NULL DEFAULT 0,
+  tds_section VARCHAR(20) DEFAULT NULL,
+  tds_rate DECIMAL(6,2) NOT NULL DEFAULT 0,
+  tds_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  net_receivable DECIMAL(14,2) NOT NULL DEFAULT 0,
+  due_date DATE DEFAULT NULL,
+  amount_received DECIMAL(14,2) NOT NULL DEFAULT 0,
+  outstanding_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  payment_status VARCHAR(30) NOT NULL DEFAULT 'Unpaid',
+  payment_date DATE DEFAULT NULL,
+  payment_reference VARCHAR(120) DEFAULT NULL,
+  irn_reference VARCHAR(120) DEFAULT NULL,
+  eway_bill_no VARCHAR(60) DEFAULT NULL,
+  credit_debit_note_ref VARCHAR(120) DEFAULT NULL,
+  notes TEXT,
+  invoice_status VARCHAR(30) NOT NULL DEFAULT 'Draft',
+  created_by BIGINT UNSIGNED DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sales_invoice_id (invoice_id),
+  KEY idx_si_date (invoice_date),
+  KEY idx_si_client (client_name),
+  KEY idx_si_payment (payment_status),
+  KEY idx_si_status (invoice_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- The INV prefix is already seeded by 2026-09-01-add-automatic-record-ids.sql,
+-- but keep this idempotent in case migrations run out of order.
+INSERT INTO record_id_sequences (prefix, next_number) VALUES ('INV', 0)
+ON DUPLICATE KEY UPDATE prefix = VALUES(prefix);

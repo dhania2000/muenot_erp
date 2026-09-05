@@ -121,6 +121,7 @@ const FILTERS = [
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   New: "outline",
+  Qualified: "secondary",
   "Follow Up 1": "secondary",
   "Follow Up 2": "secondary",
   "In Discussion": "default",
@@ -129,6 +130,8 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   Won: "default",
   Lost: "destructive",
 }
+
+const STATUS_OPTIONS = ["New", "Qualified", "Proposal Sent"] as const
 
 const LEAD_STATUS_OPTIONS = ["Open", "Won", "Lost", "Follow Up"] as const
 
@@ -205,6 +208,20 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
       mutate()
     } else {
       toast.error("Unable to update lead status")
+    }
+  }
+
+  async function updateStatus(lead: LeadRow, nextStatus: string) {
+    const res = await fetch(`/api/sales/leads/${lead.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: nextStatus }),
+    })
+    if (res.ok) {
+      toast.success(`Status updated to ${nextStatus}`)
+      mutate()
+    } else {
+      toast.error("Unable to update status")
     }
   }
 
@@ -319,7 +336,25 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
                 </TableCell>
                 <TableCell className="text-muted-foreground">{lead.lead_source || "—"}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_VARIANT[lead.status] || "outline"}>{lead.status}</Badge>
+                  {canManage ? (
+                    <Select value={lead.status} onValueChange={(value) => updateStatus(lead, value)}>
+                      <SelectTrigger size="sm" className="w-36">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STATUS_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                        {!STATUS_OPTIONS.includes(lead.status as (typeof STATUS_OPTIONS)[number]) && (
+                          <SelectItem value={lead.status}>{lead.status}</SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant={STATUS_VARIANT[lead.status] || "outline"}>{lead.status}</Badge>
+                  )}
                 </TableCell>
                 <TableCell>
                   {canManage ? (

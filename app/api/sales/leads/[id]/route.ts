@@ -4,6 +4,7 @@ import { requireFeature } from "@/lib/api-auth"
 
 const HEALTH_SCORE: Record<string, number> = {
   New: 5,
+  Qualified: 25,
   "Follow Up 1": 20,
   "Follow Up 2": 35,
   "In Discussion": 50,
@@ -70,17 +71,29 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     // ("Unknown column 'lead_status'"). Add it on the fly and retry once
     // instead of failing the request.
     const missingColumn = error?.code === "ER_BAD_FIELD_ERROR" && "lead_status" in body
-    if (!missingColumn) throw error
+    const invalidStatusEnum =
+      (error?.code === "WARN_DATA_TRUNCATED" || error?.code === "ER_TRUNCATED_WRONG_VALUE_FOR_FIELD") &&
+      "status" in body
 
-    await query(
-      "ALTER TABLE sales_leads ADD COLUMN lead_status ENUM('Open','Won','Lost','Follow Up') NOT NULL DEFAULT 'Open' AFTER status",
-    ).catch(() => {})
-    await query("ALTER TABLE sales_leads ADD KEY idx_leads_lead_status (lead_status)").catch(() => {})
-    await query("UPDATE sales_leads SET lead_status = 'Won' WHERE status = 'Won'").catch(() => {})
-    await query("UPDATE sales_leads SET lead_status = 'Lost' WHERE status = 'Lost'").catch(() => {})
-    await query(
-      "UPDATE sales_leads SET lead_status = 'Follow Up' WHERE status IN ('Follow Up 1', 'Follow Up 2')",
-    ).catch(() => {})
+    if (!missingColumn && !invalidStatusEnum) throw error
+
+    if (missingColumn) {
+      await query(
+        "ALTER TABLE sales_leads ADD COLUMN lead_status ENUM('Open','Won','Lost','Follow Up') NOT NULL DEFAULT 'Open' AFTER status",
+      ).catch(() => {})
+      await query("ALTER TABLE sales_leads ADD KEY idx_leads_lead_status (lead_status)").catch(() => {})
+      await query("UPDATE sales_leads SET lead_status = 'Won' WHERE status = 'Won'").catch(() => {})
+      await query("UPDATE sales_leads SET lead_status = 'Lost' WHERE status = 'Lost'").catch(() => {})
+      await query(
+        "UPDATE sales_leads SET lead_status = 'Follow Up' WHERE status IN ('Follow Up 1', 'Follow Up 2')",
+      ).catch(() => {})
+    }
+
+    if (invalidStatusEnum) {
+      await query(
+        "ALTER TABLE sales_leads MODIFY `status` ENUM('New','Qualified','Follow Up 1','Follow Up 2','In Discussion','Proposal Sent','Ready','Won','Lost') NOT NULL DEFAULT 'New'",
+      ).catch(() => {})
+    }
 
     await query(sql, sqlValues)
   }

@@ -135,7 +135,7 @@ CREATE TABLE `sales_leads` (
   `company_email` VARCHAR(190) DEFAULT NULL,
   `country` VARCHAR(100) DEFAULT NULL,
   `assigned_to` INT UNSIGNED DEFAULT NULL,
-  `status` ENUM('New','Follow Up 1','Follow Up 2','In Discussion','Proposal Sent','Ready','Won','Lost') NOT NULL DEFAULT 'New',
+	`status` ENUM('New','Qualified','Follow Up 1','Follow Up 2','In Discussion','Proposal Sent','Ready','Won','Lost') NOT NULL DEFAULT 'New',
   `lead_status` ENUM('Open','Won','Lost','Follow Up') NOT NULL DEFAULT 'Open',
   `follow_up_date` DATETIME DEFAULT NULL,
   `last_contact_date` DATETIME DEFAULT NULL,

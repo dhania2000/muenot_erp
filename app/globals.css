@@ -153,69 +153,11 @@
   }
 }
 
-.admin-dashboard { min-height: 100vh; background: var(--background); color: var(--foreground); font-family: Arial, sans-serif; }
-.admin-topbar { height: 98px; background: var(--card); border-top: 2px solid var(--primary); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 38px; }
-.admin-brand { display: flex; align-items: baseline; gap: 14px; }
-.admin-brand h1 { margin: 0; font-size: 28px; letter-spacing: -.02em; font-weight: 700; }
-.admin-brand span { color: var(--muted-foreground); font-size: 16px; }
-.admin-brand b { color: var(--muted-foreground); margin: 0 4px; }
-.admin-actions { display: flex; align-items: center; gap: 6px; }
-.admin-actions button { border: 0; background: transparent; color: var(--muted-foreground); padding: 8px; border-radius: var(--radius-sm); cursor: pointer; }
-.admin-actions button:hover { background: var(--accent); color: var(--accent-foreground); }
-.admin-actions svg { width: 23px; height: 23px; stroke-width: 2.7; }
-.admin-mobile-menu { display: none; }
-.admin-tabs { display: flex; min-height: 69px; background: var(--card); border-bottom: 1px solid var(--border); padding-left: 0; }
-.admin-tabs a { min-width: 145px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--border); color: var(--muted-foreground); font-size: 20px; text-decoration: none; }
-.admin-tabs a:hover, .admin-tabs a.is-active { color: var(--foreground); background: var(--accent); }
-.admin-tabs a.is-active { border-bottom: 4px solid var(--primary); }
-.admin-tabs .admin-settings { min-width: 74px; margin-left: auto; border-left: 1px solid var(--border); color: var(--muted-foreground); }
-.admin-settings svg { width: 22px; }
-.admin-content { padding: 24px 36px 40px; }
-.admin-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px 44px; margin-bottom: 24px; }
-.admin-kpi { min-height: 153px; background: var(--card); border-radius: 6px; padding: 28px 30px; display: flex; align-items: center; justify-content: space-between; text-decoration: none; color: inherit; box-shadow: 0 1px 1px var(--border); }
-.admin-kpi:hover { box-shadow: 0 3px 14px var(--border); transform: translateY(-1px); }
-.admin-kpi span { display: block; color: var(--muted-foreground); font-size: 21px; margin-bottom: 27px; }
-.admin-kpi strong { color: var(--primary); display: block; font-size: 24px; font-weight: 500; }
-.admin-kpi small { color: var(--muted-foreground); display: block; font-size: 12px; margin-top: 4px; }
-.admin-kpi > svg { color: var(--muted-foreground); width: 30px; height: 30px; stroke-width: 1.5; }
-.admin-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 44px; }
-.admin-panel { min-height: 260px; background: var(--card); border-radius: 6px; padding: 32px 30px; box-shadow: 0 1px 1px var(--border); }
-.admin-panel h2 { margin: 0; font-size: 27px; font-weight: 500; letter-spacing: -.02em; color: var(--foreground); }
-.admin-help { display: inline-flex; align-items: center; justify-content: center; background: var(--secondary); color: var(--secondary-foreground); border-radius: 50%; width: 23px; height: 23px; font-size: 16px; font-weight: 700; vertical-align: 3px; }
-.admin-empty { min-height: 170px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 17px; color: var(--muted-foreground); font-size: 19px; }
-.admin-empty svg { width: 29px; height: 29px; color: var(--muted-foreground); }
-.admin-footer-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 24px; color: var(--primary); text-decoration: none; font-size: 14px; }
-.admin-footer-link svg { width: 16px; }
-@media (max-width: 900px) { .admin-kpis { grid-template-columns: repeat(2, 1fr); } .admin-topbar { padding: 0 20px; } .admin-content { padding: 20px; } .admin-tabs a { min-width: 110px; font-size: 16px; } }
-@media (max-width: 640px) { .admin-brand span, .admin-actions button:not(.admin-mobile-menu) { display: none; } .admin-mobile-menu { display: block; } .admin-topbar { height: 78px; } .admin-tabs { display: none; flex-wrap: wrap; } .admin-tabs.is-open { display: flex; } .admin-tabs a { min-width: 50%; min-height: 52px; } .admin-tabs .admin-settings { min-width: 50%; } .admin-kpis, .admin-panels { grid-template-columns: 1fr; gap: 16px; } .admin-kpi { min-height: 130px; } .admin-panel { min-height: 230px; } }
-
-.erp-page { min-height: 100%; background: var(--background); color: var(--foreground); font-family: Arial, sans-serif; }
-.erp-pagehead { display: flex; align-items: center; justify-content: space-between; min-height: 88px; background: var(--card); border-bottom: 1px solid var(--border); padding: 0 38px; }
-.erp-pagehead h1 { margin: 0; font-size: 27px; font-weight: 700; }
-.erp-pagehead span { color: var(--muted-foreground); font-size: 16px; }
-.erp-utilities { display: flex; align-items: center; gap: 22px; color: var(--muted-foreground); }
-.erp-utilities svg { width: 23px; height: 23px; stroke-width: 2.5; }
-.erp-filterbar { display: flex; align-items: center; flex-wrap: wrap; min-height: 66px; gap: 0; background: var(--card); border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 16px; }
-.erp-filterbar > span, .erp-filterbar select { min-height: 65px; display: inline-flex; align-items: center; padding: 0 18px; border-right: 1px solid var(--border); background: var(--card); }
-.erp-filterbar select { color: var(--foreground); border: 0; border-right: 1px solid var(--border); font-size: 16px; }
-.erp-search { display: flex; align-items: center; gap: 12px; margin-left: 22px; padding: 0 12px; min-width: 330px; background: var(--muted); border-radius: 6px; color: var(--muted-foreground); }
-.erp-search input { border: 0; background: transparent; box-shadow: none; color: var(--foreground); }
-.erp-actions { display: flex; align-items: center; gap: 24px; padding: 36px 32px 24px; }
-.erp-table-card, .erp-calendar, .erp-form { margin: 0 32px 28px; border: 0; border-radius: 6px; box-shadow: 0 1px 4px var(--border); background: var(--card); }
-.erp-table-card h3, .erp-form h3 { font-size: 27px; font-weight: 500; color: var(--foreground); }
-.erp-table-head, .erp-table-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 18px; align-items: center; border-bottom: 1px solid var(--border); padding: 16px 10px; }
-.erp-table-head { color: var(--muted-foreground); font-size: 15px; }
-.erp-table-row { min-height: 56px; font-size: 16px; color: var(--foreground); }
-.erp-table-row span:last-child { justify-self: end; }
-.erp-status { display: inline-flex; align-items: center; gap: 7px; font-style: normal; }
-.erp-status i { width: 14px; height: 14px; border-radius: 50%; background: oklch(0.65 0.19 145); }
-.erp-empty { display: flex; min-height: 300px; align-items: center; justify-content: center; flex-direction: column; gap: 18px; color: var(--muted-foreground); font-size: 19px; }
-.erp-empty svg { width: 30px; height: 30px; }
-.erp-upload { display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; gap: 14px; border: 1px solid var(--border); color: var(--muted-foreground); font-weight: 400; }
-.erp-calendar strong { font-size: 20px; font-weight: 500; color: var(--foreground); }
-.erp-calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
-.erp-dayhead, .erp-day { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.erp-dayhead { padding: 15px; text-align: center; font-size: 16px; font-weight: 700; color: var(--foreground); }
-.erp-day { min-height: 120px; padding: 10px; color: var(--muted-foreground); text-align: right; }
-.erp-day b { display: block; margin-top: 28px; overflow: hidden; border-radius: 4px; background: var(--primary); color: var(--primary-foreground); padding: 7px; text-align: left; font-size: 13px; font-weight: 400; white-space: nowrap; }
-@media (max-width: 800px) { .erp-pagehead { padding: 0 18px; } .erp-utilities { gap: 10px; } .erp-filterbar { overflow-x: auto; flex-wrap: nowrap; } .erp-search { min-width: 250px; } .erp-actions { padding: 22px 18px; } .erp-table-card, .erp-calendar, .erp-form { margin-left: 18px; margin-right: 18px; } .erp-day { min-height: 80px; } .erp-dayhead { padding: 9px 4px; font-size: 12px; } }
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

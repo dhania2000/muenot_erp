@@ -69,16 +69,28 @@ export async function ensureEmailTables() {
   await ensureColumn("sales_emails", "message_id", "VARCHAR(255) DEFAULT NULL")
   await ensureColumn("sales_emails", "in_reply_to", "VARCHAR(255) DEFAULT NULL")
   await ensureColumn("sales_emails", "references_header", "TEXT DEFAULT NULL")
-  await ensureColumn("sales_emails", "thread_id", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn("sales_emails", "thread_id", "VARCHAR(160) DEFAULT NULL")
+  // recipient_key identifies the person, independent of individual conversations.
+  // A recipient can now have many thread_ids: each "New" email starts a fresh one,
+  // and each "Follow Up" joins the recipient's most recent thread.
+  await ensureColumn("sales_emails", "recipient_key", "VARCHAR(120) DEFAULT NULL")
   await ensureIndex("sales_emails", "idx_emails_thread", "thread_id")
+  await ensureIndex("sales_emails", "idx_emails_recipient", "recipient_key")
 
-  // Backfill a stable thread_id for any legacy rows that predate threading.
+  // Backfill recipient_key for any legacy rows that predate this column.
   await query(
     `UPDATE sales_emails
-     SET thread_id = CASE
+     SET recipient_key = CASE
        WHEN lead_id IS NOT NULL THEN CONCAT('lead:', lead_id)
        ELSE CONCAT('addr:', LOWER(to_email))
      END
+     WHERE recipient_key IS NULL`,
+  )
+  // Backfill a stable thread_id for any legacy rows that predate threading.
+  // Legacy rows keep the recipient-level grouping they already had.
+  await query(
+    `UPDATE sales_emails
+     SET thread_id = recipient_key
      WHERE thread_id IS NULL`,
   )
 
@@ -109,10 +121,31 @@ async function ensureIndex(table: string, indexName: string, column: string) {
   }
 }
 
-/** Build a stable thread key so all mail to the same lead/recipient groups together. */
-export function buildThreadId(leadId: number | string | null | undefined, toEmail: string) {
+/** Stable key that identifies a recipient (person), independent of conversations. */
+export function buildRecipientKey(leadId: number | string | null | undefined, toEmail: string) {
   if (leadId) return `lead:${leadId}`
   return `addr:${toEmail.trim().toLowerCase()}`
+}
+
+/** Build a brand-new, unique thread id for a fresh conversation with a recipient. */
+export function buildNewThreadId(recipientKey: string, token: string) {
+  return `${recipientKey}:${token}`
+}
+
+/**
+ * Find the most recent thread id for a recipient. Follow-ups reuse this so they
+ * land in the conversation of the last email sent to that person. Returns null
+ * when the recipient has never been emailed before.
+ */
+export async function getLatestThreadId(recipientKey: string): Promise<string | null> {
+  const rows = await query<any[]>(
+    `SELECT thread_id FROM sales_emails
+     WHERE recipient_key = ? AND thread_id IS NOT NULL
+     ORDER BY sent_at DESC, id DESC
+     LIMIT 1`,
+    [recipientKey],
+  )
+  return rows[0]?.thread_id ?? null
 }
 
 /** Resolve the domain used inside generated Message-ID headers. */
@@ -287,6 +320,8 @@ export async function sendEmail(opts: {
   inReplyTo?: string
   references?: string
   department?: Department
+  /** Attach a calendar invite so mail clients show an "Add to calendar" card. */
+  icalEvent?: { method: string; content: string; filename?: string }
 }) {
   const config = smtpConfig(opts.department)
   const configuredFrom = opts.from || config.from || config.user
@@ -299,6 +334,13 @@ export async function sendEmail(opts: {
     messageId: opts.messageId,
     inReplyTo: opts.inReplyTo,
     references: opts.references,
+    icalEvent: opts.icalEvent
+      ? {
+          method: opts.icalEvent.method,
+          filename: opts.icalEvent.filename || "invite.ics",
+          content: opts.icalEvent.content,
+        }
+      : undefined,
   })
   return info
 }

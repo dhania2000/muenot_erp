@@ -4,9 +4,11 @@ import { requireFeature } from "@/lib/api-auth"
 import {
   baseSubject,
   buildMessageId,
-  buildThreadId,
+  buildNewThreadId,
+  buildRecipientKey,
   ensureEmailTables,
   generateTrackingToken,
+  getLatestThreadId,
   getThreadContext,
   isEmailConfigured,
   renderTemplate,
@@ -41,6 +43,8 @@ export async function POST(request: Request) {
   await ensureEmailTables()
   const body = await request.json()
   const { lead_id, template_id, to_email, to_name, subject, body: content } = body
+  // "new" starts a fresh conversation; "followup" continues the recipient's latest thread.
+  const mailType = body.mail_type === "followup" ? "followup" : "new"
   const department = body.department === "hr" || body.department === "finance" ? body.department : "sales"
   await hydrateDepartmentSMTP(department)
 
@@ -70,20 +74,31 @@ export async function POST(request: Request) {
     if (leadRows[0]) vars = { ...vars, ...leadRows[0] }
   }
 
-  // Group this email with any prior mail to the same lead/recipient.
-  const threadId = buildThreadId(lead_id, to_email)
-  const thread = await getThreadContext(threadId)
+  const token = generateTrackingToken()
+  const messageId = buildMessageId(token)
+
+  // Decide which conversation this email belongs to.
+  // - New:       always a brand-new thread, even for a known recipient.
+  // - Follow Up: continue the recipient's most recent thread; if they've never
+  //              been emailed before, it naturally becomes a new thread.
+  const recipientKey = buildRecipientKey(lead_id, to_email)
+  let threadId: string
+  let thread = null as Awaited<ReturnType<typeof getThreadContext>>
+  if (mailType === "followup") {
+    const latest = await getLatestThreadId(recipientKey)
+    threadId = latest ?? buildNewThreadId(recipientKey, token)
+    thread = latest ? await getThreadContext(latest) : null
+  } else {
+    threadId = buildNewThreadId(recipientKey, token)
+  }
 
   let renderedSubject = renderTemplate(subject, vars)
-  // If a conversation already exists, normalize the subject to "Re: <root subject>"
+  // If continuing a conversation, normalize the subject to "Re: <root subject>"
   // so mail clients reliably keep the follow-up in the same thread.
   if (thread) {
     renderedSubject = `Re: ${baseSubject(thread.rootSubject)}`
   }
   const renderedBody = renderTemplate(content, vars)
-
-  const token = generateTrackingToken()
-  const messageId = buildMessageId(token)
   const baseUrl = resolveBaseUrl(request)
   const htmlWithPixel = withTrackingPixel(renderedBody, baseUrl, token)
 
@@ -111,8 +126,8 @@ export async function POST(request: Request) {
   const result = await query<any>(
     `INSERT INTO sales_emails
        (lead_id, template_id, to_email, to_name, subject, body, tracking_token,
-        status, error_message, sent_by, message_id, in_reply_to, references_header, thread_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status, error_message, sent_by, message_id, in_reply_to, references_header, thread_id, recipient_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       lead_id || null,
       template_id || null,
@@ -130,6 +145,7 @@ export async function POST(request: Request) {
       // follow-up can build on it.
       [references, messageId].filter(Boolean).join(" "),
       threadId,
+      recipientKey,
     ],
   )
 

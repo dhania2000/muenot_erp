@@ -35,9 +35,12 @@ type LeadRow = {
   email: string | null
 }
 
+type MailType = "new" | "followup"
+
 type FormState = {
   lead_id: string
   template_id: string
+  mail_type: MailType
   to_email: string
   to_name: string
   subject: string
@@ -47,6 +50,7 @@ type FormState = {
 const EMPTY: FormState = {
   lead_id: "",
   template_id: "",
+  mail_type: "new",
   to_email: "",
   to_name: "",
   subject: "",
@@ -129,6 +133,7 @@ export function ComposeEmailDialog({
         body: JSON.stringify({
           lead_id: form.lead_id ? Number(form.lead_id) : null,
           template_id: form.template_id ? Number(form.template_id) : null,
+          mail_type: form.mail_type,
           to_email: form.to_email.trim(),
           to_name: form.to_name.trim() || null,
           subject: form.subject,
@@ -156,8 +161,8 @@ export function ComposeEmailDialog({
         <DialogHeader>
           <DialogTitle>Compose email</DialogTitle>
           <DialogDescription>
-            Send a tracked email. Follow-ups to the same lead or recipient are automatically kept in the same
-            conversation thread.
+            Send a tracked email. Choose &quot;New&quot; to start a fresh conversation or &quot;Follow Up&quot; to
+            continue the recipient&apos;s most recent thread.
           </DialogDescription>
         </DialogHeader>
 
@@ -175,6 +180,24 @@ export function ComposeEmailDialog({
         )}
 
         <FieldGroup className="min-h-0 flex-1 overflow-y-auto">
+          <Field>
+            <FieldLabel htmlFor="mail_type">Mail type</FieldLabel>
+            <Select value={form.mail_type} onValueChange={(v) => update("mail_type", (v as MailType) ?? "new")}>
+              <SelectTrigger id="mail_type" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="new">New</SelectItem>
+                <SelectItem value="followup">Follow Up</SelectItem>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              {form.mail_type === "followup"
+                ? "Continues the last conversation with this recipient (threaded reply)."
+                : "Starts a brand-new conversation, separate from any earlier emails."}
+            </FieldDescription>
+          </Field>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="lead">Link to lead (optional)</FieldLabel>

@@ -22,11 +22,19 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2Icon } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Loader2Icon, VideoIcon } from "lucide-react"
 import { toDateInputValue } from "@/lib/utils"
 import type { MeetingRow } from "@/components/sales/meetings-client"
 
 const TYPES = ["Discovery", "Demo", "Negotiation", "Review", "Other"]
+const DURATIONS = [
+  { value: "15", label: "15 minutes" },
+  { value: "30", label: "30 minutes" },
+  { value: "45", label: "45 minutes" },
+  { value: "60", label: "1 hour" },
+  { value: "90", label: "1.5 hours" },
+]
 
 type FormState = {
   meeting_date: string
@@ -37,6 +45,9 @@ type FormState = {
   agenda: string
   outcome_notes: string
   next_steps: string
+  create_meet: boolean
+  attendees: string
+  duration_minutes: string
 }
 
 const EMPTY: FormState = {
@@ -48,17 +59,22 @@ const EMPTY: FormState = {
   agenda: "",
   outcome_notes: "",
   next_steps: "",
+  create_meet: false,
+  attendees: "",
+  duration_minutes: "30",
 }
 
 export function MeetingDialog({
   open,
   onOpenChange,
   meeting,
+  googleConfigured = false,
   onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   meeting: MeetingRow | null
+  googleConfigured?: boolean
   onSaved: () => void
 }) {
   const [form, setForm] = useState<FormState>(EMPTY)

@@ -2,6 +2,28 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 
+const STATUS_ENUM_VALUES =
+  "'New','Qualified','Follow Up 1','Follow Up 2','Follow Up 3','Follow Up 4','Follow Up 5','Follow Up 6','Follow Up 7','In Discussion','Proposal Sent','Ready','Won','Lost'"
+
+// Older databases were created with a `status` ENUM that only allowed up to
+// "Follow Up 2". In non-strict MySQL, saving "Follow Up 3"..."Follow Up 7"
+// is silently truncated to an empty string (no error thrown), so the value
+// comes back blank. We widen the ENUM once per server process before the
+// first status update so all follow-up stages persist correctly.
+let statusEnumEnsured = false
+async function ensureStatusEnum() {
+  if (statusEnumEnsured) return
+  try {
+    await query(
+      `ALTER TABLE sales_leads MODIFY \`status\` ENUM(${STATUS_ENUM_VALUES}) NOT NULL DEFAULT 'New'`,
+    )
+    statusEnumEnsured = true
+  } catch {
+    // Ignore: table may not exist yet or ALTER may be unsupported; the
+    // per-request error self-heal below still covers strict-mode databases.
+  }
+}
+
 const HEALTH_SCORE: Record<string, number> = {
   New: 5,
   Qualified: 25,
@@ -25,6 +47,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const { id } = await params
   const body = await request.json()
+
+  // Make sure the status ENUM can hold every follow-up stage before we try
+  // to write one, otherwise non-strict MySQL silently blanks the value.
+  if ("status" in body) await ensureStatusEnum()
 
   const fields: string[] = []
   const values: any[] = []

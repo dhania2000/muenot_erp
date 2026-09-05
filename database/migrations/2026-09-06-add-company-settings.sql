@@ -1,0 +1,7 @@
+-- Key/value store backing the Company Settings screens.
+CREATE TABLE IF NOT EXISTS company_settings (
+  skey VARCHAR(160) NOT NULL PRIMARY KEY,
+  svalue TEXT DEFAULT NULL,
+  updated_by BIGINT UNSIGNED DEFAULT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);

@@ -1,35 +1,30 @@
-"use client"
-
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import {
-  Bell, CalendarCheck2, CheckSquare2, ChevronRight, Clock3, FileText, Layers3,
-  Menu, MessageSquare, Plus, Power, Search, Settings, Ticket, UserPlus, UsersRound, X,
+  CalendarCheck2, CheckSquare2, ChevronRight, Clock3, FileText, Layers3,
+  Ticket, UsersRound,
 } from "lucide-react"
-import { useState } from "react"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 
-type Metric = { label: string; value: string; icon: typeof UsersRound; href?: string }
+type Metric = {
+  label: string
+  value: string
+  icon: typeof UsersRound
+  href?: string
+  iconWrap: string
+  iconColor: string
+  bar: string
+}
 type Panel = { title: string; icon: typeof UsersRound; message: string }
 
 const metrics: Metric[] = [
-  { label: "Total Clients", value: "0", icon: UsersRound, href: "/modules/clients" },
-  { label: "Total Employees", value: "0", icon: UsersRound, href: "/admin/employees" },
-  { label: "Total Projects", value: "0", icon: Layers3, href: "/modules/operations/projects" },
-  { label: "Due Invoices", value: "0", icon: FileText, href: "/modules/finance" },
-  { label: "Hours Logged", value: "0 hrs", icon: Clock3, href: "/modules/hr/attendance" },
-  { label: "Pending Tasks", value: "0", icon: CheckSquare2 },
-  { label: "Today Attendance", value: "0/0", icon: CalendarCheck2, href: "/modules/hr/attendance" },
-  { label: "Unresolved Tickets", value: "0", icon: Ticket, href: "/modules/tickets" },
+  { label: "Total Clients", value: "0", icon: UsersRound, href: "/modules/clients", iconWrap: "bg-blue-500/10", iconColor: "text-blue-500", bar: "bg-blue-500" },
+  { label: "Total Employees", value: "0", icon: UsersRound, href: "/admin/employees", iconWrap: "bg-violet-500/10", iconColor: "text-violet-500", bar: "bg-violet-500" },
+  { label: "Total Projects", value: "0", icon: Layers3, href: "/modules/operations/projects", iconWrap: "bg-emerald-500/10", iconColor: "text-emerald-500", bar: "bg-emerald-500" },
+  { label: "Due Invoices", value: "0", icon: FileText, href: "/modules/finance", iconWrap: "bg-amber-500/10", iconColor: "text-amber-500", bar: "bg-amber-500" },
+  { label: "Hours Logged", value: "0 hrs", icon: Clock3, href: "/modules/hr/attendance", iconWrap: "bg-cyan-500/10", iconColor: "text-cyan-500", bar: "bg-cyan-500" },
+  { label: "Pending Tasks", value: "0", icon: CheckSquare2, iconWrap: "bg-rose-500/10", iconColor: "text-rose-500", bar: "bg-rose-500" },
+  { label: "Today Attendance", value: "0/0", icon: CalendarCheck2, href: "/modules/hr/attendance", iconWrap: "bg-teal-500/10", iconColor: "text-teal-500", bar: "bg-teal-500" },
+  { label: "Unresolved Tickets", value: "0", icon: Ticket, href: "/modules/tickets", iconWrap: "bg-orange-500/10", iconColor: "text-orange-500", bar: "bg-orange-500" },
 ]
 
 const panels: Panel[] = [
@@ -53,115 +48,104 @@ const navLinks: { label: string; href: string }[] = [
   { label: "Finance", href: "/modules/finance" },
 ]
 
+function KpiCard({ metric, activeNote }: { metric: Metric; activeNote?: string }) {
+  const Icon = metric.icon
+  const Wrapper = metric.href ? Link : "div"
+  return (
+    <Wrapper
+      href={metric.href ?? "#"}
+      className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/15 hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-sm font-medium text-muted-foreground">{metric.label}</span>
+          <strong className="text-3xl font-semibold leading-none tracking-tight text-foreground">{metric.value}</strong>
+          {activeNote && <small className="mt-1 text-xs text-muted-foreground">{activeNote}</small>}
+        </div>
+        <span className={cn("flex size-11 shrink-0 items-center justify-center rounded-lg transition-transform duration-200 group-hover:scale-110", metric.iconWrap)}>
+          <Icon className={cn("size-5", metric.iconColor)} aria-hidden="true" />
+        </span>
+      </div>
+      <span className={cn("absolute inset-x-0 bottom-0 h-1 origin-left scale-x-0 transition-transform duration-200 group-hover:scale-x-100", metric.bar)} aria-hidden="true" />
+    </Wrapper>
+  )
+}
+
 function EmptyPanel({ panel }: { panel: Panel }) {
   const Icon = panel.icon
-  return <section className="admin-panel">
-    <h2>{panel.title} <span className="admin-help" aria-label={`${panel.title} information`}>?</span></h2>
-    <div className="admin-empty"><Icon aria-hidden="true" /><span>{panel.message}</span></div>
-  </section>
+  return (
+    <section className="flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-foreground">{panel.title}</h2>
+        <span
+          className="flex size-5 items-center justify-center rounded-full border border-border text-[11px] font-medium text-muted-foreground"
+          aria-label={`${panel.title} information`}
+        >
+          ?
+        </span>
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
+        <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Icon className="size-5" aria-hidden="true" />
+        </span>
+        <span className="text-sm text-muted-foreground">{panel.message}</span>
+      </div>
+    </section>
+  )
 }
 
 export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTotal: number; employeeActive: number }) {
-  const router = useRouter()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [query, setQuery] = useState("")
-  const dashboardMetrics = metrics.map((metric, index) => index === 1 ? { ...metric, value: String(employeeTotal) } : metric)
+  const dashboardMetrics = metrics.map((metric, index) =>
+    index === 1 ? { ...metric, value: String(employeeTotal) } : metric,
+  )
 
-  const searchResults = query.trim()
-    ? navLinks.filter((link) => link.label.toLowerCase().includes(query.trim().toLowerCase()))
-    : navLinks
-
-  async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" })
-    router.push("/login")
-    router.refresh()
-  }
-
-  function goTo(href: string) {
-    setSearchOpen(false)
-    setQuery("")
-    router.push(href)
-  }
-
-  return <div className="admin-dashboard">
-    <header className="admin-topbar">
-      <div className="admin-brand"><h1>Dashboard</h1></div>
-      <div className="admin-actions" aria-label="Dashboard actions">
-        <button aria-label="Search" onClick={() => setSearchOpen(true)}><Search /></button>
-        <button aria-label="Messages" onClick={() => router.push("/modules/messages")}><MessageSquare /></button>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<button aria-label="Recent activity" />}>
-            <Clock3 />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuLabel>Recent activity</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <p className="px-2 py-1.5 text-sm text-muted-foreground">No recent activity yet</p>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<button aria-label="Add" />}>
-            <Plus />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>Quick create</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => router.push("/admin/employees")}>
-              <UserPlus className="size-4" /> Add employee
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/modules/tickets/all")}>
-              <Ticket className="size-4" /> New ticket
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/modules/clients")}>
-              <UsersRound className="size-4" /> New client
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<button aria-label="Notifications" />}>
-            <Bell />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <p className="px-2 py-1.5 text-sm text-muted-foreground">You&apos;re all caught up</p>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <button aria-label="Power" onClick={handleLogout}><Power /></button>
-        <button className="admin-mobile-menu" aria-label="Open menu" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? <X /> : <Menu />}</button>
+  return (
+    <div className="mx-auto flex max-w-7xl flex-col gap-6 p-4 md:p-6 lg:p-8">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Overview</h1>
+        <p className="text-sm text-muted-foreground">Welcome back — here&apos;s what&apos;s happening across your workspace.</p>
       </div>
-    </header>
-    <nav className={`admin-tabs ${menuOpen ? "is-open" : ""}`} aria-label="Main navigation">
-      {navLinks.map((item, index) => <Link className={index === 0 ? "is-active" : ""} href={item.href} key={item.label}>{item.label}</Link>)}
-      <Link className="admin-settings" href="/admin/settings" aria-label="Settings"><Settings /></Link>
-    </nav>
-    <main className="admin-content">
-      <div className="admin-kpis">{dashboardMetrics.map(({ label, value, icon: Icon, href }) => <Link href={href ?? "#"} className="admin-kpi" key={label} onClick={(event) => !href && event.preventDefault()}><div><span>{label}</span><strong>{value}</strong>{label === "Total Employees" && <small>{employeeActive} active</small>}</div><Icon /></Link>)}</div>
-      <div className="admin-panels">{panels.map((panel) => <EmptyPanel key={panel.title} panel={panel} />)}</div>
-      <Link href="/admin/settings" className="admin-footer-link">Open admin settings <ChevronRight /></Link>
-    </main>
 
-    <Dialog open={searchOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setQuery("") }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Search</DialogTitle>
-        </DialogHeader>
-        <Input autoFocus placeholder="Search modules..." value={query} onChange={(e) => setQuery(e.target.value)} />
-        <div className="flex flex-col gap-1 pt-2">
-          {searchResults.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No results found</p>}
-          {searchResults.map((entry) => (
-            <button
-              key={entry.href}
-              type="button"
-              onClick={() => goTo(entry.href)}
-              className="rounded-md px-2 py-2 text-left text-sm hover:bg-muted"
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
-  </div>
+      <nav className="flex gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1 shadow-sm" aria-label="Dashboard sections">
+        {navLinks.map((item, index) => (
+          <Link
+            key={item.label}
+            href={item.href}
+            aria-current={index === 0 ? "page" : undefined}
+            className={cn(
+              "flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-center text-sm font-medium transition-colors",
+              index === 0
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            {item.label}
+          </Link>
+        ))}
+      </nav>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {dashboardMetrics.map((metric) => (
+          <KpiCard
+            key={metric.label}
+            metric={metric}
+            activeNote={metric.label === "Total Employees" ? `${employeeActive} active` : undefined}
+          />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {panels.map((panel) => (
+          <EmptyPanel key={panel.title} panel={panel} />
+        ))}
+      </div>
+
+      <Link
+        href="/admin/settings"
+        className="inline-flex items-center gap-1 self-start text-sm font-medium text-primary transition-colors hover:text-primary/80"
+      >
+        Open admin settings <ChevronRight className="size-4" />
+      </Link>
+    </div>
+  )
 }

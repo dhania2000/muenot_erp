@@ -1,5 +1,2 @@
-import { FinanceDashboardClient } from "@/components/finance/finance-dashboard-client"
-
-export default function GSTFilingPage() {
-  return <FinanceDashboardClient initialModule="gst-filing" />
-}
+import { FinanceModuleClient } from "@/components/finance/finance-module-client"
+export default function Page() { return <FinanceModuleClient moduleKey="gst-filing" /> }

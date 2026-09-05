@@ -1,6 +1,6 @@
 import { pool } from "@/lib/db"
 
-const safePrefixes = new Set(["EMP", "INV", "FIN", "GST", "TDS", "JE", "GL", "RPT", "PROJ", "TKT", "CLI", "PROD", "LEAD", "COMP", "MEET", "QUOTE", "CONT", "ONB", "FORE", "REG", "LR", "DOC", "SHIFT", "EXP", "FTE", "FRL", "BTX", "ACC", "COA", "CV"])
+const safePrefixes = new Set(["EMP", "INV", "FIN", "GST", "TDS", "JE", "GL", "RPT", "PROJ", "TKT", "CLI", "PROD", "LEAD", "COMP", "MEET", "QUOTE", "CONT", "ONB", "FORE", "REG", "LR", "DOC", "SHIFT", "EXP", "FTE", "FRL", "BTX", "ACC", "COA", "CV", "PB"])
 
 export async function nextRecordId(prefix: string) {
   const normalized = prefix.toUpperCase().replace(/[^A-Z0-9]/g, "")

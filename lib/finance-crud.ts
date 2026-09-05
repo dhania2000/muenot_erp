@@ -92,7 +92,13 @@ export function createFinanceHandlers(moduleKey: string) {
       if (!body[cfg.idColumn]) return NextResponse.json({ error: `${cfg.idColumn} is required` }, { status: 400 })
       record[cfg.idColumn] = body[cfg.idColumn]
     } else if (cfg.idPrefix) {
-      record[cfg.idColumn] = await nextRecordId(cfg.idPrefix)
+      // editableId modules keep a hand-entered business key, but fall back to an
+      // auto-generated id whenever the user leaves the field blank.
+      const provided = cfg.editableId ? body[cfg.idColumn] : undefined
+      record[cfg.idColumn] =
+        provided !== undefined && provided !== null && String(provided).trim() !== ""
+          ? String(provided).trim()
+          : await nextRecordId(cfg.idPrefix)
     }
 
     if (cfg.trackingId) {

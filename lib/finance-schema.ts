@@ -57,12 +57,21 @@ export type ModuleConfig = {
   /** null => manual entry (e.g. Purchase Bill PO Number). */
   idPrefix: string | null
   manualId?: boolean
+  /**
+   * The id column is shown in the form and may be entered by hand, but when the
+   * user leaves it blank it is auto-generated from idPrefix on create. Lets a
+   * module keep a real business key (e.g. a PO Number) while still guaranteeing
+   * every record gets an id automatically.
+   */
+  editableId?: boolean
   /** System tracking fields (tracking_id / opened / open_count) generated on create. */
   trackingId?: boolean
   dateColumn?: string
   financialYearColumn?: string
   statusColumn?: string
   searchColumns: string[]
+  /** Extra column-backed filters exposed by the CRUD factory's WHERE builder. */
+  filters?: FilterDef[]
   fields: FieldDef[]
   compute?: (v: Record<string, any>) => Record<string, any>
   tableColumns: TableColumn[]

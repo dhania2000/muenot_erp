@@ -1,2 +1,2 @@
-import { FinanceFeaturePage } from "@/components/finance/finance-feature-page"
-export default function Page() { return <FinanceFeaturePage module="freelance-invoices" /> }
+import { FinanceModuleClient } from "@/components/finance/finance-module-client"
+export default function Page() { return <FinanceModuleClient moduleKey="freelance-invoices" /> }

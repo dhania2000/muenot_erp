@@ -1,5 +1,2 @@
-import { FinanceDashboardClient } from "@/components/finance/finance-dashboard-client"
-
-export default function TDSFilingPage() {
-  return <FinanceDashboardClient initialModule="tds-filing" />
-}
+import { FinanceModuleClient } from "@/components/finance/finance-module-client"
+export default function Page() { return <FinanceModuleClient moduleKey="tds-filing" /> }

@@ -7,7 +7,7 @@ import {
   Ticket, UsersRound,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { OperationsOverview } from "@/components/operations/operations-dashboard-client"
+import { OperationsDashboardClient } from "@/components/operations/operations-dashboard-client"
 
 type Metric = {
   label: string
@@ -43,13 +43,17 @@ const panels: Panel[] = [
   { title: "User Activity Timeline", icon: UsersRound, message: "No record found" },
 ]
 
-const navLinks: { label: string; href: string }[] = [
-  { label: "Overview", href: "/admin" },
-  { label: "Project", href: "/modules/operations/projects" },
-  { label: "Client", href: "/modules/clients" },
-  { label: "HR", href: "/modules/hr" },
-  { label: "Ticket", href: "/modules/tickets" },
-  { label: "Finance", href: "/modules/finance" },
+type NavTab =
+  | { label: string; kind: "tab" }
+  | { label: string; kind: "link"; href: string }
+
+const navTabs: NavTab[] = [
+  { label: "Overview", kind: "tab" },
+  { label: "Project", kind: "tab" },
+  { label: "Client", kind: "link", href: "/modules/clients" },
+  { label: "HR", kind: "link", href: "/modules/hr" },
+  { label: "Ticket", kind: "link", href: "/modules/tickets" },
+  { label: "Finance", kind: "link", href: "/modules/finance" },
 ]
 
 function KpiCard({ metric, activeNote }: { metric: Metric; activeNote?: string }) {
@@ -99,6 +103,7 @@ function EmptyPanel({ panel }: { panel: Panel }) {
 }
 
 export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTotal: number; employeeActive: number }) {
+  const [activeTab, setActiveTab] = useState("Overview")
   const dashboardMetrics = metrics.map((metric, index) =>
     index === 1 ? { ...metric, value: String(employeeTotal) } : metric,
   )
@@ -106,50 +111,76 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 p-4 md:p-6 lg:p-8">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Overview</h1>
-        <p className="text-sm text-muted-foreground">Welcome back — here&apos;s what&apos;s happening across your workspace.</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+          {activeTab === "Project" ? "Project" : "Overview"}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {activeTab === "Project"
+            ? "Manage projects right here without leaving the dashboard."
+            : "Welcome back — here's what's happening across your workspace."}
+        </p>
       </div>
 
       <nav className="flex gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1 shadow-sm" aria-label="Dashboard sections">
-        {navLinks.map((item, index) => (
-          <Link
-            key={item.label}
-            href={item.href}
-            aria-current={index === 0 ? "page" : undefined}
-            className={cn(
-              "flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-center text-sm font-medium transition-colors",
-              index === 0
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            {item.label}
-          </Link>
-        ))}
+        {navTabs.map((item) => {
+          const isActive = item.kind === "tab" && item.label === activeTab
+          const className = cn(
+            "flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-center text-sm font-medium transition-colors",
+            isActive
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )
+          if (item.kind === "link") {
+            return (
+              <Link key={item.label} href={item.href} className={className}>
+                {item.label}
+              </Link>
+            )
+          }
+          return (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => setActiveTab(item.label)}
+              aria-current={isActive ? "page" : undefined}
+              className={className}
+            >
+              {item.label}
+            </button>
+          )
+        })}
       </nav>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {dashboardMetrics.map((metric) => (
-          <KpiCard
-            key={metric.label}
-            metric={metric}
-            activeNote={metric.label === "Total Employees" ? `${employeeActive} active` : undefined}
-          />
-        ))}
-      </div>
+      {activeTab === "Project" ? (
+        <div className="rounded-xl border border-border bg-card shadow-sm">
+          <OperationsDashboardClient initialModule="projects" />
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {dashboardMetrics.map((metric) => (
+              <KpiCard
+                key={metric.label}
+                metric={metric}
+                activeNote={metric.label === "Total Employees" ? `${employeeActive} active` : undefined}
+              />
+            ))}
+          </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {panels.map((panel) => (
-          <EmptyPanel key={panel.title} panel={panel} />
-        ))}
-      </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {panels.map((panel) => (
+              <EmptyPanel key={panel.title} panel={panel} />
+            ))}
+          </div>
 
-      <Link
-        href="/admin/settings"
-        className="inline-flex items-center gap-1 self-start text-sm font-medium text-primary transition-colors hover:text-primary/80"
-      >
-        Open admin settings <ChevronRight className="size-4" />
-      </Link>
+          <Link
+            href="/admin/settings"
+            className="inline-flex items-center gap-1 self-start text-sm font-medium text-primary transition-colors hover:text-primary/80"
+          >
+            Open admin settings <ChevronRight className="size-4" />
+          </Link>
+        </>
+      )}
     </div>
   )
 }

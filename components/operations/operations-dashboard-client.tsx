@@ -32,11 +32,26 @@ import {
 const fetcherJson = (url: string) => fetch(url).then((r) => r.json())
 
 const configs: Record<string, { title: string; fields: string[] }> = {
-  resources: { title: "Resources", fields: ["resource_name", "resource_type", "skill_set", "capacity_hours", "status", "notes"] },
-  projects: { title: "Projects", fields: ["project_name", "client_name", "manager_name", "start_date", "end_date", "status", "priority", "sla_due_date", "description"] },
-  allocations: { title: "Allocations", fields: ["project_id", "resource_id", "allocation_percent", "from_date", "to_date", "status", "assigned_by", "notes"] },
-  quality: { title: "Quality & SLA Reviews", fields: ["project_id", "resource_id", "review_date", "quality_score", "sla_score", "status", "reviewer_name", "remarks"] },
-  issues: { title: "Issues", fields: ["project_id", "resource_id", "title", "description", "priority", "status", "assigned_to", "due_date", "remarks"] },
+  resources: {
+    title: "Resources",
+    fields: ["resource_name", "resource_type", "department", "designation", "skill_category", "primary_skills", "secondary_skills", "employment_status", "joining_date", "exit_date", "current_location", "work_mode", "availability_status", "cost_rate", "rate_type", "reporting_manager", "personal_email", "official_email", "contact_mobile", "vendor_agency", "shift", "status", "remarks"],
+  },
+  projects: {
+    title: "Projects",
+    fields: ["client_id", "client_name", "project_name", "service_vertical", "project_type", "project_manager", "operations_manager", "start_date", "end_date", "status", "billing_model", "required_resources", "allocated_resources", "resources_deficiency", "sla_target", "priority", "shift", "work_mode", "client_poc", "client_email", "client_contact", "remarks"],
+  },
+  allocations: {
+    title: "Allocations",
+    fields: ["resource_id", "resource_name", "resource_type", "project_id", "client_name", "role", "from_date", "to_date", "shift", "working_capacity", "allocated_capacity", "available_capacity", "status", "project_manager", "operations_manager", "remarks"],
+  },
+  quality: {
+    title: "Quality & SLA Reviews",
+    fields: ["task_id", "project_id", "client_name", "resource_id", "resource_name", "resource_type", "review_date", "quality_score", "quality_target", "error_rate", "rework_count", "sla_target", "sla_actual", "sla_status", "client_escalation", "root_cause", "corrective_action", "action_owner", "action_due_date", "closure_date", "status", "remarks"],
+  },
+  issues: {
+    title: "Issues",
+    fields: ["date_reported", "project_id", "client_name", "issue_type", "issue_category", "priority", "description", "impact", "reported_by", "assigned_to", "root_cause", "corrective_action", "preventive_action", "target_date", "closure_date", "status", "escalation_level", "client_impact", "business_impact", "remarks"],
+  },
 }
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {

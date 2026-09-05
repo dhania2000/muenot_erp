@@ -726,6 +726,159 @@ const tdsFiling: ModuleConfig = {
     "COALESCE(SUM(gross_amount),0) total_gross, COALESCE(SUM(tds_amount),0) total_tds, COALESCE(SUM(total_liability),0) total_liability, COALESCE(SUM(balance_payable_refund),0) total_balance",
 }
 
+// ---------------------------------------------------------------------------
+// 11. Journal Entries — double-entry vouchers (JE-#### id, editable)
+// ---------------------------------------------------------------------------
+const ACCOUNT_GROUPS = ["Asset", "Liability", "Equity", "Income", "Expense"]
+const VOUCHER_TYPES = ["Journal", "Payment", "Receipt", "Contra", "Sales", "Purchase"]
+const SOURCE_MODULES = ["Manual", "Sales Invoices", "Purchase Bills", "Expenses", "FTE Invoices", "Freelance Invoices", "Bank Transactions", "GST Filing", "TDS Filing"]
+
+const journalEntries: ModuleConfig = {
+  key: "journal-entries",
+  table: "journal_entries",
+  label: "Journal Entries",
+  subtitle: "Finance management",
+  addLabel: "New journal entry",
+  idColumn: "journal_entry_id",
+  idPrefix: "JE",
+  editableId: true,
+  dateColumn: "journal_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "approval_status",
+  searchColumns: ["journal_entry_id", "reference_no", "account_name", "party_name", "project_name", "narration"],
+  fields: [
+    fld("Entry", "journal_entry_id", "Journal Entry ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Entry", "journal_date", "Journal date", "date", { required: true }),
+    fld("Entry", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+    fld("Entry", "reference_type", "Reference type", "select", { options: ["Manual", "System", "Adjustment", "Opening", "Closing"], optional: true }),
+    fld("Entry", "reference_no", "Reference no.", "text"),
+    fld("Entry", "voucher_type", "Voucher type", "select", { options: VOUCHER_TYPES, optional: true }),
+    fld("Entry", "narration", "Narration", "textarea"),
+    fld("Account", "account_id", "Account ID", "text"),
+    fld("Account", "account_name", "Account name", "text", { required: true }),
+    fld("Account", "account_group", "Account group", "select", { options: ACCOUNT_GROUPS, optional: true }),
+    fld("Account", "account_type", "Account type", "text"),
+    fld("Parties & project", "party_id", "Party ID", "text"),
+    fld("Parties & project", "party_name", "Party name", "text"),
+    fld("Parties & project", "project_id", "Project ID", "text"),
+    fld("Parties & project", "project_name", "Project name", "text"),
+    fld("Amounts", "debit", "Debit", "number"),
+    fld("Amounts", "credit", "Credit", "number"),
+    fld("Amounts", "net_amount", "Net amount", "number", { computed: true, money: true }),
+    fld("Amounts", "gst_amount", "GST amount", "number"),
+    fld("Amounts", "tds_amount", "TDS amount", "number"),
+    fld("Payment", "payment_mode", "Payment mode", "select", { options: PAYMENT_MODES, optional: true }),
+    fld("Payment", "cheque_utr_reference", "Cheque / UTR / reference", "text"),
+    fld("Source & approval", "source_module", "Source module", "select", { options: SOURCE_MODULES, optional: true }),
+    fld("Source & approval", "source_reference", "Source reference", "text"),
+    fld("Source & approval", "approval_status", "Approval status", "select", { options: ["Pending", "Approved", "Rejected"] }),
+    fld("Source & approval", "approved_by", "Approved by", "text"),
+    fld("Source & approval", "posting_status", "Posting status", "select", { options: ["Unposted", "Posted"] }),
+    fld("Source & approval", "posting_date", "Posting date", "date"),
+  ],
+  compute: (v) => {
+    const debit = round2(num(v.debit)), credit = round2(num(v.credit))
+    return {
+      debit, credit, net_amount: round2(debit - credit),
+      financial_year: v.financial_year || financialYearFor(v.journal_date),
+    }
+  },
+  tableColumns: [
+    { key: "journal_entry_id", label: "Journal Entry ID", mono: true },
+    { key: "journal_date", label: "Date" },
+    { key: "account_name", label: "Account", sub: "account_group" },
+    { key: "voucher_type", label: "Voucher" },
+    { key: "debit", label: "Debit", align: "right", money: true },
+    { key: "credit", label: "Credit", align: "right", money: true },
+    { key: "approval_status", label: "Approval", badge: { Approved: "default", Pending: "secondary", Rejected: "destructive" } },
+    { key: "posting_status", label: "Posting", badge: { Posted: "default", Unposted: "outline" } },
+  ],
+  kpis: [
+    { label: "Total Debit", key: "total_debit", money: true, icon: "Coins" },
+    { label: "Total Credit", key: "total_credit", money: true, icon: "Wallet" },
+    { label: "Net Amount", key: "net_amount", money: true, icon: "ArrowLeftRight" },
+    { label: "Entries", key: "total_rows", icon: "BookOpen" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(debit),0) total_debit, COALESCE(SUM(credit),0) total_credit, COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) net_amount, COUNT(*) total_rows",
+}
+
+// ---------------------------------------------------------------------------
+// 12. General Ledger — posted ledger lines with running balance (GL-#### id)
+// ---------------------------------------------------------------------------
+const generalLedger: ModuleConfig = {
+  key: "general-ledger",
+  table: "general_ledger",
+  label: "General Ledger",
+  subtitle: "Finance management",
+  addLabel: "New ledger entry",
+  idColumn: "ledger_id",
+  idPrefix: "GL",
+  editableId: true,
+  dateColumn: "transaction_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "reconciliation_status",
+  searchColumns: ["ledger_id", "reference_no", "account_name", "party_name", "project_name", "description"],
+  fields: [
+    fld("Entry", "ledger_id", "Ledger ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Entry", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+    fld("Entry", "transaction_date", "Transaction date", "date", { required: true }),
+    fld("Entry", "value_date", "Value date", "date"),
+    fld("Entry", "month", "Month", "select", { options: MONTHS, optional: true }),
+    fld("Account", "account_id", "Account ID", "text"),
+    fld("Account", "account_name", "Account name", "text", { required: true }),
+    fld("Account", "account_group", "Account group", "select", { options: ACCOUNT_GROUPS, optional: true }),
+    fld("Account", "account_type", "Account type", "text"),
+    fld("Transaction", "transaction_type", "Transaction type", "select", { options: ["Debit", "Credit", "Journal", "Opening", "Contra"], optional: true }),
+    fld("Transaction", "voucher_type", "Voucher type", "select", { options: VOUCHER_TYPES, optional: true }),
+    fld("Transaction", "reference_no", "Reference no.", "text"),
+    fld("Parties & project", "party_id", "Party ID", "text"),
+    fld("Parties & project", "party_name", "Party name", "text"),
+    fld("Parties & project", "project_id", "Project ID", "text"),
+    fld("Parties & project", "project_name", "Project name", "text"),
+    fld("Parties & project", "description", "Description", "textarea"),
+    fld("Amounts", "debit", "Debit", "number"),
+    fld("Amounts", "credit", "Credit", "number"),
+    fld("Amounts", "amount", "Amount", "number", { computed: true, money: true }),
+    fld("Amounts", "gst_amount", "GST amount", "number"),
+    fld("Amounts", "tds_amount", "TDS amount", "number"),
+    fld("Amounts", "balance", "Balance", "number"),
+    fld("Amounts", "balance_type", "Balance type", "select", { options: ["Debit", "Credit"], optional: true }),
+    fld("Payment & reconciliation", "payment_mode", "Payment mode", "select", { options: PAYMENT_MODES, optional: true }),
+    fld("Payment & reconciliation", "cheque_utr_reference", "Cheque / UTR / reference", "text"),
+    fld("Payment & reconciliation", "source_module", "Source module", "select", { options: SOURCE_MODULES, optional: true }),
+    fld("Payment & reconciliation", "source_reference", "Source reference", "text"),
+    fld("Payment & reconciliation", "reconciliation_status", "Reconciliation status", "select", { options: ["Unreconciled", "Reconciled", "Pending"] }),
+    fld("Payment & reconciliation", "reconciliation_date", "Reconciliation date", "date"),
+    fld("Payment & reconciliation", "journal_entry_id", "Journal entry ID", "text"),
+    fld("Payment & reconciliation", "attachment_link", "Attachment / document link", "text"),
+  ],
+  compute: (v) => {
+    const debit = round2(num(v.debit)), credit = round2(num(v.credit))
+    return {
+      debit, credit, amount: round2(credit > 0 ? credit : debit),
+      financial_year: v.financial_year || financialYearFor(v.transaction_date),
+    }
+  },
+  tableColumns: [
+    { key: "ledger_id", label: "Ledger ID", mono: true },
+    { key: "transaction_date", label: "Date" },
+    { key: "account_name", label: "Account", sub: "account_group" },
+    { key: "debit", label: "Debit", align: "right", money: true },
+    { key: "credit", label: "Credit", align: "right", money: true },
+    { key: "balance", label: "Balance", align: "right", money: true },
+    { key: "reconciliation_status", label: "Reconciliation", badge: { Reconciled: "default", Pending: "secondary", Unreconciled: "outline" } },
+  ],
+  kpis: [
+    { label: "Total Debit", key: "total_debit", money: true, icon: "Coins" },
+    { label: "Total Credit", key: "total_credit", money: true, icon: "Wallet" },
+    { label: "Net Movement", key: "net_movement", money: true, icon: "TrendingUp" },
+    { label: "Entries", key: "total_rows", icon: "BookOpen" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(debit),0) total_debit, COALESCE(SUM(credit),0) total_credit, COALESCE(SUM(credit),0) - COALESCE(SUM(debit),0) net_movement, COUNT(*) total_rows",
+}
+
 export const FINANCE_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "purchase-bills": purchaseBills,
   "expenses": expenses,
@@ -737,4 +890,6 @@ export const FINANCE_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "customers-vendors": customersVendors,
   "gst-filing": gstFiling,
   "tds-filing": tdsFiling,
+  "journal-entries": journalEntries,
+  "general-ledger": generalLedger,
 }

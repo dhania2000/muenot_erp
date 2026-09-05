@@ -346,12 +346,19 @@ INSERT INTO `features` (`module_id`, `name`, `slug`, `description`, `sort_order`
 (3, 'Approve Expenses', 'finance.approve_expenses', 'Approve or reject expense claims', 3),
 (3, 'View Financial Reports', 'finance.view_reports', 'View financial statements and reports', 4);
 
--- Features: Recruitment (module_id = 4)
+-- Features: Recruitment (module_id = 4) — aligned with the sidebar dropdown
+-- (app/(workspace)/layout.tsx -> RECRUITMENT_CHILDREN).
 INSERT INTO `features` (`module_id`, `name`, `slug`, `description`, `sort_order`) VALUES
-(4, 'View Candidates', 'recruitment.view_candidates', 'View candidate pipeline', 1),
-(4, 'Manage Candidates', 'recruitment.manage_candidates', 'Add, edit, or reject candidates', 2),
-(4, 'Schedule Interviews', 'recruitment.schedule_interviews', 'Schedule and manage interviews', 3),
-(4, 'Manage Offers', 'recruitment.manage_offers', 'Create and send offer letters', 4);
+(4, 'View Recruitment Dashboard', 'recruitment.view_dashboard', 'View the recruitment dashboard', 1),
+(4, 'View Job Requisitions', 'recruitment.view_requisitions', 'View and manage job requisitions', 2),
+(4, 'View Recruitment Campaigns', 'recruitment.view_campaigns', 'View and manage sourcing campaigns', 3),
+(4, 'View Candidate Master', 'recruitment.view_candidates', 'View the candidate database', 4),
+(4, 'View Screening', 'recruitment.view_screening', 'View and record candidate screening', 5),
+(4, 'Interview Tracker', 'recruitment.schedule_interviews', 'Schedule and track interviews', 6),
+(4, 'View Assessment Tracker', 'recruitment.view_assessments', 'View and evaluate assessments', 7),
+(4, 'Selection & Offers', 'recruitment.manage_offers', 'Manage selections, offers and joining', 8),
+(4, 'View Recruitment Sources', 'recruitment.view_sources', 'View sourcing channel performance', 9),
+(4, 'View Recruitment Settings', 'recruitment.view_settings', 'View and manage recruitment master lists', 10);
 
 -- Features: Operations (module_id = 5)
 INSERT INTO `features` (`module_id`, `name`, `slug`, `description`, `sort_order`) VALUES

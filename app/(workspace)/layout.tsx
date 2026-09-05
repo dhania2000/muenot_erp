@@ -64,6 +64,19 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Email Templates", href: "/modules/finance/email-templates", feature: "finance.view_email_templates" },
 ]
 
+const RECRUITMENT_CHILDREN: { label: string; href: string; feature: string }[] = [
+  { label: "Dashboard", href: "/modules/recruitment", feature: "recruitment.view_dashboard" },
+  { label: "Job Requisitions", href: "/modules/recruitment/job-requisitions", feature: "recruitment.view_requisitions" },
+  { label: "Recruitment Campaigns", href: "/modules/recruitment/recruitment-campaigns", feature: "recruitment.view_campaigns" },
+  { label: "Candidate Master", href: "/modules/recruitment/candidate-master", feature: "recruitment.view_candidates" },
+  { label: "Screening", href: "/modules/recruitment/screening", feature: "recruitment.view_screening" },
+  { label: "Interview Tracker", href: "/modules/recruitment/interview-tracker", feature: "recruitment.schedule_interviews" },
+  { label: "Assessment Tracker", href: "/modules/recruitment/assessment-tracker", feature: "recruitment.view_assessments" },
+  { label: "Selection & Offers", href: "/modules/recruitment/selection-offers", feature: "recruitment.manage_offers" },
+  { label: "Recruitment Sources", href: "/modules/recruitment/recruitment-sources", feature: "recruitment.view_sources" },
+  { label: "Recruitment Settings", href: "/modules/recruitment/recruitment-settings", feature: "recruitment.view_settings" },
+]
+
 const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Operations Dashboard", href: "/modules/operations", feature: "operations.view_dashboard" },
   { label: "Resources", href: "/modules/operations/resources", feature: "operations.view_dashboard" },
@@ -123,8 +136,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: `/modules/${m.slug}`,
         icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
       }
-      if (["hr", "sales", "finance", "operations", "clients", "tickets", "products"].includes(m.slug)) {
-        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "tickets" ? TICKETS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : SALES_CHILDREN
+      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "tickets", "products"].includes(m.slug)) {
+        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "tickets" ? TICKETS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : SALES_CHILDREN
         const children: NavChild[] = source.filter((c) => canAccess(c.feature)).map((c) => ({
           label: c.label,
           href: c.href,

@@ -1,5 +1,5 @@
-import { FinanceDashboardClient } from "@/components/finance/finance-dashboard-client"
+import { FinanceModuleClient } from "@/components/finance/finance-module-client"
 
 export default function JournalEntriesPage() {
-  return <FinanceDashboardClient initialModule="journal-entries" />
+  return <FinanceModuleClient moduleKey="journal-entries" />
 }

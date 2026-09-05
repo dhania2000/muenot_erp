@@ -7,7 +7,7 @@ import {
   Ticket, UsersRound,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { OperationsDashboardClient } from "@/components/operations/operations-dashboard-client"
+import { OperationsOverview } from "@/components/operations/operations-dashboard-client"
 
 type Metric = {
   label: string
@@ -49,7 +49,7 @@ type NavTab =
 
 const navTabs: NavTab[] = [
   { label: "Overview", kind: "tab" },
-  { label: "Project", kind: "tab" },
+  { label: "Operations", kind: "tab" },
   { label: "Client", kind: "link", href: "/modules/clients" },
   { label: "HR", kind: "link", href: "/modules/hr" },
   { label: "Ticket", kind: "link", href: "/modules/tickets" },
@@ -112,11 +112,11 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
     <div className="mx-auto flex max-w-7xl flex-col gap-6 p-4 md:p-6 lg:p-8">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          {activeTab === "Project" ? "Project" : "Overview"}
+          {activeTab === "Operations" ? "Operations" : "Overview"}
         </h1>
         <p className="text-sm text-muted-foreground">
-          {activeTab === "Project"
-            ? "Manage projects right here without leaving the dashboard."
+          {activeTab === "Operations"
+            ? "Your delivery cockpit right here without leaving the dashboard."
             : "Welcome back — here's what's happening across your workspace."}
         </p>
       </div>
@@ -151,9 +151,9 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
         })}
       </nav>
 
-      {activeTab === "Project" ? (
-        <div className="rounded-xl border border-border bg-card shadow-sm">
-          <OperationsDashboardClient initialModule="projects" />
+      {activeTab === "Operations" ? (
+        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <OperationsOverview />
         </div>
       ) : (
         <>

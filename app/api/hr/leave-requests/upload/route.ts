@@ -9,6 +9,6 @@ export async function POST(request: NextRequest) {
   const file = form.get("file")
   if (!(file instanceof File)) return NextResponse.json({ error: "File required" }, { status: 400 })
   if (file.size > 10 * 1024 * 1024) return NextResponse.json({ error: "File too large" }, { status: 413 })
-  const blob = await put(`hr/leave-attachments/${Date.now()}-${file.name}`, file, { access: "private" })
-  return NextResponse.json({ pathname: blob.pathname })
+  const blob = await put(`hr/leave-attachments/${Date.now()}-${file.name}`, file, { access: "public" })
+  return NextResponse.json({ pathname: blob.url })
 }

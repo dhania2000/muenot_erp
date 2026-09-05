@@ -11,6 +11,6 @@ export async function POST(request: Request) {
   const file = form.get("file")
   if (!(file instanceof File)) return NextResponse.json({ error: "File is required" }, { status: 400 })
   if (!allowed.has(file.type) || file.size > maxBytes) return NextResponse.json({ error: "Only PDF, image, Word, and Excel files up to 10MB are allowed" }, { status: 400 })
-  const blob = await put(`email-attachments/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`, file, { access: "private", addRandomSuffix: false })
-  return NextResponse.json({ pathname: blob.pathname, filename: file.name, contentType: file.type, size: file.size })
+  const blob = await put(`email-attachments/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`, file, { access: "public", addRandomSuffix: false })
+  return NextResponse.json({ pathname: blob.url, filename: file.name, contentType: file.type, size: file.size })
 }

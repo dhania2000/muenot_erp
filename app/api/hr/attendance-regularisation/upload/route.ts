@@ -8,6 +8,6 @@ export async function POST(request: Request) {
   const form = await request.formData()
   const file = form.get("file")
   if (!(file instanceof File) || file.size > 10 * 1024 * 1024) return NextResponse.json({ error: "Valid file up to 10MB is required" }, { status: 400 })
-  const blob = await put(`hr/regularisation/${session.userId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`, file, { access: "private" })
-  return NextResponse.json({ pathname: blob.pathname })
+  const blob = await put(`hr/regularisation/${session.userId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`, file, { access: "public" })
+  return NextResponse.json({ pathname: blob.url })
 }

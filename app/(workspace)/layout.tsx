@@ -42,6 +42,8 @@ const HR_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Designations", href: "/modules/hr/master-data?kind=designations", feature: "hr.view_master_data" },
   { label: "HR Emails", href: "/modules/hr/emails", feature: "hr.view_emails" },
   { label: "HR Email Templates", href: "/modules/hr/email-templates", feature: "hr.view_email_templates" },
+  { label: "Letter Templates", href: "/modules/hr/letter-templates", feature: "hr.view_letter_templates" },
+  { label: "Letters", href: "/modules/hr/letters", feature: "hr.view_letters" },
 ]
 
 const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [

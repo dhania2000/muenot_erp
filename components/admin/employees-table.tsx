@@ -122,10 +122,8 @@ export function EmployeesTable({
                 <TableCell className="text-right">
                   {employee.role !== "admin" && (
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon-sm" aria-label="Actions">
-                          <MoreHorizontal className="size-4" />
-                        </Button>
+                      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Actions" />}>
+                        <MoreHorizontal className="size-4" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => setPermissionsTarget(employee)}>

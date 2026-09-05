@@ -6,11 +6,26 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import { Bell, ChevronDown, Clock3, FileText, LogOut, Plus, Search, Settings, ShieldCheck, UserPlus } from "lucide-react"
+import { Bell, ChevronDown, Clock3, FileText, LogOut, MessageSquare, Plus, Search, Settings, ShieldCheck, Ticket, UserPlus, UsersRound } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Input } from "@/components/ui/input"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 export type NavChild = {
   label: string
@@ -92,11 +107,28 @@ export function AppShell({
   const pathname = usePathname()
   const router = useRouter()
   const [profileOpen, setProfileOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [query, setQuery] = useState("")
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" })
     router.push("/login")
     router.refresh()
+  }
+
+  const flatNav = navItems.flatMap((item) =>
+    item.children && item.children.length > 0
+      ? item.children.map((child) => ({ label: `${item.label} · ${child.label}`, href: child.href }))
+      : [{ label: item.label, href: item.href }],
+  )
+  const searchResults = query.trim()
+    ? flatNav.filter((entry) => entry.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : flatNav
+
+  function goTo(href: string) {
+    setSearchOpen(false)
+    setQuery("")
+    router.push(href)
   }
 
   return (
@@ -173,15 +205,78 @@ export function AppShell({
 
       <div className="flex h-full flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
-          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span><span className="hidden text-sm text-muted-foreground sm:inline">Home <span className="mx-1">���</span> Dashboard</span></div>
+          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span></div>
           <div className="flex items-center gap-1">
-            {[{label:"Search", icon:Search},{label:"Messages", icon:FileText},{label:"Activity", icon:Clock3},{label:"Create", icon:Plus},{label:"Notifications", icon:Bell}].map(({label,icon:Icon}) => <Button key={label} variant="ghost" size="icon-sm" aria-label={label} className="text-muted-foreground hover:bg-primary/10 hover:text-primary"><Icon className="size-5" /></Button>)}
+            <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Recent activity" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
+                <Clock3 className="size-5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Recent activity</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">No recent activity yet</p>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Create" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
+                <Plus className="size-5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Quick create</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {user.role === "admin" && (
+                  <DropdownMenuItem onClick={() => router.push("/modules/hr/employees")}>
+                    <UserPlus className="size-4" /> Add employee
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => router.push("/modules/tickets/all")}>
+                  <Ticket className="size-4" /> New ticket
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/modules/clients")}>
+                  <UsersRound className="size-4" /> New client
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Notifications" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
+                <Bell className="size-5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">You&apos;re all caught up</p>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/admin/settings")} aria-label="Settings"><Settings className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={handleLogout} aria-label="Sign out"><LogOut className="size-4" /></Button>
           </div>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
+
+      <Dialog open={searchOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setQuery("") }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Search</DialogTitle>
+          </DialogHeader>
+          <Input autoFocus placeholder="Search modules and pages..." value={query} onChange={(e) => setQuery(e.target.value)} />
+          <div className="flex max-h-72 flex-col gap-1 overflow-y-auto pt-2">
+            {searchResults.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No results found</p>}
+            {searchResults.map((entry) => (
+              <button
+                key={entry.href}
+                type="button"
+                onClick={() => goTo(entry.href)}
+                className="rounded-md px-2 py-2 text-left text-sm hover:bg-muted"
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

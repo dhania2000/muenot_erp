@@ -16,7 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Eye, Plus, Search } from "lucide-react"
+import { Eye, Loader2, Plus, Search, Trash2 } from "lucide-react"
 import { ComposeEmailDialog } from "@/components/sales/compose-email-dialog"
 import { EmailDetailDialog } from "@/components/sales/email-detail-dialog"
 
@@ -51,9 +51,24 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
   const [search, setSearch] = useState("")
   const [composeOpen, setComposeOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
 
   const emails = data?.emails ?? []
   const emailConfigured = data?.emailConfigured ?? false
+
+  async function handleDelete(e: EmailRow) {
+    if (!window.confirm(`Delete this email "${e.subject}"? This cannot be undone.`)) return
+    setDeletingId(e.id)
+    try {
+      const res = await fetch(`/api/sales/emails/${e.id}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("Failed to delete email")
+      await mutate()
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to delete email")
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   // Count how many emails belong to each thread so we can flag conversations.
   const threadCounts = useMemo(() => {
@@ -113,19 +128,22 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
               <TableHead className="text-right">Opens</TableHead>
               <TableHead>Last opened</TableHead>
               <TableHead>Sent</TableHead>
+              <TableHead className="w-12 text-right">
+                <span className="sr-only">Actions</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                   Loading emails...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                   No emails sent yet.
                 </TableCell>
               </TableRow>
@@ -161,6 +179,25 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
                     {e.last_opened_at ? formatDateTime(e.last_opened_at) : "—"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{formatDateTime(e.sent_at)}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-muted-foreground hover:text-destructive"
+                      disabled={deletingId === e.id}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void handleDelete(e)
+                      }}
+                      aria-label={`Delete email ${e.subject}`}
+                    >
+                      {deletingId === e.id ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-4" />
+                      )}
+                    </Button>
+                  </TableCell>
                 </TableRow>
               )
             })}

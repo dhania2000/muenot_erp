@@ -106,6 +106,13 @@ export async function POST(request: Request) {
   const references = thread ? thread.references : ""
   const inReplyTo = thread ? thread.inReplyTo : ""
 
+  // X-Entity-Ref-ID controls how Gmail groups messages that share a subject line.
+  // - New:       a unique value per email so Gmail (and Outlook) never merge it
+  //              into an earlier same-subject conversation.
+  // - Follow Up: the thread id, shared by every message in the thread, so the
+  //              reply reliably groups with the last email sent to this recipient.
+  const entityRefId = mailType === "followup" ? threadId : `${threadId}:${token}`
+
   let status: "Sent" | "Failed" = "Sent"
   let errorMessage: string | null = null
   try {
@@ -116,6 +123,7 @@ export async function POST(request: Request) {
       messageId,
       inReplyTo: inReplyTo || undefined,
       references: references || undefined,
+      headers: { "X-Entity-Ref-ID": entityRefId },
       department,
     })
   } catch (err: any) {

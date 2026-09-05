@@ -319,6 +319,8 @@ export async function sendEmail(opts: {
   messageId?: string
   inReplyTo?: string
   references?: string
+  /** Extra RFC 5322 headers, e.g. X-Entity-Ref-ID to control Gmail thread grouping. */
+  headers?: Record<string, string>
   department?: Department
   /** Attach a calendar invite so mail clients show an "Add to calendar" card. */
   icalEvent?: { method: string; content: string; filename?: string }
@@ -334,6 +336,7 @@ export async function sendEmail(opts: {
     messageId: opts.messageId,
     inReplyTo: opts.inReplyTo,
     references: opts.references,
+    headers: opts.headers,
     icalEvent: opts.icalEvent
       ? {
           method: opts.icalEvent.method,

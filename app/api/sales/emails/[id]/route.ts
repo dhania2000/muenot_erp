@@ -45,3 +45,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   return NextResponse.json({ email, events, thread })
 }
+
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireFeature("sales.send_emails")
+  if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const { id } = await params
+  await ensureEmailTables()
+
+  // Remove open-tracking events first, then the email itself.
+  await query("DELETE FROM sales_email_events WHERE email_id = ?", [id])
+  await query("DELETE FROM sales_emails WHERE id = ?", [id])
+  return NextResponse.json({ success: true })
+}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
+import { handleHtmlSourcePaste } from "@/lib/utils"
 import {
   Dialog,
   DialogContent,
@@ -151,7 +152,7 @@ export function ComposeEmailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-2xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Compose email</DialogTitle>
           <DialogDescription>
@@ -173,7 +174,7 @@ export function ComposeEmailDialog({
           </Alert>
         )}
 
-        <FieldGroup>
+        <FieldGroup className="min-h-0 flex-1 overflow-y-auto">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="lead">Link to lead (optional)</FieldLabel>
@@ -256,6 +257,7 @@ export function ComposeEmailDialog({
               id="body"
               value={form.body}
               onChange={(e) => update("body", e.target.value)}
+              onPaste={(e) => handleHtmlSourcePaste(e, form.body, (next) => update("body", next))}
               rows={10}
               placeholder="<p>Hi {{contact_person}},</p>"
             />

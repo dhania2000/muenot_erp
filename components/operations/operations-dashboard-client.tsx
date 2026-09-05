@@ -52,7 +52,7 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   "Partially Allocated": "outline",
 }
 
-function OperationsOverview() {
+export function OperationsOverview() {
   const { data, isLoading } = useSWR("/api/operations/dashboard", fetcherJson, { refreshInterval: 30000 })
 
   if (isLoading || !data) {

@@ -1,9 +1,13 @@
+"use client"
+
 import Link from "next/link"
+import { useState } from "react"
 import {
   CalendarCheck2, CheckSquare2, ChevronRight, Clock3, FileText, Layers3,
   Ticket, UsersRound,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { OperationsOverview } from "@/components/operations/operations-dashboard-client"
 
 type Metric = {
   label: string

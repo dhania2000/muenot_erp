@@ -124,6 +124,11 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   Qualified: "secondary",
   "Follow Up 1": "secondary",
   "Follow Up 2": "secondary",
+  "Follow Up 3": "secondary",
+  "Follow Up 4": "secondary",
+  "Follow Up 5": "secondary",
+  "Follow Up 6": "secondary",
+  "Follow Up 7": "secondary",
   "In Discussion": "default",
   "Proposal Sent": "default",
   Ready: "default",
@@ -131,7 +136,18 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   Lost: "destructive",
 }
 
-const STATUS_OPTIONS = ["New", "Qualified", "Proposal Sent"] as const
+const STATUS_OPTIONS = [
+  "New",
+  "Qualified",
+  "Follow Up 1",
+  "Follow Up 2",
+  "Follow Up 3",
+  "Follow Up 4",
+  "Follow Up 5",
+  "Follow Up 6",
+  "Follow Up 7",
+  "Proposal Sent",
+] as const
 
 const LEAD_STATUS_OPTIONS = ["Open", "Won", "Lost", "Follow Up"] as const
 
@@ -337,7 +353,7 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
                 <TableCell className="text-muted-foreground">{lead.lead_source || "—"}</TableCell>
                 <TableCell>
                   {canManage ? (
-                    <Select value={lead.status} onValueChange={(value) => updateStatus(lead, value)}>
+                    <Select value={lead.status ?? ""} onValueChange={(value) => updateStatus(lead, value as string)}>
                       <SelectTrigger size="sm" className="w-36">
                         <SelectValue />
                       </SelectTrigger>

@@ -77,7 +77,7 @@ export function EmailDetailDialog({
 
   return (
     <Dialog open={emailId != null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-3xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="pr-8 text-pretty">{email?.subject || "Email"}</DialogTitle>
           <DialogDescription>
@@ -90,7 +90,7 @@ export function EmailDetailDialog({
         {isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading...</p>}
 
         {email && (
-          <div className="flex flex-col gap-4">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <Badge variant={statusVariant(email.status)}>{email.status}</Badge>
               <span className="inline-flex items-center gap-1.5 text-muted-foreground">
@@ -181,11 +181,13 @@ export function EmailDetailDialog({
 
               <TabsContent value="message" className="pt-2">
                 <Separator className="mb-3" />
-                <div
-                  className="prose prose-sm max-w-none text-sm leading-relaxed [&_p]:my-2"
-                  // The stored body is our own rendered template HTML.
-                  dangerouslySetInnerHTML={{ __html: email.body }}
-                />
+                <div className="w-full overflow-x-auto">
+                  <div
+                    className="prose prose-sm w-full max-w-none break-words text-sm leading-relaxed [&_img]:h-auto [&_img]:max-w-full [&_p]:my-2 [&_table]:w-full [&_table]:max-w-full [&_td]:break-words"
+                    // The stored body is our own rendered template HTML.
+                    dangerouslySetInnerHTML={{ __html: email.body }}
+                  />
+                </div>
               </TabsContent>
             </Tabs>
           </div>

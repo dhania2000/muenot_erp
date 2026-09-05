@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2Icon } from "lucide-react"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
+import { handleHtmlSourcePaste } from "@/lib/utils"
 import type { EmailTemplateRow } from "@/components/sales/email-templates-client"
 
 type FormState = {
@@ -148,6 +149,7 @@ export function EmailTemplateDialog({
                   className="font-mono text-xs"
                   value={form.body}
                   onChange={(e) => update("body", e.target.value)}
+                  onPaste={(e) => handleHtmlSourcePaste(e, form.body, (next) => update("body", next))}
                   required
                 />
                 <FieldDescription>

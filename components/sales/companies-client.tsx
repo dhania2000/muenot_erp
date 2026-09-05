@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Table,
   TableBody,
   TableCell,
@@ -101,6 +108,10 @@ const PRIORITY_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
   Low: "outline",
 }
 
+const STATUS_OPTIONS = ["New", "Contacted", "Qualified", "Inactive"] as const
+
+const PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const
+
 export function CompaniesClient({ canManage }: { canManage: boolean }) {
   const { data, isLoading, mutate } = useSWR<{ companies: CompanyRow[] }>("/api/sales/companies", fetcher)
   const [search, setSearch] = useState("")
@@ -116,6 +127,20 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
       [c.company_name, c.industry, c.country, c.company_type].filter(Boolean).some((v) => v!.toLowerCase().includes(q)),
     )
   }, [companies, search])
+
+  async function updateField(company: CompanyRow, field: "status" | "priority", value: string) {
+    const res = await fetch(`/api/sales/companies/${company.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [field]: value }),
+    })
+    if (res.ok) {
+      toast.success(`${field === "status" ? "Status" : "Priority"} updated to ${value}`)
+      mutate()
+    } else {
+      toast.error(`Unable to update ${field}`)
+    }
+  }
 
   async function deleteCompany(company: CompanyRow) {
     if (!confirm(`Delete ${company.company_name}? This cannot be undone.`)) return
@@ -204,10 +229,45 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
                 <TableCell className="text-muted-foreground">{company.country || "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{company.company_type || "—"}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_VARIANT[company.status] || "outline"}>{company.status}</Badge>
+                  {canManage ? (
+                    <Select value={company.status ?? ""} onValueChange={(value) => updateField(company, "status", value as string)}>
+                      <SelectTrigger size="sm" className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STATUS_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                        {!STATUS_OPTIONS.includes(company.status as (typeof STATUS_OPTIONS)[number]) &&
+                          company.status && (
+                            <SelectItem value={company.status}>{company.status}</SelectItem>
+                          )}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant={STATUS_VARIANT[company.status] || "outline"}>{company.status}</Badge>
+                  )}
                 </TableCell>
                 <TableCell>
-                  {company.priority ? (
+                  {canManage ? (
+                    <Select
+                      value={company.priority || ""}
+                      onValueChange={(value) => updateField(company, "priority", value as string)}
+                    >
+                      <SelectTrigger size="sm" className="w-28">
+                        <SelectValue placeholder="Set" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PRIORITY_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : company.priority ? (
                     <Badge variant={PRIORITY_VARIANT[company.priority] || "outline"}>{company.priority}</Badge>
                   ) : (
                     <span className="text-muted-foreground">—</span>

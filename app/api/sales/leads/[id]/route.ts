@@ -7,6 +7,11 @@ const HEALTH_SCORE: Record<string, number> = {
   Qualified: 25,
   "Follow Up 1": 20,
   "Follow Up 2": 35,
+  "Follow Up 3": 40,
+  "Follow Up 4": 45,
+  "Follow Up 5": 50,
+  "Follow Up 6": 55,
+  "Follow Up 7": 60,
   "In Discussion": 50,
   "Proposal Sent": 70,
   Ready: 85,
@@ -91,7 +96,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
     if (invalidStatusEnum) {
       await query(
-        "ALTER TABLE sales_leads MODIFY `status` ENUM('New','Qualified','Follow Up 1','Follow Up 2','In Discussion','Proposal Sent','Ready','Won','Lost') NOT NULL DEFAULT 'New'",
+        "ALTER TABLE sales_leads MODIFY `status` ENUM('New','Qualified','Follow Up 1','Follow Up 2','Follow Up 3','Follow Up 4','Follow Up 5','Follow Up 6','Follow Up 7','In Discussion','Proposal Sent','Ready','Won','Lost') NOT NULL DEFAULT 'New'",
       ).catch(() => {})
     }
 

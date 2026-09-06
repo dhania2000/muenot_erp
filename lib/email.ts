@@ -285,7 +285,18 @@ function getTransporter(department: Department = "sales") {
   const cacheKey = `${department}:${config.host}:${config.port}:${config.user}`
   const existing = transporters.get(cacheKey)
   if (existing) return existing
-  const created = nodemailer.createTransport({ host: config.host, port: config.port, secure: config.secure, auth: { user: config.user, pass: config.pass } })
+  const created = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: { user: config.user, pass: config.pass },
+    // Fail fast instead of hanging forever when the SMTP host is unreachable,
+    // blocked, or misconfigured. Without these, sendMail() never rejects and
+    // the compose dialog's "Send email" button spins indefinitely.
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
+  })
   transporters.set(cacheKey, created)
   return created
 }

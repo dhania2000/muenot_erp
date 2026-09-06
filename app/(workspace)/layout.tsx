@@ -68,16 +68,14 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
 ]
 
 const RECRUITMENT_CHILDREN: { label: string; href: string; feature: string }[] = [
-  { label: "Dashboard", href: "/modules/recruitment", feature: "recruitment.view_dashboard" },
-  { label: "Job Requisitions", href: "/modules/recruitment/job-requisitions", feature: "recruitment.view_requisitions" },
-  { label: "Recruitment Campaigns", href: "/modules/recruitment/recruitment-campaigns", feature: "recruitment.view_campaigns" },
-  { label: "Candidate Master", href: "/modules/recruitment/candidate-master", feature: "recruitment.view_candidates" },
-  { label: "Screening", href: "/modules/recruitment/screening", feature: "recruitment.view_screening" },
-  { label: "Interview Tracker", href: "/modules/recruitment/interview-tracker", feature: "recruitment.schedule_interviews" },
-  { label: "Assessment Tracker", href: "/modules/recruitment/assessment-tracker", feature: "recruitment.view_assessments" },
-  { label: "Selection & Offers", href: "/modules/recruitment/selection-offers", feature: "recruitment.manage_offers" },
-  { label: "Recruitment Sources", href: "/modules/recruitment/recruitment-sources", feature: "recruitment.view_sources" },
-  { label: "Recruitment Settings", href: "/modules/recruitment/recruitment-settings", feature: "recruitment.view_settings" },
+  { label: "Recruit Dashboard", href: "/modules/recruitment", feature: "recruitment.view_dashboard" },
+  { label: "Jobs", href: "/modules/recruitment/jobs", feature: "recruitment.view_jobs" },
+  { label: "Job Applications", href: "/modules/recruitment/job-applications", feature: "recruitment.view_applications" },
+  { label: "Interview Schedule", href: "/modules/recruitment/interview-schedule", feature: "recruitment.schedule_interviews" },
+  { label: "Job Offer Letter", href: "/modules/recruitment/job-offer-letter", feature: "recruitment.manage_offers" },
+  { label: "Job Skills", href: "/modules/recruitment/job-skills", feature: "recruitment.view_skills" },
+  { label: "Candidate Database", href: "/modules/recruitment/candidate-database", feature: "recruitment.view_candidates" },
+  { label: "Recruit Report", href: "/modules/recruitment/recruit-job-report", feature: "recruitment.view_reports" },
 ]
 
 const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = [

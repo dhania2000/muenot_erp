@@ -142,7 +142,24 @@ export async function POST(request: Request) {
     })
   } catch (err: any) {
     status = "Failed"
-    errorMessage = String(err?.message || err).slice(0, 500)
+    // Nodemailer/SMTP errors often carry the useful detail in `code` and
+    // `response` rather than `message`. Build a message that never comes back
+    // empty so the composer shows a real reason instead of a bare fallback.
+    const parts = [
+      err?.message,
+      err?.code ? `code: ${err.code}` : null,
+      err?.command ? `command: ${err.command}` : null,
+      err?.response ? `response: ${err.response}` : null,
+    ].filter(Boolean)
+    errorMessage = (parts.length ? parts.join(" | ") : String(err)).slice(0, 500)
+    console.error("[v0] Sales email send failed:", {
+      department,
+      to: to_email,
+      code: err?.code,
+      command: err?.command,
+      response: err?.response,
+      message: err?.message,
+    })
   }
 
   const result = await query<any>(

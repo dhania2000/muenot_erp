@@ -23,7 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { ContractDialog } from "@/components/sales/contract-dialog"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type ContractRow = {
   id: number
@@ -65,16 +67,13 @@ export function ContractsClient({ canManage }: { canManage: boolean }) {
     )
   }, [contracts, search])
 
-  async function deleteContract(contract: ContractRow) {
-    if (!confirm(`Delete contract ${contract.contract_code}?`)) return
-    const res = await fetch(`/api/sales/contracts/${contract.id}`, { method: "DELETE" })
-    if (res.ok) {
-      toast.success("Contract deleted")
-      mutate()
-    } else {
-      toast.error("Unable to delete contract")
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/contracts/${id}`,
+    labels: { singular: "contract", plural: "contracts" },
+    mutate,
+    onDeleted: clear,
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -101,10 +100,24 @@ export function ContractsClient({ canManage }: { canManage: boolean }) {
         )}
       </div>
 
+      {canManage && (
+        <SelectionToolbar
+          count={selected.size}
+          noun="contract"
+          onClear={clear}
+          onDelete={() => del.requestBulk([...selected])}
+        />
+      )}
+
       <div className="rounded-md border border-border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-10">
+                  <SelectAllCheckbox ids={filtered.map((c) => c.id)} selected={selected} onToggleAll={toggleAll} />
+                </TableHead>
+              )}
               <TableHead>Contract</TableHead>
               <TableHead>Company</TableHead>
               <TableHead>Term</TableHead>
@@ -117,20 +130,29 @@ export function ContractsClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   Loading contracts...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   No contracts found.
                 </TableCell>
               </TableRow>
             )}
             {filtered.map((contract) => (
-              <TableRow key={contract.id}>
+              <TableRow key={contract.id} data-state={selected.has(contract.id) ? "selected" : undefined}>
+                {canManage && (
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`Select contract ${contract.contract_code}`}
+                      checked={selected.has(contract.id)}
+                      onCheckedChange={() => toggle(contract.id)}
+                    />
+                  </TableCell>
+                )}
                 <TableCell className="font-medium">{contract.contract_code}</TableCell>
                 <TableCell>{contract.company_name || "—"}</TableCell>
                 <TableCell className="text-muted-foreground">
@@ -156,7 +178,10 @@ export function ContractsClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit contract
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteContract(contract)}>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() => del.requestSingle(contract.id, `contract ${contract.contract_code}`)}
+                        >
                           Delete contract
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -179,6 +204,8 @@ export function ContractsClient({ canManage }: { canManage: boolean }) {
           mutate()
         }}
       />
+
+      {del.dialog}
     </div>
   )
 }

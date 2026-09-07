@@ -31,9 +31,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Mail, MoreHorizontal, Plus, Search } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { LeadDialog } from "@/components/sales/lead-dialog"
 import { ComposeEmailDialog } from "@/components/sales/compose-email-dialog"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 const LEAD_IMPORT_ALIASES = {
   contact_person: ["contactperson", "name", "contact"],
@@ -241,16 +243,13 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
     }
   }
 
-  async function deleteLead(lead: LeadRow) {
-    if (!confirm(`Delete lead for ${lead.company_name}? This cannot be undone.`)) return
-    const res = await fetch(`/api/sales/leads/${lead.id}`, { method: "DELETE" })
-    if (res.ok) {
-      toast.success("Lead deleted")
-      mutate()
-    } else {
-      toast.error("Unable to delete lead")
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/leads/${id}`,
+    labels: { singular: "lead", plural: "leads" },
+    mutate,
+    onDeleted: clear,
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -304,10 +303,24 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
         </div>
       </div>
 
+      {canManage && (
+        <SelectionToolbar
+          count={selected.size}
+          noun="lead"
+          onClear={clear}
+          onDelete={() => del.requestBulk([...selected])}
+        />
+      )}
+
       <div className="rounded-md border border-border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-10">
+                  <SelectAllCheckbox ids={filtered.map((l) => l.id)} selected={selected} onToggleAll={toggleAll} />
+                </TableHead>
+              )}
               <TableHead>Lead</TableHead>
               <TableHead>Company</TableHead>
               <TableHead>Source</TableHead>
@@ -322,20 +335,29 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
                   Loading leads...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
                   No leads match this view.
                 </TableCell>
               </TableRow>
             )}
             {filtered.map((lead) => (
-              <TableRow key={lead.id}>
+              <TableRow key={lead.id} data-state={selected.has(lead.id) ? "selected" : undefined}>
+                {canManage && (
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`Select lead ${lead.company_name || lead.lead_code}`}
+                      checked={selected.has(lead.id)}
+                      onCheckedChange={() => toggle(lead.id)}
+                    />
+                  </TableCell>
+                )}
                 <TableCell>
                   <div className="flex flex-col">
                     <span className="font-medium">{lead.contact_person || "—"}</span>
@@ -432,7 +454,10 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit lead
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteLead(lead)}>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() => del.requestSingle(lead.id, `lead for ${lead.company_name || lead.lead_code}`)}
+                        >
                           Delete lead
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -463,6 +488,8 @@ export function LeadsClient({ canManage }: { canManage: boolean }) {
           mutate()
         }}
       />
+
+      {del.dialog}
     </div>
   )
 }

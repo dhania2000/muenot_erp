@@ -22,7 +22,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { ForecastDialog } from "@/components/sales/forecast-dialog"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type ForecastRow = {
   id: number

@@ -29,8 +29,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { CompanyDialog } from "@/components/sales/company-dialog"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 const COMPANY_IMPORT_ALIASES = {
   company_name: ["companyname", "company", "name"],
@@ -142,16 +144,13 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
     }
   }
 
-  async function deleteCompany(company: CompanyRow) {
-    if (!confirm(`Delete ${company.company_name}? This cannot be undone.`)) return
-    const res = await fetch(`/api/sales/companies/${company.id}`, { method: "DELETE" })
-    if (res.ok) {
-      toast.success("Company deleted")
-      mutate()
-    } else {
-      toast.error("Unable to delete company")
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/companies/${id}`,
+    labels: { singular: "company", plural: "companies" },
+    mutate,
+    onDeleted: clear,
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -188,10 +187,24 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
         )}
       </div>
 
+      {canManage && (
+        <SelectionToolbar
+          count={selected.size}
+          noun="company"
+          onClear={clear}
+          onDelete={() => del.requestBulk([...selected])}
+        />
+      )}
+
       <div className="rounded-md border border-border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-10">
+                  <SelectAllCheckbox ids={filtered.map((c) => c.id)} selected={selected} onToggleAll={toggleAll} />
+                </TableHead>
+              )}
               <TableHead>Company</TableHead>
               <TableHead>Industry</TableHead>
               <TableHead>Location</TableHead>
@@ -205,20 +218,29 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
                   Loading companies...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
                   No companies found.
                 </TableCell>
               </TableRow>
             )}
             {filtered.map((company) => (
-              <TableRow key={company.id}>
+              <TableRow key={company.id} data-state={selected.has(company.id) ? "selected" : undefined}>
+                {canManage && (
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`Select company ${company.company_name}`}
+                      checked={selected.has(company.id)}
+                      onCheckedChange={() => toggle(company.id)}
+                    />
+                  </TableCell>
+                )}
                 <TableCell>
                   <div className="flex flex-col">
                     <span className="font-medium">{company.company_name}</span>
@@ -289,7 +311,10 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit company
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteCompany(company)}>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() => del.requestSingle(company.id, company.company_name)}
+                        >
                           Delete company
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -312,6 +337,8 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
           mutate()
         }}
       />
+
+      {del.dialog}
     </div>
   )
 }

@@ -23,7 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { EmailTemplateDialog } from "@/components/sales/email-template-dialog"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type EmailTemplateRow = {
   id: number
@@ -59,16 +61,13 @@ export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {
     )
   }, [templates, search])
 
-  async function deleteTemplate(t: EmailTemplateRow) {
-    if (!confirm(`Delete template "${t.name}"?`)) return
-    const res = await fetch(`/api/sales/email-templates/${t.id}`, { method: "DELETE" })
-    if (res.ok) {
-      toast.success("Template deleted")
-      mutate()
-    } else {
-      toast.error("Unable to delete template")
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/email-templates/${id}`,
+    labels: { singular: "template", plural: "templates" },
+    mutate,
+    onDeleted: clear,
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -99,6 +98,11 @@ export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-10">
+                  <SelectAllCheckbox ids={filtered.map((t) => t.id)} selected={selected} onToggleAll={toggleAll} />
+                </TableHead>
+              )}
               <TableHead>Name</TableHead>
               <TableHead>Subject</TableHead>
               <TableHead>Category</TableHead>
@@ -109,20 +113,29 @@ export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
                   Loading templates...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
                   No templates yet.
                 </TableCell>
               </TableRow>
             )}
             {filtered.map((t) => (
-              <TableRow key={t.id}>
+              <TableRow key={t.id} data-state={selected.has(t.id) ? "selected" : undefined}>
+                {canManage && (
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`Select template ${t.name}`}
+                      checked={selected.has(t.id)}
+                      onCheckedChange={() => toggle(t.id)}
+                    />
+                  </TableCell>
+                )}
                 <TableCell className="font-medium">{t.name}</TableCell>
                 <TableCell className="max-w-xs truncate text-muted-foreground">{t.subject}</TableCell>
                 <TableCell>
@@ -144,7 +157,10 @@ export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit template
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteTemplate(t)}>
+                        <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => del.requestSingle(t.id, `template "${t.name}"`)}
+                      >
                           Delete template
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -167,6 +183,8 @@ export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {
           mutate()
         }}
       />
+
+      {del.dialog}
     </div>
   )
 }

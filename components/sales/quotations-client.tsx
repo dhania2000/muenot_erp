@@ -23,7 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { QuotationDialog } from "@/components/sales/quotation-dialog"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type QuotationRow = {
   id: number
@@ -65,16 +67,13 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
     )
   }, [quotations, search])
 
-  async function deleteQuotation(quotation: QuotationRow) {
-    if (!confirm(`Delete quotation ${quotation.quote_code}?`)) return
-    const res = await fetch(`/api/sales/quotations/${quotation.id}`, { method: "DELETE" })
-    if (res.ok) {
-      toast.success("Quotation deleted")
-      mutate()
-    } else {
-      toast.error("Unable to delete quotation")
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/quotations/${id}`,
+    labels: { singular: "quotation", plural: "quotations" },
+    mutate,
+    onDeleted: clear,
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -105,6 +104,11 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-10">
+                  <SelectAllCheckbox ids={filtered.map((q) => q.id)} selected={selected} onToggleAll={toggleAll} />
+                </TableHead>
+              )}
               <TableHead>Quote</TableHead>
               <TableHead>Company</TableHead>
               <TableHead>Opportunity</TableHead>
@@ -117,20 +121,29 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   Loading quotations...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   No quotations found.
                 </TableCell>
               </TableRow>
             )}
             {filtered.map((quotation) => (
-              <TableRow key={quotation.id}>
+              <TableRow key={quotation.id} data-state={selected.has(quotation.id) ? "selected" : undefined}>
+                {canManage && (
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`Select quotation ${quotation.quote_code}`}
+                      checked={selected.has(quotation.id)}
+                      onCheckedChange={() => toggle(quotation.id)}
+                    />
+                  </TableCell>
+                )}
                 <TableCell>
                   <div className="flex flex-col">
                     <span className="font-medium">{quotation.quote_code}</span>
@@ -164,7 +177,10 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit quotation
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteQuotation(quotation)}>
+                        <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => del.requestSingle(quotation.id, `quotation ${quotation.quote_code}`)}
+                      >
                           Delete quotation
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -187,6 +203,8 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
           mutate()
         }}
       />
+
+      {del.dialog}
     </div>
   )
 }

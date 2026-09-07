@@ -23,7 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search, Video } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { MeetingDialog } from "@/components/sales/meeting-dialog"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type MeetingRow = {
   id: number
@@ -84,16 +86,13 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
     )
   }, [meetings, search])
 
-  async function deleteMeeting(meeting: MeetingRow) {
-    if (!confirm(`Delete this meeting with ${meeting.company_name}?`)) return
-    const res = await fetch(`/api/sales/meetings/${meeting.id}`, { method: "DELETE" })
-    if (res.ok) {
-      toast.success("Meeting deleted")
-      mutate()
-    } else {
-      toast.error("Unable to delete meeting")
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/meetings/${id}`,
+    labels: { singular: "meeting", plural: "meetings" },
+    mutate,
+    onDeleted: clear,
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -151,6 +150,11 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-10">
+                  <SelectAllCheckbox ids={filtered.map((m) => m.id)} selected={selected} onToggleAll={toggleAll} />
+                </TableHead>
+              )}
               <TableHead>Date</TableHead>
               <TableHead>Company</TableHead>
               <TableHead>Contact</TableHead>
@@ -163,20 +167,29 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   Loading meetings...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   No meetings found.
                 </TableCell>
               </TableRow>
             )}
             {filtered.map((meeting) => (
-              <TableRow key={meeting.id}>
+              <TableRow key={meeting.id} data-state={selected.has(meeting.id) ? "selected" : undefined}>
+                {canManage && (
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`Select meeting with ${meeting.company_name}`}
+                      checked={selected.has(meeting.id)}
+                      onCheckedChange={() => toggle(meeting.id)}
+                    />
+                  </TableCell>
+                )}
                 <TableCell>
                   <div className="flex flex-col">
                     <span className="font-medium">{formatDate(meeting.meeting_date)}</span>
@@ -207,9 +220,12 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit meeting
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteMeeting(meeting)}>
-                          Delete meeting
-                        </DropdownMenuItem>
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => del.requestSingle(meeting.id, `this meeting with ${meeting.company_name}`)}
+                      >
+                        Delete meeting
+                      </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -232,6 +248,8 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
           mutate()
         }}
       />
+
+      {del.dialog}
     </div>
   )
 }

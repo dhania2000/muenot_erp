@@ -23,7 +23,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { OnboardingDialog } from "@/components/sales/onboarding-dialog"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type OnboardingRow = {
   id: number
@@ -65,16 +67,13 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
     )
   }, [records, search])
 
-  async function deleteRecord(record: OnboardingRow) {
-    if (!confirm(`Delete onboarding record ${record.onboarding_code}?`)) return
-    const res = await fetch(`/api/sales/onboarding/${record.id}`, { method: "DELETE" })
-    if (res.ok) {
-      toast.success("Onboarding record deleted")
-      mutate()
-    } else {
-      toast.error("Unable to delete onboarding record")
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/onboarding/${id}`,
+    labels: { singular: "onboarding record", plural: "onboarding records" },
+    mutate,
+    onDeleted: clear,
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -105,6 +104,11 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-10">
+                  <SelectAllCheckbox ids={filtered.map((r) => r.id)} selected={selected} onToggleAll={toggleAll} />
+                </TableHead>
+              )}
               <TableHead>Company</TableHead>
               <TableHead>Contract</TableHead>
               <TableHead>Kickoff</TableHead>
@@ -117,20 +121,29 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   Loading onboarding records...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   No onboarding records found.
                 </TableCell>
               </TableRow>
             )}
             {filtered.map((record) => (
-              <TableRow key={record.id}>
+              <TableRow key={record.id} data-state={selected.has(record.id) ? "selected" : undefined}>
+                {canManage && (
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`Select onboarding record ${record.onboarding_code}`}
+                      checked={selected.has(record.id)}
+                      onCheckedChange={() => toggle(record.id)}
+                    />
+                  </TableCell>
+                )}
                 <TableCell>
                   <div className="flex flex-col">
                     <span className="font-medium">{record.company_name || "—"}</span>
@@ -161,7 +174,10 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit record
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteRecord(record)}>
+                        <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => del.requestSingle(record.id, `onboarding record ${record.onboarding_code}`)}
+                      >
                           Delete record
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -184,6 +200,8 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
           mutate()
         }}
       />
+
+      {del.dialog}
     </div>
   )
 }

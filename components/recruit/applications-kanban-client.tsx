@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog"
 import { KanbanSquare, Mail, MapPin, Phone, Plus, Trash2 } from "lucide-react"
 import { PageHeader, RatingStars } from "@/components/recruit/recruit-shared"
+import { CallDialer, type CallTarget } from "@/components/shared/call-dialer"
 import { APPLICATION_STAGES, formatDate, safeParse, type StageKey } from "@/lib/recruit"
 import type { Job } from "@/lib/recruit-db"
 
@@ -47,7 +48,7 @@ type Application = {
   applied_at: string
 }
 
-export function ApplicationsKanbanClient({ canManage }: { canManage: boolean }) {
+export function ApplicationsKanbanClient({ canManage, canCall = false }: { canManage: boolean; canCall?: boolean }) {
   const params = useSearchParams()
   const initialJob = params.get("jobId") || "all"
   const [jobFilter, setJobFilter] = useState(initialJob)
@@ -55,6 +56,13 @@ export function ApplicationsKanbanClient({ canManage }: { canManage: boolean }) 
   const { data: jobData } = useSWR<{ jobs: Job[] }>("/api/recruit/jobs", fetcher)
   const [active, setActive] = useState<Application | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  const [callOpen, setCallOpen] = useState(false)
+  const [callTarget, setCallTarget] = useState<CallTarget | null>(null)
+
+  function startCall(app: Application) {
+    setCallTarget({ id: app.id, name: app.candidate_name, number: app.phone })
+    setCallOpen(true)
+  }
 
   const applications = data?.applications ?? []
   const filtered = useMemo(
@@ -190,10 +198,15 @@ export function ApplicationsKanbanClient({ canManage }: { canManage: boolean }) 
                 <DialogDescription>{active.job_title || "—"} · {active.application_id}</DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-4 py-2 text-sm">
-                <div className="flex flex-wrap gap-x-6 gap-y-2 text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-muted-foreground">
                   {active.email && <span className="inline-flex items-center gap-1.5"><Mail className="size-3.5" />{active.email}</span>}
                   {active.phone && <span className="inline-flex items-center gap-1.5"><Phone className="size-3.5" />{active.phone}</span>}
                   {active.location && <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5" />{active.location}</span>}
+                  {canCall && active.phone && (
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => startCall(active)}>
+                      <Phone className="size-3.5" /> Call
+                    </Button>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Detail label="Experience" value={active.experience} />
@@ -250,6 +263,18 @@ export function ApplicationsKanbanClient({ canManage }: { canManage: boolean }) 
           )}
         </DialogContent>
       </Dialog>
+
+      {canCall && (
+        <CallDialer
+          open={callOpen}
+          onOpenChange={setCallOpen}
+          target={callTarget}
+          apiBase="/api/recruit/calls"
+          subjectKey="application_id"
+          title={callTarget?.name ? `Call ${callTarget.name}` : "Call applicant"}
+          onLogged={() => mutate()}
+        />
+      )}
     </main>
   )
 }

@@ -8,5 +8,6 @@ export default async function CandidateDatabasePage() {
   if (!session) redirect("/login")
   const canView = await userHasFeature(session.userId, session.role, "recruitment.view_candidates")
   if (!canView) redirect("/modules/recruitment")
-  return <CandidatesClient />
+  const canCall = await userHasFeature(session.userId, session.role, "recruitment.make_calls")
+  return <CandidatesClient canCall={canCall} />
 }

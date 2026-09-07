@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ hash: str
 export default async function JobOpeningPage({ params }: { params: Promise<{ hash: string }> }) {
   const { hash } = await params
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="light flex min-h-screen flex-col bg-background text-foreground [color-scheme:light]">
       <PublicHeader />
       <main className="flex-1">
         <PublicApplyClient hash={hash} />

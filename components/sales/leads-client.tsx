@@ -500,6 +500,15 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
         initialLead={emailLead}
       />
 
+      {canCall && (
+        <CallDialer
+          open={callOpen}
+          onOpenChange={setCallOpen}
+          target={callTarget}
+          onLogged={() => mutate()}
+        />
+      )}
+
       <LeadDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}

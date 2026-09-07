@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function CareersPage() {
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="light flex min-h-screen flex-col bg-background text-foreground [color-scheme:light]">
       <PublicHeader />
       <main className="flex-1">
         <CareersClient />

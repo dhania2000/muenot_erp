@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -12,8 +13,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Search, Users } from "lucide-react"
+import { Phone, Search, Users } from "lucide-react"
 import { PageHeader, RatingStars } from "@/components/recruit/recruit-shared"
+import { CallDialer, type CallTarget } from "@/components/shared/call-dialer"
 import { formatDate } from "@/lib/recruit"
 
 type Candidate = {
@@ -29,16 +31,25 @@ type Candidate = {
   last_applied: string
 }
 
-export function CandidatesClient() {
+export function CandidatesClient({ canCall = false }: { canCall?: boolean }) {
   const { data, isLoading } = useSWR<{ candidates: Candidate[] }>("/api/recruit/candidates", fetcher)
   const [search, setSearch] = useState("")
+  const [callOpen, setCallOpen] = useState(false)
+  const [callTarget, setCallTarget] = useState<CallTarget | null>(null)
   const candidates = data?.candidates ?? []
+
+  function startCall(c: Candidate) {
+    setCallTarget({ id: null, name: c.candidate_name, number: c.phone })
+    setCallOpen(true)
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return candidates
     return candidates.filter((c) => [c.candidate_name, c.email, c.current_company, c.jobs].filter(Boolean).some((v) => v!.toLowerCase().includes(q)))
   }, [candidates, search])
+
+  const colSpan = canCall ? 8 : 7
 
   return (
     <main className="flex flex-col gap-6 p-6 md:p-8">
@@ -60,11 +71,12 @@ export function CandidatesClient() {
               <TableHead>Applications</TableHead>
               <TableHead>Rating</TableHead>
               <TableHead>Last applied</TableHead>
+              {canCall && <TableHead className="text-right">Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading && <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Loading candidates...</TableCell></TableRow>}
-            {!isLoading && filtered.length === 0 && <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">No candidates yet.</TableCell></TableRow>}
+            {isLoading && <TableRow><TableCell colSpan={colSpan} className="py-10 text-center text-sm text-muted-foreground">Loading candidates...</TableCell></TableRow>}
+            {!isLoading && filtered.length === 0 && <TableRow><TableCell colSpan={colSpan} className="py-10 text-center text-sm text-muted-foreground">No candidates yet.</TableCell></TableRow>}
             {filtered.map((c) => (
               <TableRow key={`${c.candidate_name}-${c.email}`}>
                 <TableCell>
@@ -84,11 +96,35 @@ export function CandidatesClient() {
                 <TableCell className="text-muted-foreground">{c.applications_count}</TableCell>
                 <TableCell><RatingStars value={c.rating} readOnly /></TableCell>
                 <TableCell className="text-muted-foreground">{formatDate(c.last_applied)}</TableCell>
+                {canCall && (
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                      disabled={!c.phone}
+                      onClick={() => startCall(c)}
+                    >
+                      <Phone className="size-3.5" /> Call
+                    </Button>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
+
+      {canCall && (
+        <CallDialer
+          open={callOpen}
+          onOpenChange={setCallOpen}
+          target={callTarget}
+          apiBase="/api/recruit/calls"
+          subjectKey="application_id"
+          title={callTarget?.name ? `Call ${callTarget.name}` : "Call candidate"}
+        />
+      )}
     </main>
   )
 }

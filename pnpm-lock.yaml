@@ -31,7 +31,7 @@ importers:
         version: 2.1.1
       cn:
         specifier: ^0.2.5
-        version: 0.2.5
+        version: 0.2.6
       googleapis:
         specifier: ^178.0.0
         version: 178.0.0
@@ -52,7 +52,7 @@ importers:
         version: 0.4.6(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       nodemailer:
         specifier: ^10.0.0
-        version: 10.0.0
+        version: 10.0.1
       react:
         specifier: ^19
         version: 19.2.4
@@ -1130,8 +1130,8 @@ packages:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
     engines: {node: '>=6'}
 
-  cn@0.2.5:
-    resolution: {integrity: sha512-OCjZtMeQfXbI4Es1+EIjkd77gvWzaE689gD8KhfexlqjClC06qR1MQBR+Z35ZMSPNEBWyHiItW1Soy0UvwNv9w==}
+  cn@0.2.6:
+    resolution: {integrity: sha512-+i4L0zUGgRcEnhsxueVrP7iBGxBx5iD0WOTYg1MwFEu2ZyCmH5Ov2V1cul2Ht5UchRQQgftCf4be/RxspuW6QQ==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -2018,8 +2018,8 @@ packages:
   node-releases@2.0.27:
     resolution: {integrity: sha512-nmh3lCkYZ3grZvqcCH+fjmQ7X+H0OeZgP40OierEaAptX4XofMh5kwNbWh7lBduUzCcV/8kZ+NDLCwm2iorIlA==}
 
-  nodemailer@10.0.0:
-    resolution: {integrity: sha512-wdv+hXBg0iIPIOf108FaZyTxqjQpCvQeAJt9pHHTooPy/y3vQtI9eiImM9AIVKR3e/0FeMA1oueNfBjFJcaK+Q==}
+  nodemailer@10.0.1:
+    resolution: {integrity: sha512-c+gU9cL9HLDax3vjxL88kW+6NOgdtEUWaZ+AUtxdJR6LLhf0kGdCLExof7yiKW7zdO9EfXCSIgmhGyFmUM0mYQ==}
     engines: {node: '>=20.0.0'}
 
   npm-run-path@4.0.1:
@@ -3576,7 +3576,7 @@ snapshots:
 
   clsx@2.1.1: {}
 
-  cn@0.2.5: {}
+  cn@0.2.6: {}
 
   code-block-writer@13.0.3: {}
 
@@ -4364,7 +4364,7 @@ snapshots:
 
   node-releases@2.0.27: {}
 
-  nodemailer@10.0.0: {}
+  nodemailer@10.0.1: {}
 
   npm-run-path@4.0.1:
     dependencies:

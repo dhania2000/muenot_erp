@@ -85,6 +85,12 @@ export async function ensureEmailTables() {
   // A recipient can now have many thread_ids: each "New" email starts a fresh one,
   // and each "Follow Up" joins the recipient's most recent thread.
   await ensureColumn("sales_emails", "recipient_key", "VARCHAR(120) DEFAULT NULL")
+  // provider_thread_id stores the Gmail API conversation id returned when a
+  // message is sent. Gmail ONLY groups a follow-up into an existing conversation
+  // when this id is passed back in the send request — the RFC In-Reply-To /
+  // References headers alone are not enough for Gmail's own web/app view.
+  // Reusing it is what keeps follow-ups in the same Gmail thread as the original.
+  await ensureColumn("sales_emails", "provider_thread_id", "VARCHAR(190) DEFAULT NULL")
   await ensureIndex("sales_emails", "idx_emails_thread", "thread_id")
   await ensureIndex("sales_emails", "idx_emails_recipient", "recipient_key")
 
@@ -184,6 +190,8 @@ export type ThreadContext = {
   inReplyTo: string
   references: string
   rootSubject: string
+  /** Gmail API conversation id, when the thread was sent via the Gmail API. */
+  providerThreadId: string | null
 }
 
 /** Strip any leading "Re:" prefixes so we can build a single clean threaded subject. */
@@ -197,7 +205,7 @@ export function baseSubject(subject: string) {
  */
 export async function getThreadContext(threadId: string): Promise<ThreadContext | null> {
   const rows = await query<any[]>(
-    `SELECT message_id, subject FROM sales_emails
+    `SELECT message_id, subject, provider_thread_id FROM sales_emails
      WHERE thread_id = ? AND message_id IS NOT NULL
      ORDER BY sent_at ASC, id ASC`,
     [threadId],
@@ -205,10 +213,14 @@ export async function getThreadContext(threadId: string): Promise<ThreadContext 
   if (rows.length === 0) return null
   const messageIds = rows.map((r) => r.message_id).filter(Boolean)
   const last = rows[rows.length - 1]
+  // Every message in a Gmail conversation shares the same provider thread id,
+  // so the most recent non-null value identifies the conversation to rejoin.
+  const providerThreadId = [...rows].reverse().find((r) => r.provider_thread_id)?.provider_thread_id ?? null
   return {
     inReplyTo: last.message_id,
     references: messageIds.join(" "),
     rootSubject: rows[0].subject,
+    providerThreadId,
   }
 }
 
@@ -516,7 +528,12 @@ export async function sendEmail(opts: {
   attachments?: OutgoingAttachment[]
   /** Attach a calendar invite so mail clients show an "Add to calendar" card. */
   icalEvent?: { method: string; content: string; filename?: string }
-}) {
+  /**
+   * Gmail API conversation id to join. Set on follow-ups so Gmail groups the
+   * message into the original conversation instead of starting a new thread.
+   */
+  providerThreadId?: string | null
+}): Promise<{ messageId?: string; providerThreadId?: string | null }> {
   const config = smtpConfig(opts.department)
   const configuredFrom = opts.from || config.from || config.user
   const from = buildFromHeader(opts.department, configuredFrom)
@@ -552,13 +569,20 @@ export async function sendEmail(opts: {
   if (isGmailApiConfigured(opts.department)) {
     const raw = await composeMime(mailOptions)
     const encoded = raw.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
-    await getGmailClient(opts.department).users.messages.send({
+    const res = await getGmailClient(opts.department).users.messages.send({
       userId: "me",
-      requestBody: { raw: encoded },
+      // Passing threadId is what makes Gmail place a follow-up in the SAME
+      // conversation as the original. Without it Gmail always opens a new
+      // thread, even with correct In-Reply-To/References headers.
+      requestBody: opts.providerThreadId
+        ? { raw: encoded, threadId: opts.providerThreadId }
+        : { raw: encoded },
     })
-    return { messageId: opts.messageId }
+    // Capture the conversation id so the first email in a thread can persist it
+    // and later follow-ups can rejoin the same Gmail thread.
+    return { messageId: opts.messageId, providerThreadId: res.data.threadId ?? opts.providerThreadId ?? null }
   }
 
   const info = await getTransporter(opts.department).sendMail(mailOptions)
-  return info
+  return { ...info, providerThreadId: null }
 }

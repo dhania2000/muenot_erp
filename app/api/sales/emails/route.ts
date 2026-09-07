@@ -128,8 +128,11 @@ export async function POST(request: Request) {
 
   let status: "Sent" | "Failed" = "Sent"
   let errorMessage: string | null = null
+  // Carry the follow-up's Gmail conversation id forward, then overwrite it with
+  // whatever the send returns so the very first email in a thread stores its own.
+  let providerThreadId: string | null = thread?.providerThreadId ?? null
   try {
-    await sendEmail({
+    const sendResult = await sendEmail({
       to: to_email,
       subject: renderedSubject,
       html: htmlWithPixel,
@@ -139,7 +142,11 @@ export async function POST(request: Request) {
       headers: { "X-Entity-Ref-ID": entityRefId },
       department,
       attachments: outgoingAttachment ? [outgoingAttachment] : undefined,
+      // On a follow-up this is the original conversation's Gmail thread id, which
+      // makes Gmail keep the reply in the same thread instead of starting a new one.
+      providerThreadId: thread?.providerThreadId ?? undefined,
     })
+    providerThreadId = sendResult.providerThreadId ?? providerThreadId
   } catch (err: any) {
     status = "Failed"
     // Nodemailer/SMTP errors often carry the useful detail in `code` and
@@ -165,8 +172,8 @@ export async function POST(request: Request) {
   const result = await query<any>(
     `INSERT INTO sales_emails
        (lead_id, template_id, to_email, to_name, subject, body, tracking_token,
-        status, error_message, sent_by, message_id, in_reply_to, references_header, thread_id, recipient_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status, error_message, sent_by, message_id, in_reply_to, references_header, thread_id, recipient_key, provider_thread_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       lead_id || null,
       template_id || null,
@@ -185,6 +192,9 @@ export async function POST(request: Request) {
       [references, messageId].filter(Boolean).join(" "),
       threadId,
       recipientKey,
+      // Gmail conversation id — reused by the next follow-up so it lands in the
+      // same Gmail thread as this email.
+      providerThreadId,
     ],
   )
 

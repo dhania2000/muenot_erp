@@ -7,8 +7,9 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import useSWR from "swr"
-import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MessageSquare, Plus, Search, Settings, ShieldCheck, Ticket, UserPlus, UsersRound } from "lucide-react"
+import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MessageSquare, Plus, Search, Settings, ShieldCheck, StickyNote, Ticket, UserPlus, UsersRound } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { NotesPanel } from "@/components/notes-panel"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -239,6 +240,7 @@ export function AppShell({
   const router = useRouter()
   const [profileOpen, setProfileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [notesOpen, setNotesOpen] = useState(false)
   const [query, setQuery] = useState("")
 
   async function handleLogout() {
@@ -341,6 +343,7 @@ export function AppShell({
             <LiveClock />
             <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>
             <ClockControl />
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Create" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
@@ -378,6 +381,8 @@ export function AppShell({
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
+
+      <NotesPanel open={notesOpen} onOpenChange={setNotesOpen} />
 
       <Dialog open={searchOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setQuery("") }}>
         <DialogContent>

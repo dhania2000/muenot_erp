@@ -75,6 +75,8 @@ const RECRUITMENT_CHILDREN: { label: string; href: string; feature: string }[] =
   { label: "Job Offer Letter", href: "/modules/recruitment/job-offer-letter", feature: "recruitment.manage_offers" },
   { label: "Job Skills", href: "/modules/recruitment/job-skills", feature: "recruitment.view_skills" },
   { label: "Candidate Database", href: "/modules/recruitment/candidate-database", feature: "recruitment.view_candidates" },
+  { label: "Email", href: "/modules/recruitment/emails", feature: "recruitment.view_applications" },
+  { label: "Email Templates", href: "/modules/recruitment/email-templates", feature: "recruitment.view_applications" },
   { label: "Recruit Report", href: "/modules/recruitment/recruit-job-report", feature: "recruitment.view_reports" },
 ]
 

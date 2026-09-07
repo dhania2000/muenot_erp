@@ -24,6 +24,15 @@ import {
 import { KanbanSquare, Mail, MapPin, Phone, Plus, Trash2 } from "lucide-react"
 import { PageHeader, RatingStars } from "@/components/recruit/recruit-shared"
 import { CallDialer, type CallTarget } from "@/components/shared/call-dialer"
+import { RecruitComposeEmailDialog, type ComposeTarget } from "@/components/recruit/recruit-compose-email-dialog"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { APPLICATION_STAGES, formatDate, safeParse, type StageKey } from "@/lib/recruit"
 import type { Job } from "@/lib/recruit-db"
 
@@ -58,16 +67,34 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
   const [dragId, setDragId] = useState<string | null>(null)
   const [callOpen, setCallOpen] = useState(false)
   const [callTarget, setCallTarget] = useState<CallTarget | null>(null)
+  const [stageFilter, setStageFilter] = useState<string>("all")
+  const [composeOpen, setComposeOpen] = useState(false)
+  const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null)
 
   function startCall(app: Application) {
     setCallTarget({ id: app.id, name: app.candidate_name, number: app.phone })
     setCallOpen(true)
   }
 
+  function startEmail(app: Application) {
+    setComposeTarget({
+      applicationId: app.application_id,
+      name: app.candidate_name,
+      email: app.email,
+      jobTitle: app.job_title,
+    })
+    setComposeOpen(true)
+  }
+
   const applications = data?.applications ?? []
   const filtered = useMemo(
     () => (jobFilter === "all" ? applications : applications.filter((a) => a.job_id === jobFilter)),
     [applications, jobFilter],
+  )
+
+  const tableRows = useMemo(
+    () => (stageFilter === "all" ? filtered : filtered.filter((a) => a.stage === stageFilter)),
+    [filtered, stageFilter],
   )
 
   const byStage = useMemo(() => {
@@ -129,11 +156,26 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
         description="Track candidates through your hiring pipeline. Drag cards between stages to update them."
         icon={KanbanSquare}
         action={
-          canManage ? (
-            <Button render={<Link href="/modules/recruitment/job-applications/create" />}>
-              <Plus data-icon="inline-start" /> Add Application
-            </Button>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            <Select value={stageFilter} onValueChange={setStageFilter}>
+              <SelectTrigger size="sm" className="w-44">
+                <SelectValue placeholder="All statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {APPLICATION_STAGES.map((s) => (
+                  <SelectItem key={s.key} value={s.key}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {canManage && (
+              <Button render={<Link href="/modules/recruitment/job-applications/create" />}>
+                <Plus data-icon="inline-start" /> Add Application
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -187,6 +229,103 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          {stageFilter === "all"
+            ? `All applications (${tableRows.length})`
+            : `${APPLICATION_STAGES.find((s) => s.key === stageFilter)?.label} (${tableRows.length})`}
+        </h2>
+        <div className="overflow-x-auto rounded-md border border-border bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Candidate</TableHead>
+                <TableHead>Job</TableHead>
+                <TableHead>Applied</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                    Loading applications...
+                  </TableCell>
+                </TableRow>
+              )}
+              {!isLoading && tableRows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                    No applications for this filter.
+                  </TableCell>
+                </TableRow>
+              )}
+              {tableRows.map((app) => (
+                <TableRow key={app.application_id}>
+                  <TableCell>
+                    <button type="button" onClick={() => setActive(app)} className="flex flex-col text-left">
+                      <span className="font-medium">{app.candidate_name}</span>
+                      {app.email && <span className="text-xs text-muted-foreground">{app.email}</span>}
+                    </button>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{app.job_title || "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">{formatDate(app.applied_at)}</TableCell>
+                  <TableCell>
+                    {canManage ? (
+                      <Select value={app.stage} onValueChange={(v) => moveTo(app, v as StageKey)}>
+                        <SelectTrigger size="sm" className="w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {APPLICATION_STAGES.map((s) => (
+                            <SelectItem key={s.key} value={s.key}>
+                              {s.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
+                          APPLICATION_STAGES.find((s) => s.key === app.stage)?.tone ?? ""
+                        }`}
+                      >
+                        {APPLICATION_STAGES.find((s) => s.key === app.stage)?.label}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1.5">
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label="Email candidate"
+                        disabled={!app.email}
+                        onClick={() => startEmail(app)}
+                      >
+                        <Mail className="size-4" />
+                      </Button>
+                      {canCall && (
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label="Call candidate"
+                          disabled={!app.phone}
+                          onClick={() => startCall(app)}
+                        >
+                          <Phone className="size-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
       <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
@@ -275,6 +414,8 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
           onLogged={() => mutate()}
         />
       )}
+
+      <RecruitComposeEmailDialog open={composeOpen} onOpenChange={setComposeOpen} target={composeTarget} />
     </main>
   )
 }

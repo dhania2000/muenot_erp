@@ -114,6 +114,53 @@ export async function ensureEmailTables() {
   tablesEnsured = true
 }
 
+let recruitTablesEnsured = false
+
+/**
+ * Self-healing tables for the Recruit module's email feature. Mirrors
+ * ensureEmailTables but scoped to recruit_email_templates + recruit_emails.
+ */
+export async function ensureRecruitEmailTables() {
+  if (recruitTablesEnsured) return
+  await query(
+    `CREATE TABLE IF NOT EXISTS recruit_email_templates (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      name VARCHAR(150) NOT NULL,
+      subject VARCHAR(255) NOT NULL,
+      body MEDIUMTEXT NOT NULL,
+      category VARCHAR(80) DEFAULT NULL,
+      attachment_pathname VARCHAR(255) DEFAULT NULL,
+      attachment_name VARCHAR(255) DEFAULT NULL,
+      attachment_type VARCHAR(150) DEFAULT NULL,
+      attachment_size INT UNSIGNED DEFAULT NULL,
+      created_by INT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_recruit_templates_created_by (created_by)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+  await query(
+    `CREATE TABLE IF NOT EXISTS recruit_emails (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      application_id VARCHAR(40) DEFAULT NULL,
+      template_id INT UNSIGNED DEFAULT NULL,
+      to_email VARCHAR(190) NOT NULL,
+      to_name VARCHAR(190) DEFAULT NULL,
+      subject VARCHAR(255) NOT NULL,
+      body MEDIUMTEXT NOT NULL,
+      status ENUM('Sent','Failed') NOT NULL DEFAULT 'Sent',
+      error_message VARCHAR(500) DEFAULT NULL,
+      sent_by INT UNSIGNED DEFAULT NULL,
+      sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_recruit_emails_app (application_id),
+      KEY idx_recruit_emails_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+  recruitTablesEnsured = true
+}
+
 /** Add a column only if it doesn't already exist (MySQL has no ADD COLUMN IF NOT EXISTS). */
 async function ensureColumn(table: string, column: string, definition: string) {
   const rows = await query<any[]>(
@@ -260,7 +307,7 @@ export async function loadAttachment(
 
 const transporters = new Map<string, nodemailer.Transporter>()
 
-type Department = "sales" | "hr" | "finance" | "operations"
+type Department = "sales" | "hr" | "finance" | "operations" | "recruit"
 
 export async function hydrateDepartmentSMTP(department: Department = "sales") {
   const prefix = department.toUpperCase()

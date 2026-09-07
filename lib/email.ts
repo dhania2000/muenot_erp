@@ -1,4 +1,6 @@
 import nodemailer from "nodemailer"
+import MailComposer from "nodemailer/lib/mail-composer"
+import { google } from "googleapis"
 import crypto from "crypto"
 import { query } from "@/lib/db"
 
@@ -250,7 +252,18 @@ type Department = "sales" | "hr" | "finance" | "operations"
 
 export async function hydrateDepartmentSMTP(department: Department = "sales") {
   const prefix = department.toUpperCase()
-  const names = [`${prefix}_SMTP_HOST`, `${prefix}_SMTP_PORT`, `${prefix}_SMTP_SECURE`, `${prefix}_SMTP_USER`, `${prefix}_SMTP_PASS`, `${prefix}_SMTP_FROM`]
+  const names = [
+    `${prefix}_SMTP_HOST`,
+    `${prefix}_SMTP_PORT`,
+    `${prefix}_SMTP_SECURE`,
+    `${prefix}_SMTP_USER`,
+    `${prefix}_SMTP_PASS`,
+    `${prefix}_SMTP_FROM`,
+    // Gmail API (HTTPS) credentials — used on hosts that block outbound SMTP.
+    `${prefix}_GMAIL_CLIENT_EMAIL`,
+    `${prefix}_GMAIL_PRIVATE_KEY`,
+    `${prefix}_GMAIL_SENDER`,
+  ]
   const rows = await query<any[]>(`SELECT name, value_encrypted FROM environment_variables WHERE name IN (${names.map(() => "?").join(",")})`, names)
   const secret = process.env.SETTINGS_ENCRYPTION_KEY
   if (!secret) return
@@ -275,7 +288,70 @@ function smtpConfig(department: Department = "sales") {
   }
 }
 
+/**
+ * Gmail API config. When a service-account client email + private key are
+ * present, mail is sent over HTTPS (port 443) via the Gmail API instead of
+ * SMTP. This is required on hosts (e.g. Hostinger shared hosting) that block
+ * outbound SMTP ports 465/587, which otherwise surfaces as
+ * "Timeout | code: ETIMEDOUT | command: CONN".
+ *
+ * Set up (per department, or generic GMAIL_* as a fallback):
+ *   <DEPT>_GMAIL_CLIENT_EMAIL  - service account email
+ *   <DEPT>_GMAIL_PRIVATE_KEY   - service account private key (with \n escapes)
+ *   <DEPT>_GMAIL_SENDER        - the Workspace mailbox to send as / impersonate
+ * The service account must have domain-wide delegation for the scope
+ * https://www.googleapis.com/auth/gmail.send authorized in the Google
+ * Workspace Admin console.
+ */
+function gmailApiConfig(department: Department = "sales") {
+  const prefix = department.toUpperCase()
+  const clientEmail = process.env[`${prefix}_GMAIL_CLIENT_EMAIL`] || process.env.GMAIL_CLIENT_EMAIL
+  const privateKey = process.env[`${prefix}_GMAIL_PRIVATE_KEY`] || process.env.GMAIL_PRIVATE_KEY
+  const smtp = smtpConfig(department)
+  const sender =
+    process.env[`${prefix}_GMAIL_SENDER`] ||
+    process.env.GMAIL_SENDER ||
+    extractEmailAddress(smtp.from) ||
+    smtp.user
+  return { clientEmail, privateKey, sender, from: smtp.from }
+}
+
+export function isGmailApiConfigured(department: Department = "sales") {
+  const config = gmailApiConfig(department)
+  return Boolean(config.clientEmail && config.privateKey && config.sender)
+}
+
+const gmailClients = new Map<string, ReturnType<typeof google.gmail>>()
+
+function getGmailClient(department: Department = "sales") {
+  const config = gmailApiConfig(department)
+  const cacheKey = `${department}:${config.clientEmail}:${config.sender}`
+  const existing = gmailClients.get(cacheKey)
+  if (existing) return existing
+  const auth = new google.auth.JWT({
+    email: config.clientEmail,
+    // Env vars store newlines as literal "\n"; restore real line breaks.
+    key: (config.privateKey || "").replace(/\\n/g, "\n"),
+    scopes: ["https://www.googleapis.com/auth/gmail.send"],
+    subject: config.sender,
+  })
+  const client = google.gmail({ version: "v1", auth })
+  gmailClients.set(cacheKey, client)
+  return client
+}
+
+/** Compose a full RFC 2822 MIME message (headers, body, attachments) as a Buffer. */
+function composeMime(mailOptions: Record<string, unknown>) {
+  return new Promise<Buffer>((resolve, reject) => {
+    new MailComposer(mailOptions).compile().build((err: Error | null, message: Buffer) => {
+      if (err) reject(err)
+      else resolve(message)
+    })
+  })
+}
+
 export function isEmailConfigured(department: Department = "sales") {
+  if (isGmailApiConfigured(department)) return true
   const config = smtpConfig(department)
   return Boolean(config.host && config.user && config.pass)
 }
@@ -373,7 +449,19 @@ export async function sendEmail(opts: {
   const config = smtpConfig(opts.department)
   const configuredFrom = opts.from || config.from || config.user
   const from = buildFromHeader(opts.department, configuredFrom)
-  const info = await getTransporter(opts.department).sendMail({
+
+  const attachments = opts.attachments?.length
+    ? opts.attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType }))
+    : undefined
+  const icalEvent = opts.icalEvent
+    ? {
+        method: opts.icalEvent.method,
+        filename: opts.icalEvent.filename || "invite.ics",
+        content: opts.icalEvent.content,
+      }
+    : undefined
+
+  const mailOptions = {
     from,
     to: opts.to,
     subject: opts.subject,
@@ -382,16 +470,24 @@ export async function sendEmail(opts: {
     inReplyTo: opts.inReplyTo,
     references: opts.references,
     headers: opts.headers,
-    attachments: opts.attachments?.length
-      ? opts.attachments.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType }))
-      : undefined,
-    icalEvent: opts.icalEvent
-      ? {
-          method: opts.icalEvent.method,
-          filename: opts.icalEvent.filename || "invite.ics",
-          content: opts.icalEvent.content,
-        }
-      : undefined,
-  })
+    attachments,
+    icalEvent,
+  }
+
+  // Prefer the Gmail API (HTTPS) when configured. This bypasses SMTP port
+  // blocks on shared hosting that cause ETIMEDOUT/CONN. The message is composed
+  // with the exact same headers (threading, attachments, tracking) and sent
+  // over port 443, so recipients see no difference.
+  if (isGmailApiConfigured(opts.department)) {
+    const raw = await composeMime(mailOptions)
+    const encoded = raw.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+    await getGmailClient(opts.department).users.messages.send({
+      userId: "me",
+      requestBody: { raw: encoded },
+    })
+    return { messageId: opts.messageId }
+  }
+
+  const info = await getTransporter(opts.department).sendMail(mailOptions)
   return info
 }

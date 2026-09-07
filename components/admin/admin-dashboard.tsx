@@ -8,6 +8,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { OperationsOverview } from "@/components/operations/operations-dashboard-client"
+import { FinanceOverview } from "@/components/finance/finance-dashboard-client"
 
 type Metric = {
   label: string
@@ -53,7 +54,7 @@ const navTabs: NavTab[] = [
   { label: "Client", kind: "link", href: "/modules/clients" },
   { label: "HR", kind: "link", href: "/modules/hr" },
   { label: "Ticket", kind: "link", href: "/modules/tickets" },
-  { label: "Finance", kind: "link", href: "/modules/finance" },
+  { label: "Finance", kind: "tab" },
 ]
 
 function KpiCard({ metric, activeNote }: { metric: Metric; activeNote?: string }) {
@@ -112,12 +113,14 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
     <div className="mx-auto flex max-w-7xl flex-col gap-6 p-4 md:p-6 lg:p-8">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          {activeTab === "Operations" ? "Operations" : "Overview"}
+          {activeTab === "Operations" ? "Operations" : activeTab === "Finance" ? "Finance" : "Overview"}
         </h1>
         <p className="text-sm text-muted-foreground">
           {activeTab === "Operations"
             ? "Your delivery cockpit right here without leaving the dashboard."
-            : "Welcome back — here's what's happening across your workspace."}
+            : activeTab === "Finance"
+              ? "Your finance dashboard right here without leaving the overview."
+              : "Welcome back — here's what's happening across your workspace."}
         </p>
       </div>
 
@@ -154,6 +157,10 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
       {activeTab === "Operations" ? (
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <OperationsOverview />
+        </div>
+      ) : activeTab === "Finance" ? (
+        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <FinanceOverview />
         </div>
       ) : (
         <>

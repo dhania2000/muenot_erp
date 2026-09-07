@@ -61,7 +61,7 @@ const emptyForm = {
   amount: "", debit: "", credit: "", status: "Draft", reconciliation_status: "", description: "",
 }
 
-function FinanceOverview() {
+export function FinanceOverview() {
   const { data, isLoading } = useSWR("/api/finance/dashboard", fetcher, { refreshInterval: 30000 })
 
   if (isLoading || !data) {

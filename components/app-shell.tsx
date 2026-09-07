@@ -1,12 +1,13 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import { Bell, ChevronDown, Clock3, FileText, LogOut, MessageSquare, Plus, Search, Settings, ShieldCheck, Ticket, UserPlus, UsersRound } from "lucide-react"
+import useSWR from "swr"
+import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MessageSquare, Plus, Search, Settings, ShieldCheck, Ticket, UserPlus, UsersRound } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -46,6 +47,136 @@ function initials(name: string) {
     .slice(0, 2)
     .join("")
     .toUpperCase()
+}
+
+const fetcher = (url: string) => fetch(url).then((r) => r.json())
+
+type ClockStatus = {
+  linked?: boolean
+  state?: "in" | "out" | "done"
+  clockIn?: string | null
+  clockOut?: string | null
+}
+
+function formatClockTime(dt: string | null | undefined) {
+  if (!dt) return ""
+  const d = new Date(dt.replace(" ", "T"))
+  if (Number.isNaN(d.getTime())) return ""
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })
+}
+
+/** Live ticking watch shown in the header, updated every second on the client. */
+function LiveClock() {
+  const [now, setNow] = useState<Date | null>(null)
+
+  useEffect(() => {
+    setNow(new Date())
+    const id = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Render nothing until mounted to avoid a server/client hydration mismatch.
+  if (!now) return null
+
+  const time = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })
+  const date = now.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" })
+
+  return (
+    <div className="mr-1 hidden items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 sm:flex" aria-label="Current time">
+      <Clock3 className="size-4 shrink-0 text-primary" />
+      <div className="flex flex-col leading-none">
+        <span className="font-mono text-sm font-medium tabular-nums text-foreground">{time}</span>
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{date}</span>
+      </div>
+    </div>
+  )
+}
+
+/** Clock in / clock out control wired to today's attendance record. */
+function ClockControl() {
+  const { data, mutate, isLoading } = useSWR<ClockStatus>("/api/hr/attendance/clock", fetcher)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const state = data?.state ?? "out"
+  const linked = data?.linked ?? true
+
+  async function toggle() {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/hr/attendance/clock", { method: "POST" })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) setError(json.error || "Something went wrong")
+      await mutate()
+    } catch {
+      setError("Network error — please try again")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const dotColor = state === "in" ? "bg-emerald-500" : state === "done" ? "bg-muted-foreground" : "bg-amber-500"
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon-sm" aria-label="Attendance clock in and out" className="relative text-muted-foreground hover:bg-primary/10 hover:text-primary" />}
+      >
+        <Clock3 className="size-5" />
+        {linked && <span className={cn("absolute right-1 top-1 size-2 rounded-full ring-2 ring-card", dotColor)} />}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuLabel>Attendance</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+
+        {isLoading ? (
+          <p className="px-2 py-2 text-sm text-muted-foreground">Loading status…</p>
+        ) : !linked ? (
+          <p className="px-2 py-2 text-sm text-muted-foreground">
+            No employee record is linked to your account. Ask HR to set your official email on your employee profile.
+          </p>
+        ) : (
+          <div className="px-2 py-1.5">
+            <div className="mb-3 flex items-center gap-2 text-sm">
+              <span className={cn("size-2 rounded-full", dotColor)} />
+              {state === "in" && <span>Clocked in at {formatClockTime(data?.clockIn)}</span>}
+              {state === "out" && <span className="text-muted-foreground">Not clocked in today</span>}
+              {state === "done" && (
+                <span className="text-muted-foreground">
+                  Clocked out at {formatClockTime(data?.clockOut)}
+                </span>
+              )}
+            </div>
+
+            {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
+
+            {state === "done" ? (
+              <p className="rounded-md bg-muted/60 px-3 py-2 text-center text-xs text-muted-foreground">
+                Attendance completed for today
+              </p>
+            ) : (
+              <Button
+                className="w-full gap-2"
+                variant={state === "in" ? "outline" : "default"}
+                onClick={toggle}
+                disabled={busy}
+              >
+                {busy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : state === "in" ? (
+                  <LogOut className="size-4" />
+                ) : (
+                  <LogIn className="size-4" />
+                )}
+                {state === "in" ? "Clock Out" : "Clock In"}
+              </Button>
+            )}
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 function NavGroup({ item, pathname }: { item: NavItem; pathname: string }) {
@@ -207,18 +338,10 @@ export function AppShell({
         <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
           <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span></div>
           <div className="flex items-center gap-1">
+            <LiveClock />
             <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Recent activity" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
-                <Clock3 className="size-5" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel>Recent activity</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">No recent activity yet</p>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ClockControl />
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Create" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
                 <Plus className="size-5" />

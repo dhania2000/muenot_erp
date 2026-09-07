@@ -54,16 +54,15 @@ export function ForecastClient({ canManage }: { canManage: boolean }) {
 
   const forecasts = data?.forecast ?? []
 
-  async function deleteForecast(forecast: ForecastRow) {
-    if (!confirm(`Delete forecast ${forecast.forecast_code}?`)) return
-    const res = await fetch(`/api/sales/forecast/${forecast.id}`, { method: "DELETE" })
-    if (res.ok) {
-      toast.success("Forecast deleted")
-      mutate()
-    } else {
-      toast.error("Unable to delete forecast")
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/forecast/${id}`,
+    labels: { singular: "forecast", plural: "forecasts" },
+    mutate,
+    onDeleted: clear,
+  })
+
+  const colSpan = canManage ? 8 : 6
 
   return (
     <div className="flex flex-col gap-4">
@@ -85,10 +84,24 @@ export function ForecastClient({ canManage }: { canManage: boolean }) {
         )}
       </div>
 
+      {canManage && (
+        <SelectionToolbar
+          count={selected.size}
+          noun="forecast"
+          onClear={clear}
+          onDelete={() => del.requestBulk([...selected])}
+        />
+      )}
+
       <div className="rounded-md border border-border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-10">
+                  <SelectAllCheckbox ids={forecasts.map((f) => f.id)} selected={selected} onToggleAll={toggleAll} />
+                </TableHead>
+              )}
               <TableHead>Quarter</TableHead>
               <TableHead>Expected</TableHead>
               <TableHead>Best case</TableHead>
@@ -101,20 +114,29 @@ export function ForecastClient({ canManage }: { canManage: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={colSpan} className="py-10 text-center text-sm text-muted-foreground">
                   Loading forecast...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && forecasts.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={colSpan} className="py-10 text-center text-sm text-muted-foreground">
                   No forecast records found.
                 </TableCell>
               </TableRow>
             )}
             {forecasts.map((forecast) => (
-              <TableRow key={forecast.id}>
+              <TableRow key={forecast.id} data-state={selected.has(forecast.id) ? "selected" : undefined}>
+                {canManage && (
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`Select forecast ${forecast.forecast_code}`}
+                      checked={selected.has(forecast.id)}
+                      onCheckedChange={() => toggle(forecast.id)}
+                    />
+                  </TableCell>
+                )}
                 <TableCell className="font-medium">
                   {forecast.quarter} {forecast.year}
                 </TableCell>
@@ -146,7 +168,12 @@ export function ForecastClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit forecast
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteForecast(forecast)}>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() =>
+                            del.requestSingle(forecast.id, `forecast ${forecast.forecast_code}`)
+                          }
+                        >
                           Delete forecast
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -169,6 +196,8 @@ export function ForecastClient({ canManage }: { canManage: boolean }) {
           mutate()
         }}
       />
+
+      {del.dialog}
     </div>
   )
 }

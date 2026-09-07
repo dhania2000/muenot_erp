@@ -7,6 +7,7 @@ import { formatDateTime } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   Table,
@@ -16,9 +17,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Eye, Loader2, Plus, Search, Trash2 } from "lucide-react"
+import { Eye, Plus, Search, Trash2, Users } from "lucide-react"
 import { ComposeEmailDialog } from "@/components/sales/compose-email-dialog"
+import { BulkEmailDialog } from "@/components/sales/bulk-email-dialog"
 import { EmailDetailDialog } from "@/components/sales/email-detail-dialog"
+import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type EmailRow = {
   id: number
@@ -50,25 +53,19 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
   )
   const [search, setSearch] = useState("")
   const [composeOpen, setComposeOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
-  const [deletingId, setDeletingId] = useState<number | null>(null)
 
   const emails = data?.emails ?? []
   const emailConfigured = data?.emailConfigured ?? false
 
-  async function handleDelete(e: EmailRow) {
-    if (!window.confirm(`Delete this email "${e.subject}"? This cannot be undone.`)) return
-    setDeletingId(e.id)
-    try {
-      const res = await fetch(`/api/sales/emails/${e.id}`, { method: "DELETE" })
-      if (!res.ok) throw new Error("Failed to delete email")
-      await mutate()
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : "Failed to delete email")
-    } finally {
-      setDeletingId(null)
-    }
-  }
+  const { selected, toggle, toggleAll, clear } = useRowSelection()
+  const del = useDeleteManager({
+    endpoint: (id) => `/api/sales/emails/${id}`,
+    labels: { singular: "email", plural: "emails" },
+    mutate,
+    onDeleted: clear,
+  })
 
   // Count how many emails belong to each thread so we can flag conversations.
   const threadCounts = useMemo(() => {
@@ -102,10 +99,16 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
           />
         </div>
         {canSend && (
-          <Button onClick={() => setComposeOpen(true)}>
-            <Plus data-icon="inline-start" />
-            Compose email
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setBulkOpen(true)}>
+              <Users data-icon="inline-start" />
+              Bulk email
+            </Button>
+            <Button onClick={() => setComposeOpen(true)}>
+              <Plus data-icon="inline-start" />
+              Compose email
+            </Button>
+          </div>
         )}
       </div>
 
@@ -118,10 +121,20 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
         </Alert>
       )}
 
+      <SelectionToolbar
+        count={selected.size}
+        noun="email"
+        onClear={clear}
+        onDelete={() => del.requestBulk([...selected])}
+      />
+
       <div className="rounded-md border border-border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10">
+                <SelectAllCheckbox ids={filtered.map((e) => e.id)} selected={selected} onToggleAll={toggleAll} />
+              </TableHead>
               <TableHead>Subject</TableHead>
               <TableHead>Recipient</TableHead>
               <TableHead>Status</TableHead>
@@ -136,14 +149,14 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   Loading emails...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   No emails sent yet.
                 </TableCell>
               </TableRow>
@@ -151,7 +164,19 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
             {filtered.map((e) => {
               const threadCount = e.thread_id ? threadCounts.get(e.thread_id) ?? 1 : 1
               return (
-                <TableRow key={e.id} className="cursor-pointer" onClick={() => setDetailId(e.id)}>
+                <TableRow
+                  key={e.id}
+                  className="cursor-pointer"
+                  data-state={selected.has(e.id) ? "selected" : undefined}
+                  onClick={() => setDetailId(e.id)}
+                >
+                  <TableCell onClick={(event) => event.stopPropagation()}>
+                    <Checkbox
+                      aria-label={`Select email ${e.subject}`}
+                      checked={selected.has(e.id)}
+                      onCheckedChange={() => toggle(e.id)}
+                    />
+                  </TableCell>
                   <TableCell className="max-w-xs">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium">{e.subject}</span>
@@ -184,18 +209,13 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
                       variant="ghost"
                       size="icon"
                       className="size-8 text-muted-foreground hover:text-destructive"
-                      disabled={deletingId === e.id}
                       onClick={(event) => {
                         event.stopPropagation()
-                        void handleDelete(e)
+                        del.requestSingle(e.id, `the email "${e.subject}"`)
                       }}
                       aria-label={`Delete email ${e.subject}`}
                     >
-                      {deletingId === e.id ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-4" />
-                      )}
+                      <Trash2 className="size-4" />
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -211,12 +231,20 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
         onSent={() => mutate()}
         emailConfigured={emailConfigured}
       />
+      <BulkEmailDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        onSent={() => mutate()}
+        emailConfigured={emailConfigured}
+      />
       <EmailDetailDialog
         emailId={detailId}
         onOpenChange={(open) => !open && setDetailId(null)}
         currentId={detailId}
         onSelect={(id) => setDetailId(id)}
       />
+
+      {del.dialog}
     </div>
   )
 }

@@ -321,6 +321,65 @@ export function isGmailApiConfigured(department: Department = "sales") {
   return Boolean(config.clientEmail && config.privateKey && config.sender)
 }
 
+/**
+ * Normalize a service-account private key into a clean PEM that OpenSSL 3 can
+ * decode. Keys copied through env vars, JSON, or the settings UI arrive in many
+ * broken shapes; a mismatch surfaces at sign time as
+ * `error:1E08010C:DECODER routines::unsupported` (ERR_OSSL_UNSUPPORTED).
+ *
+ * This handles the common corruptions:
+ *  - literal "\n" (single-escaped) and "\\n" (double-escaped) instead of real newlines
+ *  - literal "\r" carriage returns and Windows "\r\n"
+ *  - wrapping quotes left over from `KEY="-----BEGIN...-----"` style values
+ *  - a whole JSON service-account blob pasted where only the key was expected
+ *  - keys collapsed onto a single line with the PEM header/footer intact
+ */
+function normalizePrivateKey(raw: string): string {
+  let key = (raw || "").trim()
+  if (!key) return key
+
+  // If the whole service-account JSON was pasted, pull out `private_key`.
+  if (key.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(key)
+      if (typeof parsed.private_key === "string") key = parsed.private_key
+    } catch {
+      /* not JSON — fall through and treat as a raw key */
+    }
+  }
+
+  // Strip a single pair of wrapping quotes (', ", or `).
+  if (key.length >= 2 && /^['"`]/.test(key) && key.at(-1) === key[0]) {
+    key = key.slice(1, -1)
+  }
+
+  // Turn every escaped-newline variant into a real newline, then drop CRs.
+  // Collapse double-escaped sequences (literal backslash-backslash-n) first so
+  // the following single-escape pass doesn't leave a stray backslash behind.
+  key = key
+    .replace(/\\\\r\\\\n/g, "\n")
+    .replace(/\\\\n/g, "\n")
+    .replace(/\\\\r/g, "\n")
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim()
+
+  // If the key lost its line breaks but kept the PEM markers, rebuild the
+  // 64-char base64 body between the header and footer.
+  const pemMatch = key.match(/-----BEGIN ([A-Z ]+?)-----([\s\S]*?)-----END \1-----/)
+  if (pemMatch && !pemMatch[2].includes("\n")) {
+    const label = pemMatch[1]
+    const body = pemMatch[2].replace(/\s+/g, "")
+    const wrapped = body.match(/.{1,64}/g)?.join("\n") ?? body
+    key = `-----BEGIN ${label}-----\n${wrapped}\n-----END ${label}-----`
+  }
+
+  return key.endsWith("\n") ? key : `${key}\n`
+}
+
 const gmailClients = new Map<string, ReturnType<typeof google.gmail>>()
 
 function getGmailClient(department: Department = "sales") {
@@ -328,10 +387,22 @@ function getGmailClient(department: Department = "sales") {
   const cacheKey = `${department}:${config.clientEmail}:${config.sender}`
   const existing = gmailClients.get(cacheKey)
   if (existing) return existing
+
+  const key = normalizePrivateKey(config.privateKey || "")
+
+  // Fail early with a clear, actionable message instead of the opaque OpenSSL
+  // "DECODER routines::unsupported" error that surfaces later at sign time.
+  if (!/-----BEGIN (?:RSA )?PRIVATE KEY-----/.test(key)) {
+    throw new Error(
+      "Gmail private key is malformed: expected a PEM block beginning with " +
+        "'-----BEGIN PRIVATE KEY-----'. Re-save the service-account key in " +
+        "settings (paste the full key including the BEGIN/END lines).",
+    )
+  }
+
   const auth = new google.auth.JWT({
     email: config.clientEmail,
-    // Env vars store newlines as literal "\n"; restore real line breaks.
-    key: (config.privateKey || "").replace(/\\n/g, "\n"),
+    key,
     scopes: ["https://www.googleapis.com/auth/gmail.send"],
     subject: config.sender,
   })

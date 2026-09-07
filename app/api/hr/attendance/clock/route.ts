@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
-import { getSession } from "@/lib/auth"
+import { getSession, type SessionPayload } from "@/lib/auth"
 
 type EmployeeRow = { id: number; employee_name: string }
 type AttendanceRow = {
@@ -40,6 +40,40 @@ async function resolveEmployee(email: string): Promise<EmployeeRow | null> {
   return rows[0] ?? null
 }
 
+/**
+ * Return the employee linked to the session, creating a minimal profile the
+ * first time if none exists. Every logged-in user can clock in without an HR
+ * admin pre-creating their record. Idempotent: existing users are reused, and
+ * a duplicate-insert race falls back to a re-lookup.
+ */
+async function ensureEmployee(session: SessionPayload): Promise<EmployeeRow> {
+  const existing = await resolveEmployee(session.email)
+  if (existing) return existing
+
+  const employeeCode = `EMP-U${session.userId}`
+  const employeeName = session.name?.trim() || session.email
+
+  try {
+    await query(
+      "INSERT INTO hr_employees (employee_id, employee_name, official_email, employment_status, onboarding_status, created_by) VALUES (?, ?, ?, 'Active', 'Self-registered', ?)",
+      [employeeCode, employeeName, session.email, session.userId],
+    )
+  } catch {
+    // Unique-key race (another request created it first) — fall through to re-lookup.
+  }
+
+  const created = await resolveEmployee(session.email)
+  if (created) return created
+
+  // Extremely rare: employee_id collided but email didn't match. Look up by code.
+  const byCode = await query<EmployeeRow[]>(
+    "SELECT id, employee_name FROM hr_employees WHERE employee_id = ? LIMIT 1",
+    [employeeCode],
+  )
+  if (byCode[0]) return byCode[0]
+  throw new Error("Could not create or find your employee profile.")
+}
+
 async function todaysRecord(employeeId: number): Promise<AttendanceRow | null> {
   const rows = await query<AttendanceRow[]>(
     "SELECT id, clock_in, clock_out, break_minutes, work_date FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1",
@@ -59,8 +93,7 @@ export async function GET() {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const employee = await resolveEmployee(session.email)
-    if (!employee) return NextResponse.json({ linked: false, state: "out", clockIn: null, clockOut: null })
+    const employee = await ensureEmployee(session)
 
     const record = await todaysRecord(employee.id)
     return NextResponse.json({
@@ -79,13 +112,7 @@ export async function POST() {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const employee = await resolveEmployee(session.email)
-    if (!employee) {
-      return NextResponse.json(
-        { error: "No employee record is linked to your account. Ask HR to set your official email on your employee profile." },
-        { status: 400 },
-      )
-    }
+    const employee = await ensureEmployee(session)
 
     const record = await todaysRecord(employee.id)
     const now = nowDateTime()

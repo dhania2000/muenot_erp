@@ -2,6 +2,7 @@ import { put } from "@vercel/blob"
 import { NextResponse } from "next/server"
 import { getSession, type SessionPayload } from "@/lib/auth"
 import { query } from "@/lib/db"
+import { userHasFeature } from "@/lib/permissions"
 import { validateUpload } from "@/lib/settings/uploads"
 
 type DocAccess =
@@ -25,6 +26,10 @@ async function docAccess(): Promise<DocAccess | null> {
     [session.userId],
   )
   if (manages.length) return { session, scope: "all", employeeId: null }
+  // A regular employee may manage only their OWN documents, and only when they
+  // have been granted the "Employee Documents" permission.
+  const canManageOwn = await userHasFeature(session.userId, session.role, "hr.view_documents")
+  if (!canManageOwn) return null
   const me = await query<any[]>(
     "SELECT id FROM hr_employees WHERE official_email = ? OR personal_email = ? LIMIT 1",
     [session.email, session.email],

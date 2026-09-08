@@ -2,6 +2,7 @@ import { head } from "@vercel/blob"
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
+import { userHasFeature } from "@/lib/permissions"
 
 export async function GET(request: Request) {
   const session = await getSession()
@@ -18,11 +19,14 @@ export async function GET(request: Request) {
       [session.userId],
     )
     if (!manages.length) {
+      // Non-managers can only stream their own files, and only with the
+      // "Employee Documents" permission granted.
+      const canManageOwn = await userHasFeature(session.userId, session.role, "hr.view_documents")
       const me = await query<any[]>(
         "SELECT id FROM hr_employees WHERE official_email = ? OR personal_email = ? LIMIT 1",
         [session.email, session.email],
       )
-      if (!me.length || Number(me[0].id) !== Number(owned[0].employee_id)) {
+      if (!canManageOwn || !me.length || Number(me[0].id) !== Number(owned[0].employee_id)) {
         return NextResponse.json({ error: "Not found" }, { status: 404 })
       }
     }

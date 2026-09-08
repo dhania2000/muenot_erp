@@ -63,6 +63,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     label: "HR",
     modules: [
       { key: "hr.employees", label: "Employees", group: "hr", aliases: ["employee"], scope: { table: "hr_employees", addedBy: "created_by" } },
+      { key: "hr.documents", label: "Employee Documents", group: "hr", aliases: ["document"], scope: { table: "hr_employee_documents", addedBy: "employee_id", ownedBy: "employee_id" } },
       { key: "hr.attendance", label: "Attendance", group: "hr", aliases: ["attendance", "regularisation"], scope: { table: "hr_attendance", addedBy: "user_id", ownedBy: "user_id" } },
       { key: "hr.leaves", label: "Leaves", group: "hr", aliases: ["leave"], scope: { table: "hr_leave_requests", addedBy: "created_by", ownedBy: "employee_id" } },
       { key: "hr.shifts", label: "Shifts", group: "hr", aliases: ["shift", "rotation"], scope: { table: "hr_shifts", addedBy: "created_by" } },

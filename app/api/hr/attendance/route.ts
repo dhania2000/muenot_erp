@@ -22,6 +22,10 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     const body = await request.json()
+    // Location is compulsory: reject records without captured coordinates.
+    if (body.latitude == null || body.latitude === "" || body.longitude == null || body.longitude === "") {
+      return NextResponse.json({ error: "Location is required to add attendance." }, { status: 400 })
+    }
     const values = fields.map((field) => body[field] ?? null)
     values[7] = body.status || "Present"; values[14] = body.source || "Manual"; values[15] = body.regularisation_required ? 1 : 0
     values[8] = Number(body.late_minutes || 0); values[9] = Number(body.early_leaving_minutes || 0); values[10] = Number(body.overtime_hours || 0)

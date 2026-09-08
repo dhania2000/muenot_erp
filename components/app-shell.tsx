@@ -7,8 +7,8 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import useSWR from "swr"
-import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MessageSquare, Plus, Search, Settings, ShieldCheck, StickyNote, Ticket, UserPlus, UsersRound } from "lucide-react"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MessageSquare, Moon, Plus, Search, Settings, ShieldCheck, StickyNote, Sun, Ticket, UserPlus, UsersRound } from "lucide-react"
+import { useTheme } from "next-themes"
 import { NotesPanel } from "@/components/notes-panel"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -183,6 +183,28 @@ function ClockControl() {
   )
 }
 
+/** Full-width theme toggle used inside the profile popover so the whole row is clickable. */
+function ThemeModeItem() {
+  const { theme, resolvedTheme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => setMounted(true), [])
+
+  const current = theme === "system" ? resolvedTheme : theme
+  const isDark = mounted ? current === "dark" : true
+
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(isDark ? "light" : "dark")}
+      className="flex items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted"
+    >
+      {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+      {isDark ? "Light mode" : "Dark mode"}
+    </button>
+  )
+}
+
 function NavGroup({
   item,
   pathname,
@@ -354,7 +376,7 @@ export function AppShell({
               </div>
               <div className="flex flex-col gap-1 pt-3">
                 {user.role === "admin" && <Link href="/modules/hr/employees" className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted"><UserPlus className="size-4" /> Add employee</Link>}
-                <div className="flex items-center justify-between rounded-md px-2 py-2 text-sm"><span className="flex items-center gap-3"><ThemeToggle /> Dark mode</span></div>
+                <ThemeModeItem />
                 <button type="button" onClick={handleLogout} className="flex items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted"><LogOut className="size-4" /> Logout</button>
               </div>
             </div>

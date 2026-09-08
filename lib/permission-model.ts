@@ -141,6 +141,14 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "orders.orders", label: "Orders", group: "orders", aliases: ["order"], scope: { table: "orders", addedBy: "created_by", ownedBy: "assigned_to" } },
     ],
   },
+  {
+    slug: "legal",
+    label: "Legal",
+    modules: [
+      { key: "legal.contracts", label: "Contracts", group: "legal", aliases: ["contract"], scope: { table: "legal_contracts", addedBy: "created_by" } },
+      { key: "legal.esign", label: "Esign", group: "legal", aliases: ["esign", "sign", "signature"], scope: { table: "legal_esign_requests", addedBy: "created_by" } },
+    ],
+  },
 ]
 
 export const PERMISSION_MODULES: PermissionModule[] = PERMISSION_GROUPS.flatMap((g) => g.modules)

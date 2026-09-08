@@ -11,7 +11,7 @@ import { OperationsOverview } from "@/components/operations/operations-dashboard
 import { FinanceOverview } from "@/components/finance/finance-dashboard-client"
 import { HrDashboardClient } from "@/components/hr/hr-dashboard-client"
 import { TicketOverview } from "@/components/tickets/ticket-overview"
-import { ClientsClient } from "@/components/clients/clients-client"
+import { ClientsOverview } from "@/components/clients/clients-overview"
 
 type Metric = {
   label: string
@@ -191,7 +191,7 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
         </div>
       ) : activeTab === "Client" ? (
         <div className="rounded-xl border border-border bg-card shadow-sm">
-          <ClientsClient canManage />
+          <ClientsOverview />
         </div>
       ) : (
         <>

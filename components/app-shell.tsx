@@ -461,6 +461,7 @@ export function AppShell({
           <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">{brandName || "Dashboard"}</span></div>
           <div className="flex items-center gap-1">
             <LiveClock />
+            <ClockControl />
             <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>

@@ -5,7 +5,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, ExternalLink } from "lucide-react"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink } from "lucide-react"
 
 function settingEnabled(v: string | undefined, fallback = true) {
   if (v == null) return fallback
@@ -22,6 +22,7 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
   clients: <BriefcaseBusiness className="size-4" />,
   tickets: <TicketCheck className="size-4" />,
   products: <Package className="size-4" />,
+  legal: <Scale className="size-4" />,
 }
 
 type FeatureChild = { label: string; href?: string; feature?: string; children?: FeatureChild[] }
@@ -55,13 +56,7 @@ const HR_CHILDREN: FeatureChild[] = [
       { label: "Rotation Employees", href: "/modules/hr/shift-workflows?kind=employees", feature: "hr.view_rotation_employees" },
     ],
   },
-  { label: "Promotions", href: "/modules/hr/master-data?kind=promotions", feature: "hr.view_master_data" },
-  { label: "Awards", href: "/modules/hr/master-data?kind=awards", feature: "hr.view_master_data" },
-  { label: "Appreciations", href: "/modules/hr/master-data?kind=appreciations", feature: "hr.view_master_data" },
-  { label: "Passport Visa", href: "/modules/hr/master-data?kind=passport-visa", feature: "hr.view_master_data" },
-  { label: "Holidays", href: "/modules/hr/master-data?kind=holidays", feature: "hr.view_master_data" },
-  { label: "Departments", href: "/modules/hr/master-data?kind=departments", feature: "hr.view_master_data" },
-  { label: "Designations", href: "/modules/hr/master-data?kind=designations", feature: "hr.view_master_data" },
+  { label: "HR Master Data", href: "/modules/hr/master-data", feature: "hr.view_master_data" },
   { label: "HR Emails", href: "/modules/hr/emails", feature: "hr.view_emails" },
   { label: "HR Email Templates", href: "/modules/hr/email-templates", feature: "hr.view_email_templates" },
   { label: "Letter Templates", href: "/modules/hr/letter-templates", feature: "hr.view_letter_templates" },
@@ -125,6 +120,11 @@ const PRODUCTS_CHILDREN = [
   { label: "Product Catalog", href: "/modules/products/catalog", feature: "products.view_products" },
 ]
 
+const LEGAL_CHILDREN = [
+  { label: "Contracts", href: "/modules/legal/contracts", feature: "legal.view_contracts" },
+  { label: "Esign", href: "/modules/legal/esign", feature: "legal.view_esign" },
+]
+
 const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Dashboard", href: "/modules/sales/dashboard", feature: "sales.view_dashboard" },
   { label: "Leads", href: "/modules/sales/leads", feature: "sales.view_leads" },
@@ -164,8 +164,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: `/modules/${m.slug}`,
         icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
       }
-      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products"].includes(m.slug)) {
-        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : SALES_CHILDREN
+      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products", "legal"].includes(m.slug)) {
+        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : m.slug === "legal" ? LEGAL_CHILDREN : SALES_CHILDREN
         // Recursively keep only accessible leaves; drop groups that end up empty.
         const buildChildren = (nodes: FeatureChild[]): NavChild[] =>
           nodes.flatMap<NavChild>((c) => {

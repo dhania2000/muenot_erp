@@ -1,0 +1,189 @@
+==============================================================================
+ MUENOT ERP - ENVIRONMENT VARIABLES
+==============================================================================
+ Copy the variables you need into your .env file (or your host's env settings).
+ Values shown are EXAMPLES / placeholders - replace them with real values.
+
+ Legend:
+   [REQUIRED] app will not work without it
+   [OPTIONAL] only needed if you use that feature
+==============================================================================
+
+
+# =============================================================================
+# 1. CORE APP  [REQUIRED]
+# =============================================================================
+
+# Public base URL of this app (used for links + email tracking pixels).
+# No trailing slash.
+APP_URL=https://erp.muenot.co.in
+NEXT_PUBLIC_APP_URL=https://erp.muenot.co.in
+
+# Secret used to sign/verify login session cookies (JWT). Use a long random
+# string, e.g. output of: openssl rand -base64 48
+SESSION_SECRET=change-me-to-a-long-random-string
+
+# Secret used to encrypt/decrypt values stored in the environment_variables
+# table (department email credentials saved from the admin UI).
+# Use a long random string. If you change it, previously saved values can no
+# longer be decrypted.
+SETTINGS_ENCRYPTION_KEY=change-me-to-a-long-random-string
+
+
+# =============================================================================
+# 2. DATABASE (MySQL)  [REQUIRED]
+# =============================================================================
+
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=muenot_erp
+DB_PASSWORD=your-db-password
+DB_NAME=muenot_erp
+
+
+# =============================================================================
+# 3. EMAIL - GENERIC FALLBACK  [OPTIONAL]
+# =============================================================================
+# These are used as a DEFAULT for any department that does NOT have its own
+# department-specific variables set (section 4). If every department has its
+# own values, you do not strictly need these - but it is good to keep one
+# working fallback.
+#
+# Two ways to send mail (pick one per department):
+#   A) SMTP        - standard mail server (ports 465/587)
+#   B) Gmail API   - use this if your host BLOCKS outbound SMTP
+#                    (symptom: "Timeout | code: ETIMEDOUT | command: CONN")
+
+# ---- A) Generic SMTP ----
+SMTP_HOST=smtp.hostinger.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=noreply@muenot.co.in
+SMTP_PASS=your-mailbox-password
+SMTP_FROM=Muenot <noreply@muenot.co.in>
+
+# ---- B) Generic Gmail API (fallback) ----
+GMAIL_CLIENT_EMAIL=service-account@your-project.iam.gserviceaccount.com
+GMAIL_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+GMAIL_SENDER=noreply@muenot.co.in
+
+
+# =============================================================================
+# 4. EMAIL - PER DEPARTMENT  [OPTIONAL, but recommended]
+# =============================================================================
+# Each department sends from its OWN email address, so each department has its
+# OWN set of variables. The app looks for the department-specific variable
+# first, and falls back to the generic one from section 3 if it is missing.
+#
+# For EACH department you can configure EITHER SMTP or Gmail API (or both;
+# Gmail API is used when its credentials are present, otherwise SMTP).
+#
+# Departments: SALES, HR, FINANCE, OPERATIONS, RECRUIT
+# -----------------------------------------------------------------------------
+
+
+# ----------------------------- SALES -----------------------------------------
+# SMTP
+SALES_SMTP_HOST=smtp.hostinger.com
+SALES_SMTP_PORT=465
+SALES_SMTP_SECURE=true
+SALES_SMTP_USER=sales@muenot.co.in
+SALES_SMTP_PASS=your-sales-mailbox-password
+SALES_SMTP_FROM=Muenot Sales <sales@muenot.co.in>
+# Gmail API (only if SMTP is blocked)
+SALES_GMAIL_CLIENT_EMAIL=service-account@your-project.iam.gserviceaccount.com
+SALES_GMAIL_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+SALES_GMAIL_SENDER=sales@muenot.co.in
+
+
+# ------------------------------- HR -------------------------------------------
+# SMTP
+HR_SMTP_HOST=smtp.hostinger.com
+HR_SMTP_PORT=465
+HR_SMTP_SECURE=true
+HR_SMTP_USER=hr@muenot.co.in
+HR_SMTP_PASS=your-hr-mailbox-password
+HR_SMTP_FROM=Muenot HR <hr@muenot.co.in>
+# Gmail API (only if SMTP is blocked)
+HR_GMAIL_CLIENT_EMAIL=service-account@your-project.iam.gserviceaccount.com
+HR_GMAIL_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+HR_GMAIL_SENDER=hr@muenot.co.in
+
+
+# ---------------------------- FINANCE -----------------------------------------
+# SMTP
+FINANCE_SMTP_HOST=smtp.hostinger.com
+FINANCE_SMTP_PORT=465
+FINANCE_SMTP_SECURE=true
+FINANCE_SMTP_USER=finance@muenot.co.in
+FINANCE_SMTP_PASS=your-finance-mailbox-password
+FINANCE_SMTP_FROM=Muenot Finance <finance@muenot.co.in>
+# Gmail API (only if SMTP is blocked)
+FINANCE_GMAIL_CLIENT_EMAIL=service-account@your-project.iam.gserviceaccount.com
+FINANCE_GMAIL_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+FINANCE_GMAIL_SENDER=finance@muenot.co.in
+
+
+# --------------------------- OPERATIONS ---------------------------------------
+# SMTP
+OPERATIONS_SMTP_HOST=smtp.hostinger.com
+OPERATIONS_SMTP_PORT=465
+OPERATIONS_SMTP_SECURE=true
+OPERATIONS_SMTP_USER=operations@muenot.co.in
+OPERATIONS_SMTP_PASS=your-operations-mailbox-password
+OPERATIONS_SMTP_FROM=Muenot Operations <operations@muenot.co.in>
+# Gmail API (only if SMTP is blocked)
+OPERATIONS_GMAIL_CLIENT_EMAIL=service-account@your-project.iam.gserviceaccount.com
+OPERATIONS_GMAIL_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+OPERATIONS_GMAIL_SENDER=operations@muenot.co.in
+
+
+# ---------------------------- RECRUIT -----------------------------------------
+# (Recruitment department)
+# SMTP
+RECRUIT_SMTP_HOST=smtp.hostinger.com
+RECRUIT_SMTP_PORT=465
+RECRUIT_SMTP_SECURE=true
+RECRUIT_SMTP_USER=careers@muenot.co.in
+RECRUIT_SMTP_PASS=your-recruit-mailbox-password
+RECRUIT_SMTP_FROM=Muenot Careers <careers@muenot.co.in>
+# Gmail API (only if SMTP is blocked)
+RECRUIT_GMAIL_CLIENT_EMAIL=service-account@your-project.iam.gserviceaccount.com
+RECRUIT_GMAIL_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+RECRUIT_GMAIL_SENDER=careers@muenot.co.in
+
+
+# =============================================================================
+# 5. TWILIO - VOICE CALLS  [OPTIONAL]
+# =============================================================================
+# Needed only if you use the in-app calling feature.
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your-twilio-auth-token
+TWILIO_API_KEY=SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_API_SECRET=your-twilio-api-secret
+TWILIO_TWIML_APP_SID=APxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_CALLER_ID=+911234567890
+# Default country code prepended to national numbers (defaults to +91)
+TWILIO_DEFAULT_COUNTRY_CODE=+91
+
+
+# =============================================================================
+# 6. GOOGLE CALENDAR  [OPTIONAL]
+# =============================================================================
+# Needed only if you sync events with Google Calendar.
+GOOGLE_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REFRESH_TOKEN=your-google-refresh-token
+# Which calendar to write to (defaults to "primary")
+GOOGLE_CALENDAR_ID=primary
+# OAuth redirect URI. If omitted, it is derived from the request origin, e.g.
+# https://erp.muenot.co.in/api/sales/google/callback
+GOOGLE_REDIRECT_URI=https://erp.muenot.co.in/api/sales/google/callback
+
+
+# =============================================================================
+# 7. AUTO / PLATFORM  [set automatically - usually do NOT set by hand]
+# =============================================================================
+# NODE_ENV is set by the runtime ("production" on the deployed server).
+# NODE_ENV=production
+==============================================================================

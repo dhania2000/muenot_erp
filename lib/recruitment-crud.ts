@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { nextRecordId } from "@/lib/record-ids"
+import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { RECRUITMENT_MODULE_CONFIGS } from "@/lib/recruitment-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
 
@@ -99,7 +100,7 @@ export function createRecruitmentHandlers(moduleKey: string) {
       record[cfg.idColumn] =
         provided !== undefined && provided !== null && String(provided).trim() !== ""
           ? String(provided).trim()
-          : await nextRecordId(cfg.idPrefix)
+          : await nextRecordIdForPrefix(cfg.idPrefix)
     }
 
     record.created_by = session.userId

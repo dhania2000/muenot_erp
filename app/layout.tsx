@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from '@/components/theme-provider'
+import { CookieConsent } from '@/components/providers/cookie-consent'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -45,6 +46,7 @@ export default function RootLayout({
       <body className="antialiased">
         <ThemeProvider>
           {children}
+          <CookieConsent />
           <Toaster />
         </ThemeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}

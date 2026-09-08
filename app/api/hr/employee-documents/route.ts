@@ -2,6 +2,7 @@ import { put } from "@vercel/blob"
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
+import { validateUpload } from "@/lib/settings/uploads"
 
 async function allowed() {
   const session = await getSession()
@@ -30,7 +31,8 @@ export async function POST(request: Request) {
   let fileName: string | null = null
   let filePath: string | null = null
   if (file instanceof File && file.size > 0) {
-    if (file.size > 10 * 1024 * 1024) return NextResponse.json({ error: "File must be 10MB or smaller" }, { status: 400 })
+    const uploadError = await validateUpload(file)
+    if (uploadError) return NextResponse.json({ error: uploadError }, { status: 400 })
     const blob = await put(`hr-documents/${employeeId}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`, file, { access: "public", addRandomSuffix: false })
     fileName = file.name
     filePath = blob.url

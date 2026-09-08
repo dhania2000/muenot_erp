@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { verifyPassword } from "@/lib/password"
 import { createSessionToken, setSessionCookie } from "@/lib/auth"
+import { getNum } from "@/lib/settings/server"
 
 type UserRow = {
   id: number
@@ -39,13 +40,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
 
-    const token = await createSessionToken({
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-    })
-    await setSessionCookie(token)
+    // Session lifetime is configurable in Settings → Security (minutes).
+    const timeoutMinutes = await getNum("security.session_timeout", 480)
+    const durationSeconds = Math.max(60, Math.round(timeoutMinutes * 60))
+    const token = await createSessionToken(
+      {
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+      durationSeconds,
+    )
+    await setSessionCookie(token, durationSeconds)
 
     return NextResponse.json({
       user: {

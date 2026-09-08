@@ -3,6 +3,7 @@ import { randomUUID } from "crypto"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { nextRecordId } from "@/lib/record-ids"
+import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
 
@@ -98,7 +99,7 @@ export function createFinanceHandlers(moduleKey: string) {
       record[cfg.idColumn] =
         provided !== undefined && provided !== null && String(provided).trim() !== ""
           ? String(provided).trim()
-          : await nextRecordId(cfg.idPrefix)
+          : await nextRecordIdForPrefix(cfg.idPrefix)
     }
 
     if (cfg.trackingId) {

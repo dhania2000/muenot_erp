@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { rtFormatDate, rtFormatDateTime } from "@/lib/settings/runtime"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -18,28 +19,21 @@ export function formatCurrency(
   }).format(num)
 }
 
+// Date / datetime display honours the configured app.date_format,
+// app.time_format and app.timezone via the shared runtime settings cache
+// (populated by SettingsProvider). Empty values keep the "—" placeholder.
 export function formatDate(value: string | number | Date | null | undefined): string {
   if (!value) return "—"
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return "—"
-  return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(date)
+  return rtFormatDate(date)
 }
 
 export function formatDateTime(value: string | number | Date | null | undefined): string {
   if (!value) return "—"
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return "—"
-  return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date)
+  return rtFormatDateTime(date)
 }
 
 /**

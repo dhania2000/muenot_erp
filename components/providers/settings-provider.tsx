@@ -11,6 +11,7 @@ import {
   type SettingsMap,
 } from "@/lib/settings/format"
 import { configureCurrency, configureFinancialYear } from "@/lib/finance-calc"
+import { configureRuntimeSettings } from "@/lib/settings/runtime"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
@@ -41,6 +42,7 @@ export function SettingsProvider({
   useEffect(() => {
     configureCurrency(settings)
     configureFinancialYear(settings["app.financial_year_start"])
+    configureRuntimeSettings(settings)
   }, [settings])
 
   return <SettingsContext.Provider value={settings}>{children}</SettingsContext.Provider>

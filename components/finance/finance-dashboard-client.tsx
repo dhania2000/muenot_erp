@@ -25,6 +25,7 @@ import {
   FilterX,
 } from "lucide-react"
 import { FINANCE_MODULES } from "@/lib/finance-modules"
+import { inr0 } from "@/lib/finance-calc"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
 
 const MONTHS = [
@@ -45,8 +46,8 @@ const FINANCE_IMPORT_ALIASES: Record<string, string[]> = {
   description: ["description", "notes", "remarks", "narration"],
 }
 
-const currency = (n: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0)
+// Honours the configured currency (symbol/position/separators) via settings.
+const currency = (n: number) => inr0(n)
 
 const RECON_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   Reconciled: "default",
@@ -477,7 +478,7 @@ export function FinanceDashboardClient({ initialModule = "overview" }: { initial
                     <td className="p-2">{row.record_date || "—"}</td>
                     <td className="p-2">{row.party_name || row.account_name || "—"}</td>
                     <td className="p-2">{row.record_type || "—"}</td>
-                    <td className="p-2">₹{Number(row.amount || row.debit || row.credit || 0).toLocaleString()}</td>
+                    <td className="p-2">{currency(Number(row.amount || row.debit || row.credit || 0))}</td>
                     <td className="p-2">{row.status}</td>
                     {isBankTransactions && <td className="p-2">{row.reconciliation_status || "—"}</td>}
                   </tr>

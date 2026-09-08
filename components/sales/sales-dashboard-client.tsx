@@ -13,8 +13,10 @@ import {
 import { Bar, BarChart, CartesianGrid, XAxis, Pie, PieChart, Cell } from "recharts"
 import { TrendingUp, Users, Trophy, Target, Clock, CalendarClock } from "lucide-react"
 
-const currency = (n: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0)
+import { inr0 } from "@/lib/finance-calc"
+
+// Honours the configured currency (symbol/position/separators) via settings.
+const currency = (n: number) => inr0(n)
 
 const STATUS_COLORS: Record<string, string> = {
   New: "var(--chart-5)",

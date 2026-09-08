@@ -7,6 +7,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogTrigger,
+  DialogClose,
+} from "@/components/ui/dialog"
+import { Plus } from "lucide-react"
 import {
   Table,
   TableHeader,
@@ -231,78 +242,125 @@ export function OperationsOverview() {
   )
 }
 
+function formatLabel(field: string) {
+  return field.replaceAll("_", " ").replace(/\b\w/g, (ch) => ch.toUpperCase())
+}
+
 export function OperationsDashboardClient({ initialModule = "resources" }: { initialModule?: string }) {
   const [kind, setKind] = useState(initialModule)
   const [form, setForm] = useState<any>({})
-  const { data, mutate } = useSWR(`/api/operations?kind=${kind}`, fetcher)
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const { data, mutate } = useSWR<{ rows: any[] }>(`/api/operations?kind=${kind}`, fetcher)
   const c = configs[kind]
 
   async function save() {
-    await fetch("/api/operations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind, ...form }),
-    })
-    setForm({})
-    mutate()
+    setSaving(true)
+    try {
+      await fetch("/api/operations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, ...form }),
+      })
+      setForm({})
+      setOpen(false)
+      mutate()
+    } finally {
+      setSaving(false)
+    }
   }
+
+  const rows: any[] = data?.rows || []
 
   return (
     <main className="space-y-8 p-6">
-      <div>
-        <p className="text-sm text-muted-foreground">Delivery cockpit</p>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          {kind === "overview" ? "Operations" : c?.title ?? "Operations"}
-        </h1>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-sm text-muted-foreground">Delivery cockpit</p>
+          <h1 className="text-3xl font-semibold tracking-tight">
+            {kind === "overview" ? "Operations" : c?.title ?? "Operations"}
+          </h1>
+        </div>
+
+        {kind !== "overview" && c && (
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger
+              render={
+                <Button>
+                  <Plus className="size-4" />
+                  Add {c.title}
+                </Button>
+              }
+            />
+            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>Add {c.title}</DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-4 py-2 md:grid-cols-2">
+                {c.fields.map((field: string) => (
+                  <div key={field} className="flex flex-col gap-1.5">
+                    <Label htmlFor={field} className="text-xs text-muted-foreground">
+                      {formatLabel(field)}
+                    </Label>
+                    <Input
+                      id={field}
+                      placeholder={formatLabel(field)}
+                      type={field.includes("date") ? "date" : "text"}
+                      value={form[field] ?? ""}
+                      onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+                    />
+                  </div>
+                ))}
+              </div>
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline">Cancel</Button>} />
+                <Button onClick={save} disabled={saving}>
+                  {saving ? "Saving..." : "Save record"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       {kind === "overview" && <OperationsOverview />}
 
-      {kind !== "overview" && <section className="rounded-xl border bg-card p-5">
-        <h2 className="mb-4 text-lg font-semibold">Add {c.title}</h2>
-        <div className="grid gap-3 md:grid-cols-3">
-          {c.fields.map((field: string) => (
-            <Input
-              key={field}
-              placeholder={field.replaceAll("_", " ")}
-              type={field.includes("date") ? "date" : "text"}
-              value={form[field] ?? ""}
-              onChange={(e) => setForm({ ...form, [field]: e.target.value })}
-            />
-          ))}
-        </div>
-        <Button className="mt-4" onClick={save}>
-          Save record
-        </Button>
-      </section>}
-
-      {kind !== "overview" && <section className="overflow-x-auto rounded-xl border bg-card">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b text-muted-foreground">
-              <th className="p-4">ID</th>
-              <th className="p-4">Record</th>
-              <th className="p-4">Status</th>
-              <th className="p-4">Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(data?.rows || []).map((row: any) => (
-              <tr
-                key={row.resource_id || row.project_id || row.allocation_id || row.review_id || row.issue_id}
-                className="border-b last:border-0"
-              >
-                <td className="p-4 font-mono text-xs">
-                  {row.resource_id || row.project_id || row.allocation_id || row.review_id || row.issue_id}
-                </td>
-                <td className="p-4">{row.resource_name || row.project_name || row.title || row.reviewer_name || "Operational record"}</td>
-                <td className="p-4">{row.status}</td>
-                <td className="p-4 text-muted-foreground">{String(row.created_at || "").slice(0, 10)}</td>
+      {kind !== "overview" && (
+        <section className="overflow-x-auto rounded-xl border bg-card">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b text-muted-foreground">
+                <th className="p-4">ID</th>
+                <th className="p-4">Record</th>
+                <th className="p-4">Status</th>
+                <th className="p-4">Created</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>}
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-8 text-center text-muted-foreground">
+                    No records yet. Click &quot;Add {c?.title}&quot; to create one.
+                  </td>
+                </tr>
+              )}
+              {rows.map((row: any) => (
+                <tr
+                  key={row.resource_id || row.project_id || row.allocation_id || row.review_id || row.issue_id}
+                  className="border-b last:border-0"
+                >
+                  <td className="p-4 font-mono text-xs">
+                    {row.resource_id || row.project_id || row.allocation_id || row.review_id || row.issue_id}
+                  </td>
+                  <td className="p-4">{row.resource_name || row.project_name || row.title || row.reviewer_name || "Operational record"}</td>
+                  <td className="p-4">{row.status}</td>
+                  <td className="p-4 text-muted-foreground">{String(row.created_at || "").slice(0, 10)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </main>
   )
 }

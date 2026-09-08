@@ -9,6 +9,8 @@ import {
 import { cn } from "@/lib/utils"
 import { OperationsOverview } from "@/components/operations/operations-dashboard-client"
 import { FinanceOverview } from "@/components/finance/finance-dashboard-client"
+import { HrDashboardClient } from "@/components/hr/hr-dashboard-client"
+import { TicketOverview } from "@/components/tickets/ticket-overview"
 
 type Metric = {
   label: string
@@ -52,8 +54,8 @@ const navTabs: NavTab[] = [
   { label: "Overview", kind: "tab" },
   { label: "Operations", kind: "tab" },
   { label: "Client", kind: "link", href: "/modules/clients" },
-  { label: "HR", kind: "link", href: "/modules/hr" },
-  { label: "Ticket", kind: "link", href: "/modules/tickets" },
+  { label: "HR", kind: "tab" },
+  { label: "Ticket", kind: "tab" },
   { label: "Finance", kind: "tab" },
 ]
 
@@ -113,14 +115,26 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
     <div className="mx-auto flex max-w-7xl flex-col gap-6 p-4 md:p-6 lg:p-8">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          {activeTab === "Operations" ? "Operations" : activeTab === "Finance" ? "Finance" : "Overview"}
+          {activeTab === "Operations"
+            ? "Operations"
+            : activeTab === "Finance"
+              ? "Finance"
+              : activeTab === "HR"
+                ? "HR"
+                : activeTab === "Ticket"
+                  ? "Ticket"
+                  : "Overview"}
         </h1>
         <p className="text-sm text-muted-foreground">
           {activeTab === "Operations"
             ? "Your delivery cockpit right here without leaving the dashboard."
             : activeTab === "Finance"
               ? "Your finance dashboard right here without leaving the overview."
-              : "Welcome back — here's what's happening across your workspace."}
+              : activeTab === "HR"
+                ? "Your HR dashboard right here without leaving the overview."
+                : activeTab === "Ticket"
+                  ? "Your ticket dashboard right here without leaving the overview."
+                  : "Welcome back — here's what's happening across your workspace."}
         </p>
       </div>
 
@@ -161,6 +175,14 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
       ) : activeTab === "Finance" ? (
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <FinanceOverview />
+        </div>
+      ) : activeTab === "HR" ? (
+        <div className="rounded-xl border border-border bg-card shadow-sm">
+          <HrDashboardClient />
+        </div>
+      ) : activeTab === "Ticket" ? (
+        <div className="rounded-xl border border-border bg-card shadow-sm">
+          <TicketOverview />
         </div>
       ) : (
         <>

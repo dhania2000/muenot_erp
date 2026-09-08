@@ -17,6 +17,7 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
 
 // Sales sub-pages shown in the sidebar dropdown, each gated by a feature slug.
 const HR_CHILDREN: { label: string; href: string; feature: string }[] = [
+  { label: "HR Dashboard", href: "/modules/hr/dashboard", feature: "hr.view_dashboard" },
   { label: "Employees", href: "/modules/hr/employees", feature: "hr.view_employees" },
   { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_employees" },
   { label: "Attendance", href: "/modules/hr/attendance", feature: "hr.view_attendance" },

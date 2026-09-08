@@ -154,17 +154,19 @@ RECRUIT_GMAIL_SENDER=careers@muenot.co.in
 
 
 # =============================================================================
-# 5. TWILIO - VOICE CALLS  [OPTIONAL]
+# 5. TELNYX - VOICE CALLS  [OPTIONAL]
 # =============================================================================
-# Needed only if you use the in-app calling feature.
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=your-twilio-auth-token
-TWILIO_API_KEY=SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_API_SECRET=your-twilio-api-secret
-TWILIO_TWIML_APP_SID=APxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_CALLER_ID=+911234567890
+# Needed only if you use the in-app calling feature (browser WebRTC dialer).
+# Create these in the Telnyx Mission Control Portal:
+#   - API v2 key            -> TELNYX_API_KEY
+#   - Credential Connection -> TELNYX_SIP_CONNECTION_ID
+#     (enable outbound voice + assign an Outbound Voice Profile)
+#   - a Telnyx phone number -> TELNYX_CALLER_ID (E.164)
+TELNYX_API_KEY=KEYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TELNYX_SIP_CONNECTION_ID=1234567890123456789
+TELNYX_CALLER_ID=+911234567890
 # Default country code prepended to national numbers (defaults to +91)
-TWILIO_DEFAULT_COUNTRY_CODE=+91
+TELNYX_DEFAULT_COUNTRY_CODE=+91
 
 
 # =============================================================================

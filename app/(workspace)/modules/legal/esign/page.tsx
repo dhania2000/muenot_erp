@@ -1,5 +1,5 @@
-import { LegalWorkspace } from "@/components/legal/legal-workspace"
+import { EsignWorkspace } from "@/components/legal/esign-workspace"
 
 export default function LegalEsignPage() {
-  return <LegalWorkspace kind="esign" />
+  return <EsignWorkspace />
 }

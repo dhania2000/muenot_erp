@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import type { Call, Device } from "@twilio/voice-sdk"
+import type { TelnyxRTC, ICall } from "@telnyx/webrtc"
 import {
   Dialog,
   DialogContent,
@@ -44,7 +44,7 @@ const DEFAULT_DISPOSITIONS = [
 ] as const
 
 const DEFAULT_CONFIG_HINT =
-  "Calling isn't configured yet. Add your Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID, TWILIO_CALLER_ID) to enable in-browser calling."
+  "Calling isn't configured yet. Add your Telnyx credentials (TELNYX_API_KEY, TELNYX_SIP_CONNECTION_ID, TELNYX_CALLER_ID) to enable in-browser calling."
 
 function formatDuration(totalSeconds: number) {
   const m = Math.floor(totalSeconds / 60)
@@ -57,7 +57,7 @@ function formatDuration(totalSeconds: number) {
 }
 
 /**
- * In-browser Twilio Voice dialer, shared across modules.
+ * In-browser Telnyx WebRTC dialer, shared across modules.
  *
  * `apiBase` selects the module's calling endpoints — the component talks to
  * `${apiBase}/token`, `${apiBase}` (POST to log) and `${apiBase}/${id}` (PATCH
@@ -95,8 +95,10 @@ export function CallDialer({
   const [saving, setSaving] = useState(false)
   const [initError, setInitError] = useState<string | null>(null)
 
-  const deviceRef = useRef<Device | null>(null)
-  const callRef = useRef<Call | null>(null)
+  const clientRef = useRef<TelnyxRTC | null>(null)
+  const callRef = useRef<ICall | null>(null)
+  const callerIdRef = useRef<string>("")
+  const readyRef = useRef(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const callLogIdRef = useRef<number | null>(null)
   const secondsRef = useRef(0)
@@ -108,15 +110,16 @@ export function CallDialer({
     }
   }, [])
 
-  const teardownDevice = useCallback(() => {
+  const teardownClient = useCallback(() => {
     try {
-      callRef.current?.disconnect()
+      callRef.current?.hangup()
     } catch {}
     callRef.current = null
     try {
-      deviceRef.current?.destroy()
+      clientRef.current?.disconnect()
     } catch {}
-    deviceRef.current = null
+    clientRef.current = null
+    readyRef.current = false
   }, [])
 
   // Reset all local state whenever the dialog is opened for a new target.
@@ -147,10 +150,24 @@ export function CallDialer({
           setConfigured(false)
           return
         }
+        callerIdRef.current = data.callerId || ""
+        const { TelnyxRTC } = await import("@telnyx/webrtc")
+        const client = new TelnyxRTC({ login_token: data.token })
+
+        client.on("telnyx.ready", () => {
+          readyRef.current = true
+        })
+        client.on("telnyx.error", (err: unknown) => {
+          console.error("[call-dialer] telnyx error", err)
+        })
+        client.on("telnyx.notification", (notification: any) => {
+          if (notification?.type !== "callUpdate" || !notification.call) return
+          handleCallState(notification.call.state as string)
+        })
+
+        client.connect()
+        clientRef.current = client
         setConfigured(true)
-        const { Device } = await import("@twilio/voice-sdk")
-        const device = new Device(data.token, { logLevel: "error" })
-        deviceRef.current = device
       } catch (err) {
         if (cancelled) return
         console.error("[call-dialer] init failed", err)
@@ -162,25 +179,52 @@ export function CallDialer({
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, target, apiBase])
 
-  // Clean up the device and timer when the dialog fully closes.
+  // Clean up the client and timer when the dialog fully closes.
   useEffect(() => {
     if (open) return
     stopTimer()
-    teardownDevice()
-  }, [open, stopTimer, teardownDevice])
+    teardownClient()
+  }, [open, stopTimer, teardownClient])
 
   useEffect(() => {
     return () => {
       stopTimer()
-      teardownDevice()
+      teardownClient()
     }
-  }, [stopTimer, teardownDevice])
+  }, [stopTimer, teardownClient])
 
   useEffect(() => {
     secondsRef.current = seconds
   }, [seconds])
+
+  // Map Telnyx WebRTC call states onto our UI state machine.
+  function handleCallState(telnyxState: string) {
+    switch (telnyxState) {
+      case "new":
+      case "requesting":
+      case "trying":
+        setState("connecting")
+        break
+      case "ringing":
+      case "early":
+        setState("ringing")
+        break
+      case "active":
+        setState("in-progress")
+        stopTimer()
+        timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
+        break
+      case "hangup":
+      case "destroy":
+        finishCall("Completed")
+        break
+      default:
+        break
+    }
+  }
 
   async function logInitialCall(dialed: string) {
     try {
@@ -202,32 +246,22 @@ export function CallDialer({
   }
 
   async function startCall() {
-    const device = deviceRef.current
+    const client = clientRef.current
     const dialed = number.trim()
-    if (!device || !dialed) return
+    if (!client || !dialed) return
 
     setState("connecting")
     setSeconds(0)
     await logInitialCall(dialed)
 
     try {
-      const call = await device.connect({ params: { To: dialed } })
+      const call = client.newCall({
+        destinationNumber: dialed,
+        callerNumber: callerIdRef.current || undefined,
+        audio: true,
+        video: false,
+      })
       callRef.current = call
-
-      call.on("ringing", () => setState("ringing"))
-      call.on("accept", () => {
-        setState("in-progress")
-        stopTimer()
-        timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
-      })
-      call.on("disconnect", () => finishCall("Completed"))
-      call.on("cancel", () => finishCall("Canceled"))
-      call.on("reject", () => finishCall("Failed"))
-      call.on("error", (e: unknown) => {
-        console.error("[call-dialer] call error", e)
-        toast.error("Call error. Please try again.")
-        finishCall("Failed")
-      })
     } catch (err) {
       console.error("[call-dialer] connect failed", err)
       toast.error("Unable to place the call.")
@@ -237,7 +271,7 @@ export function CallDialer({
 
   function finishCall(status: "Completed" | "Canceled" | "Failed") {
     stopTimer()
-    setState("ended")
+    setState((prev) => (prev === "ended" ? prev : "ended"))
     const callId = callLogIdRef.current
     const finalDuration = secondsRef.current
     if (callId) {
@@ -251,7 +285,7 @@ export function CallDialer({
 
   function hangup() {
     try {
-      callRef.current?.disconnect()
+      callRef.current?.hangup()
     } catch {}
   }
 
@@ -259,7 +293,10 @@ export function CallDialer({
     const call = callRef.current
     if (!call) return
     const next = !muted
-    call.mute(next)
+    try {
+      if (next) call.muteAudio()
+      else call.unmuteAudio()
+    } catch {}
     setMuted(next)
   }
 

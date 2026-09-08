@@ -1,10 +1,13 @@
 -- =============================================================
--- Migration: Recruitment In-Browser Calling (Twilio Voice)
+-- Migration: Recruitment In-Browser Calling (Telnyx Voice / WebRTC)
 -- Run this in phpMyAdmin (Hostinger) after the base schema and the
 -- Worksuite recruit module migration.
 -- Safe to run once. Uses IF NOT EXISTS where possible.
--- Reuses the same Twilio TwiML App voice webhook as Sales
--- (/api/sales/calls/voice) — no extra Twilio config is required.
+-- Uses the same Telnyx credentials as Sales — no extra config is required.
+--
+-- NOTE: If you previously ran the Twilio version of this migration,
+-- rename the old column instead of recreating the table:
+--   ALTER TABLE `recruit_calls` CHANGE `twilio_call_sid` `telnyx_call_id` VARCHAR(64) DEFAULT NULL;
 -- =============================================================
 
 SET NAMES utf8mb4;
@@ -24,7 +27,7 @@ CREATE TABLE IF NOT EXISTS `recruit_calls` (
   `to_number` VARCHAR(40) NOT NULL,
   `to_name` VARCHAR(190) DEFAULT NULL,
   `from_number` VARCHAR(40) DEFAULT NULL,
-  `twilio_call_sid` VARCHAR(64) DEFAULT NULL,
+  `telnyx_call_id` VARCHAR(64) DEFAULT NULL,
   `direction` ENUM('Outbound','Inbound') NOT NULL DEFAULT 'Outbound',
   `status` ENUM('Initiated','Ringing','In Progress','Completed','Failed','Busy','No Answer','Canceled') NOT NULL DEFAULT 'Initiated',
   `duration_seconds` INT UNSIGNED NOT NULL DEFAULT 0,
@@ -36,7 +39,7 @@ CREATE TABLE IF NOT EXISTS `recruit_calls` (
   PRIMARY KEY (`id`),
   KEY `idx_recruit_calls_app` (`application_id`),
   KEY `idx_recruit_calls_status` (`status`),
-  KEY `idx_recruit_calls_sid` (`twilio_call_sid`),
+  KEY `idx_recruit_calls_sid` (`telnyx_call_id`),
   CONSTRAINT `fk_recruit_calls_app` FOREIGN KEY (`application_id`) REFERENCES `recruit_applications` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_recruit_calls_called_by` FOREIGN KEY (`called_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

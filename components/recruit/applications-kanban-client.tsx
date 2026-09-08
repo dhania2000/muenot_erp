@@ -64,7 +64,6 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
   const { data, isLoading, mutate } = useSWR<{ applications: Application[] }>("/api/recruit/applications", fetcher)
   const { data: jobData } = useSWR<{ jobs: Job[] }>("/api/recruit/jobs", fetcher)
   const [active, setActive] = useState<Application | null>(null)
-  const [dragId, setDragId] = useState<string | null>(null)
   const [callOpen, setCallOpen] = useState(false)
   const [callTarget, setCallTarget] = useState<CallTarget | null>(null)
   const [stageFilter, setStageFilter] = useState<string>("all")
@@ -96,13 +95,6 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
     () => (stageFilter === "all" ? filtered : filtered.filter((a) => a.stage === stageFilter)),
     [filtered, stageFilter],
   )
-
-  const byStage = useMemo(() => {
-    const map: Record<string, Application[]> = {}
-    for (const s of APPLICATION_STAGES) map[s.key] = []
-    for (const a of filtered) (map[a.stage] ??= []).push(a)
-    return map
-  }, [filtered])
 
   async function moveTo(app: Application, stage: StageKey) {
     if (app.stage === stage) return
@@ -153,7 +145,7 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
     <main className="flex flex-col gap-6 p-6 md:p-8">
       <PageHeader
         title="Job Applications"
-        description="Track candidates through your hiring pipeline. Drag cards between stages to update them."
+        description="Track candidates through your hiring pipeline and update their status."
         icon={KanbanSquare}
         action={
           <div className="flex items-center gap-2">
@@ -190,45 +182,6 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
             ))}
           </SelectContent>
         </Select>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {APPLICATION_STAGES.map((stage) => (
-          <div
-            key={stage.key}
-            onDragOver={(e) => canManage && e.preventDefault()}
-            onDrop={() => {
-              if (!canManage || !dragId) return
-              const app = applications.find((a) => a.application_id === dragId)
-              if (app) moveTo(app, stage.key)
-              setDragId(null)
-            }}
-            className="flex min-h-40 flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3"
-          >
-            <div className="flex items-center justify-between">
-              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${stage.tone}`}>{stage.label}</span>
-              <span className="text-xs text-muted-foreground">{byStage[stage.key]?.length ?? 0}</span>
-            </div>
-            <div className="flex flex-col gap-2">
-              {isLoading && <div className="text-xs text-muted-foreground">Loading...</div>}
-              {byStage[stage.key]?.map((app) => (
-                <button
-                  key={app.application_id}
-                  type="button"
-                  draggable={canManage}
-                  onDragStart={() => setDragId(app.application_id)}
-                  onClick={() => setActive(app)}
-                  className="flex flex-col gap-1.5 rounded-md border border-border bg-card p-3 text-left shadow-sm transition-colors hover:border-primary/50"
-                >
-                  <span className="font-medium leading-tight">{app.candidate_name}</span>
-                  <span className="text-xs text-muted-foreground">{app.job_title || "—"}</span>
-                  <RatingStars value={app.rating} readOnly />
-                  <span className="text-xs text-muted-foreground">{formatDate(app.applied_at)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
       </div>
 
       <div className="flex flex-col gap-3">

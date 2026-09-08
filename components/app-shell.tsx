@@ -180,15 +180,24 @@ function ClockControl() {
   )
 }
 
-function NavGroup({ item, pathname }: { item: NavItem; pathname: string }) {
+function NavGroup({
+  item,
+  pathname,
+  open,
+  onToggle,
+}: {
+  item: NavItem
+  pathname: string
+  open: boolean
+  onToggle: () => void
+}) {
   const groupActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
-  const [open, setOpen] = useState(groupActive)
 
   return (
     <div className="flex flex-col">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={onToggle}
         aria-expanded={open}
         className={cn(
           "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
@@ -238,6 +247,9 @@ export function AppShell({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  const [openGroup, setOpenGroup] = useState<string | null>(
+    () => navItems.find((i) => i.children?.length && (pathname === i.href || pathname.startsWith(`${i.href}/`)))?.href ?? null,
+  )
   const [profileOpen, setProfileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)
@@ -276,7 +288,15 @@ export function AppShell({
         <nav className="min-h-0 flex-1 flex flex-col gap-1 overflow-y-auto px-3">
           {navItems.map((item) => {
             if (item.children && item.children.length > 0) {
-              return <NavGroup key={item.href} item={item} pathname={pathname} />
+              return (
+                <NavGroup
+                  key={item.href}
+                  item={item}
+                  pathname={pathname}
+                  open={openGroup === item.href}
+                  onToggle={() => setOpenGroup((cur) => (cur === item.href ? null : item.href))}
+                />
+              )
             }
             const active = pathname === item.href
             return (
@@ -344,27 +364,6 @@ export function AppShell({
             <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>
-            <ClockControl />
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Create" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
-                <Plus className="size-5" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>Quick create</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {user.role === "admin" && (
-                  <DropdownMenuItem onClick={() => router.push("/modules/hr/employees")}>
-                    <UserPlus className="size-4" /> Add employee
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onClick={() => router.push("/modules/tickets/all")}>
-                  <Ticket className="size-4" /> New ticket
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => router.push("/modules/clients")}>
-                  <UsersRound className="size-4" /> New client
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Notifications" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
                 <Bell className="size-5" />

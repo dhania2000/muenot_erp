@@ -1,108 +1,98 @@
 "use client"
 
-import { useMemo, useState } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { ArrowRight, MapPin, Search } from "lucide-react"
-import { JOB_TYPES, WORK_MODES, labelFor, salaryRange } from "@/lib/recruit"
+import { Briefcase, Globe } from "lucide-react"
 
-type PublicJob = {
-  job_id: string
-  public_hash: string
-  title: string
-  department: string | null
-  location: string | null
-  job_type: string | null
-  work_mode: string | null
-  experience: string | null
-  salary_from: number | null
-  salary_to: number | null
-  currency: string
-  skills: string | null
-}
+type PublicJob = { job_id: string }
 
 export function CareersClient() {
-  const { data, isLoading } = useSWR<{ jobs: PublicJob[] }>("/api/recruit/public/jobs", fetcher)
-  const [search, setSearch] = useState("")
-  const jobs = data?.jobs ?? []
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return jobs
-    return jobs.filter((j) =>
-      [j.title, j.department, j.location, j.skills].filter(Boolean).some((v) => v!.toLowerCase().includes(q)),
-    )
-  }, [jobs, search])
-
-  const departments = useMemo(() => {
-    const set = new Set(jobs.map((j) => j.department).filter(Boolean) as string[])
-    return Array.from(set)
-  }, [jobs])
+  const { data } = useSWR<{ jobs: PublicJob[] }>("/api/recruit/public/jobs", fetcher)
+  const openCount = data?.jobs?.length ?? 0
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-10 md:px-6 md:py-16">
-      <div className="flex flex-col gap-4 text-center">
-        <h1 className="text-3xl font-semibold tracking-tight text-balance md:text-4xl">Join our team</h1>
-        <p className="mx-auto max-w-2xl text-pretty text-muted-foreground">
-          We&apos;re hiring across {departments.length > 0 ? `${departments.length} teams` : "the company"}. Explore open
-          roles below and apply in minutes.
-        </p>
+    <div className="mx-auto max-w-6xl px-4 py-6 md:px-6 md:py-8">
+      {/* Hero banner */}
+      <div className="overflow-hidden rounded-t-xl border border-border">
+        <div className="relative h-48 w-full sm:h-60 md:h-72">
+          <Image src="/careers-hero.png" alt="Muenot workplace" fill priority className="object-cover" />
+        </div>
       </div>
 
-      <div className="relative mx-auto mt-8 max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search roles, teams or skills…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
-      </div>
-
-      <div className="mt-8 flex items-center justify-between">
-        <h2 className="text-sm font-medium text-muted-foreground">
-          {isLoading ? "Loading openings…" : `${filtered.length} open ${filtered.length === 1 ? "role" : "roles"}`}
-        </h2>
-      </div>
-
-      <div className="mt-4 flex flex-col gap-3">
-        {!isLoading && filtered.length === 0 && (
-          <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
-            No open positions right now. Please check back soon.
-          </div>
-        )}
-        {filtered.map((job) => (
-          <Link
-            key={job.job_id}
-            href={`/job-opening/${job.public_hash}`}
-            className="group flex flex-col gap-3 rounded-lg border border-border bg-card p-5 transition-colors hover:border-primary/50 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="min-w-0">
-              <h3 className="font-medium">{job.title}</h3>
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                {job.department && <span>{job.department}</span>}
-                {job.location && (
-                  <span className="inline-flex items-center gap-1">
-                    <MapPin className="size-3.5" /> {job.location}
-                  </span>
-                )}
-                <span>{salaryRange(job.salary_from, job.salary_to, job.currency)}</span>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {job.job_type && <Badge variant="secondary">{labelFor(JOB_TYPES, job.job_type)}</Badge>}
-                {job.work_mode && <Badge variant="secondary">{labelFor(WORK_MODES, job.work_mode)}</Badge>}
-                {job.experience && <Badge variant="outline">{job.experience}</Badge>}
-              </div>
-            </div>
-            <span className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-primary">
-              View &amp; apply
-              <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+      {/* Company header card */}
+      <div className="relative rounded-b-xl border border-t-0 border-border bg-card px-5 pb-6 pt-4 md:px-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex items-end gap-4">
+            <span className="-mt-16 flex size-28 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-card shadow-sm md:-mt-20 md:size-32">
+              <Image src="/muenot-mark.png" alt="Muenot logo" width={128} height={128} className="size-full object-contain" />
             </span>
+            <div className="pb-1">
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Muenot</h1>
+              <a
+                href="https://muenot.co.in"
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-blue-600"
+              >
+                <Globe className="size-3.5" /> https://muenot.co.in
+              </a>
+            </div>
+          </div>
+          <Link
+            href="/job-opening"
+            className="inline-flex items-center justify-center gap-2 self-start rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 sm:self-auto"
+          >
+            <Briefcase className="size-4" />
+            Jobs{openCount > 0 ? ` (${openCount})` : ""}
           </Link>
-        ))}
+        </div>
+      </div>
+
+      {/* Content card */}
+      <div className="mt-6 rounded-xl border border-border bg-card px-5 py-6 md:px-8 md:py-8">
+        <h2 className="text-xl font-semibold tracking-tight text-foreground">Muenot</h2>
+        <p className="mt-1 text-muted-foreground">Infinite Learning, Endless Possibilities</p>
+
+        <section className="mt-6">
+          <h3 className="text-base font-semibold text-foreground">About Us</h3>
+          <p className="mt-2 leading-relaxed text-muted-foreground">
+            Muenot is a learning-first organisation on a mission to make quality education accessible to everyone. We
+            build content, platforms and programs that help learners grow and help businesses upskill their teams. Our
+            focus on quality, mentorship and outcomes has made us a trusted name for infinite learning.
+          </p>
+        </section>
+
+        <section className="mt-6">
+          <h3 className="text-base font-semibold text-foreground">What We Do</h3>
+          <div className="mt-2 flex flex-col gap-1.5 leading-relaxed text-muted-foreground">
+            <p>Curriculum &amp; content: expertly crafted learning material across domains.</p>
+            <p>Learning platform: an easy-to-use environment that simplifies studying and tracking progress.</p>
+            <p>Mentorship: guidance from subject-matter experts to help learners stay ahead.</p>
+            <p>Training &amp; support: onboarding and support to ensure successful adoption of our programs.</p>
+          </div>
+        </section>
+
+        <section className="mt-6">
+          <h3 className="text-base font-semibold text-foreground">Our Team</h3>
+          <p className="mt-2 leading-relaxed text-muted-foreground">
+            Muenot is powered by a talented and dedicated team of educators, engineers and creators. Our people bring a
+            diverse set of skills and experiences to the table, allowing us to tackle complex challenges and deliver
+            learning experiences that truly make a difference. We are committed to fostering a positive, collaborative
+            environment where everyone has the opportunity to grow and succeed.
+          </p>
+        </section>
+
+        <div className="mt-8 border-t border-border pt-6">
+          <Link
+            href="/job-opening"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+          >
+            <Briefcase className="size-4" />
+            View open roles{openCount > 0 ? ` (${openCount})` : ""}
+          </Link>
+        </div>
       </div>
     </div>
   )

@@ -1,18 +1,18 @@
 import type { Metadata } from "next"
-import { CareersClient } from "@/components/recruit/careers-client"
+import { JobBrowserClient } from "@/components/recruit/job-browser-client"
 import { PublicHeader, PublicFooter } from "@/components/recruit/public-header"
 
 export const metadata: Metadata = {
-  title: "Careers — Open Positions",
-  description: "Explore open roles and apply to join our team.",
+  title: "Open Positions — Muenot Careers",
+  description: "Browse open roles at Muenot and apply in minutes.",
 }
 
-export default function CareersPage() {
+export default function JobOpeningsPage() {
   return (
     <div className="light flex min-h-screen flex-col bg-muted text-foreground [color-scheme:light]">
       <PublicHeader />
       <main className="flex-1">
-        <CareersClient />
+        <JobBrowserClient />
       </main>
       <PublicFooter />
     </div>

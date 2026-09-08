@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { PublicApplyClient } from "@/components/recruit/public-apply-client"
+import { JobBrowserClient } from "@/components/recruit/job-browser-client"
 import { PublicHeader, PublicFooter } from "@/components/recruit/public-header"
 import { getJobByHash } from "@/lib/recruit-db"
 
@@ -19,10 +19,10 @@ export async function generateMetadata({ params }: { params: Promise<{ hash: str
 export default async function JobOpeningPage({ params }: { params: Promise<{ hash: string }> }) {
   const { hash } = await params
   return (
-    <div className="light flex min-h-screen flex-col bg-background text-foreground [color-scheme:light]">
+    <div className="light flex min-h-screen flex-col bg-muted text-foreground [color-scheme:light]">
       <PublicHeader />
       <main className="flex-1">
-        <PublicApplyClient hash={hash} />
+        <JobBrowserClient initialHash={hash} />
       </main>
       <PublicFooter />
     </div>

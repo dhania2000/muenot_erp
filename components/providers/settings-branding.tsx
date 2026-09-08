@@ -47,9 +47,17 @@ export function SettingsBranding() {
     }
   }, [primary, sidebar])
 
-  // Default theme mode.
+  // Default theme mode. Applied only as the initial default — a theme the user
+  // picked themselves (persisted by next-themes under the "theme" key) always
+  // wins, so the Light/Dark toggle in the profile menu sticks across reloads
+  // and navigation instead of being overridden by the org default.
   useEffect(() => {
     if (!mode) return
+    try {
+      if (localStorage.getItem("theme")) return
+    } catch {
+      // localStorage unavailable (SSR/privacy mode) — fall through to default.
+    }
     setTheme(mode.toLowerCase() === "system" ? "system" : mode.toLowerCase())
   }, [mode, setTheme])
 

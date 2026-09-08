@@ -95,6 +95,7 @@ const RECRUITMENT_CHILDREN: { label: string; href: string; feature: string }[] =
   { label: "Email", href: "/modules/recruitment/emails", feature: "recruitment.view_applications" },
   { label: "Email Templates", href: "/modules/recruitment/email-templates", feature: "recruitment.view_applications" },
   { label: "Recruit Report", href: "/modules/recruitment/recruit-job-report", feature: "recruitment.view_reports" },
+  { label: "Career Site", href: "/modules/recruitment/career-site", feature: "recruitment.view_jobs" },
 ]
 
 const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = [

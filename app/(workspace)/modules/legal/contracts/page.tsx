@@ -1,5 +1,5 @@
-import { LegalWorkspace } from "@/components/legal/legal-workspace"
+import { TemplateGenerator } from "@/components/legal/template-generator"
 
 export default function LegalContractsPage() {
-  return <LegalWorkspace kind="contracts" />
+  return <TemplateGenerator />
 }

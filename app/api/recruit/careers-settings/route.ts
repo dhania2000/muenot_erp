@@ -21,6 +21,11 @@ async function ensureTable() {
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`,
   )
+  // Widen svalue so inline data-URL images (used when no Blob storage is
+  // connected) are not truncated by TEXT's ~64KB limit. Safe to run repeatedly.
+  try {
+    await query("ALTER TABLE company_settings MODIFY svalue MEDIUMTEXT DEFAULT NULL")
+  } catch {}
 }
 
 // GET — return the current (effective) careers content for the editor.

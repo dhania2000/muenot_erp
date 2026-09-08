@@ -178,7 +178,7 @@ export function OnboardingDialog({
               <div className="grid grid-cols-2 gap-4">
                 <Field>
                   <FieldLabel htmlFor="current_stage">Current stage</FieldLabel>
-                  <Select value={form.current_stage} onValueChange={(v) => update("current_stage", v)}>
+                  <Select value={form.current_stage} onValueChange={(v) => update("current_stage", v ?? "")}>
                     <SelectTrigger id="current_stage" className="w-full">
                       <SelectValue placeholder="Select stage" />
                     </SelectTrigger>
@@ -195,7 +195,7 @@ export function OnboardingDialog({
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="status">Status</FieldLabel>
-                  <Select value={form.status} onValueChange={(v) => update("status", v)}>
+                  <Select value={form.status} onValueChange={(v) => update("status", v ?? "")}>
                     <SelectTrigger id="status" className="w-full">
                       <SelectValue placeholder="Select status" />
                     </SelectTrigger>

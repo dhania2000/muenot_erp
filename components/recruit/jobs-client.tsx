@@ -92,7 +92,7 @@ export function JobsClient({ canManage }: { canManage: boolean }) {
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Search jobs..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-64 pl-8" />
         </div>
-        <Select value={status} onValueChange={setStatus}>
+        <Select value={status} onValueChange={(v) => setStatus(v ?? "")}>
           <SelectTrigger size="sm" className="w-40">
             <SelectValue />
           </SelectTrigger>

@@ -149,7 +149,7 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
         icon={KanbanSquare}
         action={
           <div className="flex items-center gap-2">
-            <Select value={stageFilter} onValueChange={setStageFilter}>
+            <Select value={stageFilter} onValueChange={(v) => setStageFilter(v ?? "")}>
               <SelectTrigger size="sm" className="w-44">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
@@ -173,7 +173,7 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
 
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">Filter by job</span>
-        <Select value={jobFilter} onValueChange={setJobFilter}>
+        <Select value={jobFilter} onValueChange={(v) => setJobFilter(v ?? "")}>
           <SelectTrigger size="sm" className="w-64"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All jobs</SelectItem>

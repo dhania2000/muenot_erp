@@ -216,7 +216,7 @@ export function CompanyDialog({
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="priority">Priority</FieldLabel>
-                  <Select value={form.priority || "none"} onValueChange={(v) => update("priority", v === "none" ? "" : v)}>
+                  <Select value={form.priority || "none"} onValueChange={(v) => update("priority", v === "none" ? "" : v ?? "")}>
                     <SelectTrigger id="priority" className="w-full">
                       <SelectValue placeholder="Select priority" />
                     </SelectTrigger>
@@ -237,7 +237,7 @@ export function CompanyDialog({
               <div className="grid grid-cols-2 gap-4">
                 <Field>
                   <FieldLabel htmlFor="status">Status</FieldLabel>
-                  <Select value={form.status} onValueChange={(v) => update("status", v)}>
+                  <Select value={form.status} onValueChange={(v) => update("status", v ?? "")}>
                     <SelectTrigger id="status" className="w-full">
                       <SelectValue placeholder="Select status" />
                     </SelectTrigger>
@@ -256,7 +256,7 @@ export function CompanyDialog({
                   <FieldLabel htmlFor="assigned_to">Assigned to</FieldLabel>
                   <Select
                     value={form.assigned_to || "unassigned"}
-                    onValueChange={(v) => update("assigned_to", v === "unassigned" ? "" : v)}
+                    onValueChange={(v) => update("assigned_to", v === "unassigned" ? "" : v ?? "")}
                   >
                     <SelectTrigger id="assigned_to" className="w-full">
                       <SelectValue placeholder="Unassigned" />

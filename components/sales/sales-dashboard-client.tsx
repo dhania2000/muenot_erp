@@ -34,7 +34,7 @@ const sourceConfig: ChartConfig = {
 }
 
 export function SalesDashboardClient() {
-  const { data, isLoading } = useSWR("/api/sales/dashboard", fetcher, { refreshInterval: 30000 })
+  const { data, isLoading } = useSWR<any>("/api/sales/dashboard", fetcher, { refreshInterval: 30000 })
 
   if (isLoading || !data) {
     return <div className="text-sm text-muted-foreground">Loading dashboard...</div>

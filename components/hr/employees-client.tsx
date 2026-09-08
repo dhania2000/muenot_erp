@@ -402,20 +402,21 @@ export function EmployeesClient() {
                 </td>
                 <td className="px-4 py-4">
                   <div className="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="icon" aria-label={`Open ${e.employee_name} profile`} asChild>
-                      <Link href={`/modules/hr/employees/${e.id}`}>
-                        <ExternalLink className="size-4" />
-                      </Link>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Open ${e.employee_name} profile`}
+                      render={<Link href={`/modules/hr/employees/${e.id}`} />}
+                    >
+                      <ExternalLink className="size-4" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       aria-label={`Manage permissions for ${e.employee_name}`}
-                      asChild
+                      render={<Link href={`/modules/hr/employees/${e.id}?tab=permissions`} />}
                     >
-                      <Link href={`/modules/hr/employees/${e.id}?tab=permissions`}>
-                        <ShieldCheck className="size-4" />
-                      </Link>
+                      <ShieldCheck className="size-4" />
                     </Button>
                     <Button
                       variant="ghost"

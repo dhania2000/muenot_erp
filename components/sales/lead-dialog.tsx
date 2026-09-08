@@ -277,7 +277,7 @@ export function LeadDialog({
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="lead_source">Lead source</FieldLabel>
-                  <Select value={form.lead_source} onValueChange={(v) => update("lead_source", v)}>
+                  <Select value={form.lead_source} onValueChange={(v) => update("lead_source", v ?? "")}>
                     <SelectTrigger id="lead_source" className="w-full">
                       <SelectValue placeholder="Select source" />
                     </SelectTrigger>
@@ -294,7 +294,7 @@ export function LeadDialog({
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="status">Status</FieldLabel>
-                  <Select value={form.status} onValueChange={(v) => update("status", v)}>
+                  <Select value={form.status} onValueChange={(v) => update("status", v ?? "")}>
                     <SelectTrigger id="status" className="w-full">
                       <SelectValue placeholder="Select status" />
                     </SelectTrigger>
@@ -316,7 +316,7 @@ export function LeadDialog({
                   <FieldLabel htmlFor="assigned_to">Assigned to</FieldLabel>
                   <Select
                     value={form.assigned_to || "unassigned"}
-                    onValueChange={(v) => update("assigned_to", v === "unassigned" ? "" : v)}
+                    onValueChange={(v) => update("assigned_to", v === "unassigned" ? "" : v ?? "")}
                   >
                     <SelectTrigger id="assigned_to" className="w-full">
                       <SelectValue placeholder="Unassigned" />

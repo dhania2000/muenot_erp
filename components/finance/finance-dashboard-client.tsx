@@ -63,7 +63,7 @@ const emptyForm = {
 }
 
 export function FinanceOverview() {
-  const { data, isLoading } = useSWR("/api/finance/dashboard", fetcher, { refreshInterval: 30000 })
+  const { data, isLoading } = useSWR<any>("/api/finance/dashboard", fetcher, { refreshInterval: 30000 })
 
   if (isLoading || !data) {
     return <div className="text-sm text-muted-foreground">Loading finance dashboard...</div>
@@ -280,7 +280,7 @@ export function FinanceDashboardClient({ initialModule = "overview" }: { initial
     return `/api/finance/records?${params.toString()}`
   }, [module, filters])
 
-  const { data, mutate } = useSWR(queryKey, fetcher)
+  const { data, mutate } = useSWR<any>(queryKey, fetcher)
 
   async function save(e: React.FormEvent) {
     e.preventDefault()

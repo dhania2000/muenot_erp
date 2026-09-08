@@ -61,11 +61,14 @@ export function EmployeeProfile({
   return (
     <div className="flex flex-col gap-6 p-6 md:p-8">
       <div>
-        <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 text-muted-foreground">
-          <Link href="/modules/hr/employees">
-            <ArrowLeft className="size-4" />
-            Employees
-          </Link>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mb-3 -ml-2 text-muted-foreground"
+          render={<Link href="/modules/hr/employees" />}
+        >
+          <ArrowLeft className="size-4" />
+          Employees
         </Button>
 
         <div className="flex flex-wrap items-center gap-4">

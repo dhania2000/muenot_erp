@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import {
-  Search, Save, Check, Loader2,
+  Search, Save, Check, Loader2, ChevronRight,
   Building2, MapPin, AppWindow, Coins, CreditCard, Bell, Wallet, Percent,
   FileSignature, TicketCheck, FolderKanban, Clock, CalendarOff, MessageSquare,
   Target, Timer, ListChecks, ShieldCheck, Palette, Blocks, HardDrive, Languages,
@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import {
   companySettingsSections,
   getSectionDefaults,
+  getSettingsTree,
   type SettingField,
   type SettingSection,
 } from "@/lib/company-settings-config"

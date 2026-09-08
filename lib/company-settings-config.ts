@@ -33,11 +33,17 @@ export type SettingSection = {
   icon: string
   description: string
   fields: SettingField[]
+  /** Top-level module this section belongs to (e.g. "System", "HR", "Finance"). */
+  module: string
+  /** Sub-module grouping shown under the module in the settings nav. */
+  submodule: string
 }
 
 const yesNo = ["Enabled", "Disabled"]
 
-export const companySettingsSections: SettingSection[] = [
+// Raw section definitions. Module/sub-module taxonomy is attached below via
+// SECTION_TAXONOMY so the grouping lives in one place and is easy to audit.
+const rawSections: Omit<SettingSection, "module" | "submodule">[] = [
   {
     id: "company",
     label: "Company Settings",
@@ -502,6 +508,79 @@ export const companySettingsSections: SettingSection[] = [
     ],
   },
 ]
+
+// Maps each section id to its module and sub-module. Settings still live in the
+// Admin panel; this only controls how they are grouped in the settings nav.
+export const SECTION_TAXONOMY: Record<string, { module: string; submodule: string }> = {
+  company: { module: "System", submodule: "Company Profile" },
+  business_address: { module: "System", submodule: "Company Profile" },
+  app: { module: "System", submodule: "Localization" },
+  currency: { module: "System", submodule: "Localization" },
+  language: { module: "System", submodule: "Localization" },
+  theme: { module: "System", submodule: "Appearance" },
+  custom_link: { module: "System", submodule: "Appearance" },
+  security: { module: "System", submodule: "Security" },
+  social_login: { module: "System", submodule: "Authentication" },
+  signup: { module: "System", submodule: "Authentication" },
+  storage: { module: "System", submodule: "Storage" },
+  backup: { module: "System", submodule: "Maintenance" },
+  gdpr: { module: "System", submodule: "Privacy" },
+  rest_api: { module: "System", submodule: "Developer / API" },
+  google_calendar: { module: "System", submodule: "Integrations" },
+  notifications: { module: "System", submodule: "Notifications" },
+  message: { module: "System", submodule: "Messaging" },
+  modules: { module: "System", submodule: "Modules" },
+  profile: { module: "System", submodule: "Profile Defaults" },
+  finance: { module: "Finance", submodule: "Invoicing" },
+  tax: { module: "Finance", submodule: "Tax" },
+  payment: { module: "Finance", submodule: "Payments" },
+  purchase: { module: "Finance", submodule: "Purchases" },
+  lead: { module: "Sales", submodule: "Leads" },
+  contract: { module: "Sales", submodule: "Contracts" },
+  ticket: { module: "Tickets", submodule: "Ticket Defaults" },
+  project: { module: "Operations", submodule: "Projects" },
+  task: { module: "Operations", submodule: "Tasks" },
+  timelog: { module: "Operations", submodule: "Time Logs" },
+  attendance: { module: "HR", submodule: "Attendance" },
+  leaves: { module: "HR", submodule: "Leaves" },
+  payroll: { module: "HR", submodule: "Payroll" },
+  overtime: { module: "HR", submodule: "Overtime" },
+  performance: { module: "HR", submodule: "Performance" },
+  asset: { module: "HR", submodule: "Assets" },
+  recruit: { module: "Recruitment", submodule: "Recruitment Defaults" },
+}
+
+// Order in which modules appear in the settings navigation.
+export const MODULE_ORDER = ["System", "HR", "Finance", "Sales", "Operations", "Tickets", "Recruitment"] as const
+
+export const companySettingsSections: SettingSection[] = rawSections.map((s) => {
+  const tax = SECTION_TAXONOMY[s.id] ?? { module: "System", submodule: "Other" }
+  return { ...s, module: tax.module, submodule: tax.submodule }
+})
+
+export type SettingsModuleGroup = {
+  module: string
+  submodules: { submodule: string; sections: SettingSection[] }[]
+}
+
+// Groups sections into module → sub-module → sections for the settings nav tree.
+export function getSettingsTree(sections: SettingSection[] = companySettingsSections): SettingsModuleGroup[] {
+  const byModule = new Map<string, Map<string, SettingSection[]>>()
+  for (const s of sections) {
+    if (!byModule.has(s.module)) byModule.set(s.module, new Map())
+    const subs = byModule.get(s.module)!
+    if (!subs.has(s.submodule)) subs.set(s.submodule, [])
+    subs.get(s.submodule)!.push(s)
+  }
+  const orderedModules = [
+    ...MODULE_ORDER.filter((m) => byModule.has(m)),
+    ...[...byModule.keys()].filter((m) => !MODULE_ORDER.includes(m as (typeof MODULE_ORDER)[number])),
+  ]
+  return orderedModules.map((module) => ({
+    module,
+    submodules: [...byModule.get(module)!.entries()].map(([submodule, secs]) => ({ submodule, sections: secs })),
+  }))
+}
 
 export function getSectionDefaults(): Record<string, string> {
   const out: Record<string, string> = {}

@@ -2,8 +2,9 @@ minimumReleaseAgeExclude:
   - '@next/*'
   - next
 
-# core-js ships a postinstall "donation" banner that is not required for the
-# package to work. Explicitly acknowledging it here prevents pnpm from failing
-# with ERR_PNPM_IGNORED_BUILDS in strict/CI environments.
-ignoredBuiltDependencies:
+# core-js ships a postinstall "donation" banner as its only build script.
+# Allowing it to run (rather than ignoring it) means there are no ignored build
+# scripts, which prevents strict install pipelines from failing with
+# ERR_PNPM_IGNORED_BUILDS. The script is harmless (it just prints a banner).
+onlyBuiltDependencies:
   - core-js

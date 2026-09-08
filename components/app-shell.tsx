@@ -31,7 +31,9 @@ import {
 
 export type NavChild = {
   label: string
-  href: string
+  /** Optional for grouping-only nodes that expand into nested children. */
+  href?: string
+  children?: NavChild[]
 }
 
 export type NavItem = {
@@ -205,6 +207,60 @@ function ThemeModeItem() {
   )
 }
 
+/** Recursively determines whether a child (or any descendant) matches the current path. */
+function childActive(child: NavChild, pathname: string): boolean {
+  if (child.href && (pathname === child.href || pathname.startsWith(`${child.href.split("?")[0]}/`))) {
+    // Compare including query so ?kind= variants highlight correctly.
+    if (child.href.includes("?")) return pathname + (typeof window !== "undefined" ? window.location.search : "") === child.href
+    return true
+  }
+  return (child.children ?? []).some((c) => childActive(c, pathname))
+}
+
+/** Renders a single leaf link or a nested collapsible sub-group within the sidebar. */
+function NavChildNode({ child, pathname }: { child: NavChild; pathname: string }) {
+  const hasChildren = !!child.children && child.children.length > 0
+  const [open, setOpen] = useState(() => (child.children ?? []).some((c) => childActive(c, pathname)))
+
+  if (hasChildren) {
+    return (
+      <div className="flex flex-col">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+        >
+          {child.label}
+          <ChevronDown className={cn("ml-auto size-3.5 shrink-0 transition-transform", open && "rotate-180")} />
+        </button>
+        {open && (
+          <div className="mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-3 ml-2">
+            {child.children!.map((c) => (
+              <NavChildNode key={c.href ?? c.label} child={c} pathname={pathname} />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const active = pathname === child.href
+  return (
+    <Link
+      href={child.href!}
+      className={cn(
+        "rounded-md px-3 py-1.5 text-sm transition-colors",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+          : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+      )}
+    >
+      {child.label}
+    </Link>
+  )
+}
+
 function NavGroup({
   item,
   pathname,
@@ -238,23 +294,9 @@ function NavGroup({
 
       {open && (
         <div className="mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-3 ml-4">
-          {item.children!.map((child) => {
-            const active = pathname === child.href
-            return (
-              <Link
-                key={child.href}
-                href={child.href}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-sm transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                    : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-                )}
-              >
-                {child.label}
-              </Link>
-            )
-          })}
+          {item.children!.map((child) => (
+            <NavChildNode key={child.href ?? child.label} child={child} pathname={pathname} />
+          ))}
         </div>
       )}
     </div>
@@ -290,9 +332,18 @@ export function AppShell({
     router.refresh()
   }
 
+  function flattenChildren(prefix: string, children: NavChild[]): { label: string; href: string }[] {
+    return children.flatMap((child) =>
+      child.children && child.children.length > 0
+        ? flattenChildren(`${prefix} · ${child.label}`, child.children)
+        : child.href
+          ? [{ label: `${prefix} · ${child.label}`, href: child.href }]
+          : [],
+    )
+  }
   const flatNav = navItems.flatMap((item) =>
     item.children && item.children.length > 0
-      ? item.children.map((child) => ({ label: `${item.label} · ${child.label}`, href: child.href }))
+      ? flattenChildren(item.label, item.children)
       : [{ label: item.label, href: item.href }],
   )
   const searchResults = query.trim()

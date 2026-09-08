@@ -24,8 +24,10 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
   products: <Package className="size-4" />,
 }
 
+type FeatureChild = { label: string; href?: string; feature?: string; children?: FeatureChild[] }
+
 // Sales sub-pages shown in the sidebar dropdown, each gated by a feature slug.
-const HR_CHILDREN: { label: string; href: string; feature: string }[] = [
+const HR_CHILDREN: FeatureChild[] = [
   { label: "HR Dashboard", href: "/modules/hr/dashboard", feature: "hr.view_dashboard" },
   { label: "Employees", href: "/modules/hr/employees", feature: "hr.view_employees" },
   { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_employees" },
@@ -33,16 +35,26 @@ const HR_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Attendance Regularisation", href: "/modules/hr/attendance-regularisation", feature: "hr.view_regularisation" },
   { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
   { label: "Offboarding", href: "/modules/hr/offboarding", feature: "hr.view_offboarding" },
-  { label: "Leave Requests", href: "/modules/hr/leave-requests", feature: "hr.view_leave_requests" },
-  { label: "Leave Balances", href: "/modules/hr/leave-balances", feature: "hr.view_leave_balances" },
-  { label: "Leave Quota History", href: "/modules/hr/leave-quota-history", feature: "hr.view_leave_quota_history" },
-  { label: "Leave Types", href: "/modules/hr/leave-types", feature: "hr.view_leave_types" },
-  { label: "Shifts", href: "/modules/hr/shifts", feature: "hr.view_shifts" },
-  { label: "Shift Change Requests", href: "/modules/hr/shift-workflows?kind=requests", feature: "hr.view_shift_change_requests" },
-  { label: "Shift Assignments", href: "/modules/hr/shift-workflows?kind=assignments", feature: "hr.view_shift_assignments" },
-  { label: "Shift Rotations", href: "/modules/hr/shift-workflows?kind=rotations", feature: "hr.view_shift_rotations" },
-  { label: "Rotation Sequences", href: "/modules/hr/shift-workflows?kind=sequences", feature: "hr.view_rotation_sequences" },
-  { label: "Rotation Employees", href: "/modules/hr/shift-workflows?kind=employees", feature: "hr.view_rotation_employees" },
+  {
+    label: "Leaves",
+    children: [
+      { label: "Leave Requests", href: "/modules/hr/leave-requests", feature: "hr.view_leave_requests" },
+      { label: "Leave Balances", href: "/modules/hr/leave-balances", feature: "hr.view_leave_balances" },
+      { label: "Leave Quota History", href: "/modules/hr/leave-quota-history", feature: "hr.view_leave_quota_history" },
+      { label: "Leave Types", href: "/modules/hr/leave-types", feature: "hr.view_leave_types" },
+    ],
+  },
+  {
+    label: "Shifts",
+    children: [
+      { label: "Shifts", href: "/modules/hr/shifts", feature: "hr.view_shifts" },
+      { label: "Shift Change Requests", href: "/modules/hr/shift-workflows?kind=requests", feature: "hr.view_shift_change_requests" },
+      { label: "Shift Assignments", href: "/modules/hr/shift-workflows?kind=assignments", feature: "hr.view_shift_assignments" },
+      { label: "Shift Rotations", href: "/modules/hr/shift-workflows?kind=rotations", feature: "hr.view_shift_rotations" },
+      { label: "Rotation Sequences", href: "/modules/hr/shift-workflows?kind=sequences", feature: "hr.view_rotation_sequences" },
+      { label: "Rotation Employees", href: "/modules/hr/shift-workflows?kind=employees", feature: "hr.view_rotation_employees" },
+    ],
+  },
   { label: "Promotions", href: "/modules/hr/master-data?kind=promotions", feature: "hr.view_master_data" },
   { label: "Awards", href: "/modules/hr/master-data?kind=awards", feature: "hr.view_master_data" },
   { label: "Appreciations", href: "/modules/hr/master-data?kind=appreciations", feature: "hr.view_master_data" },
@@ -154,10 +166,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
       }
       if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products"].includes(m.slug)) {
         const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : SALES_CHILDREN
-        const children: NavChild[] = source.filter((c) => canAccess(c.feature)).map((c) => ({
-          label: c.label,
-          href: c.href,
-        }))
+        // Recursively keep only accessible leaves; drop groups that end up empty.
+        const buildChildren = (nodes: FeatureChild[]): NavChild[] =>
+          nodes.flatMap<NavChild>((c) => {
+            if (c.children && c.children.length > 0) {
+              const sub = buildChildren(c.children)
+              return sub.length > 0 ? [{ label: c.label, children: sub }] : []
+            }
+            return c.feature && !canAccess(c.feature) ? [] : [{ label: c.label, href: c.href }]
+          })
+        const children = buildChildren(source as FeatureChild[])
         if (children.length > 0) item.children = children
       }
       return item

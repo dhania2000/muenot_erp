@@ -1,8 +1,17 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getUserAccessibleModules, getUserFeatureSlugs } from "@/lib/permissions"
+import { getPublicSettings } from "@/lib/settings/server"
+import { SettingsProvider } from "@/components/providers/settings-provider"
+import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package } from "lucide-react"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, ExternalLink } from "lucide-react"
+
+function settingEnabled(v: string | undefined, fallback = true) {
+  if (v == null) return fallback
+  const t = v.trim().toLowerCase()
+  return t === "enabled" || t === "true" || t === "1" || t === "yes"
+}
 
 const moduleIcons: Record<string, NavItem["icon"]> = {
   hr: <Users2 className="size-4" />,
@@ -122,10 +131,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const session = await getSession()
   if (!session) redirect("/login")
 
+  const settings = await getPublicSettings()
+
   const HIDDEN_MODULES = new Set(["biolinks", "biometric", "letter", "monitor-center", "monitor center"])
-  const modules = (await getUserAccessibleModules(session.userId, session.role)).filter(
-    (m) => !HIDDEN_MODULES.has(m.slug.toLowerCase()) && !HIDDEN_MODULES.has(m.name.toLowerCase()),
-  )
+  const modules = (await getUserAccessibleModules(session.userId, session.role))
+    .filter((m) => !HIDDEN_MODULES.has(m.slug.toLowerCase()) && !HIDDEN_MODULES.has(m.name.toLowerCase()))
+    // Respect the Module Settings toggles (module.hr, module.finance, ...).
+    .filter((m) => settingEnabled(settings[`module.${m.slug.toLowerCase()}`]))
 
   const granted = session.role === "admin" ? null : new Set(await getUserFeatureSlugs(session.userId))
   const canAccess = (feature: string) => session.role === "admin" || granted!.has(feature)
@@ -152,9 +164,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }),
   ]
 
+  // Optional custom sidebar link driven by Custom Link Settings.
+  if (settingEnabled(settings["customlink.enabled"], false) && settings["customlink.url"]) {
+    navItems.push({
+      label: settings["customlink.label"] || "Custom Link",
+      href: settings["customlink.url"],
+      icon: <ExternalLink className="size-4" />,
+      external: true,
+      openInNewTab: settingEnabled(settings["customlink.open_new_tab"], true),
+    })
+  }
+
   return (
-    <AppShell navItems={navItems} user={session}>
-      {children}
-    </AppShell>
+    <SettingsProvider initial={settings}>
+      <SettingsBranding />
+      <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
+        {children}
+      </AppShell>
+    </SettingsProvider>
   )
 }

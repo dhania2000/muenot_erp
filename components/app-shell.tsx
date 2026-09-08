@@ -39,6 +39,9 @@ export type NavItem = {
   href: string
   icon: React.ReactNode
   children?: NavChild[]
+  /** Render as an external anchor (used by the optional custom sidebar link). */
+  external?: boolean
+  openInNewTab?: boolean
 }
 
 function initials(name: string) {
@@ -240,10 +243,14 @@ export function AppShell({
   navItems,
   user,
   children,
+  brandName,
+  logoUrl,
 }: {
   navItems: NavItem[]
   user: { name: string; email: string; role: "admin" | "employee" }
   children: React.ReactNode
+  brandName?: string
+  logoUrl?: string
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -281,7 +288,13 @@ export function AppShell({
       <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex items-center px-5 py-5">
           <div className="flex items-center px-1 py-1">
-            <Image src="/muenot-logo-transparent.png" alt="Muenot" width={112} height={25} className="h-5 w-auto object-contain" priority />
+            {logoUrl ? (
+              // Company logo from settings can be any host, so use a plain <img>.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={logoUrl || "/placeholder.svg"} alt={brandName || "Logo"} className="h-6 w-auto max-w-[160px] object-contain" />
+            ) : (
+              <Image src="/muenot-logo-transparent.png" alt={brandName || "Muenot"} width={112} height={25} className="h-5 w-auto object-contain" priority />
+            )}
           </div>
         </div>
 
@@ -296,6 +309,20 @@ export function AppShell({
                   open={openGroup === item.href}
                   onToggle={() => setOpenGroup((cur) => (cur === item.href ? null : item.href))}
                 />
+              )
+            }
+            if (item.external) {
+              return (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  target={item.openInNewTab ? "_blank" : undefined}
+                  rel={item.openInNewTab ? "noopener noreferrer" : undefined}
+                  className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+                >
+                  <span className="size-4 shrink-0">{item.icon}</span>
+                  {item.label}
+                </a>
               )
             }
             const active = pathname === item.href
@@ -358,7 +385,7 @@ export function AppShell({
 
       <div className="flex h-full flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
-          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span></div>
+          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">{brandName || "Dashboard"}</span></div>
           <div className="flex items-center gap-1">
             <LiveClock />
             <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>

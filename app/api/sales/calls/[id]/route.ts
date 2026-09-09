@@ -46,10 +46,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     sets.push("notes = ?")
     values.push(body.notes ? String(body.notes) : null)
   }
-  if (body.telnyx_call_id !== undefined) {
-    sets.push("telnyx_call_id = ?")
-    values.push(body.telnyx_call_id ? String(body.telnyx_call_id).slice(0, 64) : null)
-  }
 
   if (sets.length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 })

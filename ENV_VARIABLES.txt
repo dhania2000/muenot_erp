@@ -154,19 +154,12 @@ RECRUIT_GMAIL_SENDER=careers@muenot.co.in
 
 
 # =============================================================================
-# 5. TELNYX - VOICE CALLS  [OPTIONAL]
+# 5. CALL LOGGING  [OPTIONAL]
 # =============================================================================
-# Needed only if you use the in-app calling feature (browser WebRTC dialer).
-# Create these in the Telnyx Mission Control Portal:
-#   - API v2 key            -> TELNYX_API_KEY
-#   - Credential Connection -> TELNYX_SIP_CONNECTION_ID
-#     (enable outbound voice + assign an Outbound Voice Profile)
-#   - a Telnyx phone number -> TELNYX_CALLER_ID (E.164)
-TELNYX_API_KEY=KEYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TELNYX_SIP_CONNECTION_ID=1234567890123456789
-TELNYX_CALLER_ID=+911234567890
-# Default country code prepended to national numbers (defaults to +91)
-TELNYX_DEFAULT_COUNTRY_CODE=+91
+# In-app calls are placed from the agent's own phone; the app only records the
+# outcome. No telephony provider is required.
+# Default country code prepended to national numbers when logging (defaults to +91)
+CALL_DEFAULT_COUNTRY_CODE=+91
 
 
 # =============================================================================

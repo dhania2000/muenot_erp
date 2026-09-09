@@ -1,8 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import type { TelnyxRTC, ICall } from "@telnyx/webrtc"
 import {
   Dialog,
   DialogContent,
@@ -15,7 +14,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
 import {
   Select,
   SelectContent,
@@ -23,15 +21,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Mic, MicOff, Phone, PhoneOff } from "lucide-react"
+import { Phone } from "lucide-react"
 
 export type CallTarget = {
   id: number | null
   name: string | null
   number: string | null
 }
-
-type CallState = "idle" | "connecting" | "ringing" | "in-progress" | "ended"
 
 const DEFAULT_DISPOSITIONS = [
   "Interested",
@@ -43,26 +39,15 @@ const DEFAULT_DISPOSITIONS = [
   "Follow Up",
 ] as const
 
-const DEFAULT_CONFIG_HINT =
-  "Calling isn't configured yet. Add your Telnyx credentials (TELNYX_API_KEY, TELNYX_SIP_CONNECTION_ID, TELNYX_CALLER_ID) to enable in-browser calling."
-
-function formatDuration(totalSeconds: number) {
-  const m = Math.floor(totalSeconds / 60)
-    .toString()
-    .padStart(2, "0")
-  const s = Math.floor(totalSeconds % 60)
-    .toString()
-    .padStart(2, "0")
-  return `${m}:${s}`
-}
-
 /**
- * In-browser Telnyx WebRTC dialer, shared across modules.
+ * Manual call-logging dialog, shared across modules.
  *
- * `apiBase` selects the module's calling endpoints — the component talks to
- * `${apiBase}/token`, `${apiBase}` (POST to log) and `${apiBase}/${id}` (PATCH
- * outcome). `subjectKey` is the payload field used to link a call to a record
- * (e.g. "lead_id" for Sales, "application_id" for Recruitment).
+ * Live in-browser calling has been removed. This dialog lets an agent place the
+ * call on their own phone (via the `tel:` link) and then record the outcome.
+ *
+ * `apiBase` selects the module's calling endpoints — the component POSTs the log
+ * to `${apiBase}`. `subjectKey` is the payload field used to link a call to a
+ * record (e.g. "lead_id" for Sales, "application_id" for Recruitment).
  */
 export function CallDialer({
   open,
@@ -73,7 +58,6 @@ export function CallDialer({
   subjectKey,
   title,
   dispositions = DEFAULT_DISPOSITIONS as unknown as string[],
-  configHint = DEFAULT_CONFIG_HINT,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -83,150 +67,35 @@ export function CallDialer({
   subjectKey: string
   title?: string
   dispositions?: string[]
-  configHint?: string
 }) {
-  const [configured, setConfigured] = useState<boolean | null>(null)
   const [number, setNumber] = useState("")
-  const [state, setState] = useState<CallState>("idle")
-  const [muted, setMuted] = useState(false)
-  const [seconds, setSeconds] = useState(0)
+  const [minutes, setMinutes] = useState("")
+  const [seconds, setSeconds] = useState("")
   const [disposition, setDisposition] = useState<string>("")
   const [notes, setNotes] = useState("")
   const [saving, setSaving] = useState(false)
-  const [initError, setInitError] = useState<string | null>(null)
 
-  const clientRef = useRef<TelnyxRTC | null>(null)
-  const callRef = useRef<ICall | null>(null)
-  const callerIdRef = useRef<string>("")
-  const readyRef = useRef(false)
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const callLogIdRef = useRef<number | null>(null)
-  const secondsRef = useRef(0)
-
-  const stopTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current)
-      timerRef.current = null
-    }
-  }, [])
-
-  const teardownClient = useCallback(() => {
-    try {
-      callRef.current?.hangup()
-    } catch {}
-    callRef.current = null
-    try {
-      clientRef.current?.disconnect()
-    } catch {}
-    clientRef.current = null
-    readyRef.current = false
-  }, [])
-
-  // Reset all local state whenever the dialog is opened for a new target.
+  // Reset the form whenever the dialog is opened for a new target.
   useEffect(() => {
     if (!open) return
     setNumber(target?.number ?? "")
-    setState("idle")
-    setMuted(false)
-    setSeconds(0)
+    setMinutes("")
+    setSeconds("")
     setDisposition("")
     setNotes("")
-    setInitError(null)
-    callLogIdRef.current = null
-    setConfigured(null)
+  }, [open, target])
 
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch(`${apiBase}/token`, { method: "POST" })
-        const data = await res.json()
-        if (cancelled) return
-        if (!res.ok) {
-          setInitError(data?.error || "Unable to start the dialer.")
-          setConfigured(false)
-          return
-        }
-        if (!data.configured) {
-          setConfigured(false)
-          return
-        }
-        callerIdRef.current = data.callerId || ""
-        const { TelnyxRTC } = await import("@telnyx/webrtc")
-        const client = new TelnyxRTC({ login_token: data.token })
-
-        client.on("telnyx.ready", () => {
-          readyRef.current = true
-        })
-        client.on("telnyx.error", (err: unknown) => {
-          console.error("[call-dialer] telnyx error", err)
-        })
-        client.on("telnyx.notification", (notification: any) => {
-          if (notification?.type !== "callUpdate" || !notification.call) return
-          handleCallState(notification.call.state as string)
-        })
-
-        client.connect()
-        clientRef.current = client
-        setConfigured(true)
-      } catch (err) {
-        if (cancelled) return
-        console.error("[call-dialer] init failed", err)
-        setInitError("Could not initialize the calling device.")
-        setConfigured(false)
-      }
-    })()
-
-    return () => {
-      cancelled = true
+  async function saveLog() {
+    const dialed = number.trim()
+    if (!dialed) {
+      toast.error("Enter a phone number to log the call.")
+      return
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, target, apiBase])
+    const durationSeconds =
+      Math.max(0, Math.trunc(Number(minutes) || 0)) * 60 +
+      Math.max(0, Math.trunc(Number(seconds) || 0))
 
-  // Clean up the client and timer when the dialog fully closes.
-  useEffect(() => {
-    if (open) return
-    stopTimer()
-    teardownClient()
-  }, [open, stopTimer, teardownClient])
-
-  useEffect(() => {
-    return () => {
-      stopTimer()
-      teardownClient()
-    }
-  }, [stopTimer, teardownClient])
-
-  useEffect(() => {
-    secondsRef.current = seconds
-  }, [seconds])
-
-  // Map Telnyx WebRTC call states onto our UI state machine.
-  function handleCallState(telnyxState: string) {
-    switch (telnyxState) {
-      case "new":
-      case "requesting":
-      case "trying":
-        setState("connecting")
-        break
-      case "ringing":
-      case "early":
-        setState("ringing")
-        break
-      case "active":
-        setState("in-progress")
-        stopTimer()
-        timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
-        break
-      case "hangup":
-      case "destroy":
-        finishCall("Completed")
-        break
-      default:
-        break
-    }
-  }
-
-  async function logInitialCall(dialed: string) {
+    setSaving(true)
     try {
       const res = await fetch(apiBase, {
         method: "POST",
@@ -235,86 +104,10 @@ export function CallDialer({
           [subjectKey]: target?.id ?? null,
           to_number: dialed,
           to_name: target?.name ?? null,
-          status: "Initiated",
-        }),
-      })
-      const data = await res.json()
-      if (res.ok) callLogIdRef.current = data.id
-    } catch (err) {
-      console.error("[call-dialer] failed to log call", err)
-    }
-  }
-
-  async function startCall() {
-    const client = clientRef.current
-    const dialed = number.trim()
-    if (!client || !dialed) return
-
-    setState("connecting")
-    setSeconds(0)
-    await logInitialCall(dialed)
-
-    try {
-      const call = client.newCall({
-        destinationNumber: dialed,
-        callerNumber: callerIdRef.current || undefined,
-        audio: true,
-        video: false,
-      })
-      callRef.current = call
-    } catch (err) {
-      console.error("[call-dialer] connect failed", err)
-      toast.error("Unable to place the call.")
-      finishCall("Failed")
-    }
-  }
-
-  function finishCall(status: "Completed" | "Canceled" | "Failed") {
-    stopTimer()
-    setState((prev) => (prev === "ended" ? prev : "ended"))
-    const callId = callLogIdRef.current
-    const finalDuration = secondsRef.current
-    if (callId) {
-      fetch(`${apiBase}/${callId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, duration_seconds: finalDuration }),
-      }).catch(() => {})
-    }
-  }
-
-  function hangup() {
-    try {
-      callRef.current?.hangup()
-    } catch {}
-  }
-
-  function toggleMute() {
-    const call = callRef.current
-    if (!call) return
-    const next = !muted
-    try {
-      if (next) call.muteAudio()
-      else call.unmuteAudio()
-    } catch {}
-    setMuted(next)
-  }
-
-  async function saveOutcome() {
-    const callId = callLogIdRef.current
-    if (!callId) {
-      onOpenChange(false)
-      return
-    }
-    setSaving(true)
-    try {
-      const res = await fetch(`${apiBase}/${callId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+          status: "Completed",
           disposition: disposition || null,
           notes: notes || null,
-          duration_seconds: secondsRef.current,
+          duration_seconds: durationSeconds,
         }),
       })
       if (res.ok) {
@@ -322,137 +115,106 @@ export function CallDialer({
         onLogged?.()
         onOpenChange(false)
       } else {
-        toast.error("Unable to save call notes")
+        const data = await res.json().catch(() => ({}))
+        toast.error(data?.error || "Unable to log the call")
       }
     } finally {
       setSaving(false)
     }
   }
 
-  const isLive = state === "connecting" || state === "ringing" || state === "in-progress"
+  const telHref = number.trim() ? `tel:${number.replace(/[^\d+]/g, "")}` : undefined
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // Prevent closing mid-call; require hang up first.
-        if (!next && isLive) {
-          toast.message("End the call before closing.")
-          return
-        }
-        onOpenChange(next)
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{title ?? (target?.name ? `Call ${target.name}` : "Call")}</DialogTitle>
-          <DialogDescription>Place a call directly from your browser.</DialogDescription>
+          <DialogTitle>{title ?? (target?.name ? `Call ${target.name}` : "Log a call")}</DialogTitle>
+          <DialogDescription>
+            Place the call from your phone, then record the outcome here.
+          </DialogDescription>
         </DialogHeader>
 
-        {configured === false ? (
-          <div className="rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
-            {initError || configHint}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="dialer-number">Phone number</Label>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dialer-number">Phone number</Label>
+            <div className="flex items-center gap-2">
               <Input
                 id="dialer-number"
                 value={number}
                 onChange={(e) => setNumber(e.target.value)}
                 placeholder="+1 415 555 1234"
-                disabled={isLive || state === "ended"}
                 inputMode="tel"
               />
-            </div>
-
-            <div className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-2">
-              <StatusBadge state={state} />
-              <span className="font-mono text-sm tabular-nums text-muted-foreground">
-                {formatDuration(seconds)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-center gap-3">
-              {!isLive && state !== "ended" && (
-                <Button
-                  onClick={startCall}
-                  disabled={configured === null || !number.trim()}
-                  className="gap-2"
-                >
+              <Button asChild variant="outline" className="shrink-0 gap-2" disabled={!telHref}>
+                <a href={telHref}>
                   <Phone className="size-4" /> Call
-                </Button>
-              )}
-              {isLive && (
-                <>
-                  <Button variant="outline" onClick={toggleMute} className="gap-2">
-                    {muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-                    {muted ? "Unmute" : "Mute"}
-                  </Button>
-                  <Button variant="destructive" onClick={hangup} className="gap-2">
-                    <PhoneOff className="size-4" /> Hang up
-                  </Button>
-                </>
-              )}
+                </a>
+              </Button>
             </div>
-
-            {state === "ended" && (
-              <div className="flex flex-col gap-3 border-t border-border pt-4">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="dialer-disposition">Outcome</Label>
-                  <Select value={disposition} onValueChange={(value) => setDisposition(value ?? "")}>
-                    <SelectTrigger id="dialer-disposition">
-                      <SelectValue placeholder="Select an outcome" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {dispositions.map((d) => (
-                        <SelectItem key={d} value={d}>
-                          {d}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="dialer-notes">Notes</Label>
-                  <Textarea
-                    id="dialer-notes"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="What did you discuss?"
-                    rows={3}
-                  />
-                </div>
-              </div>
-            )}
           </div>
-        )}
+
+          <div className="flex flex-col gap-1.5">
+            <Label>Duration</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                aria-label="Minutes"
+                value={minutes}
+                onChange={(e) => setMinutes(e.target.value.replace(/\D/g, ""))}
+                placeholder="0"
+                inputMode="numeric"
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">min</span>
+              <Input
+                aria-label="Seconds"
+                value={seconds}
+                onChange={(e) => setSeconds(e.target.value.replace(/\D/g, ""))}
+                placeholder="00"
+                inputMode="numeric"
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">sec</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dialer-disposition">Outcome</Label>
+            <Select value={disposition} onValueChange={(value) => setDisposition(value ?? "")}>
+              <SelectTrigger id="dialer-disposition">
+                <SelectValue placeholder="Select an outcome" />
+              </SelectTrigger>
+              <SelectContent>
+                {dispositions.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dialer-notes">Notes</Label>
+            <Textarea
+              id="dialer-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="What did you discuss?"
+              rows={3}
+            />
+          </div>
+        </div>
 
         <DialogFooter>
-          {state === "ended" ? (
-            <Button onClick={saveOutcome} disabled={saving}>
-              {saving ? "Saving..." : "Save & close"}
-            </Button>
-          ) : (
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLive}>
-              Close
-            </Button>
-          )}
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={saveLog} disabled={saving}>
+            {saving ? "Saving..." : "Save call log"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
-}
-
-function StatusBadge({ state }: { state: CallState }) {
-  const map: Record<CallState, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
-    idle: { label: "Ready", variant: "outline" },
-    connecting: { label: "Connecting…", variant: "secondary" },
-    ringing: { label: "Ringing…", variant: "secondary" },
-    "in-progress": { label: "In call", variant: "default" },
-    ended: { label: "Call ended", variant: "outline" },
-  }
-  const { label, variant } = map[state]
-  return <Badge variant={variant}>{label}</Badge>
 }

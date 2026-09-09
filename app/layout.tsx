@@ -1,21 +1,27 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { Toaster } from '@/components/ui/sonner'
-import { ThemeProvider } from '@/components/theme-provider'
-import { CookieConsent } from '@/components/providers/cookie-consent'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Muenot Management Portal',
-  description: 'Muenot Technologies ERP',
+  title: 'v0 App',
+  description: 'Created with v0',
+  generator: 'v0.app',
   icons: {
     icon: [
       {
-        url: '/muenot-favicon.png',
-        type: 'image/png',
+        url: '/icon-light-32x32.png',
+        media: '(prefers-color-scheme: light)',
+      },
+      {
+        url: '/icon-dark-32x32.png',
+        media: '(prefers-color-scheme: dark)',
+      },
+      {
+        url: '/icon.svg',
+        type: 'image/svg+xml',
       },
     ],
-    apple: '/muenot-favicon.png',
+    apple: '/apple-icon.png',
   },
 }
 
@@ -33,13 +39,9 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <body className="antialiased">
-        <ThemeProvider>
-          {children}
-          <CookieConsent />
-          <Toaster />
-        </ThemeProvider>
+        {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

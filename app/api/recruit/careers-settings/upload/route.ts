@@ -18,27 +18,9 @@ export async function POST(request: NextRequest) {
   const uploadError = await validateUpload(file)
   if (uploadError) return NextResponse.json({ error: uploadError }, { status: 400 })
 
-  // When Vercel Blob storage is connected, store the file there and return its
-  // public URL. This is the preferred path for larger images.
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const blob = await put(`careers/${crypto.randomUUID()}-${file.name}`, file, {
-      access: "public",
-      addRandomSuffix: false,
-    })
-    return NextResponse.json({ url: blob.url })
-  }
-
-  // Fallback with no external storage connected: inline the image as a base64
-  // data URL saved directly in company_settings. Capped so it comfortably fits
-  // the widened MEDIUMTEXT column (base64 inflates size by ~33%).
-  const MAX_INLINE_BYTES = 1.5 * 1024 * 1024
-  if (file.size > MAX_INLINE_BYTES) {
-    return NextResponse.json(
-      { error: "Without connected file storage, images must be 1.5MB or smaller. Please use a smaller image." },
-      { status: 400 },
-    )
-  }
-  const buffer = Buffer.from(await file.arrayBuffer())
-  const dataUrl = `data:${file.type};base64,${buffer.toString("base64")}`
-  return NextResponse.json({ url: dataUrl })
+  const blob = await put(`careers/${crypto.randomUUID()}-${file.name}`, file, {
+    access: "public",
+    addRandomSuffix: false,
+  })
+  return NextResponse.json({ url: blob.url })
 }

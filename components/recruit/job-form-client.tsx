@@ -185,7 +185,7 @@ export function JobFormClient({ jobId }: { jobId?: string }) {
             </Field>
             <Field>
               <FieldLabel htmlFor="job_type">Job type</FieldLabel>
-              <Select value={form.job_type} onValueChange={(v) => update("job_type", v ?? "")}>
+              <Select value={form.job_type} onValueChange={(v) => update("job_type", v)}>
                 <SelectTrigger id="job_type" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {JOB_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
@@ -194,7 +194,7 @@ export function JobFormClient({ jobId }: { jobId?: string }) {
             </Field>
             <Field>
               <FieldLabel htmlFor="work_mode">Work mode</FieldLabel>
-              <Select value={form.work_mode} onValueChange={(v) => update("work_mode", v ?? "")}>
+              <Select value={form.work_mode} onValueChange={(v) => update("work_mode", v)}>
                 <SelectTrigger id="work_mode" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {WORK_MODES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
@@ -207,7 +207,7 @@ export function JobFormClient({ jobId }: { jobId?: string }) {
             </Field>
             <Field>
               <FieldLabel htmlFor="status">Status</FieldLabel>
-              <Select value={form.status} onValueChange={(v) => update("status", v ?? "")}>
+              <Select value={form.status} onValueChange={(v) => update("status", v)}>
                 <SelectTrigger id="status" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {JOB_STATUSES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
@@ -278,7 +278,7 @@ export function JobFormClient({ jobId }: { jobId?: string }) {
                     </Field>
                     <Field>
                       <FieldLabel htmlFor={`qt-${i}`}>Answer type</FieldLabel>
-                      <Select value={q.type} onValueChange={(v) => updateQuestion(i, { type: v ?? "" })}>
+                      <Select value={q.type} onValueChange={(v) => updateQuestion(i, { type: v })}>
                         <SelectTrigger id={`qt-${i}`} className="w-full"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {QUESTION_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}

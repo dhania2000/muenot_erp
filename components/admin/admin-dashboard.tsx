@@ -11,7 +11,6 @@ import { OperationsOverview } from "@/components/operations/operations-dashboard
 import { FinanceOverview } from "@/components/finance/finance-dashboard-client"
 import { HrDashboardClient } from "@/components/hr/hr-dashboard-client"
 import { TicketOverview } from "@/components/tickets/ticket-overview"
-import { ClientsOverview } from "@/components/clients/clients-overview"
 
 type Metric = {
   label: string
@@ -54,7 +53,7 @@ type NavTab =
 const navTabs: NavTab[] = [
   { label: "Overview", kind: "tab" },
   { label: "Operations", kind: "tab" },
-  { label: "Client", kind: "tab" },
+  { label: "Client", kind: "link", href: "/modules/clients" },
   { label: "HR", kind: "tab" },
   { label: "Ticket", kind: "tab" },
   { label: "Finance", kind: "tab" },
@@ -124,9 +123,7 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
                 ? "HR"
                 : activeTab === "Ticket"
                   ? "Ticket"
-                  : activeTab === "Client"
-                    ? "Client"
-                    : "Overview"}
+                  : "Overview"}
         </h1>
         <p className="text-sm text-muted-foreground">
           {activeTab === "Operations"
@@ -137,9 +134,7 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
                 ? "Your HR dashboard right here without leaving the overview."
                 : activeTab === "Ticket"
                   ? "Your ticket dashboard right here without leaving the overview."
-                  : activeTab === "Client"
-                    ? "Your client directory right here without leaving the overview."
-                    : "Welcome back — here's what's happening across your workspace."}
+                  : "Welcome back — here's what's happening across your workspace."}
         </p>
       </div>
 
@@ -188,10 +183,6 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
       ) : activeTab === "Ticket" ? (
         <div className="rounded-xl border border-border bg-card shadow-sm">
           <TicketOverview />
-        </div>
-      ) : activeTab === "Client" ? (
-        <div className="rounded-xl border border-border bg-card shadow-sm">
-          <ClientsOverview />
         </div>
       ) : (
         <>

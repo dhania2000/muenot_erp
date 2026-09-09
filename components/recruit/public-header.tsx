@@ -1,16 +1,14 @@
 import Link from "next/link"
 import Image from "next/image"
-import { getCareersContent } from "@/lib/careers-settings-server"
 
-export async function PublicHeader() {
-  const content = await getCareersContent()
+export function PublicHeader() {
   return (
     <header className="border-b border-border bg-card">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 md:px-6">
-        <Link href="/careers" className="flex items-center gap-2" aria-label={`${content.companyName} Careers home`}>
+        <Link href="/careers" className="flex items-center gap-2" aria-label="Muenot Careers home">
           <Image
-            src={content.headerLogo || "/muenot-logo.png"}
-            alt={content.tagline ? `${content.companyName} — ${content.tagline}` : content.companyName}
+            src="/muenot-logo.png"
+            alt="Muenot — Infinite Learning, Endless Possibilities"
             width={200}
             height={48}
             priority
@@ -33,12 +31,11 @@ export async function PublicHeader() {
   )
 }
 
-export async function PublicFooter() {
-  const content = await getCareersContent()
+export function PublicFooter() {
   return (
     <footer className="border-t border-border bg-card">
       <div className="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-muted-foreground md:px-6">
-        © {new Date().getFullYear()} {content.footerText}
+        © {new Date().getFullYear()} By Muenot · Powered by Muenot ERP
       </div>
     </footer>
   )

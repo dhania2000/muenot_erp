@@ -1,11 +1,7 @@
 -- =============================================================
--- Migration: Sales In-Browser Calling (Telnyx Voice / WebRTC)
+-- Migration: Sales In-Browser Calling (Twilio Voice)
 -- Run this in phpMyAdmin (Hostinger) after the base schema.
 -- Safe to run once. Uses IF NOT EXISTS where possible.
---
--- NOTE: If you previously ran the Twilio version of this migration,
--- rename the old column instead of recreating the table:
---   ALTER TABLE `sales_calls` CHANGE `twilio_call_sid` `telnyx_call_id` VARCHAR(64) DEFAULT NULL;
 -- =============================================================
 
 SET NAMES utf8mb4;
@@ -14,7 +10,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- -------------------------------------------------------------
 -- Table: sales_calls
 -- One row per call placed to a lead from the browser dialer.
--- `telnyx_call_id` links the row to the Telnyx call so status
+-- `twilio_call_sid` links the row to the Twilio call so status
 -- and duration can be reconciled. `disposition` + `notes` capture
 -- the outcome the employee records after hanging up.
 -- -------------------------------------------------------------
@@ -24,7 +20,7 @@ CREATE TABLE IF NOT EXISTS `sales_calls` (
   `to_number` VARCHAR(40) NOT NULL,
   `to_name` VARCHAR(190) DEFAULT NULL,
   `from_number` VARCHAR(40) DEFAULT NULL,
-  `telnyx_call_id` VARCHAR(64) DEFAULT NULL,
+  `twilio_call_sid` VARCHAR(64) DEFAULT NULL,
   `direction` ENUM('Outbound','Inbound') NOT NULL DEFAULT 'Outbound',
   `status` ENUM('Initiated','Ringing','In Progress','Completed','Failed','Busy','No Answer','Canceled') NOT NULL DEFAULT 'Initiated',
   `duration_seconds` INT UNSIGNED NOT NULL DEFAULT 0,
@@ -36,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `sales_calls` (
   PRIMARY KEY (`id`),
   KEY `idx_calls_lead` (`lead_id`),
   KEY `idx_calls_status` (`status`),
-  KEY `idx_calls_sid` (`telnyx_call_id`),
+  KEY `idx_calls_sid` (`twilio_call_sid`),
   CONSTRAINT `fk_calls_lead` FOREIGN KEY (`lead_id`) REFERENCES `sales_leads` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_calls_called_by` FOREIGN KEY (`called_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

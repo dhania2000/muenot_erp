@@ -1,17 +1,8 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
-import { getUserAccessibleModules, getFeatureChecker } from "@/lib/permissions"
-import { getPublicSettings } from "@/lib/settings/server"
-import { SettingsProvider } from "@/components/providers/settings-provider"
-import { SettingsBranding } from "@/components/providers/settings-branding"
+import { getUserAccessibleModules, getUserFeatureSlugs } from "@/lib/permissions"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink } from "lucide-react"
-
-function settingEnabled(v: string | undefined, fallback = true) {
-  if (v == null) return fallback
-  const t = v.trim().toLowerCase()
-  return t === "enabled" || t === "true" || t === "1" || t === "yes"
-}
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package } from "lucide-react"
 
 const moduleIcons: Record<string, NavItem["icon"]> = {
   hr: <Users2 className="size-4" />,
@@ -22,41 +13,34 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
   clients: <BriefcaseBusiness className="size-4" />,
   tickets: <TicketCheck className="size-4" />,
   products: <Package className="size-4" />,
-  legal: <Scale className="size-4" />,
 }
 
-type FeatureChild = { label: string; href?: string; feature?: string; children?: FeatureChild[] }
-
 // Sales sub-pages shown in the sidebar dropdown, each gated by a feature slug.
-const HR_CHILDREN: FeatureChild[] = [
+const HR_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "HR Dashboard", href: "/modules/hr/dashboard", feature: "hr.view_dashboard" },
   { label: "Employees", href: "/modules/hr/employees", feature: "hr.view_employees" },
-  { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_documents" },
+  { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_employees" },
   { label: "Attendance", href: "/modules/hr/attendance", feature: "hr.view_attendance" },
   { label: "Attendance Regularisation", href: "/modules/hr/attendance-regularisation", feature: "hr.view_regularisation" },
   { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
   { label: "Offboarding", href: "/modules/hr/offboarding", feature: "hr.view_offboarding" },
-  {
-    label: "Leaves",
-    children: [
-      { label: "Leave Requests", href: "/modules/hr/leave-requests", feature: "hr.view_leave_requests" },
-      { label: "Leave Balances", href: "/modules/hr/leave-balances", feature: "hr.view_leave_balances" },
-      { label: "Leave Quota History", href: "/modules/hr/leave-quota-history", feature: "hr.view_leave_quota_history" },
-      { label: "Leave Types", href: "/modules/hr/leave-types", feature: "hr.view_leave_types" },
-    ],
-  },
-  {
-    label: "Shifts",
-    children: [
-      { label: "Shifts", href: "/modules/hr/shifts", feature: "hr.view_shifts" },
-      { label: "Shift Change Requests", href: "/modules/hr/shift-workflows?kind=requests", feature: "hr.view_shift_change_requests" },
-      { label: "Shift Assignments", href: "/modules/hr/shift-workflows?kind=assignments", feature: "hr.view_shift_assignments" },
-      { label: "Shift Rotations", href: "/modules/hr/shift-workflows?kind=rotations", feature: "hr.view_shift_rotations" },
-      { label: "Rotation Sequences", href: "/modules/hr/shift-workflows?kind=sequences", feature: "hr.view_rotation_sequences" },
-      { label: "Rotation Employees", href: "/modules/hr/shift-workflows?kind=employees", feature: "hr.view_rotation_employees" },
-    ],
-  },
-  { label: "HR Master Data", href: "/modules/hr/master-data", feature: "hr.view_master_data" },
+  { label: "Leave Requests", href: "/modules/hr/leave-requests", feature: "hr.view_leave_requests" },
+  { label: "Leave Balances", href: "/modules/hr/leave-balances", feature: "hr.view_leave_balances" },
+  { label: "Leave Quota History", href: "/modules/hr/leave-quota-history", feature: "hr.view_leave_quota_history" },
+  { label: "Leave Types", href: "/modules/hr/leave-types", feature: "hr.view_leave_types" },
+  { label: "Shifts", href: "/modules/hr/shifts", feature: "hr.view_shifts" },
+  { label: "Shift Change Requests", href: "/modules/hr/shift-workflows?kind=requests", feature: "hr.view_shift_change_requests" },
+  { label: "Shift Assignments", href: "/modules/hr/shift-workflows?kind=assignments", feature: "hr.view_shift_assignments" },
+  { label: "Shift Rotations", href: "/modules/hr/shift-workflows?kind=rotations", feature: "hr.view_shift_rotations" },
+  { label: "Rotation Sequences", href: "/modules/hr/shift-workflows?kind=sequences", feature: "hr.view_rotation_sequences" },
+  { label: "Rotation Employees", href: "/modules/hr/shift-workflows?kind=employees", feature: "hr.view_rotation_employees" },
+  { label: "Promotions", href: "/modules/hr/master-data?kind=promotions", feature: "hr.view_master_data" },
+  { label: "Awards", href: "/modules/hr/master-data?kind=awards", feature: "hr.view_master_data" },
+  { label: "Appreciations", href: "/modules/hr/master-data?kind=appreciations", feature: "hr.view_master_data" },
+  { label: "Passport Visa", href: "/modules/hr/master-data?kind=passport-visa", feature: "hr.view_master_data" },
+  { label: "Holidays", href: "/modules/hr/master-data?kind=holidays", feature: "hr.view_master_data" },
+  { label: "Departments", href: "/modules/hr/master-data?kind=departments", feature: "hr.view_master_data" },
+  { label: "Designations", href: "/modules/hr/master-data?kind=designations", feature: "hr.view_master_data" },
   { label: "HR Emails", href: "/modules/hr/emails", feature: "hr.view_emails" },
   { label: "HR Email Templates", href: "/modules/hr/email-templates", feature: "hr.view_email_templates" },
   { label: "Letter Templates", href: "/modules/hr/letter-templates", feature: "hr.view_letter_templates" },
@@ -95,7 +79,6 @@ const RECRUITMENT_CHILDREN: { label: string; href: string; feature: string }[] =
   { label: "Email", href: "/modules/recruitment/emails", feature: "recruitment.view_applications" },
   { label: "Email Templates", href: "/modules/recruitment/email-templates", feature: "recruitment.view_applications" },
   { label: "Recruit Report", href: "/modules/recruitment/recruit-job-report", feature: "recruitment.view_reports" },
-  { label: "Career Site", href: "/modules/recruitment/career-site", feature: "recruitment.view_jobs" },
 ]
 
 const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = [
@@ -121,11 +104,6 @@ const PRODUCTS_CHILDREN = [
   { label: "Product Catalog", href: "/modules/products/catalog", feature: "products.view_products" },
 ]
 
-const LEGAL_CHILDREN = [
-  { label: "Agreement Templates", href: "/modules/legal/contracts", feature: "legal.view_contracts" },
-  { label: "Esign", href: "/modules/legal/esign", feature: "legal.view_esign" },
-]
-
 const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Dashboard", href: "/modules/sales/dashboard", feature: "sales.view_dashboard" },
   { label: "Leads", href: "/modules/sales/leads", feature: "sales.view_leads" },
@@ -144,15 +122,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const session = await getSession()
   if (!session) redirect("/login")
 
-  const settings = await getPublicSettings()
-
   const HIDDEN_MODULES = new Set(["biolinks", "biometric", "letter", "monitor-center", "monitor center"])
-  const modules = (await getUserAccessibleModules(session.userId, session.role))
-    .filter((m) => !HIDDEN_MODULES.has(m.slug.toLowerCase()) && !HIDDEN_MODULES.has(m.name.toLowerCase()))
-    // Respect the Module Settings toggles (module.hr, module.finance, ...).
-    .filter((m) => settingEnabled(settings[`module.${m.slug.toLowerCase()}`]))
+  const modules = (await getUserAccessibleModules(session.userId, session.role)).filter(
+    (m) => !HIDDEN_MODULES.has(m.slug.toLowerCase()) && !HIDDEN_MODULES.has(m.name.toLowerCase()),
+  )
 
-  const canAccess = await getFeatureChecker(session.userId, session.role)
+  const granted = session.role === "admin" ? null : new Set(await getUserFeatureSlugs(session.userId))
+  const canAccess = (feature: string) => session.role === "admin" || granted!.has(feature)
 
   const navItems: NavItem[] = [
     ...(session.role === "admin"
@@ -164,41 +140,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: `/modules/${m.slug}`,
         icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
       }
-      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products", "legal"].includes(m.slug)) {
-        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : m.slug === "legal" ? LEGAL_CHILDREN : SALES_CHILDREN
-        // Recursively keep only accessible leaves; drop groups that end up empty.
-        const buildChildren = (nodes: FeatureChild[]): NavChild[] =>
-          nodes.flatMap<NavChild>((c) => {
-            if (c.children && c.children.length > 0) {
-              const sub = buildChildren(c.children)
-              return sub.length > 0 ? [{ label: c.label, children: sub }] : []
-            }
-            return c.feature && !canAccess(c.feature) ? [] : [{ label: c.label, href: c.href }]
-          })
-        const children = buildChildren(source as FeatureChild[])
+      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products"].includes(m.slug)) {
+        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : SALES_CHILDREN
+        const children: NavChild[] = source.filter((c) => canAccess(c.feature)).map((c) => ({
+          label: c.label,
+          href: c.href,
+        }))
         if (children.length > 0) item.children = children
       }
       return item
     }),
   ]
 
-  // Optional custom sidebar link driven by Custom Link Settings.
-  if (settingEnabled(settings["customlink.enabled"], false) && settings["customlink.url"]) {
-    navItems.push({
-      label: settings["customlink.label"] || "Custom Link",
-      href: settings["customlink.url"],
-      icon: <ExternalLink className="size-4" />,
-      external: true,
-      openInNewTab: settingEnabled(settings["customlink.open_new_tab"], true),
-    })
-  }
-
   return (
-    <SettingsProvider initial={settings}>
-      <SettingsBranding />
-      <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
-        {children}
-      </AppShell>
-    </SettingsProvider>
+    <AppShell navItems={navItems} user={session}>
+      {children}
+    </AppShell>
   )
 }

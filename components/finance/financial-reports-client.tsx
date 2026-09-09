@@ -16,7 +16,6 @@ import {
   TableCell,
 } from "@/components/ui/table"
 import { Download, FileBarChart, FilterX, RefreshCw } from "lucide-react"
-import { inr0 } from "@/lib/finance-calc"
 
 type ReportColumn = {
   key: string
@@ -45,8 +44,12 @@ type ReportResponse = {
   available: boolean
 }
 
-// Honours the configured currency (symbol/position/separators) via settings.
-const currency = (n: number) => inr0(Number(n) || 0)
+const currency = (n: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(Number(n) || 0)
 
 function formatCell(value: any, col: ReportColumn) {
   if (value === null || value === undefined || value === "") return "—"

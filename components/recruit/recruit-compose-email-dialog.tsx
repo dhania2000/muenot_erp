@@ -146,7 +146,7 @@ export function RecruitComposeEmailDialog({
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-1.5">
             <Label>Template</Label>
-            <Select value={templateId} onValueChange={(v) => applyTemplate(v ?? "")}>
+            <Select value={templateId} onValueChange={applyTemplate}>
               <SelectTrigger>
                 <SelectValue placeholder="Start from scratch" />
               </SelectTrigger>

@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/dialog"
 import { Plus, FilterX, Receipt, Wallet, TrendingUp, Clock, Pencil, Eye, Trash2 } from "lucide-react"
 import { SalesInvoiceDialog } from "@/components/finance/sales-invoice-dialog"
-import { inr, inr0 } from "@/lib/finance-calc"
 
 export type InvoiceRow = {
   id: number
@@ -71,8 +70,8 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ]
 
-// Honours the configured currency (symbol/position/separators) via settings.
-const currency = (n: any) => inr0(Number(n) || 0)
+const currency = (n: any) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(n) || 0)
 
 const PAYMENT_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   Paid: "default",
@@ -285,7 +284,8 @@ export function SalesInvoicesClient() {
 }
 
 function InvoiceDetailDialog({ invoice, onClose }: { invoice: InvoiceRow | null; onClose: () => void }) {
-  const money = (n: any) => inr(Number(n) || 0)
+  const money = (n: any) =>
+    new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(n) || 0)
 
   return (
     <Dialog open={!!invoice} onOpenChange={(o) => !o && onClose()}>

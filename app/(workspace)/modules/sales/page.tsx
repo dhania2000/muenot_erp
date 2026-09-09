@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
-import { getFeatureChecker } from "@/lib/permissions"
+import { getUserFeatureSlugs } from "@/lib/permissions"
 
 export default async function SalesIndexPage() {
   const session = await getSession()
@@ -8,7 +8,7 @@ export default async function SalesIndexPage() {
 
   if (session.role === "admin") redirect("/modules/sales/dashboard")
 
-  const has = await getFeatureChecker(session.userId, session.role)
+  const granted = new Set(await getUserFeatureSlugs(session.userId))
   const order = [
     ["sales.view_dashboard", "/modules/sales/dashboard"],
     ["sales.view_leads", "/modules/sales/leads"],
@@ -19,6 +19,6 @@ export default async function SalesIndexPage() {
     ["sales.manage_onboarding", "/modules/sales/onboarding"],
   ] as const
 
-  const first = order.find(([slug]) => has(slug))
+  const first = order.find(([slug]) => granted.has(slug))
   redirect(first ? first[1] : "/dashboard")
 }

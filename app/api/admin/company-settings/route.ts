@@ -2,7 +2,6 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { companySettingsSections } from "@/lib/company-settings-config"
-import { invalidateSettingsCache } from "@/lib/settings/server"
 
 // Keys that must never be returned in plain text.
 const secretKeys = new Set(
@@ -55,8 +54,5 @@ export async function POST(req: Request) {
       [key, v, s.userId],
     )
   }
-  // Ensure server-side consumers (nav gating, numbering, formatting) pick up
-  // the new values on the next read.
-  invalidateSettingsCache()
   return NextResponse.json({ ok: true, saved: entries.length })
 }

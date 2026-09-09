@@ -117,7 +117,7 @@ export function RecruitEmailTemplatesClient() {
                     <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
-                <TableCell className="text-muted-foreground">{formatDate((t as any).updated_at as unknown as string)}</TableCell>
+                <TableCell className="text-muted-foreground">{formatDate(t.updated_at as unknown as string)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1.5">
                     <Button

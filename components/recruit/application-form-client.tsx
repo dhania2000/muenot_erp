@@ -114,7 +114,7 @@ export function ApplicationFormClient() {
           <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="job">Job</FieldLabel>
-              <Select value={jobId || "none"} onValueChange={(v) => setJobId(v === "none" ? "" : v ?? "")}>
+              <Select value={jobId || "none"} onValueChange={(v) => setJobId(v === "none" ? "" : v)}>
                 <SelectTrigger id="job" className="w-full"><SelectValue placeholder="Select a job" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">No specific job</SelectItem>
@@ -160,7 +160,7 @@ export function ApplicationFormClient() {
             </Field>
             <Field>
               <FieldLabel htmlFor="stage">Stage</FieldLabel>
-              <Select value={form.stage} onValueChange={(v) => update("stage", v ?? "")}>
+              <Select value={form.stage} onValueChange={(v) => update("stage", v)}>
                 <SelectTrigger id="stage" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {APPLICATION_STAGES.map((s) => <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>)}

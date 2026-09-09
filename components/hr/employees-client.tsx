@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { fetcher } from "@/lib/fetcher";
@@ -18,8 +17,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Users2, ShieldCheck, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { Plus, Search, Users2, ShieldCheck, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { PermissionsDialog } from "@/components/admin/permissions-dialog";
 import { ExcelImportButton } from "@/components/sales/excel-import-button";
 
 const EMPLOYEE_IMPORT_ALIASES = Object.fromEntries(
@@ -299,7 +299,10 @@ function EmployeeDialog({
 }
 export function EmployeesClient() {
   const { data, mutate } = useSWR<{ employees: any[] }>("/api/hr/employees", fetcher);
+  const { data: moduleData } = useSWR<{ modules: any[] }>("/api/admin/modules", fetcher);
   const [search, setSearch] = useState("");
+  const [permissionEmployee, setPermissionEmployee] = useState<any>(null);
+  const [permissionEmployeeId, setPermissionEmployeeId] = useState("");
   const [editEmployee, setEditEmployee] = useState<any>(null);
   const [deleteEmployee, setDeleteEmployee] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
@@ -341,6 +344,26 @@ export function EmployeesClient() {
             onImported={() => mutate()}
           />
           <EmployeeDialog onSaved={() => mutate()} />
+          <select
+            className="h-10 rounded-md border bg-background px-3 text-sm"
+            value={permissionEmployeeId}
+            onChange={(e) => setPermissionEmployeeId(e.target.value)}
+            aria-label="Select employee for permissions"
+          >
+            <option value="">Select employee</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.employee_name}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="outline"
+            disabled={!permissionEmployeeId}
+            onClick={() => setPermissionEmployee(employees.find((e) => String(e.id) === permissionEmployeeId))}
+          >
+            <ShieldCheck className="size-4" /> Manage permissions
+          </Button>
         </div>
       </div>
       <div className="flex items-center gap-3">
@@ -371,12 +394,7 @@ export function EmployeesClient() {
             {employees.map((e) => (
               <tr key={e.id} className="border-b last:border-0">
                 <td className="px-4 py-4">
-                  <Link
-                    href={`/modules/hr/employees/${e.id}`}
-                    className="font-medium text-primary hover:underline"
-                  >
-                    {e.employee_name}
-                  </Link>
+                  <div className="font-medium">{e.employee_name}</div>
                   <div className="text-xs text-muted-foreground">
                     {e.employee_id} · {e.designation || "No designation"}
                   </div>
@@ -402,22 +420,6 @@ export function EmployeesClient() {
                 </td>
                 <td className="px-4 py-4">
                   <div className="flex items-center justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Open ${e.employee_name} profile`}
-                      render={<Link href={`/modules/hr/employees/${e.id}`} />}
-                    >
-                      <ExternalLink className="size-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Manage permissions for ${e.employee_name}`}
-                      render={<Link href={`/modules/hr/employees/${e.id}?tab=permissions`} />}
-                    >
-                      <ShieldCheck className="size-4" />
-                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -485,6 +487,19 @@ export function EmployeesClient() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <PermissionsDialog
+        employee={
+          permissionEmployee
+            ? ({
+                id: permissionEmployee.id,
+                name: permissionEmployee.employee_name,
+                email: permissionEmployee.official_email || permissionEmployee.personal_email || "",
+              } as any)
+            : null
+        }
+        modules={moduleData?.modules || []}
+        onOpenChange={(open) => !open && setPermissionEmployee(null)}
+      />
     </div>
   );
 }

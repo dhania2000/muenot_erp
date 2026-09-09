@@ -2,7 +2,6 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { hashPassword } from "@/lib/password"
 import { consumeResetToken, verifyResetToken } from "@/lib/password-reset"
-import { getNum } from "@/lib/settings/server"
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -18,9 +17,8 @@ export async function POST(request: Request) {
     if (!token || !newPassword) {
       return NextResponse.json({ error: "Token and new password are required" }, { status: 400 })
     }
-    const minLength = await getNum("security.password_min_length", 8)
-    if (String(newPassword).length < minLength) {
-      return NextResponse.json({ error: `New password must be at least ${minLength} characters` }, { status: 400 })
+    if (String(newPassword).length < 8) {
+      return NextResponse.json({ error: "New password must be at least 8 characters" }, { status: 400 })
     }
 
     const result = await verifyResetToken(token)

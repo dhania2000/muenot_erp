@@ -22,14 +22,11 @@ export type SessionPayload = {
   role: "admin" | "employee"
 }
 
-export async function createSessionToken(
-  payload: SessionPayload,
-  durationSeconds: number = SESSION_DURATION_SECONDS,
-) {
+export async function createSessionToken(payload: SessionPayload) {
   return new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${durationSeconds}s`)
+    .setExpirationTime(`${SESSION_DURATION_SECONDS}s`)
     .sign(getSecretKey())
 }
 
@@ -50,14 +47,14 @@ export async function getSession(): Promise<SessionPayload | null> {
   return verifySessionToken(token)
 }
 
-export async function setSessionCookie(token: string, durationSeconds: number = SESSION_DURATION_SECONDS) {
+export async function setSessionCookie(token: string) {
   const cookieStore = await cookies()
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: durationSeconds,
+    maxAge: SESSION_DURATION_SECONDS,
   })
 }
 

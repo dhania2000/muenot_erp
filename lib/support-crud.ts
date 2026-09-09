@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { nextRecordId } from "@/lib/record-ids"
-import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { SUPPORT_MODULE_CONFIGS } from "@/lib/support-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
 
@@ -100,7 +99,7 @@ export function createSupportHandlers(moduleKey: string) {
       record[cfg.idColumn] =
         provided !== undefined && provided !== null && String(provided).trim() !== ""
           ? String(provided).trim()
-          : await nextRecordIdForPrefix(cfg.idPrefix)
+          : await nextRecordId(cfg.idPrefix)
     }
 
     record.created_by = session.userId

@@ -309,9 +309,8 @@ const rawSections: Omit<SettingSection, "module" | "submodule">[] = [
       { key: "module.sales", label: "Sales & CRM", type: "toggle", options: yesNo, default: "Enabled" },
       { key: "module.recruitment", label: "Recruitment", type: "toggle", options: yesNo, default: "Enabled" },
       { key: "module.operations", label: "Operations", type: "toggle", options: yesNo, default: "Enabled" },
-    { key: "module.tickets", label: "Tickets", type: "toggle", options: yesNo, default: "Enabled" },
-    { key: "module.products", label: "Products", type: "toggle", options: yesNo, default: "Enabled" },
-    { key: "module.legal", label: "Legal", type: "toggle", options: yesNo, default: "Enabled" },
+      { key: "module.tickets", label: "Tickets", type: "toggle", options: yesNo, default: "Enabled" },
+      { key: "module.products", label: "Products", type: "toggle", options: yesNo, default: "Enabled" },
     ],
   },
   {

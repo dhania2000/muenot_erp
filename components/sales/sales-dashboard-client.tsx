@@ -13,10 +13,8 @@ import {
 import { Bar, BarChart, CartesianGrid, XAxis, Pie, PieChart, Cell } from "recharts"
 import { TrendingUp, Users, Trophy, Target, Clock, CalendarClock } from "lucide-react"
 
-import { inr0 } from "@/lib/finance-calc"
-
-// Honours the configured currency (symbol/position/separators) via settings.
-const currency = (n: number) => inr0(n)
+const currency = (n: number) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0)
 
 const STATUS_COLORS: Record<string, string> = {
   New: "var(--chart-5)",
@@ -34,7 +32,7 @@ const sourceConfig: ChartConfig = {
 }
 
 export function SalesDashboardClient() {
-  const { data, isLoading } = useSWR<any>("/api/sales/dashboard", fetcher, { refreshInterval: 30000 })
+  const { data, isLoading } = useSWR("/api/sales/dashboard", fetcher, { refreshInterval: 30000 })
 
   if (isLoading || !data) {
     return <div className="text-sm text-muted-foreground">Loading dashboard...</div>

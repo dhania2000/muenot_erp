@@ -1,9 +1,6 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getAllModulesWithFeatures } from "@/lib/permissions"
-import { getPublicSettings } from "@/lib/settings/server"
-import { SettingsProvider } from "@/components/providers/settings-provider"
-import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem } from "@/components/app-shell"
 import { LayoutDashboard, Users2, TrendingUp, Wallet, UserPlus, Settings2, Settings } from "lucide-react"
 
@@ -19,8 +16,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const session = await getSession()
   if (!session) redirect("/login")
   if (session.role !== "admin") redirect("/dashboard")
-
-  const settings = await getPublicSettings()
 
   const HIDDEN_MODULES = new Set(["biolinks", "biometric", "letter", "monitor-center", "monitor center"])
   const modules = (await getAllModulesWithFeatures()).filter(
@@ -38,11 +33,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   ]
 
   return (
-    <SettingsProvider initial={settings}>
-      <SettingsBranding />
-      <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
-        {children}
-      </AppShell>
-    </SettingsProvider>
+    <AppShell navItems={navItems} user={session}>
+      {children}
+    </AppShell>
   )
 }

@@ -186,7 +186,7 @@ export function QuotationDialog({
 
               <Field>
                 <FieldLabel htmlFor="status">Status</FieldLabel>
-                <Select value={form.status} onValueChange={(v) => update("status", v ?? "")}>
+                <Select value={form.status} onValueChange={(v) => update("status", v)}>
                   <SelectTrigger id="status" className="w-full">
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>

@@ -2,7 +2,6 @@ import "server-only"
 import crypto from "crypto"
 import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
-import { nextDocumentId } from "@/lib/settings/numbering"
 import type { JobQuestion, StageKey } from "@/lib/recruit"
 
 // ---------------------------------------------------------------------------
@@ -115,8 +114,7 @@ async function saveQuestions(jobId: string, questions: JobQuestion[]) {
 }
 
 export async function createJob(data: any, userId: number | null) {
-  // Uses the configured recruit.job_prefix (falls back to JOB).
-  const jobId = await nextDocumentId("job")
+  const jobId = await nextRecordId("JOB")
   const hash = makeHash()
   await query(
     `INSERT INTO recruit_jobs

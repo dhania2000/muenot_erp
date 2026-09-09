@@ -46,6 +46,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     sets.push("notes = ?")
     values.push(body.notes ? String(body.notes) : null)
   }
+  if (body.twilio_call_sid !== undefined) {
+    sets.push("twilio_call_sid = ?")
+    values.push(body.twilio_call_sid ? String(body.twilio_call_sid).slice(0, 64) : null)
+  }
 
   if (sets.length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 })

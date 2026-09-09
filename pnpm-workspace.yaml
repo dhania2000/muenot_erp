@@ -4,5 +4,5 @@ minimumReleaseAgeExclude:
   - '@vercel/cli-config'
   - '@vercel/oidc'
   - react-is
-onlyBuiltDependencies:
-  - core-js
+allowBuilds:
+  core-js: true

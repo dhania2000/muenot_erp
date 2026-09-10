@@ -23,12 +23,28 @@ function isPlatformId(value: string | null): value is SocialPlatformId {
   return Boolean(value && PLATFORM_IDS.includes(value as SocialPlatformId))
 }
 
+export function resolveOrigin(request: Request, fallback: string) {
+  // Prefer the pinned base, then proxy-forwarded host (real public host),
+  // and only fall back to the raw request origin (which in dev is the
+  // 0.0.0.0 bind address that OAuth providers will reject).
+  if (process.env.SOCIAL_REDIRECT_BASE) {
+    return process.env.SOCIAL_REDIRECT_BASE.replace(/\/$/, "")
+  }
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host")
+  if (host && !host.startsWith("0.0.0.0") && !host.startsWith("127.0.0.1")) {
+    const proto = request.headers.get("x-forwarded-proto") || "https"
+    return `${proto}://${host}`
+  }
+  return fallback
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url)
-  const returnUrl = new URL(RETURN_PATH, url.origin)
+  const origin = resolveOrigin(request, url.origin)
+  const returnUrl = new URL(RETURN_PATH, origin)
 
   const session = await getSession()
-  if (!session) return NextResponse.redirect(new URL("/login", url.origin))
+  if (!session) return NextResponse.redirect(new URL("/login", origin))
 
   const platform = url.searchParams.get("platform")
   const type = url.searchParams.get("type") === "personal" ? "personal" : "company"
@@ -65,7 +81,7 @@ export async function GET(request: Request) {
 
   const authUrl = buildAuthUrl({
     platform,
-    redirectUri: resolveRedirectUri(platform, url.origin),
+    redirectUri: resolveRedirectUri(platform, origin),
     state,
     codeChallenge,
   })

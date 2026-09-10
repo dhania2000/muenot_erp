@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import useSWR from "swr"
+import { toast } from "sonner"
 import {
   Search,
   Plus,
@@ -22,6 +24,8 @@ import {
   Megaphone,
   Smile,
   ImageUp,
+  ExternalLink,
+  AlertTriangle,
 } from "lucide-react"
 
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
@@ -56,121 +60,51 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
+import { fetcher } from "@/lib/fetcher"
+import { SOCIAL_PLATFORMS, getSocialPlatform, type SocialPlatformId } from "@/lib/social-platforms"
 
 /* ------------------------------------------------------------------ */
-/* Platform catalog                                                    */
-/* ------------------------------------------------------------------ */
-
-type PlatformId =
-  | "linkedin"
-  | "instagram"
-  | "x"
-  | "facebook"
-  | "youtube"
-  | "threads"
-  | "tiktok"
-  | "pinterest"
-
-type Platform = {
-  id: PlatformId
-  name: string
-  abbr: string
-  color: string
-  /** max characters allowed for a post on this platform */
-  limit: number
-}
-
-const PLATFORMS: Platform[] = [
-  { id: "linkedin", name: "LinkedIn", abbr: "in", color: "#0A66C2", limit: 3000 },
-  { id: "instagram", name: "Instagram", abbr: "Ig", color: "#E4405F", limit: 2200 },
-  { id: "x", name: "X (Twitter)", abbr: "X", color: "#111827", limit: 280 },
-  { id: "facebook", name: "Facebook", abbr: "f", color: "#1877F2", limit: 63206 },
-  { id: "youtube", name: "YouTube", abbr: "YT", color: "#FF0000", limit: 5000 },
-  { id: "threads", name: "Threads", abbr: "Th", color: "#000000", limit: 500 },
-  { id: "tiktok", name: "TikTok", abbr: "Tk", color: "#EE1D52", limit: 2200 },
-  { id: "pinterest", name: "Pinterest", abbr: "P", color: "#BD081C", limit: 500 },
-]
-
-const platformById = (id: PlatformId) => PLATFORMS.find((p) => p.id === id)!
-
-/* ------------------------------------------------------------------ */
-/* Types                                                               */
+/* Types (mirror the API shapes)                                       */
 /* ------------------------------------------------------------------ */
 
 type AccountType = "company" | "personal"
 
 type Account = {
-  id: string
-  platform: PlatformId
+  id: number
+  platform: SocialPlatformId
   type: AccountType
   handle: string
-  /** employee name — only set for personal accounts */
-  owner?: string
-  followers: number
+  displayName: string | null
+  owner: string | null
+  followers: number | null
   connectedAt: string
 }
 
 type PostStatus = "Draft" | "Scheduled" | "Publishing" | "Published" | "Failed"
 
-type SocialPost = {
-  id: string
-  name: string
-  content: string
-  targets: PlatformId[]
-  /** specific connected accounts selected for this post */
-  accountIds?: string[]
-  /** optional attached image (object URL / data URL) */
-  image?: string
-  brand?: string
-  status: PostStatus
-  folder: string
-  createdAt: string
-  publishedAt?: string
+type PublishResult = {
+  accountId: number
+  platform: string
+  handle: string
+  ok: boolean
+  permalink?: string
+  error?: string
 }
 
-const BRANDS = ["Muenot Technologies", "Muenot Labs", "Muenot Academy"]
-
-/* ------------------------------------------------------------------ */
-/* Seed data                                                           */
-/* ------------------------------------------------------------------ */
-
-const INITIAL_ACCOUNTS: Account[] = [
-  { id: "ACC-1", platform: "linkedin", type: "company", handle: "@muenot", followers: 12400, connectedAt: "2026-08-02" },
-  { id: "ACC-2", platform: "instagram", type: "company", handle: "@muenot.official", followers: 8600, connectedAt: "2026-08-10" },
-  { id: "ACC-3", platform: "x", type: "company", handle: "@muenot", followers: 5200, connectedAt: "2026-08-14" },
-  { id: "ACC-4", platform: "linkedin", type: "personal", handle: "@priya.sharma", owner: "Priya Sharma", followers: 3200, connectedAt: "2026-08-20" },
-]
-
-const INITIAL_POSTS: SocialPost[] = [
-  {
-    id: "SOC-101",
-    name: "Product launch teaser",
-    content: "Something big is coming. Stay tuned for our biggest release yet.",
-    targets: ["linkedin", "x"],
-    status: "Published",
-    folder: "Launches",
-    createdAt: "2026-09-09T10:20:00",
-    publishedAt: "2026-09-09T11:00:00",
-  },
-  {
-    id: "SOC-102",
-    name: "Behind the scenes reel",
-    content: "A peek inside how our team ships every week.",
-    targets: ["instagram"],
-    status: "Scheduled",
-    folder: "Unclassified",
-    createdAt: "2026-09-10T09:15:00",
-  },
-  {
-    id: "SOC-103",
-    name: "Test",
-    content: "This is a draft social campaign.",
-    targets: ["linkedin"],
-    status: "Draft",
-    folder: "Unclassified",
-    createdAt: "2026-09-11T00:49:00",
-  },
-]
+type SocialPost = {
+  id: number
+  name: string
+  content: string
+  brand: string | null
+  image?: string
+  targets: SocialPlatformId[]
+  accountIds: number[]
+  status: PostStatus
+  folder: string
+  results: PublishResult[] | null
+  createdAt: string
+  publishedAt: string | null
+}
 
 const STATUS_STYLES: Record<PostStatus, string> = {
   Draft: "bg-muted text-muted-foreground",
@@ -184,8 +118,8 @@ const STATUS_STYLES: Record<PostStatus, string> = {
 /* Small pieces                                                        */
 /* ------------------------------------------------------------------ */
 
-function PlatformBadge({ id, size = "sm" }: { id: PlatformId; size?: "sm" | "md" }) {
-  const p = platformById(id)
+function PlatformBadge({ id, size = "sm" }: { id: SocialPlatformId; size?: "sm" | "md" }) {
+  const p = getSocialPlatform(id)
   return (
     <span
       className={cn(
@@ -202,7 +136,7 @@ function PlatformBadge({ id, size = "sm" }: { id: PlatformId; size?: "sm" | "md"
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleString(undefined, {
+  return new Date(iso.replace(" ", "T")).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -221,19 +155,52 @@ function formatCount(n: number) {
 /* ------------------------------------------------------------------ */
 
 export function MarketingSocialClient() {
-  const [accounts, setAccounts] = React.useState<Account[]>(INITIAL_ACCOUNTS)
-  const [posts, setPosts] = React.useState<SocialPost[]>(INITIAL_POSTS)
+  const {
+    data: accountsData,
+    isLoading: accountsLoading,
+    mutate: mutateAccounts,
+  } = useSWR<{ accounts: Account[]; configured: Record<string, boolean> }>(
+    "/api/marketing/social/accounts",
+    fetcher,
+  )
+  const { data: postsData, mutate: mutatePosts } = useSWR<{ posts: SocialPost[] }>(
+    "/api/marketing/social/posts",
+    fetcher,
+  )
+
+  const accounts = accountsData?.accounts ?? []
+  const configured = accountsData?.configured ?? {}
+  const posts = postsData?.posts ?? []
 
   const [folder, setFolder] = React.useState("all")
   const [statusFilter, setStatusFilter] = React.useState("all")
   const [query, setQuery] = React.useState("")
   const [composing, setComposing] = React.useState(false)
 
-  const connectedIds = Array.from(new Set(accounts.map((a) => a.platform)))
-  const folders = React.useMemo(
-    () => Array.from(new Set(posts.map((p) => p.folder))),
-    [posts],
-  )
+  // Surface the OAuth redirect result (?social=...) as a toast, then clean the URL.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const status = params.get("social")
+    if (!status) return
+    const platform = params.get("platform")
+    const platformName = platform ? getSocialPlatform(platform as SocialPlatformId)?.name ?? platform : "account"
+    if (status === "connected") toast.success(`${platformName} account connected`)
+    else if (status === "notconfigured")
+      toast.error(`${platformName} is not configured yet. Add its developer app credentials to connect.`)
+    else if (status === "noadmin")
+      toast.error("No LinkedIn company page found where you are an administrator.")
+    else if (status === "nopage") toast.error("No Facebook Page found on this account.")
+    else if (status === "noig")
+      toast.error("No Instagram Business account linked to your Facebook Page.")
+    else toast.error(`Could not connect your ${platformName} account`)
+    params.delete("social")
+    params.delete("platform")
+    const qs = params.toString()
+    window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""))
+    mutateAccounts()
+  }, [mutateAccounts])
+
+  const folders = React.useMemo(() => Array.from(new Set(posts.map((p) => p.folder))), [posts])
 
   const filtered = posts.filter((p) => {
     const byFolder = folder === "all" || p.folder === folder
@@ -243,70 +210,78 @@ export function MarketingSocialClient() {
   })
 
   /* ---- account actions ---- */
-  function connect(input: { platform: PlatformId; type: AccountType; handle: string; owner?: string }) {
-    setAccounts((prev) => [
-      ...prev,
-      {
-        id: `ACC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        platform: input.platform,
-        type: input.type,
-        handle: input.handle.startsWith("@") ? input.handle : `@${input.handle}`,
-        owner: input.owner?.trim() ? input.owner.trim() : undefined,
-        followers: Math.floor(1000 + Math.random() * 20000),
-        connectedAt: new Date().toISOString().slice(0, 10),
-      },
-    ])
+  function connect(platform: SocialPlatformId, type: AccountType) {
+    window.location.href = `/api/marketing/social/connect?platform=${platform}&type=${type}`
   }
-  function disconnect(id: string) {
-    setAccounts((prev) => prev.filter((a) => a.id !== id))
+  async function disconnect(id: number) {
+    await fetch(`/api/marketing/social/accounts/${id}`, { method: "DELETE" })
+    toast.success("Account disconnected")
+    mutateAccounts()
   }
 
   /* ---- post actions ---- */
-  function addPost(post: SocialPost) {
-    setPosts((prev) => [post, ...prev])
-  }
-  function clonePost(id: string) {
-    setPosts((prev) => {
-      const src = prev.find((p) => p.id === id)
-      if (!src) return prev
-      const copy: SocialPost = {
-        ...src,
-        id: `SOC-${Math.floor(100 + Math.random() * 900)}`,
-        name: `${src.name} (copy)`,
+  async function clonePost(post: SocialPost) {
+    await fetch("/api/marketing/social/posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: `${post.name} (copy)`,
+        content: post.content,
+        brand: post.brand,
+        image: post.image,
+        targets: post.targets,
+        accountIds: post.accountIds,
         status: "Draft",
-        createdAt: new Date().toISOString(),
-        publishedAt: undefined,
-      }
-      return [copy, ...prev]
+        folder: post.folder,
+      }),
     })
+    toast.success("Post cloned as draft")
+    mutatePosts()
   }
-  function deletePost(id: string) {
-    setPosts((prev) => prev.filter((p) => p.id !== id))
+  async function deletePost(id: number) {
+    await fetch(`/api/marketing/social/posts/${id}`, { method: "DELETE" })
+    toast.success("Post deleted")
+    mutatePosts()
   }
 
-  /** Simulated publish pipeline: Publishing -> Published after a short delay. */
-  function publishPost(id: string) {
-    setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, status: "Publishing" } : p)))
-    window.setTimeout(() => {
-      setPosts((prev) =>
-        prev.map((p) =>
-          p.id === id
-            ? { ...p, status: "Published", publishedAt: new Date().toISOString() }
-            : p,
-        ),
-      )
-    }, 1600)
+  async function publishPost(id: number) {
+    mutatePosts(
+      (cur) =>
+        cur ? { posts: cur.posts.map((p) => (p.id === id ? { ...p, status: "Publishing" } : p)) } : cur,
+      false,
+    )
+    try {
+      const res = await fetch("/api/marketing/social/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: id }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || "Publish failed")
+      const results: PublishResult[] = json.results ?? []
+      const okCount = results.filter((r) => r.ok).length
+      const failCount = results.length - okCount
+      if (failCount === 0) toast.success(`Published live to ${okCount} account${okCount === 1 ? "" : "s"}`)
+      else if (okCount === 0)
+        toast.error(`Publish failed: ${results.find((r) => !r.ok)?.error ?? "unknown error"}`)
+      else toast.warning(`Published to ${okCount}, ${failCount} failed`)
+    } catch (err: any) {
+      toast.error(err?.message || "Publish failed")
+    } finally {
+      mutatePosts()
+    }
   }
 
   const publishedCount = posts.filter((p) => p.status === "Published").length
-  const totalReach = accounts.reduce((s, a) => s + a.followers, 0)
+  const knownFollowers = accounts.filter((a) => typeof a.followers === "number")
+  const totalReach = knownFollowers.reduce((s, a) => s + (a.followers ?? 0), 0)
 
   if (composing) {
     return (
       <ComposeWizard
         accounts={accounts}
         onCancel={() => setComposing(false)}
-        onCreate={addPost}
+        onCreated={() => mutatePosts()}
         onPublish={publishPost}
       />
     )
@@ -317,9 +292,9 @@ export function MarketingSocialClient() {
       <MarketingHeader
         eyebrow="Marketing Campaigns"
         title="Social Campaigns"
-        description="Connect your social accounts and publish posts straight to every connected platform from one place."
+        description="Connect your real social accounts and publish posts straight to every connected platform from one place."
         action={
-          <Button onClick={() => setComposing(true)}>
+          <Button onClick={() => setComposing(true)} disabled={accounts.length === 0}>
             <Plus className="size-4" />
             Create
           </Button>
@@ -327,9 +302,24 @@ export function MarketingSocialClient() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Connected Accounts" value={accounts.length} icon={LinkIcon} hint={`${PLATFORMS.length} platforms available`} />
-        <StatCard label="Total Reach" value={formatCount(totalReach)} icon={Users} hint="Across connected networks" />
-        <StatCard label="Posts" value={posts.length} icon={FileText} hint={`${posts.filter((p) => p.status === "Draft").length} drafts`} />
+        <StatCard
+          label="Connected Accounts"
+          value={accounts.length}
+          icon={LinkIcon}
+          hint={`${SOCIAL_PLATFORMS.length} platforms available`}
+        />
+        <StatCard
+          label="Total Reach"
+          value={knownFollowers.length ? formatCount(totalReach) : "—"}
+          icon={Users}
+          hint="Across connected networks"
+        />
+        <StatCard
+          label="Posts"
+          value={posts.length}
+          icon={FileText}
+          hint={`${posts.filter((p) => p.status === "Draft").length} drafts`}
+        />
         <StatCard label="Published" value={publishedCount} icon={CheckCircle2} hint="Live on platforms" />
       </div>
 
@@ -348,7 +338,7 @@ export function MarketingSocialClient() {
                   {filtered.length} Social {filtered.length === 1 ? "Campaign" : "Campaigns"} in this view
                 </CardTitle>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Select value={folder} onValueChange={setFolder}>
+                  <Select value={folder} onValueChange={(v) => setFolder(v ?? "all")}>
                     <SelectTrigger className="h-9 w-40" aria-label="Filter by folder">
                       <SelectValue />
                     </SelectTrigger>
@@ -361,15 +351,15 @@ export function MarketingSocialClient() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
                     <SelectTrigger className="h-9 w-32" aria-label="Filter by status">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
                       <SelectItem value="Draft">Draft</SelectItem>
-                      <SelectItem value="Scheduled">Scheduled</SelectItem>
                       <SelectItem value="Published">Published</SelectItem>
+                      <SelectItem value="Failed">Failed</SelectItem>
                     </SelectContent>
                   </Select>
                   <div className="relative">
@@ -393,14 +383,18 @@ export function MarketingSocialClient() {
               {filtered.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed py-12 text-center">
                   <Share2 className="size-6 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">No campaigns match your filters.</p>
+                  <p className="text-sm text-muted-foreground">
+                    {posts.length === 0
+                      ? "No campaigns yet. Connect an account and create your first post."
+                      : "No campaigns match your filters."}
+                  </p>
                 </div>
               ) : (
                 filtered.map((post) => (
                   <PostRow
                     key={post.id}
                     post={post}
-                    onClone={() => clonePost(post.id)}
+                    onClone={() => clonePost(post)}
                     onDelete={() => deletePost(post.id)}
                     onPublish={() => publishPost(post.id)}
                   />
@@ -414,77 +408,96 @@ export function MarketingSocialClient() {
         <TabsContent value="accounts" className="space-y-4">
           <p className="text-sm text-muted-foreground">
             Connect a company page to publish as the brand, or let employees link their own accounts to
-            post under their name. You can connect multiple accounts per platform.
+            post under their name. Connecting opens the platform&apos;s secure sign-in — we never see your
+            password.
           </p>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {PLATFORMS.map((p) => {
-              const list = accounts.filter((a) => a.platform === p.id)
-              return (
-                <Card key={p.id}>
-                  <CardContent className="flex flex-col gap-4 pt-6">
-                    <div className="flex items-center gap-3">
-                      <PlatformBadge id={p.id} size="md" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{p.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {list.length === 0
-                            ? "Not connected"
-                            : `${list.length} account${list.length > 1 ? "s" : ""} connected`}
-                        </p>
+          {accountsLoading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {SOCIAL_PLATFORMS.map((p) => {
+                const list = accounts.filter((a) => a.platform === p.id)
+                return (
+                  <Card key={p.id}>
+                    <CardContent className="flex flex-col gap-4 pt-6">
+                      <div className="flex items-center gap-3">
+                        <PlatformBadge id={p.id} size="md" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium">{p.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {list.length === 0
+                              ? "Not connected"
+                              : `${list.length} account${list.length > 1 ? "s" : ""} connected`}
+                          </p>
+                        </div>
+                        {list.length > 0 ? (
+                          <Badge className="bg-chart-2/15 text-chart-2">Active</Badge>
+                        ) : configured[p.id] ? null : (
+                          <Badge variant="outline" className="gap-1 text-amber-600">
+                            <AlertTriangle className="size-3" />
+                            Setup
+                          </Badge>
+                        )}
                       </div>
+
                       {list.length > 0 ? (
-                        <Badge className="bg-chart-2/15 text-chart-2">Active</Badge>
-                      ) : null}
-                    </div>
-
-                    {list.length > 0 ? (
-                      <ul className="space-y-2">
-                        {list.map((account) => (
-                          <li
-                            key={account.id}
-                            className="flex items-center justify-between gap-2 rounded-lg border p-2.5"
-                          >
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="truncate text-sm font-medium">{account.handle}</span>
-                                <Badge variant="outline" className="shrink-0 gap-1 text-[10px] font-normal">
-                                  {account.type === "company" ? (
-                                    <>
-                                      <Building2 className="size-3" />
-                                      Company
-                                    </>
-                                  ) : (
-                                    <>
-                                      <User className="size-3" />
-                                      {account.owner ?? "Employee"}
-                                    </>
-                                  )}
-                                </Badge>
-                              </div>
-                              <p className="text-xs text-muted-foreground">
-                                {formatCount(account.followers)} followers
-                              </p>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-muted-foreground"
-                              onClick={() => disconnect(account.id)}
-                              aria-label={`Disconnect ${account.handle}`}
+                        <ul className="space-y-2">
+                          {list.map((account) => (
+                            <li
+                              key={account.id}
+                              className="flex items-center justify-between gap-2 rounded-lg border p-2.5"
                             >
-                              <Unlink className="size-4" />
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate text-sm font-medium">{account.handle}</span>
+                                  <Badge variant="outline" className="shrink-0 gap-1 text-[10px] font-normal">
+                                    {account.type === "company" ? (
+                                      <>
+                                        <Building2 className="size-3" />
+                                        Company
+                                      </>
+                                    ) : (
+                                      <>
+                                        <User className="size-3" />
+                                        {account.owner ?? "Employee"}
+                                      </>
+                                    )}
+                                  </Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  {typeof account.followers === "number"
+                                    ? `${formatCount(account.followers)} followers`
+                                    : "Connected"}
+                                </p>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                className="text-muted-foreground"
+                                onClick={() => disconnect(account.id)}
+                                aria-label={`Disconnect ${account.handle}`}
+                              >
+                                <Unlink className="size-4" />
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
 
-                    <ConnectDialog platform={p} onConnect={connect} hasAccounts={list.length > 0} />
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
+                      <ConnectDialog
+                        platform={p}
+                        configured={Boolean(configured[p.id])}
+                        hasAccounts={list.length > 0}
+                        onConnect={connect}
+                      />
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          )}
         </TabsContent>
       </Tabs>
     </div>
@@ -507,6 +520,7 @@ function PostRow({
   onPublish: () => void
 }) {
   const canPublish = post.status === "Draft" || post.status === "Scheduled" || post.status === "Failed"
+  const permalinks = (post.results ?? []).filter((r) => r.ok && r.permalink)
   return (
     <div className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-lg border p-3 transition-colors hover:bg-muted/40">
       <div className="min-w-0 space-y-1.5">
@@ -522,6 +536,22 @@ function PostRow({
           Created on {formatDate(post.createdAt)}
           {post.publishedAt ? ` · Published ${formatDate(post.publishedAt)}` : ""}
         </p>
+        {permalinks.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {permalinks.map((r) => (
+              <a
+                key={r.accountId}
+                href={r.permalink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <ExternalLink className="size-3" />
+                {r.handle}
+              </a>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex items-center gap-2">
@@ -532,6 +562,8 @@ function PostRow({
             <CheckCircle2 className="size-3" />
           ) : post.status === "Scheduled" ? (
             <CalendarClock className="size-3" />
+          ) : post.status === "Failed" ? (
+            <AlertTriangle className="size-3" />
           ) : (
             <FileText className="size-3" />
           )}
@@ -539,7 +571,7 @@ function PostRow({
         </Badge>
 
         {canPublish ? (
-          <Button size="sm" onClick={onPublish}>
+          <Button size="sm" onClick={onPublish} disabled={post.accountIds.length === 0}>
             <Send className="size-4" />
             Publish
           </Button>
@@ -571,28 +603,23 @@ function PostRow({
 
 function ConnectDialog({
   platform,
-  onConnect,
+  configured,
   hasAccounts,
+  onConnect,
 }: {
-  platform: Platform
-  onConnect: (input: { platform: PlatformId; type: AccountType; handle: string; owner?: string }) => void
+  platform: (typeof SOCIAL_PLATFORMS)[number]
+  configured: boolean
   hasAccounts: boolean
+  onConnect: (platform: SocialPlatformId, type: AccountType) => void
 }) {
   const [open, setOpen] = React.useState(false)
   const [type, setType] = React.useState<AccountType>("company")
-  const [handle, setHandle] = React.useState("")
-  const [owner, setOwner] = React.useState("")
 
-  const reset = () => {
-    setType("company")
-    setHandle("")
-    setOwner("")
-  }
-
-  const canSubmit = handle.trim().length > 0 && (type === "company" || owner.trim().length > 0)
+  // Facebook & Instagram publishing is always page/business based.
+  const pageOnly = platform.id === "facebook" || platform.id === "instagram"
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
           <Button variant="outline" size="sm" className="w-full">
@@ -607,91 +634,84 @@ function ConnectDialog({
             <PlatformBadge id={platform.id} size="md" />
             <div>
               <DialogTitle>Connect {platform.name}</DialogTitle>
-              <DialogDescription>Authorize an account to publish from this ERP.</DialogDescription>
+              <DialogDescription>
+                You&apos;ll be redirected to {platform.name} to authorize this ERP.
+              </DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Account type</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setType("company")}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
-                  type === "company"
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-border text-muted-foreground hover:bg-muted",
-                )}
-              >
-                <Building2 className="size-4" />
-                Company page
-              </button>
-              <button
-                type="button"
-                onClick={() => setType("personal")}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
-                  type === "personal"
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-border text-muted-foreground hover:bg-muted",
-                )}
-              >
-                <User className="size-4" />
-                Employee account
-              </button>
+        {!configured ? (
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <div className="space-y-1">
+                <p className="font-medium">Developer credentials required</p>
+                <p className="text-muted-foreground">{platform.setupHint}</p>
+              </div>
             </div>
-          </div>
-
-          {type === "personal" ? (
-            <div className="space-y-2">
-              <Label htmlFor={`owner-${platform.id}`}>Employee name</Label>
-              <Input
-                id={`owner-${platform.id}`}
-                placeholder="e.g. Priya Sharma"
-                value={owner}
-                onChange={(e) => setOwner(e.target.value)}
-              />
-            </div>
-          ) : null}
-
-          <div className="space-y-2">
-            <Label htmlFor={`handle-${platform.id}`}>
-              {type === "company" ? "Page handle" : "Account handle"}
-            </Label>
-            <Input
-              id={`handle-${platform.id}`}
-              placeholder={`@your-${platform.id}-handle`}
-              value={handle}
-              onChange={(e) => setHandle(e.target.value)}
-            />
             <p className="text-xs text-muted-foreground">
-              {type === "company"
-                ? "Directly connect your company page to publish as the brand."
-                : "Employees can connect their own account to publish under their name."}
+              Once you have them, add the credentials as project environment variables and this button
+              will connect a live account.
             </p>
           </div>
-        </div>
+        ) : (
+          <div className="space-y-4">
+            {pageOnly ? (
+              <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                {platform.name} publishes through a{" "}
+                {platform.id === "instagram" ? "linked Instagram Business account" : "Facebook Page"} you
+                administer. We&apos;ll connect the first one available.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <Label>Account type</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setType("company")}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
+                      type === "company"
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    <Building2 className="size-4" />
+                    Company page
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setType("personal")}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
+                      type === "personal"
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    <User className="size-4" />
+                    Employee account
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {type === "company"
+                    ? "Publish as the brand from a page you administer."
+                    : "Publish under your own name from your personal account."}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-          <Button
-            disabled={!canSubmit}
-            onClick={() => {
-              onConnect({
-                platform: platform.id,
-                type,
-                handle: handle.trim(),
-                owner: type === "personal" ? owner.trim() : undefined,
-              })
-              reset()
-              setOpen(false)
-            }}
-          >
-            Authorize &amp; Connect
-          </Button>
+          {configured ? (
+            <Button onClick={() => onConnect(platform.id, pageOnly ? "company" : type)}>
+              <LinkIcon className="size-4" />
+              Continue to {platform.name}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -705,7 +725,7 @@ function ConnectDialog({
 const EMOJIS = ["😀", "😎", "🚀", "🎉", "🔥", "💡", "👏", "❤️", "✅", "📢", "📈", "🙌", "✨", "🎯", "💬", "👀"]
 
 function AccountAvatar({ account, size = "md" }: { account: Account; size?: "sm" | "md" }) {
-  const p = platformById(account.platform)
+  const p = getSocialPlatform(account.platform)
   const initial = (account.owner ?? account.handle.replace(/^@/, "")).charAt(0).toUpperCase()
   const dim = size === "sm" ? "size-8 text-xs" : "size-12 text-base"
   return (
@@ -732,13 +752,13 @@ function AccountAvatar({ account, size = "md" }: { account: Account; size?: "sm"
 function ComposeWizard({
   accounts,
   onCancel,
-  onCreate,
+  onCreated,
   onPublish,
 }: {
   accounts: Account[]
   onCancel: () => void
-  onCreate: (post: SocialPost) => void
-  onPublish: (id: string) => void
+  onCreated: () => void
+  onPublish: (id: number) => void
 }) {
   const [step, setStep] = React.useState<1 | 2>(1)
 
@@ -748,55 +768,77 @@ function ComposeWizard({
   const [nameTouched, setNameTouched] = React.useState(false)
 
   // step 2
-  const [selectedAccounts, setSelectedAccounts] = React.useState<string[]>([])
+  const [selectedAccounts, setSelectedAccounts] = React.useState<number[]>([])
   const [content, setContent] = React.useState("")
   const [image, setImage] = React.useState<string | undefined>(undefined)
   const [showEmoji, setShowEmoji] = React.useState(false)
+  const [submitting, setSubmitting] = React.useState(false)
   const fileRef = React.useRef<HTMLInputElement>(null)
 
   const nameValid = name.trim().length > 0
 
-  const toggleAccount = (id: string) =>
+  const toggleAccount = (id: number) =>
     setSelectedAccounts((prev) => (prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]))
 
   const chosen = accounts.filter((a) => selectedAccounts.includes(a.id))
   const targets = Array.from(new Set(chosen.map((a) => a.platform)))
-  const activeLimit = targets.length ? Math.min(...targets.map((t) => platformById(t).limit)) : null
+  const activeLimit = targets.length ? Math.min(...targets.map((t) => getSocialPlatform(t).limit)) : null
   const overLimit = activeLimit !== null && content.length > activeLimit
+  const needsImage = targets.includes("instagram") && !image
 
-  const canProceed = selectedAccounts.length > 0 && content.trim().length > 0 && !overLimit
+  const canProceed = selectedAccounts.length > 0 && content.trim().length > 0 && !overLimit && !needsImage
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setImage(URL.createObjectURL(file))
+    const reader = new FileReader()
+    reader.onload = () => setImage(reader.result as string)
+    reader.readAsDataURL(file)
   }
 
-  function build(status: PostStatus): SocialPost {
-    return {
-      id: `SOC-${Math.floor(100 + Math.random() * 900)}`,
-      name: name.trim(),
-      content: content.trim(),
-      targets,
-      accountIds: selectedAccounts,
-      image,
-      brand: brand || undefined,
-      status,
-      folder: "Unclassified",
-      createdAt: new Date().toISOString(),
+  async function createPost(status: "Draft" | "Publishing"): Promise<number | null> {
+    const res = await fetch("/api/marketing/social/posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: name.trim(),
+        content: content.trim(),
+        brand: brand || null,
+        image,
+        targets,
+        accountIds: selectedAccounts,
+        status,
+        folder: "Unclassified",
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      toast.error(json.error || "Could not save post")
+      return null
     }
+    return json.id as number
   }
 
-  function saveDraft() {
-    onCreate(build("Draft"))
+  async function saveDraft() {
+    setSubmitting(true)
+    const id = await createPost("Draft")
+    setSubmitting(false)
+    if (id == null) return
+    toast.success("Draft saved")
+    onCreated()
     onCancel()
   }
 
-  function publishNow() {
-    const post = build("Publishing")
-    onCreate(post)
-    window.setTimeout(() => onPublish(post.id), 50)
+  async function publishNow() {
+    setSubmitting(true)
+    const id = await createPost("Publishing")
+    if (id == null) {
+      setSubmitting(false)
+      return
+    }
+    onCreated()
     onCancel()
+    onPublish(id)
   }
 
   return (
@@ -821,12 +863,12 @@ function ComposeWizard({
         </div>
         {step === 2 ? (
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={saveDraft} disabled={!canProceed}>
+            <Button variant="outline" onClick={saveDraft} disabled={!canProceed || submitting}>
               Save Draft
             </Button>
-            <Button onClick={publishNow} disabled={!canProceed}>
-              <Send className="size-4" />
-              Save and Proceed
+            <Button onClick={publishNow} disabled={!canProceed || submitting}>
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+              Publish Live
             </Button>
           </div>
         ) : null}
@@ -843,7 +885,7 @@ function ComposeWizard({
             <h2 className="text-lg font-semibold">General Details</h2>
             <p className="max-w-xs text-sm leading-relaxed text-muted-foreground text-pretty">
               General information about your campaign gives an overview of its purpose. Give it a name
-              and pick the brand to proceed.
+              and an optional brand label to proceed.
             </p>
           </div>
 
@@ -866,19 +908,13 @@ function ComposeWizard({
               </div>
 
               <div className="space-y-2">
-                <Label>Choose Brand</Label>
-                <Select value={brand} onValueChange={setBrand}>
-                  <SelectTrigger aria-label="Choose brand">
-                    <SelectValue placeholder="Select" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BRANDS.map((b) => (
-                      <SelectItem key={b} value={b}>
-                        {b}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="wiz-brand">Brand label (optional)</Label>
+                <Input
+                  id="wiz-brand"
+                  placeholder="e.g. your brand or product name"
+                  value={brand}
+                  onChange={(e) => setBrand(e.target.value)}
+                />
               </div>
 
               <div className="flex justify-end">
@@ -1024,6 +1060,11 @@ function ComposeWizard({
               {overLimit ? (
                 <p className="text-xs text-destructive">
                   Content exceeds the limit for the tightest selected platform.
+                </p>
+              ) : needsImage ? (
+                <p className="flex items-center gap-1 text-xs text-destructive">
+                  <AlertTriangle className="size-3" />
+                  Instagram requires an image. Attach one to publish to Instagram.
                 </p>
               ) : (
                 <p className="flex items-center gap-1 text-xs text-muted-foreground">

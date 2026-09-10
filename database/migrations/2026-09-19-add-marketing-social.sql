@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS `social_posts` (
 -- target set survives even if the account row is later removed.
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `social_post_accounts` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `post_id` INT UNSIGNED NOT NULL,
   `account_id` INT UNSIGNED DEFAULT NULL,
   `platform` ENUM('linkedin','instagram','x','facebook','youtube','threads','tiktok','pinterest') NOT NULL,
@@ -89,7 +90,8 @@ CREATE TABLE IF NOT EXISTS `social_post_accounts` (
   `external_post_id` VARCHAR(190) DEFAULT NULL,
   `error_message` VARCHAR(500) DEFAULT NULL,
   `published_at` DATETIME DEFAULT NULL,
-  PRIMARY KEY (`post_id`, `platform`, `account_id`),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_spa_post_platform_account` (`post_id`, `platform`, `account_id`),
   KEY `idx_spa_account` (`account_id`),
   CONSTRAINT `fk_spa_post` FOREIGN KEY (`post_id`) REFERENCES `social_posts` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_spa_account` FOREIGN KEY (`account_id`) REFERENCES `social_accounts` (`id`) ON DELETE SET NULL

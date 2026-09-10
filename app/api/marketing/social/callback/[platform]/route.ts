@@ -9,6 +9,7 @@ import {
   SOCIAL_STATE_COOKIE,
   SOCIAL_TYPE_COOKIE,
   SOCIAL_VERIFIER_COOKIE,
+  SOCIAL_REDIRECT_COOKIE,
   resolveOrigin,
 } from "@/app/api/marketing/social/connect/route"
 
@@ -44,9 +45,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
   const savedStateRaw = cookieStore.get(SOCIAL_STATE_COOKIE)?.value
   const type = cookieStore.get(SOCIAL_TYPE_COOKIE)?.value === "personal" ? "personal" : "company"
   const verifier = cookieStore.get(SOCIAL_VERIFIER_COOKIE)?.value
+  // The redirect URI pinned at the authorize step — reused verbatim so the
+  // token exchange matches byte-for-byte. Fall back only if the cookie is gone.
+  const pinnedRedirectUri = cookieStore.get(SOCIAL_REDIRECT_COOKIE)?.value
   cookieStore.delete(SOCIAL_STATE_COOKIE)
   cookieStore.delete(SOCIAL_TYPE_COOKIE)
   cookieStore.delete(SOCIAL_VERIFIER_COOKIE)
+  cookieStore.delete(SOCIAL_REDIRECT_COOKIE)
 
   if (oauthError || !code || !state || !savedStateRaw) return fail("error")
   const [savedPlatform, savedState] = savedStateRaw.split(":")
@@ -56,7 +61,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
     const tokens = await exchangeCode({
       platform,
       code,
-      redirectUri: resolveRedirectUri(platform, origin),
+      redirectUri: pinnedRedirectUri || resolveRedirectUri(platform, origin),
       codeVerifier: verifier,
     })
 

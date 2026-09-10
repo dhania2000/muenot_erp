@@ -7,7 +7,7 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import useSWR from "swr"
-import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MessageSquare, Moon, Plus, Search, Settings, ShieldCheck, StickyNote, Sun, Ticket, UserPlus, UsersRound } from "lucide-react"
+import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MapPin, MessageSquare, Moon, Plus, RefreshCw, Search, Settings, ShieldCheck, StickyNote, Sun, Ticket, UserPlus, UsersRound } from "lucide-react"
 import { useTheme } from "next-themes"
 import { NotesPanel } from "@/components/notes-panel"
 import { cn } from "@/lib/utils"
@@ -98,20 +98,88 @@ function LiveClock() {
   )
 }
 
+type Geo = { lat: number; lng: number; label: string }
+
+/**
+ * Fetch the browser location and reverse-geocode it to a readable address via
+ * OpenStreetMap's Nominatim (no API key required). Resolves to null if the user
+ * denies permission or geolocation is unavailable — clock in/out still works.
+ */
+function getBrowserLocation(): Promise<Geo | null> {
+  return new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
+      resolve(null)
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude
+        const lng = pos.coords.longitude
+        let label = ""
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+            { headers: { Accept: "application/json" } },
+          )
+          const json = await res.json()
+          label = typeof json?.display_name === "string" ? json.display_name : ""
+        } catch {
+          // Reverse geocoding is best-effort; coordinates are still captured.
+        }
+        resolve({ lat, lng, label })
+      },
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+    )
+  })
+}
+
 /** Clock in / clock out control wired to today's attendance record. */
 function ClockControl() {
   const { data, mutate, isLoading } = useSWR<ClockStatus>("/api/hr/attendance/clock", fetcher)
+  const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [geo, setGeo] = useState<Geo | null>(null)
+  const [geoBusy, setGeoBusy] = useState(false)
+  const [geoDenied, setGeoDenied] = useState(false)
 
   const state = data?.state ?? "out"
   const linked = data?.linked ?? true
+
+  async function detectLocation() {
+    setGeoBusy(true)
+    setGeoDenied(false)
+    const result = await getBrowserLocation()
+    if (result) setGeo(result)
+    else setGeoDenied(true)
+    setGeoBusy(false)
+    return result
+  }
+
+  // Auto-detect location when the panel opens and there is a punch to make.
+  useEffect(() => {
+    if (open && linked && state !== "done" && !geo && !geoBusy) {
+      void detectLocation()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, linked, state])
 
   async function toggle() {
     setBusy(true)
     setError(null)
     try {
-      const res = await fetch("/api/hr/attendance/clock", { method: "POST" })
+      // Use the already-detected location, or make a fresh attempt at punch time.
+      const location = geo ?? (await detectLocation())
+      const res = await fetch("/api/hr/attendance/clock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          location
+            ? { latitude: location.lat, longitude: location.lng, location: location.label }
+            : {},
+        ),
+      })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) setError(json.error || "Something went wrong")
       await mutate()
@@ -123,16 +191,19 @@ function ClockControl() {
   }
 
   const dotColor = state === "in" ? "bg-emerald-500" : state === "done" ? "bg-muted-foreground" : "bg-amber-500"
+  const bbox = geo
+    ? `${geo.lng - 0.004}%2C${geo.lat - 0.003}%2C${geo.lng + 0.004}%2C${geo.lat + 0.003}`
+    : ""
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         render={<Button variant="ghost" size="icon-sm" aria-label="Attendance clock in and out" className="relative text-muted-foreground hover:bg-primary/10 hover:text-primary" />}
       >
         <Clock3 className="size-5" />
         {linked && <span className={cn("absolute right-1 top-1 size-2 rounded-full ring-2 ring-card", dotColor)} />}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-72">
+      <DropdownMenuContent align="end" className="w-80">
         <DropdownMenuLabel>Attendance</DropdownMenuLabel>
         <DropdownMenuSeparator />
 
@@ -154,6 +225,51 @@ function ClockControl() {
                 </span>
               )}
             </div>
+
+            {state !== "done" && (
+              <div className="mb-3 rounded-md border border-border bg-muted/30 p-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                    <MapPin className="size-3.5 text-primary" />
+                    Your location
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => detectLocation()}
+                    disabled={geoBusy}
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                  >
+                    <RefreshCw className={cn("size-3", geoBusy && "animate-spin")} />
+                    {geoBusy ? "Locating…" : "Refresh"}
+                  </button>
+                </div>
+
+                {geo ? (
+                  <>
+                    <div className="mb-2 overflow-hidden rounded border border-border">
+                      <iframe
+                        title="Your current location on map"
+                        className="h-32 w-full"
+                        loading="lazy"
+                        referrerPolicy="no-referrer-when-downgrade"
+                        src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${geo.lat}%2C${geo.lng}`}
+                      />
+                    </div>
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      {geo.label || `${geo.lat.toFixed(5)}, ${geo.lng.toFixed(5)}`}
+                    </p>
+                  </>
+                ) : geoBusy ? (
+                  <p className="text-[11px] text-muted-foreground">Fetching your location…</p>
+                ) : geoDenied ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-500">
+                    Location unavailable. You can still clock {state === "in" ? "out" : "in"}, but it won&apos;t be recorded.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">Waiting for location permission…</p>
+                )}
+              </div>
+            )}
 
             {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
 

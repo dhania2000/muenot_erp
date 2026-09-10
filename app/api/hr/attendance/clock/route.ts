@@ -107,12 +107,24 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const employee = await ensureEmployee(session)
+
+    // Optional geolocation captured by the browser at punch time.
+    let body: { latitude?: unknown; longitude?: unknown; location?: unknown } = {}
+    try {
+      body = await request.json()
+    } catch {
+      // No body (or invalid JSON) — location capture is optional.
+    }
+    const latitude = typeof body.latitude === "number" && Number.isFinite(body.latitude) ? body.latitude : null
+    const longitude = typeof body.longitude === "number" && Number.isFinite(body.longitude) ? body.longitude : null
+    const location =
+      typeof body.location === "string" && body.location.trim() ? body.location.trim().slice(0, 255) : null
 
     const record = await todaysRecord(employee.id)
     const now = nowDateTime()
@@ -121,22 +133,28 @@ export async function POST() {
     if (!record) {
       const attendanceId = `ATT-${employee.id}-${today().replace(/-/g, "")}`
       await query(
-        "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, status, source) VALUES (?, ?, ?, ?, ?, 'Present', 'Portal')",
-        [attendanceId, employee.id, employee.employee_name, today(), now],
+        "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, status, source, location, latitude, longitude) VALUES (?, ?, ?, ?, ?, 'Present', 'Portal', ?, ?, ?)",
+        [attendanceId, employee.id, employee.employee_name, today(), now, location, latitude, longitude],
       )
       return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null })
     }
 
     // Record exists but no clock_in yet → treat as clock in.
     if (!record.clock_in) {
-      await query("UPDATE hr_attendance SET clock_in = ?, source = 'Portal' WHERE id = ?", [now, record.id])
+      await query(
+        "UPDATE hr_attendance SET clock_in = ?, source = 'Portal', location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
+        [now, location, latitude, longitude, record.id],
+      )
       return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null })
     }
 
     // Clocked in, not out yet → clock out and compute hours.
     if (!record.clock_out) {
       const hours = workingHours(record.clock_in, now, Number(record.break_minutes || 0))
-      await query("UPDATE hr_attendance SET clock_out = ?, working_hours = ? WHERE id = ?", [now, hours, record.id])
+      await query(
+        "UPDATE hr_attendance SET clock_out = ?, working_hours = ?, location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
+        [now, hours, location, latitude, longitude, record.id],
+      )
       return NextResponse.json({ ok: true, state: "done", clockIn: record.clock_in, clockOut: now })
     }
 

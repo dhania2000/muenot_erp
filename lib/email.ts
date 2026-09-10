@@ -384,13 +384,14 @@ function smtpConfig(department: Department = "sales") {
  *   <DEPT>_GMAIL_PRIVATE_KEY   - service account private key (with \n escapes)
  *   <DEPT>_GMAIL_SENDER        - the Workspace mailbox to send as / impersonate
  * The service account must have domain-wide delegation authorized in the
- * Google Workspace Admin console for BOTH scopes:
- *   https://www.googleapis.com/auth/gmail.send      (send mail)
- *   https://www.googleapis.com/auth/gmail.metadata   (read back Message-ID)
- * The gmail.metadata scope is required for follow-up threading: it lets us read
- * the real Message-ID Gmail assigns to the sent mail so the next follow-up can
- * reference the exact id the recipient received. Without it, follow-ups open a
- * new thread on the recipient side.
+ * Google Workspace Admin console. Sending only requires:
+ *   https://www.googleapis.com/auth/gmail.send
+ * Follow-up threading additionally requires a read scope so we can read back
+ * the real Message-ID Gmail assigns to each sent mail:
+ *   https://www.googleapis.com/auth/gmail.readonly
+ * These scopes are used by two SEPARATE clients on purpose: if the read scope
+ * is not authorized, sending still works and only follow-up threading degrades
+ * (follow-ups may open a new thread on the recipient side).
  */
 function gmailApiConfig(department: Department = "sales") {
   const prefix = department.toUpperCase()
@@ -492,21 +493,50 @@ function getGmailClient(department: Department = "sales") {
   const auth = new google.auth.JWT({
     email: config.clientEmail,
     key,
-    // gmail.send lets us send. gmail.metadata lets us read back the delivered
-    // message's headers (specifically the real Message-ID Gmail stamps on the
-    // outgoing mail) so follow-ups can reference an id the recipient's mailbox
-    // actually received — without it, follow-ups start a NEW thread on the
-    // recipient side. Both scopes must be authorized in the Workspace Admin
-    // domain-wide delegation for the service account, otherwise the read-back
-    // returns 403 and threading silently degrades.
-    scopes: [
-      "https://www.googleapis.com/auth/gmail.send",
-      "https://www.googleapis.com/auth/gmail.metadata",
-    ],
+    // SEND ONLY. This scope must stay isolated: a service-account JWT that
+    // requests any scope not authorized in the Workspace domain-wide delegation
+    // fails token acquisition entirely (401 unauthorized_client), which would
+    // break sending. The Message-ID read-back needed for follow-up threading
+    // uses a SEPARATE client (getGmailReadClient) with the read scope so that,
+    // if that read scope is not authorized, only threading degrades — sending
+    // keeps working.
+    scopes: ["https://www.googleapis.com/auth/gmail.send"],
     subject: config.sender,
   })
   const client = google.gmail({ version: "v1", auth })
   gmailClients.set(cacheKey, client)
+  return client
+}
+
+const gmailReadClients = new Map<string, ReturnType<typeof google.gmail>>()
+
+/**
+ * A separate Gmail client authorized ONLY for reading message metadata. Kept
+ * apart from the send client on purpose (see getGmailClient): if the
+ * gmail.readonly scope is not authorized in the Workspace domain-wide
+ * delegation, calls on this client fail with 401/403 but sending is unaffected.
+ * Used to read back the real Message-ID Gmail assigns to a sent message so
+ * follow-ups reference the exact id the recipient received and thread correctly.
+ */
+function getGmailReadClient(department: Department = "sales") {
+  const config = gmailApiConfig(department)
+  const cacheKey = `${department}:${config.clientEmail}:${config.sender}`
+  const existing = gmailReadClients.get(cacheKey)
+  if (existing) return existing
+
+  const key = normalizePrivateKey(config.privateKey || "")
+  if (!/-----BEGIN (?:RSA )?PRIVATE KEY-----/.test(key)) {
+    throw new Error("Gmail private key is malformed")
+  }
+
+  const auth = new google.auth.JWT({
+    email: config.clientEmail,
+    key,
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+    subject: config.sender,
+  })
+  const client = google.gmail({ version: "v1", auth })
+  gmailReadClients.set(cacheKey, client)
   return client
 }
 
@@ -678,7 +708,11 @@ export async function sendEmail(opts: {
     let realMessageId = opts.messageId
     if (res.data.id) {
       try {
-        const sent = await gmail.users.messages.get({
+        // Use the SEPARATE read-only client so an unauthorized read scope can
+        // never affect the send above. getGmailReadClient() itself may throw
+        // (e.g. malformed key), so it is inside the try too.
+        const readClient = getGmailReadClient(opts.department)
+        const sent = await readClient.users.messages.get({
           userId: "me",
           id: res.data.id,
           format: "metadata",
@@ -694,13 +728,14 @@ export async function sendEmail(opts: {
           console.warn("[v0] Gmail read-back returned no Message-ID header; using generated id", opts.messageId)
         }
       } catch (err) {
-        // Non-fatal: fall back to our generated id. Threading may be weaker but
-        // the send already succeeded, so we never fail the request over this.
-        // A 403 here almost always means the gmail.metadata scope is not yet
-        // authorized in the Workspace domain-wide delegation.
+        // Non-fatal: fall back to our generated id. The send already succeeded,
+        // so we never fail the request over this. A 401 unauthorized_client or
+        // 403 here means the gmail.readonly scope is not yet authorized in the
+        // Workspace domain-wide delegation for the service account.
         console.error(
           "[v0] Could not read back Gmail Message-ID (follow-ups may not thread). " +
-            "Ensure gmail.metadata scope is authorized for the service account:",
+            "Authorize the gmail.readonly scope for the service account in " +
+            "Workspace Admin > domain-wide delegation:",
           (err as any)?.message,
         )
       }

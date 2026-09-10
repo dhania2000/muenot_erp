@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog"
 import { Award, Download, Mail } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ImportButton } from "@/components/import-button"
 
 const sections = {
   departments: { label: "Departments", fields: ["department_id", "department_name", "parent_department_id", "head_employee_id", "description", "status"] },
@@ -28,6 +29,10 @@ const sections = {
 } as const
 
 type Kind = keyof typeof sections
+// Only the simple, single-table master-data tabs support bulk import; the
+// others (promotions, awards, appreciations, passport-visa) depend on lookups
+// or generated files and are managed through their own forms.
+const IMPORT_KIND: Partial<Record<Kind, string>> = { departments: "hr-departments", designations: "hr-designations", holidays: "hr-holidays" }
 const CERT_KINDS = new Set<Kind>(["awards", "appreciations"])
 const idKeyFor = (kind: Kind) => (kind === "awards" ? "award_id" : "appreciation_id")
 const titleFor = (kind: Kind, row: any) => (kind === "awards" ? row.award_name : row.title)
@@ -117,11 +122,14 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
             </Button>
           ))}
         </div>
-        <ExcelExportButton
-          rows={data?.rows || []}
-          filename={kind}
-          columns={c.fields.map((f) => ({ header: f.replaceAll("_", " "), value: (r: any) => r[f] }))}
-        />
+        <div className="flex items-center gap-2">
+          {IMPORT_KIND[kind] && <ImportButton moduleKey={IMPORT_KIND[kind]!} onImported={mutate} />}
+          <ExcelExportButton
+            rows={data?.rows || []}
+            filename={kind}
+            columns={c.fields.map((f) => ({ header: f.replaceAll("_", " "), value: (r: any) => r[f] }))}
+          />
+        </div>
       </div>
 
       <section className="rounded-xl border bg-card p-5">

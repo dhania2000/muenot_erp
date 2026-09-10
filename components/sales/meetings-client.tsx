@@ -26,6 +26,7 @@ import { MoreHorizontal, Plus, Search, Video } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { MeetingDialog } from "@/components/sales/meeting-dialog"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ImportButton } from "@/components/import-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type MeetingRow = {
@@ -108,6 +109,7 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
           />
         </div>
         <div className="flex items-center gap-2">
+          {canManage && <ImportButton moduleKey="sales-meetings" onImported={() => mutate()} />}
           <ExcelExportButton
             rows={filtered}
             filename="meetings"

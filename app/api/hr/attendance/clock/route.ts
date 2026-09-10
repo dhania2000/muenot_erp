@@ -74,6 +74,24 @@ async function ensureEmployee(session: SessionPayload): Promise<EmployeeRow> {
   throw new Error("Could not create or find your employee profile.")
 }
 
+/**
+ * Whether the hr_attendance table has the geolocation columns. Older databases
+ * created before the location feature won't have them (the CREATE TABLE IF NOT
+ * EXISTS migration is skipped for an existing table), so we detect once and
+ * cache the result to avoid writing to columns that don't exist.
+ */
+let locationColumnsExist: boolean | null = null
+async function hasLocationColumns(): Promise<boolean> {
+  if (locationColumnsExist !== null) return locationColumnsExist
+  try {
+    const rows = await query<{ Field: string }[]>("SHOW COLUMNS FROM hr_attendance LIKE 'latitude'")
+    locationColumnsExist = rows.length > 0
+  } catch {
+    locationColumnsExist = false
+  }
+  return locationColumnsExist
+}
+
 async function todaysRecord(employeeId: number): Promise<AttendanceRow | null> {
   const rows = await query<AttendanceRow[]>(
     "SELECT id, clock_in, clock_out, break_minutes, work_date FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1",
@@ -128,33 +146,49 @@ export async function POST(request: Request) {
 
     const record = await todaysRecord(employee.id)
     const now = nowDateTime()
+    const withLocation = await hasLocationColumns()
 
     // First punch of the day → clock in.
     if (!record) {
       const attendanceId = `ATT-${employee.id}-${today().replace(/-/g, "")}`
-      await query(
-        "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, status, source, location, latitude, longitude) VALUES (?, ?, ?, ?, ?, 'Present', 'Portal', ?, ?, ?)",
-        [attendanceId, employee.id, employee.employee_name, today(), now, location, latitude, longitude],
-      )
+      if (withLocation) {
+        await query(
+          "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, status, source, location, latitude, longitude) VALUES (?, ?, ?, ?, ?, 'Present', 'Portal', ?, ?, ?)",
+          [attendanceId, employee.id, employee.employee_name, today(), now, location, latitude, longitude],
+        )
+      } else {
+        await query(
+          "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, status, source) VALUES (?, ?, ?, ?, ?, 'Present', 'Portal')",
+          [attendanceId, employee.id, employee.employee_name, today(), now],
+        )
+      }
       return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null })
     }
 
     // Record exists but no clock_in yet → treat as clock in.
     if (!record.clock_in) {
-      await query(
-        "UPDATE hr_attendance SET clock_in = ?, source = 'Portal', location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
-        [now, location, latitude, longitude, record.id],
-      )
+      if (withLocation) {
+        await query(
+          "UPDATE hr_attendance SET clock_in = ?, source = 'Portal', location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
+          [now, location, latitude, longitude, record.id],
+        )
+      } else {
+        await query("UPDATE hr_attendance SET clock_in = ?, source = 'Portal' WHERE id = ?", [now, record.id])
+      }
       return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null })
     }
 
     // Clocked in, not out yet → clock out and compute hours.
     if (!record.clock_out) {
       const hours = workingHours(record.clock_in, now, Number(record.break_minutes || 0))
-      await query(
-        "UPDATE hr_attendance SET clock_out = ?, working_hours = ?, location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
-        [now, hours, location, latitude, longitude, record.id],
-      )
+      if (withLocation) {
+        await query(
+          "UPDATE hr_attendance SET clock_out = ?, working_hours = ?, location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
+          [now, hours, location, latitude, longitude, record.id],
+        )
+      } else {
+        await query("UPDATE hr_attendance SET clock_out = ?, working_hours = ? WHERE id = ?", [now, hours, record.id])
+      }
       return NextResponse.json({ ok: true, state: "done", clockIn: record.clock_in, clockOut: now })
     }
 

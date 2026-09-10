@@ -42,7 +42,6 @@ const MARKETING_CHILDREN: NavChild[] = [
       { label: "Email", href: "/modules/marketing/campaigns/email" },
       { label: "Social", href: "/modules/marketing/campaigns/social" },
       { label: "WhatsApp", href: "/modules/marketing/campaigns/whatsapp" },
-      { label: "Engagement Pop-Ups", href: "/modules/marketing/campaigns/engagement-popups" },
     ],
   },
   { label: "Website Analytics", href: "/modules/marketing/website-analytics" },

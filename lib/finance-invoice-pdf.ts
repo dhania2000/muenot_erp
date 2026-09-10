@@ -394,6 +394,316 @@ export function buildFreelanceInvoicePdf(
   return Buffer.from(doc.output("arraybuffer"))
 }
 
+// ---------------------------------------------------------------------------
+// FTE Invoice (payroll / salary-slip style) — earnings vs deductions breakdown
+// ---------------------------------------------------------------------------
+export function buildFteInvoicePdf(
+  inv: FreelanceInvoiceRow,
+  company: InvoiceCompany,
+  bank: InvoiceBank,
+  title = "FTE INVOICE",
+): Buffer {
+  const doc = new jsPDF({ unit: "pt", format: "a4" })
+  const W = doc.internal.pageSize.getWidth()
+  const M = 40
+  const right = W - M
+
+  const setColor = (c: [number, number, number]) => doc.setTextColor(c[0], c[1], c[2])
+  const setDraw = (c: [number, number, number]) => doc.setDrawColor(c[0], c[1], c[2])
+  const setFill = (c: [number, number, number]) => doc.setFillColor(c[0], c[1], c[2])
+
+  let y = 54
+
+  // --- Header: company (left) + title/meta (right) ---
+  setColor(INK)
+  doc.setFont("helvetica", "bold")
+  doc.setFontSize(15)
+  doc.text(company.name || "Company", M, y)
+
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(8.5)
+  setColor(MUTED)
+  let cy = y + 15
+  for (const line of company.addressLines.filter(Boolean)) {
+    doc.text(line, M, cy)
+    cy += 11
+  }
+  const contactBits = [
+    company.email && `Email: ${company.email}`,
+    company.phone && `Phone: ${company.phone}`,
+    company.website && company.website,
+  ].filter(Boolean) as string[]
+  for (const line of contactBits) {
+    doc.text(line, M, cy)
+    cy += 11
+  }
+  if (company.taxNumber) {
+    doc.text(`${company.taxLabel || "GSTIN"}: ${company.taxNumber}`, M, cy)
+    cy += 11
+  }
+
+  setColor(HEAD)
+  doc.setFont("helvetica", "bold")
+  doc.setFontSize(20)
+  doc.text(title, right, y, { align: "right" })
+
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(9)
+  setColor(MUTED)
+  const meta: Array<[string, string]> = [
+    ["Invoice No", String(inv.fte_invoice_id || "—")],
+    ["Invoice Date", fmtDate(inv.invoice_date)],
+  ]
+  if (inv.month) meta.push(["Month", String(inv.month)])
+  if (inv.financial_year) meta.push(["Financial Year", String(inv.financial_year)])
+  let my = y + 16
+  for (const [label, val] of meta) {
+    doc.text(`${label}:`, right - 150, my, { align: "left" })
+    setColor(INK)
+    doc.text(val, right, my, { align: "right" })
+    setColor(MUTED)
+    my += 13
+  }
+
+  y = Math.max(cy, my) + 8
+
+  // --- Divider ---
+  setDraw(HEAD)
+  doc.setLineWidth(1.2)
+  doc.line(M, y, right, y)
+  y += 20
+
+  // --- Employee (left) / Period & attendance (right) ---
+  const colGap = 20
+  const colW = (right - M - colGap) / 2
+  const rx = M + colW + colGap
+
+  doc.setFont("helvetica", "bold")
+  doc.setFontSize(9)
+  setColor(MUTED)
+  doc.text("EMPLOYEE", M, y)
+  doc.text("PERIOD & ATTENDANCE", rx, y)
+  y += 15
+
+  doc.setFont("helvetica", "bold")
+  doc.setFontSize(11)
+  setColor(INK)
+  doc.text(String(inv.employee_name || "—"), M, y)
+
+  // right column details
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(9)
+  const details: Array<[string, string]> = []
+  if (inv.billing_basis) details.push(["Billing Basis", String(inv.billing_basis)])
+  if (inv.working_days != null && inv.working_days !== "") details.push(["Working Days", String(inv.working_days)])
+  if (inv.paid_days != null && inv.paid_days !== "") details.push(["Paid Days", String(inv.paid_days)])
+  if (inv.leave_days != null && inv.leave_days !== "") details.push(["Leave Days", String(inv.leave_days)])
+  if (inv.holiday_days != null && inv.holiday_days !== "") details.push(["Holiday Days", String(inv.holiday_days)])
+  details.push(["Status", String(inv.status || "Draft")])
+
+  let ry = y
+  for (const [label, val] of details) {
+    setColor(MUTED)
+    doc.text(`${label}:`, rx, ry)
+    setColor(INK)
+    doc.text(val, right, ry, { align: "right" })
+    ry += 13
+  }
+
+  // left column employee sub-lines
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(9)
+  setColor(MUTED)
+  let ly = y + 14
+  const empLines = [
+    inv.designation && String(inv.designation),
+    inv.department && `Department: ${inv.department}`,
+    inv.employment_type && `Type: ${inv.employment_type}`,
+    inv.employee_id && `Employee ID: ${inv.employee_id}`,
+    inv.employee_email && `Email: ${inv.employee_email}`,
+    inv.project_name && `Project: ${inv.project_name}`,
+  ].filter(Boolean) as string[]
+  for (const line of empLines) {
+    doc.text(line, M, ly)
+    ly += 12
+  }
+
+  y = Math.max(ly, ry) + 16
+
+  // --- Earnings vs Deductions breakdown (two side-by-side tables) ---
+  const earnRows: Array<[string, number] | null> = []
+  earnRows.push(["Gross billing / salary", Number(inv.gross_billing) || 0])
+  if (Number(inv.overtime_extra)) earnRows.push(["Overtime / extra", Number(inv.overtime_extra)])
+  if (Number(inv.bonus_incentive)) earnRows.push(["Bonus / incentive", Number(inv.bonus_incentive)])
+  if (Number(inv.other_earnings)) earnRows.push(["Other earnings", Number(inv.other_earnings)])
+
+  const dedRows: Array<[string, number] | null> = []
+  if (Number(inv.pf_deduction)) dedRows.push(["PF deduction", Number(inv.pf_deduction)])
+  if (Number(inv.esi_deduction)) dedRows.push(["ESI deduction", Number(inv.esi_deduction)])
+  if (Number(inv.professional_tax)) dedRows.push(["Professional tax", Number(inv.professional_tax)])
+  if (Number(inv.tds)) dedRows.push(["TDS", Number(inv.tds)])
+  if (Number(inv.other_deductions)) dedRows.push(["Other deductions", Number(inv.other_deductions)])
+  if (dedRows.length === 0) dedRows.push(["No deductions", 0])
+
+  // Pad the shorter column so both subtotal rows line up horizontally.
+  const rowCount = Math.max(earnRows.length, dedRows.length)
+  while (earnRows.length < rowCount) earnRows.push(null)
+  while (dedRows.length < rowCount) dedRows.push(null)
+
+  const drawBreakdown = (
+    x: number,
+    startY: number,
+    headTitle: string,
+    rows: Array<[string, number] | null>,
+    subLabel: string,
+    subVal: number,
+  ): number => {
+    const hH = 20
+    const rowH = 18
+    let ty = startY
+    setFill(HEAD)
+    doc.rect(x, ty, colW, hH, "F")
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(8.5)
+    doc.setTextColor(255, 255, 255)
+    doc.text(headTitle, x + 8, ty + 13)
+    doc.text("AMOUNT", x + colW - 8, ty + 13, { align: "right" })
+    ty += hH
+    rows.forEach((row, i) => {
+      if (i % 2 === 1) {
+        setFill(ZEBRA)
+        doc.rect(x, ty, colW, rowH, "F")
+      }
+      if (row) {
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(9)
+        setColor(MUTED)
+        doc.text(row[0], x + 8, ty + 12)
+        setColor(INK)
+        doc.text(grouped(row[1]), x + colW - 8, ty + 12, { align: "right" })
+      }
+      ty += rowH
+    })
+    setDraw(LINE)
+    doc.setLineWidth(0.7)
+    doc.line(x, ty, x + colW, ty)
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(9.5)
+    setColor(INK)
+    doc.text(subLabel, x + 8, ty + 14)
+    doc.text(grouped(subVal), x + colW - 8, ty + 14, { align: "right" })
+    ty += 22
+    setDraw(LINE)
+    doc.setLineWidth(0.7)
+    doc.rect(x, startY, colW, ty - startY)
+    return ty
+  }
+
+  const earnBottom = drawBreakdown(M, y, "EARNINGS", earnRows, "Gross Earnings", Number(inv.gross_earnings) || 0)
+  const dedBottom = drawBreakdown(rx, y, "DEDUCTIONS", dedRows, "Total Deductions", Number(inv.total_deductions) || 0)
+  y = Math.max(earnBottom, dedBottom) + 14
+
+  // --- Net payable highlight bar ---
+  setFill(HEAD)
+  doc.rect(M, y, right - M, 30, "F")
+  doc.setFont("helvetica", "bold")
+  doc.setFontSize(12)
+  doc.setTextColor(255, 255, 255)
+  doc.text("NET PAYABLE", M + 12, y + 20)
+  doc.text(money(inv.net_payable), right - 12, y + 20, { align: "right" })
+  y += 44
+
+  // --- Amount in words ---
+  setColor(MUTED)
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(8.5)
+  doc.text("Amount in words", M, y)
+  y += 13
+  setColor(INK)
+  doc.setFont("helvetica", "bold")
+  doc.setFontSize(9.5)
+  const wordsLines = doc.splitTextToSize(amountInWords(Number(inv.net_payable) || 0), right - M) as string[]
+  doc.text(wordsLines, M, y)
+  y += wordsLines.length * 12 + 14
+
+  // --- Payment details ---
+  const payRows = [
+    inv.payment_due_date && `Payment Due: ${fmtDate(inv.payment_due_date)}`,
+    inv.payment_date && `Paid On: ${fmtDate(inv.payment_date)}`,
+    inv.payment_reference && `Reference: ${inv.payment_reference}`,
+  ].filter(Boolean) as string[]
+  if (payRows.length) {
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(9)
+    setColor(MUTED)
+    doc.text("PAYMENT", M, y)
+    y += 13
+    doc.setFont("helvetica", "normal")
+    setColor(INK)
+    for (const line of payRows) {
+      doc.text(line, M, y)
+      y += 12
+    }
+    y += 8
+  }
+
+  // --- Bank details ---
+  if (bank && (bank.accountNumber || bank.bankName)) {
+    setDraw(LINE)
+    doc.setLineWidth(0.7)
+    doc.line(M, y, right, y)
+    y += 16
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(9)
+    setColor(MUTED)
+    doc.text("ACCOUNT DETAILS", M, y)
+    y += 14
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(9)
+    const bankRows = [
+      bank.accountName && `Account Name: ${bank.accountName}`,
+      bank.accountNumber && `Account Number: ${bank.accountNumber}`,
+      bank.bankName && `Bank: ${bank.bankName}`,
+      bank.ifsc && `IFSC: ${bank.ifsc}`,
+      bank.branch && `Branch: ${bank.branch}`,
+    ].filter(Boolean) as string[]
+    setColor(INK)
+    for (const line of bankRows) {
+      doc.text(line, M, y)
+      y += 12
+    }
+    y += 8
+  }
+
+  // --- Notes ---
+  if (inv.notes) {
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(9)
+    setColor(MUTED)
+    doc.text("NOTES", M, y)
+    y += 13
+    doc.setFont("helvetica", "normal")
+    setColor(INK)
+    const noteLines = doc.splitTextToSize(String(inv.notes), right - M) as string[]
+    doc.text(noteLines, M, y)
+    y += noteLines.length * 12 + 8
+  }
+
+  // --- Footer note ---
+  const footerY = doc.internal.pageSize.getHeight() - 36
+  setDraw(LINE)
+  doc.setLineWidth(0.7)
+  doc.line(M, footerY - 12, right, footerY - 12)
+  setColor(MUTED)
+  doc.setFont("helvetica", "italic")
+  doc.setFontSize(8)
+  doc.text("This is a system-generated invoice. No signature is required.", M, footerY)
+  doc.setFont("helvetica", "normal")
+  doc.text(company.name || "", right, footerY, { align: "right" })
+
+  return Buffer.from(doc.output("arraybuffer"))
+}
+
 // ===========================================================================
 // Indian "Tax Invoice" layout (matches the boxed GST invoice format).
 // Used for Sales Invoices and Purchase Bills.

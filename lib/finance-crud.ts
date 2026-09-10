@@ -6,7 +6,7 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns } from "@/lib/finance-ensure"
 
 /** Column keys a client is allowed to write (everything except computed fields). */
 function inputKeys(cfg: ModuleConfig) {
@@ -48,6 +48,7 @@ export function createFinanceHandlers(moduleKey: string) {
   // send tracking) that aren't in the base migration. Self-heal them once.
   const ensureSchema = async () => {
     if (moduleKey === "freelance-invoices") await ensureFreelanceInvoiceColumns()
+    if (moduleKey === "fte-invoices") await ensureFteInvoiceColumns()
   }
 
   async function GET(req: NextRequest) {

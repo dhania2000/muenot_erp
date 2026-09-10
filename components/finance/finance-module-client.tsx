@@ -335,7 +335,7 @@ function SendInvoiceDialog({
   // Reset the form whenever a different row is opened.
   if (row && row.id !== lastRowId) {
     setLastRowId(row.id)
-    setTo(row.freelancer_email || "")
+    setTo((cfg.emailField && row[cfg.emailField]) || "")
     setSubject("")
     setMessage("")
     setError(null)

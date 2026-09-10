@@ -54,8 +54,6 @@ const APPLY_FIELDS = [
   { key: "location", label: "Current location", required: false, type: "text" },
   { key: "experience", label: "Total experience", required: false, type: "text" },
   { key: "current_company", label: "Current company", required: false, type: "text" },
-  { key: "expected_salary", label: "Expected salary", required: false, type: "text" },
-  { key: "resume_url", label: "Resume link (URL)", required: false, type: "url" },
 ] as const
 
 export function JobBrowserClient({ initialHash }: { initialHash?: string }) {
@@ -323,9 +321,38 @@ function ApplyDialog({
   const [answers, setAnswers] = useState<Answers>({})
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
+  const [resumeUrl, setResumeUrl] = useState("")
+  const [resumeName, setResumeName] = useState("")
+  const [uploading, setUploading] = useState(false)
 
   function setField(key: string, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }))
+  }
+
+  async function handleResume(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setResumeUrl("")
+    setResumeName("")
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      const res = await fetch("/api/recruit/public/resume", { method: "POST", body: fd })
+      const body = await res.json().catch(() => ({}))
+      if (res.ok && body.url) {
+        setResumeUrl(body.url)
+        setResumeName(body.filename || file.name)
+      } else {
+        toast.error(body.error || "Unable to upload resume")
+        e.target.value = ""
+      }
+    } catch {
+      toast.error("Unable to upload resume")
+      e.target.value = ""
+    } finally {
+      setUploading(false)
+    }
   }
 
   async function submit(e: React.FormEvent) {
@@ -343,7 +370,7 @@ function ApplyDialog({
     const res = await fetch("/api/recruit/public/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hash, ...form, cover_letter: coverLetter, answers }),
+      body: JSON.stringify({ hash, ...form, resume_url: resumeUrl, cover_letter: coverLetter, answers }),
     })
     setSubmitting(false)
     if (res.ok) {
@@ -365,6 +392,8 @@ function ApplyDialog({
             setForm({})
             setCoverLetter("")
             setAnswers({})
+            setResumeUrl("")
+            setResumeName("")
           }, 200)
         }
       }}
@@ -402,6 +431,27 @@ function ApplyDialog({
                   </Field>
                 ))}
               </div>
+
+              <Field>
+                <FieldLabel htmlFor="resume">Resume (PDF or image)</FieldLabel>
+                <Input
+                  id="resume"
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={handleResume}
+                  disabled={uploading}
+                />
+                {uploading && (
+                  <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" /> Uploading…
+                  </p>
+                )}
+                {!uploading && resumeUrl && (
+                  <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="size-3.5" /> {resumeName || "Resume uploaded"}
+                  </p>
+                )}
+              </Field>
 
               <Field>
                 <FieldLabel htmlFor="cover_letter">Cover letter</FieldLabel>

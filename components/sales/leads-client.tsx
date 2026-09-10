@@ -36,6 +36,7 @@ import { LeadDialog } from "@/components/sales/lead-dialog"
 import { ComposeEmailDialog } from "@/components/sales/compose-email-dialog"
 import { CallDialer, type CallTarget } from "@/components/sales/call-dialer"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 const LEAD_IMPORT_ALIASES = {
@@ -282,6 +283,30 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
               className="w-56 pl-8"
             />
           </div>
+          <ExcelExportButton
+            rows={filtered}
+            filename="leads"
+            columns={[
+              { header: "Lead Code", value: (r) => r.lead_code },
+              { header: "Lead Date", value: (r) => r.lead_date },
+              { header: "Contact Person", value: (r) => r.contact_person },
+              { header: "Designation", value: (r) => r.designation },
+              { header: "Contact Number", value: (r) => r.contact_number },
+              { header: "Email", value: (r) => r.email },
+              { header: "Company", value: (r) => r.company_name },
+              { header: "Industry", value: (r) => r.industry },
+              { header: "Website", value: (r) => r.website },
+              { header: "Company Email", value: (r) => r.company_email },
+              { header: "Country", value: (r) => r.country },
+              { header: "Source", value: (r) => r.lead_source },
+              { header: "Status", value: (r) => r.status },
+              { header: "Lead Status", value: (r) => effectiveLeadStatus(r) },
+              { header: "Health Score", value: (r) => r.lead_health_score },
+              { header: "Follow Up Date", value: (r) => r.follow_up_date },
+              { header: "Assigned To", value: (r) => r.assigned_to_name },
+              { header: "Remarks", value: (r) => r.remarks },
+            ]}
+          />
           {canManage && (
             <ExcelImportButton
               endpoint="/api/sales/leads/import"

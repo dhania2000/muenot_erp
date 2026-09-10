@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table"
 import { BarChart3 } from "lucide-react"
 import { PageHeader, StatusPill } from "@/components/recruit/recruit-shared"
+import { ExcelExportButton } from "@/components/excel-export-button"
 
 type ReportRow = {
   job_id: string
@@ -52,7 +53,29 @@ export function ReportClient() {
 
   return (
     <main className="flex flex-col gap-6 p-6 md:p-8">
-      <PageHeader title="Recruitment Report" description="Hiring funnel performance across every job posting." icon={BarChart3} />
+      <PageHeader
+        title="Recruitment Report"
+        description="Hiring funnel performance across every job posting."
+        icon={BarChart3}
+        action={
+          <ExcelExportButton
+            rows={rows}
+            filename="recruitment-report"
+            columns={[
+              { header: "Job ID", value: (r) => r.job_id },
+              { header: "Title", value: (r) => r.title },
+              { header: "Department", value: (r) => r.department },
+              { header: "Status", value: (r) => r.status },
+              { header: "Positions", value: (r) => r.positions },
+              { header: "Applications", value: (r) => r.applications },
+              { header: "Interviews", value: (r) => r.interviews },
+              { header: "Offered", value: (r) => r.offered },
+              { header: "Hired", value: (r) => r.hired },
+              { header: "Rejected", value: (r) => r.rejected },
+            ]}
+          />
+        }
+      />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {stats.map((s) => (

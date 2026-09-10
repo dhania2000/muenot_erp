@@ -2,11 +2,13 @@
 import { useState } from "react"
 import useSWR from "swr"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
+import { ExcelExportButton } from "@/components/excel-export-button"
 const fetcher=(u:string)=>fetch(u).then(r=>r.json())
 export function ModuleEmailCenter({ module, mode = "emails" }: { module: "finance" | "operations"; mode?: "emails" | "templates" }) {
   const isTemplates = mode === "templates"
   const [form, setForm] = useState({ name: "", to: "", subject: "", body: "", attachment: null as EmailAttachment | null })
   const { data, mutate } = useSWR(`/api/${module}/${isTemplates ? "email-templates" : "emails"}`, fetcher)
+  const listRows = (data?.[isTemplates ? "templates" : "emails"] ?? []) as any[]
 
   const submit = async () => {
     const payload = isTemplates ? { name: form.name, subject: form.subject, body: form.body, attachment: form.attachment } : { to: form.to, subject: form.subject, body: form.body, attachment: form.attachment }
@@ -16,7 +18,27 @@ export function ModuleEmailCenter({ module, mode = "emails" }: { module: "financ
   }
 
   return <main className="space-y-6 p-6">
-    <div><h1 className="text-2xl font-semibold">{module[0].toUpperCase() + module.slice(1)} {isTemplates ? "Email Templates" : "Emails"}</h1><p className="text-muted-foreground">{isTemplates ? `Create reusable templates for ${module} communication.` : "Send tracked emails and monitor opens."}</p></div>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><h1 className="text-2xl font-semibold">{module[0].toUpperCase() + module.slice(1)} {isTemplates ? "Email Templates" : "Emails"}</h1><p className="text-muted-foreground">{isTemplates ? `Create reusable templates for ${module} communication.` : "Send tracked emails and monitor opens."}</p></div>
+      <ExcelExportButton
+        rows={listRows}
+        filename={`${module}-${isTemplates ? "email-templates" : "emails"}`}
+        columns={isTemplates
+          ? [
+              { header: "Name", value: (r: any) => r.name },
+              { header: "Subject", value: (r: any) => r.subject },
+              { header: "Body", value: (r: any) => r.body },
+              { header: "Status", value: (r: any) => r.status },
+            ]
+          : [
+              { header: "To", value: (r: any) => r.to_email },
+              { header: "Subject", value: (r: any) => r.subject },
+              { header: "Status", value: (r: any) => r.status },
+              { header: "Opened", value: (r: any) => (r.opened_at ? "Opened" : "Not opened") },
+              { header: "Opened At", value: (r: any) => r.opened_at },
+            ]}
+      />
+    </div>
     <section className="grid gap-3 rounded-xl border p-4">
       {isTemplates ? <input className="rounded border bg-background p-2" placeholder="Template name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /> : <input className="rounded border bg-background p-2" placeholder="Recipient email" value={form.to} onChange={e => setForm({ ...form, to: e.target.value })} />}
       <input className="rounded border bg-background p-2" placeholder="Subject" value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} />

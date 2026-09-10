@@ -25,6 +25,7 @@ import {
 import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { OnboardingDialog } from "@/components/sales/onboarding-dialog"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type OnboardingRow = {
@@ -87,17 +88,34 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
             className="w-64 pl-8"
           />
         </div>
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Add onboarding
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={filtered}
+            filename="onboarding"
+            columns={[
+              { header: "Onboarding Code", value: (r) => r.onboarding_code },
+              { header: "Date", value: (r) => r.onboarding_date },
+              { header: "Company", value: (r) => r.company_name },
+              { header: "Contract", value: (r) => r.contract_code },
+              { header: "Start Date", value: (r) => r.start_date },
+              { header: "Kickoff Date", value: (r) => r.kickoff_meeting_date },
+              { header: "Stage", value: (r) => r.current_stage },
+              { header: "Status", value: (r) => r.status },
+              { header: "Owner", value: (r) => r.onboarding_by },
+            ]}
+          />
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus data-icon="inline-start" />
+              Add onboarding
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-md border border-border bg-card">

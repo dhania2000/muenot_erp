@@ -32,6 +32,7 @@ import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CompanyDialog } from "@/components/sales/company-dialog"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 const COMPANY_IMPORT_ALIASES = {
@@ -164,27 +165,48 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
             className="w-64 pl-8"
           />
         </div>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <ExcelImportButton
-              endpoint="/api/sales/companies/import"
-              aliases={COMPANY_IMPORT_ALIASES}
-              templateFilename="companies-template.xlsx"
-              templateHeaders={COMPANY_IMPORT_HEADERS}
-              templateSample={COMPANY_IMPORT_SAMPLE}
-              onImported={() => mutate()}
-            />
-            <Button
-              onClick={() => {
-                setEditing(null)
-                setDialogOpen(true)
-              }}
-            >
-              <Plus data-icon="inline-start" />
-              Add company
-            </Button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={filtered}
+            filename="companies"
+            columns={[
+              { header: "Company Code", value: (r) => r.company_code },
+              { header: "Company Name", value: (r) => r.company_name },
+              { header: "Industry", value: (r) => r.industry },
+              { header: "Website", value: (r) => r.website },
+              { header: "LinkedIn", value: (r) => r.linkedin_url },
+              { header: "Company Email", value: (r) => r.company_email },
+              { header: "Country", value: (r) => r.country },
+              { header: "Type", value: (r) => r.company_type },
+              { header: "Status", value: (r) => r.status },
+              { header: "Priority", value: (r) => r.priority },
+              { header: "Founded Year", value: (r) => r.founded_year },
+              { header: "Employee Count", value: (r) => r.employee_count },
+              { header: "Assigned To", value: (r) => r.assigned_to_name },
+            ]}
+          />
+          {canManage && (
+            <>
+              <ExcelImportButton
+                endpoint="/api/sales/companies/import"
+                aliases={COMPANY_IMPORT_ALIASES}
+                templateFilename="companies-template.xlsx"
+                templateHeaders={COMPANY_IMPORT_HEADERS}
+                templateSample={COMPANY_IMPORT_SAMPLE}
+                onImported={() => mutate()}
+              />
+              <Button
+                onClick={() => {
+                  setEditing(null)
+                  setDialogOpen(true)
+                }}
+              >
+                <Plus data-icon="inline-start" />
+                Add company
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {canManage && (

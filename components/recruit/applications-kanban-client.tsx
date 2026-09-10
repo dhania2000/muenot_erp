@@ -34,6 +34,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { APPLICATION_STAGES, formatDate, safeParse, type StageKey } from "@/lib/recruit"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import type { Job } from "@/lib/recruit-db"
 
 type Application = {
@@ -162,6 +163,24 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
                 ))}
               </SelectContent>
             </Select>
+            <ExcelExportButton
+              rows={tableRows}
+              filename="job-applications"
+              columns={[
+                { header: "Application ID", value: (r) => r.application_id },
+                { header: "Candidate", value: (r) => r.candidate_name },
+                { header: "Email", value: (r) => r.email },
+                { header: "Phone", value: (r) => r.phone },
+                { header: "Location", value: (r) => r.location },
+                { header: "Job", value: (r) => r.job_title },
+                { header: "Experience", value: (r) => r.experience },
+                { header: "Current Company", value: (r) => r.current_company },
+                { header: "Source", value: (r) => r.source },
+                { header: "Stage", value: (r) => APPLICATION_STAGES.find((s) => s.key === r.stage)?.label ?? r.stage },
+                { header: "Rating", value: (r) => r.rating },
+                { header: "Applied At", value: (r) => r.applied_at },
+              ]}
+            />
             {canManage && (
               <Button render={<Link href="/modules/recruitment/job-applications/create" />}>
                 <Plus data-icon="inline-start" /> Add Application

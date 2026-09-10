@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog"
 import { Plus, FilterX, Receipt, Wallet, TrendingUp, Clock, Pencil, Eye, Trash2, FileDown } from "lucide-react"
 import { SalesInvoiceDialog } from "@/components/finance/sales-invoice-dialog"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { inr, inr0 } from "@/lib/finance-calc"
 
 export type InvoiceRow = {
@@ -138,10 +139,33 @@ export function SalesInvoicesClient() {
           <p className="text-sm text-muted-foreground">Finance management</p>
           <h1 className="text-3xl font-semibold tracking-tight">Sales Invoices</h1>
         </div>
-        <Button onClick={openNew}>
-          <Plus data-icon="inline-start" />
-          New invoice
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ExcelExportButton
+            rows={rows}
+            filename="sales-invoices"
+            columns={[
+              { header: "Invoice ID", value: (r) => r.invoice_id },
+              { header: "Date", value: (r) => r.invoice_date },
+              { header: "Type", value: (r) => r.invoice_type },
+              { header: "Financial Year", value: (r) => r.financial_year },
+              { header: "Client", value: (r) => r.client_name },
+              { header: "Project", value: (r) => r.project_name },
+              { header: "Taxable Amount", value: (r) => r.taxable_amount },
+              { header: "Invoice Total", value: (r) => r.invoice_total },
+              { header: "TDS Amount", value: (r) => r.tds_amount },
+              { header: "Net Receivable", value: (r) => r.net_receivable },
+              { header: "Amount Received", value: (r) => r.amount_received },
+              { header: "Outstanding", value: (r) => r.outstanding_amount },
+              { header: "Due Date", value: (r) => r.due_date },
+              { header: "Payment Status", value: (r) => r.payment_status },
+              { header: "Invoice Status", value: (r) => r.invoice_status },
+            ]}
+          />
+          <Button onClick={openNew}>
+            <Plus data-icon="inline-start" />
+            New invoice
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

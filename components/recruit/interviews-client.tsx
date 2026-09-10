@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CalendarClock, MoreHorizontal, Plus, Search } from "lucide-react"
 import { PageHeader, StatusPill, RatingStars } from "@/components/recruit/recruit-shared"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { INTERVIEW_MODES, INTERVIEW_STATUSES, formatDateTime, labelFor } from "@/lib/recruit"
 
 type Interview = {
@@ -70,11 +71,31 @@ export function InterviewsClient({ canManage }: { canManage: boolean }) {
         title="Interview Schedule"
         description="Plan interview rounds, assign interviewers and record feedback."
         icon={CalendarClock}
-        action={canManage ? (
-          <Button render={<Link href="/modules/recruitment/interview-schedule/create" />}>
-            <Plus data-icon="inline-start" /> Schedule Interview
-          </Button>
-        ) : undefined}
+        action={
+          <div className="flex items-center gap-2">
+            <ExcelExportButton
+              rows={filtered}
+              filename="interviews"
+              columns={[
+                { header: "Interview ID", value: (r) => r.interview_id },
+                { header: "Candidate", value: (r) => r.candidate_name },
+                { header: "Job", value: (r) => r.job_title },
+                { header: "Interviewer", value: (r) => r.interviewer },
+                { header: "Scheduled At", value: (r) => r.scheduled_at },
+                { header: "Mode", value: (r) => labelFor(INTERVIEW_MODES, r.mode) },
+                { header: "Location", value: (r) => r.location },
+                { header: "Round", value: (r) => r.round },
+                { header: "Rating", value: (r) => r.rating },
+                { header: "Status", value: (r) => r.status },
+              ]}
+            />
+            {canManage && (
+              <Button render={<Link href="/modules/recruitment/interview-schedule/create" />}>
+                <Plus data-icon="inline-start" /> Schedule Interview
+              </Button>
+            )}
+          </div>
+        }
       />
 
       <div className="relative">

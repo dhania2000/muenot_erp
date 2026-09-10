@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/table"
 import { Phone, Search, Users } from "lucide-react"
 import { PageHeader, RatingStars } from "@/components/recruit/recruit-shared"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { CallDialer, type CallTarget } from "@/components/shared/call-dialer"
 import { formatDate } from "@/lib/recruit"
 
@@ -53,7 +54,29 @@ export function CandidatesClient({ canCall = false }: { canCall?: boolean }) {
 
   return (
     <main className="flex flex-col gap-6 p-6 md:p-8">
-      <PageHeader title="Candidate Database" description="Every person who has applied, aggregated across all your jobs." icon={Users} />
+      <PageHeader
+        title="Candidate Database"
+        description="Every person who has applied, aggregated across all your jobs."
+        icon={Users}
+        action={
+          <ExcelExportButton
+            rows={filtered}
+            filename="candidates"
+            columns={[
+              { header: "Candidate", value: (r) => r.candidate_name },
+              { header: "Email", value: (r) => r.email },
+              { header: "Phone", value: (r) => r.phone },
+              { header: "Location", value: (r) => r.location },
+              { header: "Current Company", value: (r) => r.current_company },
+              { header: "Experience", value: (r) => r.experience },
+              { header: "Applied For", value: (r) => r.jobs },
+              { header: "Applications", value: (r) => r.applications_count },
+              { header: "Rating", value: (r) => r.rating },
+              { header: "Last Applied", value: (r) => r.last_applied },
+            ]}
+          />
+        }
+      />
 
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />

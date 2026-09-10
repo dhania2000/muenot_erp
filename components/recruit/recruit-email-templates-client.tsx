@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table"
 import { Mail, Pencil, Plus, Search, Trash2 } from "lucide-react"
 import { PageHeader } from "@/components/recruit/recruit-shared"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { formatDate } from "@/lib/recruit"
 import {
   RecruitEmailTemplateDialog,
@@ -59,14 +60,27 @@ export function RecruitEmailTemplatesClient() {
         description="Reusable emails for reaching out to candidates."
         icon={Mail}
         action={
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" /> Create template
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExcelExportButton
+              rows={filtered}
+              filename="recruit-email-templates"
+              columns={[
+                { header: "Name", value: (r) => r.name },
+                { header: "Subject", value: (r) => r.subject },
+                { header: "Category", value: (r) => r.category },
+                { header: "Body", value: (r) => (r as any).body },
+                { header: "Updated", value: (r) => (r as any).updated_at },
+              ]}
+            />
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus data-icon="inline-start" /> Create template
+            </Button>
+          </div>
         }
       />
 

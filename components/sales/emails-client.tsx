@@ -22,6 +22,7 @@ import { ComposeEmailDialog } from "@/components/sales/compose-email-dialog"
 import { BulkEmailDialog } from "@/components/sales/bulk-email-dialog"
 import { EmailDetailDialog } from "@/components/sales/email-detail-dialog"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
+import { ExcelExportButton } from "@/components/excel-export-button"
 
 export type EmailRow = {
   id: number
@@ -98,18 +99,35 @@ export function EmailsClient({ canSend }: { canSend: boolean }) {
             className="w-64 pl-8"
           />
         </div>
-        {canSend && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setBulkOpen(true)}>
-              <Users data-icon="inline-start" />
-              Bulk email
-            </Button>
-            <Button onClick={() => setComposeOpen(true)}>
-              <Plus data-icon="inline-start" />
-              Compose email
-            </Button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={filtered}
+            filename="sales-emails"
+            columns={[
+              { header: "Subject", value: (r) => r.subject },
+              { header: "Recipient Name", value: (r) => r.to_name },
+              { header: "Recipient Email", value: (r) => r.to_email },
+              { header: "Status", value: (r) => r.status },
+              { header: "Opens", value: (r) => r.open_count },
+              { header: "First Opened", value: (r) => r.first_opened_at },
+              { header: "Last Opened", value: (r) => r.last_opened_at },
+              { header: "Sent At", value: (r) => r.sent_at },
+              { header: "Sent By", value: (r) => r.sent_by_name },
+            ]}
+          />
+          {canSend && (
+            <>
+              <Button variant="outline" onClick={() => setBulkOpen(true)}>
+                <Users data-icon="inline-start" />
+                Bulk email
+              </Button>
+              <Button onClick={() => setComposeOpen(true)}>
+                <Plus data-icon="inline-start" />
+                Compose email
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {!emailConfigured && (

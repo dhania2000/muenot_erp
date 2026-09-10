@@ -25,6 +25,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { DialogFooter } from "@/components/ui/dialog"
 import { inr, inr0 } from "@/lib/finance-calc"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { FinanceModuleDialog } from "@/components/finance/finance-module-dialog"
 import { FinanceImportDialog } from "@/components/finance/finance-import-dialog"
 import type { BadgeVariant, ModuleConfig, TableColumn } from "@/lib/finance-schema"
@@ -104,6 +105,14 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
           <h1 className="text-3xl font-semibold tracking-tight text-balance">{cfg.label}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <ExcelExportButton
+            rows={rows}
+            filename={cfg.key}
+            columns={cfg.tableColumns.map((col) => ({
+              header: col.label,
+              value: (row: Row) => row[col.key],
+            }))}
+          />
           {cfg.importSpec && (
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload data-icon="inline-start" />

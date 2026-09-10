@@ -25,6 +25,7 @@ import {
 import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { EmailTemplateDialog } from "@/components/sales/email-template-dialog"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type EmailTemplateRow = {
@@ -81,17 +82,31 @@ export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {
             className="w-64 pl-8"
           />
         </div>
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Create template
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={filtered}
+            filename="sales-email-templates"
+            columns={[
+              { header: "Name", value: (r) => r.name },
+              { header: "Subject", value: (r) => r.subject },
+              { header: "Category", value: (r) => r.category },
+              { header: "Body", value: (r) => r.body },
+              { header: "Created By", value: (r) => r.created_by_name },
+              { header: "Updated At", value: (r) => r.updated_at },
+            ]}
+          />
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus data-icon="inline-start" />
+              Create template
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-md border border-border bg-card">

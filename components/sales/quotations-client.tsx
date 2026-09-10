@@ -25,6 +25,7 @@ import {
 import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { QuotationDialog } from "@/components/sales/quotation-dialog"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type QuotationRow = {
@@ -87,17 +88,34 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
             className="w-64 pl-8"
           />
         </div>
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Create quotation
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={filtered}
+            filename="quotations"
+            columns={[
+              { header: "Quote Code", value: (r) => r.quote_code },
+              { header: "Date", value: (r) => r.quote_date },
+              { header: "Company", value: (r) => r.company_name },
+              { header: "Contact Person", value: (r) => r.contact_person },
+              { header: "Opportunity", value: (r) => r.opportunity_name },
+              { header: "Amount", value: (r) => r.total_amount },
+              { header: "Valid Until", value: (r) => r.valid_until },
+              { header: "Status", value: (r) => r.status },
+              { header: "Added By", value: (r) => r.added_by_name },
+            ]}
+          />
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus data-icon="inline-start" />
+              Create quotation
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-md border border-border bg-card">

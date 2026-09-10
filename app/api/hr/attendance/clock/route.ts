@@ -78,6 +78,48 @@ async function ensureEmployee(session: SessionPayload): Promise<EmployeeRow> {
 }
 
 /**
+ * Ensure the hr_attendance table exists before any read/write. On databases
+ * where the SQL migration was never applied the table is missing, which would
+ * otherwise make every punch fail. We create it once per server process with
+ * the full schema (including `active_since` for multi-session days). Best-effort:
+ * if creation fails, the caller's own query will surface the real error.
+ */
+let tableEnsured = false
+async function ensureTable(): Promise<void> {
+  if (tableEnsured) return
+  await query(`
+    CREATE TABLE IF NOT EXISTS hr_attendance (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      attendance_id VARCHAR(40) NOT NULL,
+      employee_id BIGINT UNSIGNED NOT NULL,
+      employee_name VARCHAR(180) NOT NULL,
+      work_date DATE NOT NULL,
+      clock_in DATETIME DEFAULT NULL,
+      clock_out DATETIME DEFAULT NULL,
+      active_since DATETIME DEFAULT NULL,
+      break_minutes INT UNSIGNED NOT NULL DEFAULT 0,
+      working_hours DECIMAL(6,2) NOT NULL DEFAULT 0,
+      status VARCHAR(40) NOT NULL DEFAULT 'Present',
+      late_minutes INT UNSIGNED NOT NULL DEFAULT 0,
+      early_leaving_minutes INT UNSIGNED NOT NULL DEFAULT 0,
+      overtime_hours DECIMAL(6,2) NOT NULL DEFAULT 0,
+      location VARCHAR(180) DEFAULT NULL,
+      latitude DECIMAL(10,7) DEFAULT NULL,
+      longitude DECIMAL(10,7) DEFAULT NULL,
+      source VARCHAR(40) NOT NULL DEFAULT 'Manual',
+      regularisation_required TINYINT(1) NOT NULL DEFAULT 0,
+      remarks TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_hr_attendance_employee_date (employee_id, work_date),
+      KEY idx_hr_attendance_date (work_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `)
+  tableEnsured = true
+}
+
+/**
  * Whether the hr_attendance table has the geolocation columns. Older databases
  * created before the location feature won't have them, so we detect once and
  * cache the result to avoid writing to columns that don't exist.
@@ -157,6 +199,7 @@ export async function GET() {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    await ensureTable()
     const withSession = await hasSessionColumn()
     const employee = await ensureEmployee(session)
 
@@ -178,6 +221,7 @@ export async function POST(request: Request) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    await ensureTable()
     const withSession = await hasSessionColumn()
     const employee = await ensureEmployee(session)
 

@@ -105,6 +105,19 @@ export async function POST(request: Request) {
   if (thread) {
     renderedSubject = `Re: ${baseSubject(thread.rootSubject)}`
   }
+
+  console.log("[v0][thread] decision", {
+    mailType,
+    to: to_email,
+    recipientKey,
+    threadId,
+    foundExistingThread: Boolean(thread),
+    thread_inReplyTo: thread?.inReplyTo ?? null,
+    thread_references: thread?.references ?? null,
+    thread_rootSubject: thread?.rootSubject ?? null,
+    thread_providerThreadId: thread?.providerThreadId ?? null,
+    renderedSubject,
+  })
   const renderedBody = renderTemplate(content, vars)
   const baseUrl = resolveBaseUrl(request)
   const htmlWithPixel = withTrackingPixel(renderedBody, baseUrl, token)
@@ -162,6 +175,15 @@ export async function POST(request: Request) {
     })
     providerThreadId = sendResult.providerThreadId ?? providerThreadId
     effectiveMessageId = sendResult.messageId ?? effectiveMessageId
+    console.log("[v0][thread] send ok", {
+      mailType,
+      to: to_email,
+      passedProviderThreadId: thread?.providerThreadId ?? null,
+      returnedProviderThreadId: sendResult.providerThreadId ?? null,
+      generatedMessageId: messageId,
+      effectiveMessageId,
+      messageIdWasRewritten: messageId !== effectiveMessageId,
+    })
   } catch (err: any) {
     status = "Failed"
     // Nodemailer/SMTP errors often carry the useful detail in `code` and

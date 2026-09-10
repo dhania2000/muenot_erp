@@ -59,9 +59,17 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
 type ClockStatus = {
   linked?: boolean
-  state?: "in" | "out" | "done"
+  state?: "in" | "out"
   clockIn?: string | null
   clockOut?: string | null
+  workedHours?: number
+}
+
+/** Format a decimal hours value (e.g. 7.25) as "7h 15m". */
+function formatWorked(hours: number | null | undefined) {
+  if (!hours || hours <= 0) return "0h 0m"
+  const total = Math.round(hours * 60)
+  return `${Math.floor(total / 60)}h ${total % 60}m`
 }
 
 function formatClockTime(dt: string | null | undefined) {
@@ -204,7 +212,7 @@ function ClockControl() {
 
   // Auto-detect location when the panel opens and there is a punch to make.
   useEffect(() => {
-    if (open && linked && state !== "done" && !geo && !geoBusy) {
+    if (open && linked && !geo && !geoBusy) {
       void detectLocation()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -235,7 +243,7 @@ function ClockControl() {
     }
   }
 
-  const dotColor = state === "in" ? "bg-emerald-500" : state === "done" ? "bg-muted-foreground" : "bg-amber-500"
+  const dotColor = state === "in" ? "bg-emerald-500" : data?.clockOut ? "bg-muted-foreground" : "bg-amber-500"
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -257,20 +265,25 @@ function ClockControl() {
           </p>
         ) : (
           <div className="px-2 py-1.5">
-            <div className="mb-3 flex items-center gap-2 text-sm">
-              <span className={cn("size-2 rounded-full", dotColor)} />
-              {state === "in" && <span>Clocked in at {formatClockTime(data?.clockIn)}</span>}
-              {state === "out" && <span className="text-muted-foreground">Not clocked in today</span>}
-              {state === "done" && (
-                <span className="text-muted-foreground">
-                  Clocked out at {formatClockTime(data?.clockOut)}
-                </span>
-              )}
+            <div className="mb-3 flex flex-col gap-1 text-sm">
+              <div className="flex items-center gap-2">
+                <span className={cn("size-2 rounded-full", dotColor)} />
+                {state === "in" ? (
+                  <span>Clocked in at {formatClockTime(data?.clockIn)}</span>
+                ) : data?.clockOut ? (
+                  <span className="text-muted-foreground">Last clocked out at {formatClockTime(data?.clockOut)}</span>
+                ) : (
+                  <span className="text-muted-foreground">Not clocked in today</span>
+                )}
+              </div>
+              <span className="pl-4 text-xs text-muted-foreground">
+                Worked today: <span className="font-medium text-foreground">{formatWorked(data?.workedHours)}</span>
+                {" "}(breaks excluded)
+              </span>
             </div>
 
-            {state !== "done" && (
-              <div className="mb-3 rounded-md border border-border bg-muted/30 p-2">
-                <div className="mb-2 flex items-center justify-between">
+            <div className="mb-3 rounded-md border border-border bg-muted/30 p-2">
+              <div className="mb-2 flex items-center justify-between">
                   <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
                     <MapPin className="size-3.5 text-primary" />
                     Your location
@@ -313,35 +326,73 @@ function ClockControl() {
                   <p className="text-[11px] text-muted-foreground">Waiting for location permission…</p>
                 )}
               </div>
-            )}
 
             {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
 
-            {state === "done" ? (
-              <p className="rounded-md bg-muted/60 px-3 py-2 text-center text-xs text-muted-foreground">
-                Attendance completed for today
-              </p>
-            ) : (
-              <Button
-                className="w-full gap-2"
-                variant={state === "in" ? "outline" : "default"}
-                onClick={toggle}
-                disabled={busy}
-              >
-                {busy ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : state === "in" ? (
-                  <LogOut className="size-4" />
-                ) : (
-                  <LogIn className="size-4" />
-                )}
-                {state === "in" ? "Clock Out" : "Clock In"}
-              </Button>
-            )}
+            <Button
+              className="w-full gap-2"
+              variant={state === "in" ? "outline" : "default"}
+              onClick={toggle}
+              disabled={busy}
+            >
+              {busy ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : state === "in" ? (
+                <LogOut className="size-4" />
+              ) : (
+                <LogIn className="size-4" />
+              )}
+              {state === "in" ? "Clock Out" : "Clock In"}
+            </Button>
           </div>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+/**
+ * Prominent text button shown in the header center. No icon — just a clear
+ * "Clock In" that flips to "Clock Out" while a session is open, and back to
+ * "Clock In" after clocking out so more sessions can be recorded the same day.
+ * Shares the SWR cache key with ClockControl so both stay in sync.
+ */
+function HeaderClockButton() {
+  const { data, mutate } = useSWR<ClockStatus>("/api/hr/attendance/clock", fetcher)
+  const [busy, setBusy] = useState(false)
+
+  const state = data?.state ?? "out"
+  const linked = data?.linked ?? true
+
+  if (!linked) return null
+
+  async function toggle() {
+    setBusy(true)
+    try {
+      const location = await getBrowserLocation()
+      await fetch("/api/hr/attendance/clock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          location ? { latitude: location.lat, longitude: location.lng, location: location.label } : {},
+        ),
+      })
+      await mutate()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Button
+      onClick={toggle}
+      disabled={busy}
+      variant={state === "in" ? "outline" : "default"}
+      size="sm"
+      className="min-w-28 font-medium"
+    >
+      {busy ? <Loader2 className="size-4 animate-spin" /> : state === "in" ? "Clock Out" : "Clock In"}
+    </Button>
   )
 }
 
@@ -619,6 +670,7 @@ export function AppShell({
       <div className="flex h-full flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
           <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">{brandName || "Dashboard"}</span></div>
+          <HeaderClockButton />
           <div className="flex items-center gap-1">
             <LiveClock />
             <ClockControl />

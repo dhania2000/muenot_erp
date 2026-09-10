@@ -8,6 +8,8 @@ type AttendanceRow = {
   clock_in: string | null
   clock_out: string | null
   break_minutes: number
+  working_hours: number
+  active_since: string | null
   work_date: string
 }
 
@@ -27,9 +29,10 @@ function nowDateTime() {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
 }
 
-function workingHours(clockIn: string, clockOut: string, breakMinutes: number) {
-  const value = (new Date(clockOut).getTime() - new Date(clockIn).getTime()) / 3600000 - breakMinutes / 60
-  return Math.max(0, Number(value.toFixed(2)))
+/** Hours between two DATETIME strings (never negative). */
+function hoursBetween(start: string, end: string) {
+  const value = (new Date(end).getTime() - new Date(start).getTime()) / 3600000
+  return Math.max(0, value)
 }
 
 async function resolveEmployee(email: string): Promise<EmployeeRow | null> {
@@ -92,18 +95,39 @@ async function hasLocationColumns(): Promise<boolean> {
   return locationColumnsExist
 }
 
+/**
+ * Ensure the `active_since` column exists. It records the start of the current
+ * open work session so a day can hold several clock-in / clock-out cycles in a
+ * single row: worked hours accumulate per session and the gaps between sessions
+ * (breaks) are never counted. Detected + created once, then cached.
+ */
+let sessionColumnReady: boolean | null = null
+async function ensureSessionColumn(): Promise<boolean> {
+  if (sessionColumnReady !== null) return sessionColumnReady
+  try {
+    const rows = await query<{ Field: string }[]>("SHOW COLUMNS FROM hr_attendance LIKE 'active_since'")
+    if (rows.length === 0) {
+      await query("ALTER TABLE hr_attendance ADD COLUMN active_since DATETIME NULL DEFAULT NULL")
+    }
+    sessionColumnReady = true
+  } catch {
+    sessionColumnReady = false
+  }
+  return sessionColumnReady
+}
+
 async function todaysRecord(employeeId: number): Promise<AttendanceRow | null> {
   const rows = await query<AttendanceRow[]>(
-    "SELECT id, clock_in, clock_out, break_minutes, work_date FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1",
+    "SELECT id, clock_in, clock_out, break_minutes, working_hours, active_since, work_date FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1",
     [employeeId, today()],
   )
   return rows[0] ?? null
 }
 
+/** "in" = currently in an open session; "out" = not clocked in (may clock in). */
 function stateOf(record: AttendanceRow | null) {
-  if (!record || !record.clock_in) return "out" as const
-  if (record.clock_in && !record.clock_out) return "in" as const
-  return "done" as const
+  if (record && record.active_since) return "in" as const
+  return "out" as const
 }
 
 export async function GET() {
@@ -111,6 +135,7 @@ export async function GET() {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    await ensureSessionColumn()
     const employee = await ensureEmployee(session)
 
     const record = await todaysRecord(employee.id)
@@ -119,6 +144,7 @@ export async function GET() {
       state: stateOf(record),
       clockIn: record?.clock_in ?? null,
       clockOut: record?.clock_out ?? null,
+      workedHours: record ? Number(record.working_hours || 0) : 0,
     })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load status" }, { status: 500 })
@@ -130,6 +156,7 @@ export async function POST(request: Request) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    await ensureSessionColumn()
     const employee = await ensureEmployee(session)
 
     // Optional geolocation captured by the browser at punch time.
@@ -148,55 +175,60 @@ export async function POST(request: Request) {
     const now = nowDateTime()
     const withLocation = await hasLocationColumns()
 
-    // First punch of the day → clock in.
+    // First punch of the day → create the row and open a session (clock in).
     if (!record) {
       const attendanceId = `ATT-${employee.id}-${today().replace(/-/g, "")}`
       if (withLocation) {
         await query(
-          "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, status, source, location, latitude, longitude) VALUES (?, ?, ?, ?, ?, 'Present', 'Portal', ?, ?, ?)",
-          [attendanceId, employee.id, employee.employee_name, today(), now, location, latitude, longitude],
+          "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, active_since, status, source, location, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, 'Present', 'Portal', ?, ?, ?)",
+          [attendanceId, employee.id, employee.employee_name, today(), now, now, location, latitude, longitude],
         )
       } else {
         await query(
-          "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, status, source) VALUES (?, ?, ?, ?, ?, 'Present', 'Portal')",
-          [attendanceId, employee.id, employee.employee_name, today(), now],
+          "INSERT INTO hr_attendance (attendance_id, employee_id, employee_name, work_date, clock_in, active_since, status, source) VALUES (?, ?, ?, ?, ?, ?, 'Present', 'Portal')",
+          [attendanceId, employee.id, employee.employee_name, today(), now, now],
         )
       }
       return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null })
     }
 
-    // Record exists but no clock_in yet → treat as clock in.
-    if (!record.clock_in) {
+    // Currently in an open session → clock out, accumulate worked hours, and
+    // recompute the break total as the day's span minus worked time.
+    if (record.active_since) {
+      const firstIn = record.clock_in || record.active_since
+      const sessionHours = hoursBetween(record.active_since, now)
+      const worked = Number((Number(record.working_hours || 0) + sessionHours).toFixed(2))
+      const spanMinutes = hoursBetween(firstIn, now) * 60
+      const breakMinutes = Math.max(0, Math.round(spanMinutes - worked * 60))
       if (withLocation) {
         await query(
-          "UPDATE hr_attendance SET clock_in = ?, source = 'Portal', location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
-          [now, location, latitude, longitude, record.id],
+          "UPDATE hr_attendance SET clock_out = ?, active_since = NULL, working_hours = ?, break_minutes = ?, location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
+          [now, worked, breakMinutes, location, latitude, longitude, record.id],
         )
       } else {
-        await query("UPDATE hr_attendance SET clock_in = ?, source = 'Portal' WHERE id = ?", [now, record.id])
-      }
-      return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null })
-    }
-
-    // Clocked in, not out yet → clock out and compute hours.
-    if (!record.clock_out) {
-      const hours = workingHours(record.clock_in, now, Number(record.break_minutes || 0))
-      if (withLocation) {
         await query(
-          "UPDATE hr_attendance SET clock_out = ?, working_hours = ?, location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
-          [now, hours, location, latitude, longitude, record.id],
+          "UPDATE hr_attendance SET clock_out = ?, active_since = NULL, working_hours = ?, break_minutes = ? WHERE id = ?",
+          [now, worked, breakMinutes, record.id],
         )
-      } else {
-        await query("UPDATE hr_attendance SET clock_out = ?, working_hours = ? WHERE id = ?", [now, hours, record.id])
       }
-      return NextResponse.json({ ok: true, state: "done", clockIn: record.clock_in, clockOut: now })
+      return NextResponse.json({ ok: true, state: "out", clockIn: firstIn, clockOut: now, workedHours: worked })
     }
 
-    // Already completed for the day.
-    return NextResponse.json(
-      { error: "You have already clocked in and out for today.", state: "done", clockIn: record.clock_in, clockOut: record.clock_out },
-      { status: 409 },
-    )
+    // Row exists but no open session → start a new session (clock in again).
+    // Keep the day's first clock_in, clear the visible clock_out while working.
+    const firstIn = record.clock_in || now
+    if (withLocation) {
+      await query(
+        "UPDATE hr_attendance SET clock_in = ?, active_since = ?, clock_out = NULL, source = 'Portal', location = COALESCE(?, location), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude) WHERE id = ?",
+        [firstIn, now, location, latitude, longitude, record.id],
+      )
+    } else {
+      await query(
+        "UPDATE hr_attendance SET clock_in = ?, active_since = ?, clock_out = NULL, source = 'Portal' WHERE id = ?",
+        [firstIn, now, record.id],
+      )
+    }
+    return NextResponse.json({ ok: true, state: "in", clockIn: firstIn, clockOut: null })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update attendance" }, { status: 500 })
   }

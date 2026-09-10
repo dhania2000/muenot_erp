@@ -91,57 +91,63 @@ export async function createMeetEvent(input: CreateMeetInput): Promise<CreateMee
   }
 }
 
-/** Format a Date as an iCalendar UTC timestamp: 20260910T090000Z */
-function toICSDate(date: Date) {
-  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")
+/* -------------------------------------------------------------------------- */
+/* Reading a user's own calendar (live sync into the ERP calendar module)     */
+/* -------------------------------------------------------------------------- */
+
+export type CalendarEvent = {
+  id: string
+  title: string
+  /** ISO instant for timed events, or "YYYY-MM-DD" for all-day events. */
+  start: string
+  end: string | null
+  allDay: boolean
+  location: string | null
+  description: string | null
+  hangoutLink: string | null
+  htmlLink: string | null
+  status: string | null
 }
 
-/** Escape iCalendar TEXT values per RFC 5545. */
-function escapeICS(value: string) {
-  return value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n")
-}
+/**
+ * List events from a connected user's primary Google Calendar between two
+ * instants. Uses the `calendar.events` scope already granted during the Meet
+ * connect flow, so connecting once powers both meetings and the calendar.
+ */
+export async function listCalendarEventsForUser(
+  refreshToken: string,
+  opts: { timeMin: string; timeMax: string; timeZone?: string },
+): Promise<CalendarEvent[]> {
+  const auth = makeOAuthClient()
+  auth.setCredentials({ refresh_token: refreshToken })
+  const calendar = google.calendar({ version: "v3", auth })
 
-export type ICSInput = {
-  uid: string
-  summary: string
-  description?: string
-  location?: string
-  start: Date
-  end: Date
-  organizerEmail: string
-  organizerName?: string
-  attendees: string[]
-  method?: "REQUEST" | "CANCEL"
-}
+  const res = await calendar.events.list({
+    calendarId: "primary",
+    timeMin: opts.timeMin,
+    timeMax: opts.timeMax,
+    singleEvents: true, // expand recurring events into individual instances
+    orderBy: "startTime",
+    maxResults: 2500,
+    timeZone: opts.timeZone || DEFAULT_TIME_ZONE,
+  })
 
-/** Build a minimal, standards-compliant VCALENDAR/VEVENT string. */
-export function buildICS(input: ICSInput): string {
-  const method = input.method || "REQUEST"
-  const lines = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Muenot ERP//Sales//EN",
-    "CALSCALE:GREGORIAN",
-    `METHOD:${method}`,
-    "BEGIN:VEVENT",
-    `UID:${input.uid}`,
-    `DTSTAMP:${toICSDate(new Date())}`,
-    `DTSTART:${toICSDate(input.start)}`,
-    `DTEND:${toICSDate(input.end)}`,
-    `SUMMARY:${escapeICS(input.summary)}`,
-  ]
-  if (input.description) lines.push(`DESCRIPTION:${escapeICS(input.description)}`)
-  if (input.location) lines.push(`LOCATION:${escapeICS(input.location)}`)
-  lines.push(
-    `ORGANIZER;CN=${escapeICS(input.organizerName || input.organizerEmail)}:mailto:${input.organizerEmail}`,
-  )
-  for (const email of input.attendees) {
-    lines.push(
-      `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${email}`,
-    )
-  }
-  lines.push("STATUS:CONFIRMED", "END:VEVENT", "END:VCALENDAR")
-  return lines.join("\r\n")
+  const items = res.data.items || []
+  return items
+    .filter((e) => e.status !== "cancelled")
+    .map((e) => ({
+      id: e.id || "",
+      title: e.summary || "(no title)",
+      start: e.start?.dateTime || e.start?.date || "",
+      end: e.end?.dateTime || e.end?.date || null,
+      allDay: Boolean(e.start?.date),
+      location: e.location || null,
+      description: e.description || null,
+      hangoutLink: e.hangoutLink || null,
+      htmlLink: e.htmlLink || null,
+      status: e.status || null,
+    }))
+    .filter((e) => e.start)
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,4 +1,4 @@
-import nodemailer from "nodemailer"
+import nodemailer, { type Transporter } from "nodemailer"
 import MailComposer from "nodemailer/lib/mail-composer"
 import { google } from "googleapis"
 import crypto from "crypto"
@@ -305,7 +305,7 @@ export async function loadAttachment(
 //   APP_URL       - public base URL of this app, used to build the tracking
 //                   pixel link, e.g. https://erp.muenot.co.in
 
-const transporters = new Map<string, nodemailer.Transporter>()
+const transporters = new Map<string, Transporter>()
 
 type Department = "sales" | "hr" | "finance" | "operations" | "recruit"
 

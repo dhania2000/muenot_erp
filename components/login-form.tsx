@@ -9,12 +9,34 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2 } from "lucide-react"
 
-export function LoginForm() {
+export type SocialProviders = {
+  google?: boolean
+  linkedin?: boolean
+  facebook?: boolean
+}
+
+const PROVIDER_LABELS: Record<keyof SocialProviders, string> = {
+  google: "Google",
+  linkedin: "LinkedIn",
+  facebook: "Facebook",
+}
+
+export function LoginForm({
+  social,
+  signupEnabled = false,
+}: {
+  social?: SocialProviders
+  signupEnabled?: boolean
+}) {
   const router = useRouter()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  const enabledProviders = (Object.keys(PROVIDER_LABELS) as (keyof SocialProviders)[]).filter(
+    (p) => social?.[p],
+  )
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -91,6 +113,43 @@ export function LoginForm() {
         {loading && <Loader2 className="animate-spin" />}
         Sign in
       </Button>
+
+      {enabledProviders.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            or continue with
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <div className="flex flex-col gap-2">
+            {enabledProviders.map((p) => (
+              <Button
+                key={p}
+                type="button"
+                variant="outline"
+                size="lg"
+                className="w-full"
+                onClick={() =>
+                  setError(
+                    `${PROVIDER_LABELS[p]} sign-in is enabled but not fully configured yet. Please sign in with your work email or contact your administrator.`,
+                  )
+                }
+              >
+                Continue with {PROVIDER_LABELS[p]}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {signupEnabled && (
+        <p className="text-center text-xs text-muted-foreground">
+          New here?{" "}
+          <Link href="/signup" className="font-medium text-primary hover:underline">
+            Create an account
+          </Link>
+        </p>
+      )}
     </form>
   )
 }

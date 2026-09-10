@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
+import type { Call, Device } from "@twilio/voice-sdk"
 import {
   Dialog,
   DialogContent,
@@ -32,8 +33,6 @@ export type CallTarget = {
 
 type CallState = "idle" | "connecting" | "ringing" | "in-progress" | "ended"
 
-const REMOTE_AUDIO_ID = "telnyx-remote-audio"
-
 const DEFAULT_DISPOSITIONS = [
   "Interested",
   "Not Interested",
@@ -45,7 +44,7 @@ const DEFAULT_DISPOSITIONS = [
 ] as const
 
 const DEFAULT_CONFIG_HINT =
-  "Calling isn't configured yet. Add your Telnyx Voice API credentials (TELNYX_API_KEY, TELNYX_CREDENTIAL_ID, TELNYX_CALLER_ID) to enable in-browser calling."
+  "Calling isn't configured yet. Add your Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID, TWILIO_CALLER_ID) to enable in-browser calling."
 
 function formatDuration(totalSeconds: number) {
   const m = Math.floor(totalSeconds / 60)
@@ -57,20 +56,8 @@ function formatDuration(totalSeconds: number) {
   return `${m}:${s}`
 }
 
-// Map a Telnyx WebRTC hangup cause to one of our stored call statuses.
-function resolveEndStatus(reachedActive: boolean, cause: string): CallEndStatus {
-  if (reachedActive) return "Completed"
-  const c = cause.toUpperCase()
-  if (c.includes("BUSY")) return "Busy"
-  if (c.includes("NO_ANSWER") || c.includes("NO_USER_RESPONSE") || c.includes("TIMEOUT")) return "No Answer"
-  if (c.includes("ORIGINATOR_CANCEL") || c.includes("USER_CANCEL") || c.includes("NORMAL_CLEARING")) return "Canceled"
-  return "Failed"
-}
-
-type CallEndStatus = "Completed" | "Canceled" | "Failed" | "Busy" | "No Answer"
-
 /**
- * In-browser Telnyx WebRTC dialer, shared across modules.
+ * In-browser Twilio Voice dialer, shared across modules.
  *
  * `apiBase` selects the module's calling endpoints — the component talks to
  * `${apiBase}/token`, `${apiBase}` (POST to log) and `${apiBase}/${id}` (PATCH
@@ -108,15 +95,11 @@ export function CallDialer({
   const [saving, setSaving] = useState(false)
   const [initError, setInitError] = useState<string | null>(null)
 
-  // Telnyx client + active call (typed loosely to avoid SDK type friction).
-  const clientRef = useRef<any>(null)
-  const callRef = useRef<any>(null)
-  const callerIdRef = useRef<string>("")
+  const deviceRef = useRef<Device | null>(null)
+  const callRef = useRef<Call | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const callLogIdRef = useRef<number | null>(null)
   const secondsRef = useRef(0)
-  const reachedActiveRef = useRef(false)
-  const finishedRef = useRef(false)
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) {
@@ -125,77 +108,18 @@ export function CallDialer({
     }
   }, [])
 
-  const startTimer = useCallback(() => {
-    if (timerRef.current) return
-    timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
-  }, [])
-
   const teardownDevice = useCallback(() => {
     try {
-      callRef.current?.hangup()
+      callRef.current?.disconnect()
     } catch {}
     callRef.current = null
     try {
-      clientRef.current?.disconnect()
+      deviceRef.current?.destroy()
     } catch {}
-    clientRef.current = null
+    deviceRef.current = null
   }, [])
 
-  const finishCall = useCallback(
-    (status: CallEndStatus) => {
-      if (finishedRef.current) return
-      finishedRef.current = true
-      stopTimer()
-      setState("ended")
-      const callId = callLogIdRef.current
-      const finalDuration = secondsRef.current
-      if (callId) {
-        fetch(`${apiBase}/${callId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status, duration_seconds: finalDuration }),
-        }).catch(() => {})
-      }
-    },
-    [apiBase, stopTimer],
-  )
-
-  // Keep a fresh handler for the client's global notification stream. The
-  // client is created once per dialog open, but this ref is refreshed each
-  // render so it always sees the latest state/refs.
-  const onCallUpdateRef = useRef<(call: any) => void>(() => {})
-  onCallUpdateRef.current = (call: any) => {
-    if (callRef.current && call?.id && callRef.current.id && call.id !== callRef.current.id) return
-    switch (call?.state as string) {
-      case "new":
-      case "requesting":
-      case "trying":
-      case "recovering":
-        setState("connecting")
-        break
-      case "ringing":
-      case "early":
-        setState("ringing")
-        break
-      case "active":
-        reachedActiveRef.current = true
-        setState("in-progress")
-        startTimer()
-        break
-      case "held":
-        break
-      case "hangup":
-      case "destroy":
-      case "purge":
-        finishCall(resolveEndStatus(reachedActiveRef.current, String(call?.cause || "")))
-        break
-      default:
-        break
-    }
-  }
-
-  // Reset all local state whenever the dialog is opened for a new target,
-  // and boot up the Telnyx WebRTC client.
+  // Reset all local state whenever the dialog is opened for a new target.
   useEffect(() => {
     if (!open) return
     setNumber(target?.number ?? "")
@@ -206,8 +130,6 @@ export function CallDialer({
     setNotes("")
     setInitError(null)
     callLogIdRef.current = null
-    reachedActiveRef.current = false
-    finishedRef.current = false
     setConfigured(null)
 
     let cancelled = false
@@ -226,27 +148,9 @@ export function CallDialer({
           return
         }
         setConfigured(true)
-        callerIdRef.current = data.callerId || ""
-
-        const { TelnyxRTC } = await import("@telnyx/webrtc")
-        const client = new TelnyxRTC({ login_token: data.token })
-        client.remoteElement = REMOTE_AUDIO_ID
-        client.on("telnyx.notification", (notification: any) => {
-          if (notification?.type === "callUpdate" && notification.call) {
-            onCallUpdateRef.current(notification.call)
-          }
-        })
-        client.on("telnyx.error", (err: unknown) => {
-          console.error("[call-dialer] telnyx error", err)
-        })
-        client.connect()
-        if (cancelled) {
-          try {
-            client.disconnect()
-          } catch {}
-          return
-        }
-        clientRef.current = client
+        const { Device } = await import("@twilio/voice-sdk")
+        const device = new Device(data.token, { logLevel: "error" })
+        deviceRef.current = device
       } catch (err) {
         if (cancelled) return
         console.error("[call-dialer] init failed", err)
@@ -260,7 +164,7 @@ export function CallDialer({
     }
   }, [open, target, apiBase])
 
-  // Clean up the client and timer when the dialog fully closes.
+  // Clean up the device and timer when the dialog fully closes.
   useEffect(() => {
     if (open) return
     stopTimer()
@@ -298,35 +202,32 @@ export function CallDialer({
   }
 
   async function startCall() {
-    const client = clientRef.current
+    const device = deviceRef.current
     const dialed = number.trim()
-    if (!client || !dialed) return
+    if (!device || !dialed) return
 
     setState("connecting")
     setSeconds(0)
-    reachedActiveRef.current = false
-    finishedRef.current = false
     await logInitialCall(dialed)
 
     try {
-      const call = client.newCall({
-        destinationNumber: dialed,
-        callerNumber: callerIdRef.current || undefined,
-        audio: true,
-        video: false,
-      })
+      const call = await device.connect({ params: { To: dialed } })
       callRef.current = call
 
-      // Persist the Telnyx call id onto the log record when available.
-      const telnyxCallId = call?.id
-      const callLogId = callLogIdRef.current
-      if (telnyxCallId && callLogId) {
-        fetch(`${apiBase}/${callLogId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ telnyx_call_id: telnyxCallId }),
-        }).catch(() => {})
-      }
+      call.on("ringing", () => setState("ringing"))
+      call.on("accept", () => {
+        setState("in-progress")
+        stopTimer()
+        timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
+      })
+      call.on("disconnect", () => finishCall("Completed"))
+      call.on("cancel", () => finishCall("Canceled"))
+      call.on("reject", () => finishCall("Failed"))
+      call.on("error", (e: unknown) => {
+        console.error("[call-dialer] call error", e)
+        toast.error("Call error. Please try again.")
+        finishCall("Failed")
+      })
     } catch (err) {
       console.error("[call-dialer] connect failed", err)
       toast.error("Unable to place the call.")
@@ -334,9 +235,23 @@ export function CallDialer({
     }
   }
 
+  function finishCall(status: "Completed" | "Canceled" | "Failed") {
+    stopTimer()
+    setState("ended")
+    const callId = callLogIdRef.current
+    const finalDuration = secondsRef.current
+    if (callId) {
+      fetch(`${apiBase}/${callId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, duration_seconds: finalDuration }),
+      }).catch(() => {})
+    }
+  }
+
   function hangup() {
     try {
-      callRef.current?.hangup()
+      callRef.current?.disconnect()
     } catch {}
   }
 
@@ -344,13 +259,8 @@ export function CallDialer({
     const call = callRef.current
     if (!call) return
     const next = !muted
-    try {
-      if (next) call.muteAudio()
-      else call.unmuteAudio()
-      setMuted(next)
-    } catch (err) {
-      console.error("[call-dialer] mute toggle failed", err)
-    }
+    call.mute(next)
+    setMuted(next)
   }
 
   async function saveOutcome() {
@@ -401,10 +311,6 @@ export function CallDialer({
           <DialogTitle>{title ?? (target?.name ? `Call ${target.name}` : "Call")}</DialogTitle>
           <DialogDescription>Place a call directly from your browser.</DialogDescription>
         </DialogHeader>
-
-        {/* Telnyx attaches the remote party's audio stream to this element. */}
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <audio id={REMOTE_AUDIO_ID} autoPlay className="hidden" />
 
         {configured === false ? (
           <div className="rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">

@@ -1,4 +1,6 @@
 import { query } from "./db"
+import { getUserMatrix } from "./permission-store"
+import { PERMISSION_MODULES, resolveFeatureSlug, type PermissionMatrix } from "./permission-model"
 
 export type ModuleRow = {
   id: number
@@ -28,7 +30,7 @@ export async function getAllModulesWithFeatures() {
   }))
 }
 
-/** Feature slugs a given user has been granted. */
+/** Legacy: feature slugs granted to a user via the old user_permissions table. */
 export async function getUserFeatureSlugs(userId: number): Promise<string[]> {
   const rows = await query<{ slug: string }[]>(
     `SELECT f.slug FROM user_permissions up
@@ -39,19 +41,42 @@ export async function getUserFeatureSlugs(userId: number): Promise<string[]> {
   return rows.map((r) => r.slug)
 }
 
-/** Modules (with only the features the user can access) for a given user. Admins get everything. */
-export async function getUserAccessibleModules(userId: number, role: "admin" | "employee") {
-  const allModules = await getAllModulesWithFeatures()
-  if (role === "admin") return allModules
+/** Does the matrix grant the given feature slug? Returns null if slug is unmapped. */
+function matrixGrantsSlug(matrix: PermissionMatrix, slug: string): boolean | null {
+  const resolved = resolveFeatureSlug(slug)
+  if (!resolved) return null
+  const perm = matrix[resolved.moduleKey]
+  if (!perm) return null
+  if (resolved.action === "view") {
+    // Any level of access to the module implies it can be viewed.
+    return perm.view !== "none" || perm.add !== "none" || perm.update !== "none" || perm.delete !== "none"
+  }
+  // "manage"-style features require some write capability.
+  return perm.add !== "none" || perm.update !== "none" || perm.delete !== "none"
+}
 
-  const granted = new Set(await getUserFeatureSlugs(userId))
-  return allModules
-    .map((m) => ({ ...m, features: m.features.filter((f) => granted.has(f.slug)) }))
-    .filter((m) => m.features.length > 0)
+/** True if the group (top-level module) has any visible permission for the user. */
+function matrixGroupVisible(matrix: PermissionMatrix, groupSlug: string): boolean {
+  return PERMISSION_MODULES.filter((m) => m.group === groupSlug).some((m) => {
+    const p = matrix[m.key]
+    return p && (p.view !== "none" || p.add !== "none" || p.update !== "none" || p.delete !== "none")
+  })
 }
 
 export async function userHasFeature(userId: number, role: "admin" | "employee", featureSlug: string) {
   if (role === "admin") return true
+
+  const matrix = await getUserMatrix(userId)
+  if (matrix) {
+    const granted = matrixGrantsSlug(matrix, featureSlug)
+    if (granted !== null) return granted
+    // Unmapped slug — fall back to group-level visibility so we neither
+    // over-expose nor accidentally hide a whole section.
+    const group = featureSlug.split(".")[0]
+    return matrixGroupVisible(matrix, group)
+  }
+
+  // No matrix configured — use the legacy feature grants.
   const rows = await query<{ id: number }[]>(
     `SELECT up.id FROM user_permissions up
      JOIN features f ON f.id = up.feature_id
@@ -61,6 +86,33 @@ export async function userHasFeature(userId: number, role: "admin" | "employee",
   return rows.length > 0
 }
 
+/** Modules (with only the features the user can access) for a given user. Admins get everything. */
+export async function getUserAccessibleModules(userId: number, role: "admin" | "employee") {
+  const allModules = await getAllModulesWithFeatures()
+  if (role === "admin") return allModules
+
+  const matrix = await getUserMatrix(userId)
+
+  if (matrix) {
+    return allModules
+      .map((m) => ({
+        ...m,
+        features: m.features.filter((f) => {
+          const granted = matrixGrantsSlug(matrix, f.slug)
+          return granted === null ? matrixGroupVisible(matrix, m.slug) : granted
+        }),
+      }))
+      .filter((m) => m.features.length > 0 || matrixGroupVisible(matrix, m.slug))
+  }
+
+  // Legacy fallback.
+  const granted = new Set(await getUserFeatureSlugs(userId))
+  return allModules
+    .map((m) => ({ ...m, features: m.features.filter((f) => granted.has(f.slug)) }))
+    .filter((m) => m.features.length > 0)
+}
+
+/** Legacy setter kept for backward compatibility with the old permissions dialog. */
 export async function setUserPermissions(userId: number, featureIds: number[], grantedBy: number) {
   await query("DELETE FROM user_permissions WHERE user_id = ?", [userId])
   if (featureIds.length === 0) return

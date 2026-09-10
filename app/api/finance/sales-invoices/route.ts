@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
-import { nextRecordId } from "@/lib/record-ids"
+import { nextDocumentId } from "@/lib/settings/numbering"
+import { getSettings } from "@/lib/settings/server"
 
 // Columns that clients may send. Derived money fields (taxable_amount,
 // *_amount, invoice_total, tds_amount, net_receivable, outstanding_amount,
@@ -23,27 +24,41 @@ const num = (v: any) => {
 }
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
 
-/** Indian financial year (April–March) derived from an invoice date. */
-function financialYearFor(dateStr?: string | null) {
+const FY_MONTH: Record<string, number> = { January: 0, April: 3, July: 6, October: 9 }
+
+/** Financial year derived from an invoice date, honouring the configured start month. */
+function financialYearFor(dateStr?: string | null, startMonth = 3) {
   if (!dateStr) return null
   const d = new Date(dateStr)
   if (Number.isNaN(d.getTime())) return null
   const y = d.getFullYear()
-  const start = d.getMonth() >= 3 ? y : y - 1
+  const start = d.getMonth() >= startMonth ? y : y - 1
   return `${start}-${String((start + 1) % 100).padStart(2, "0")}`
 }
 
+type TaxConfig = { enabled: boolean; type: string }
+
 /** Recompute every derived money field from the raw inputs. */
-function computeDerived(body: Record<string, any>) {
+function computeDerived(body: Record<string, any>, fyStartMonth = 3, tax: TaxConfig = { enabled: true, type: "Exclusive" }) {
   const quantity = num(body.quantity)
   const rate = num(body.rate)
   const discount = num(body.discount)
   const base = quantity > 0 && rate > 0 ? quantity * rate : num(body.taxable_amount) + discount
-  const taxable = round2(Math.max(base - discount, 0))
+  let taxable = round2(Math.max(base - discount, 0))
 
-  const cgstPct = num(body.cgst_percent)
-  const sgstPct = num(body.sgst_percent)
-  const igstPct = num(body.igst_percent)
+  // When tax is disabled in Company Settings, no GST components are applied
+  // regardless of what the client sent.
+  const cgstPct = tax.enabled ? num(body.cgst_percent) : 0
+  const sgstPct = tax.enabled ? num(body.sgst_percent) : 0
+  const igstPct = tax.enabled ? num(body.igst_percent) : 0
+
+  // Inclusive tax ("Tax Calculation" = Inclusive): the entered amount already
+  // contains tax, so back it out before computing the individual components.
+  const totalPct = cgstPct + sgstPct + igstPct
+  if (tax.type === "Inclusive" && totalPct > 0) {
+    taxable = round2(taxable / (1 + totalPct / 100))
+  }
+
   const cgstAmount = round2((taxable * cgstPct) / 100)
   const sgstAmount = round2((taxable * sgstPct) / 100)
   const igstAmount = round2((taxable * igstPct) / 100)
@@ -81,7 +96,7 @@ function computeDerived(body: Record<string, any>) {
     amount_received: amountReceived,
     outstanding_amount: outstanding,
     payment_status: paymentStatus,
-    financial_year: body.financial_year || financialYearFor(body.invoice_date),
+    financial_year: body.financial_year || financialYearFor(body.invoice_date, fyStartMonth),
   }
 }
 
@@ -150,10 +165,28 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body = await req.json()
-  const derived = computeDerived(body)
+  const settings = await getSettings()
+  const fyStartMonth = FY_MONTH[settings["app.financial_year_start"]] ?? 3
 
-  // Invoice ID is generated on the server — clients never set it.
-  const invoiceId = await nextRecordId("INV")
+  // Apply Finance Settings defaults when the client did not supply them:
+  // due date = invoice date + finance.due_days, and default invoice terms/notes.
+  if (!body.due_date && body.invoice_date) {
+    const dueDays = Number(settings["finance.due_days"]) || 15
+    const d = new Date(body.invoice_date)
+    if (!Number.isNaN(d.getTime())) {
+      d.setDate(d.getDate() + dueDays)
+      body.due_date = d.toISOString().slice(0, 10)
+    }
+  }
+  if ((body.notes == null || body.notes === "") && settings["finance.invoice_terms"]) {
+    body.notes = settings["finance.invoice_terms"]
+  }
+
+  const derived = computeDerived(body, fyStartMonth)
+
+  // Invoice ID is generated on the server — clients never set it. The prefix and
+  // digit count come from Finance Settings (finance.invoice_prefix / _digits).
+  const invoiceId = await nextDocumentId("invoice")
 
   const record: Record<string, any> = { invoice_id: invoiceId }
   for (const field of INPUT_FIELDS) {
@@ -185,7 +218,9 @@ export async function PATCH(req: NextRequest) {
 
   // Merge incoming changes over the stored row, then recompute derived fields.
   const merged = { ...existing, ...body }
-  const derived = computeDerived(merged)
+  const settings = await getSettings()
+  const fyStartMonth = FY_MONTH[settings["app.financial_year_start"]] ?? 3
+  const derived = computeDerived(merged, fyStartMonth)
 
   const update: Record<string, any> = {}
   for (const field of INPUT_FIELDS) {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { hashPassword, verifyPassword } from "@/lib/password"
+import { getNum } from "@/lib/settings/server"
 
 export async function POST(request: Request) {
   const session = await getSession()
@@ -13,8 +14,9 @@ export async function POST(request: Request) {
   if (!currentPassword || !newPassword) {
     return NextResponse.json({ error: "Current and new password are required" }, { status: 400 })
   }
-  if (String(newPassword).length < 8) {
-    return NextResponse.json({ error: "New password must be at least 8 characters" }, { status: 400 })
+  const minLength = await getNum("security.password_min_length", 8)
+  if (String(newPassword).length < minLength) {
+    return NextResponse.json({ error: `New password must be at least ${minLength} characters` }, { status: 400 })
   }
 
   const rows = await query<{ id: number; password_hash: string }[]>(

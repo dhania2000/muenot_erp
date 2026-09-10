@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { requireFeature } from "@/lib/api-auth"
 import { query } from "@/lib/db"
-import { getCallerId, toE164 } from "@/lib/telnyx"
+import { getCallerId, toE164 } from "@/lib/twilio"
 
 export const dynamic = "force-dynamic"
 
@@ -47,8 +47,7 @@ export async function POST(request: Request) {
 
   const leadId = body.lead_id ? Number(body.lead_id) : null
   const toName = body.to_name ? String(body.to_name).slice(0, 190) : null
-  const rawCallId = body.telnyx_call_id ?? body.twilio_call_sid
-  const providerCallId = rawCallId ? String(rawCallId).slice(0, 64) : null
+  const twilioCallSid = body.twilio_call_sid ? String(body.twilio_call_sid).slice(0, 64) : null
   const status = normalizeStatus(body.status) || "Initiated"
   const duration = Number.isFinite(Number(body.duration_seconds)) ? Math.max(0, Math.trunc(Number(body.duration_seconds))) : 0
   const disposition = body.disposition ? String(body.disposition).slice(0, 80) : null
@@ -58,7 +57,7 @@ export async function POST(request: Request) {
     `INSERT INTO sales_calls
        (lead_id, to_number, to_name, from_number, twilio_call_sid, direction, status, duration_seconds, disposition, notes, called_by)
      VALUES (?, ?, ?, ?, ?, 'Outbound', ?, ?, ?, ?, ?)`,
-    [leadId, toNumber, toName, getCallerId() || null, providerCallId, status, duration, disposition, notes, session.userId],
+    [leadId, toNumber, toName, getCallerId() || null, twilioCallSid, status, duration, disposition, notes, session.userId],
   )
 
   return NextResponse.json({ id: result.insertId }, { status: 201 })

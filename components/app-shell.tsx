@@ -7,8 +7,8 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import useSWR from "swr"
-import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MessageSquare, Plus, Search, Settings, ShieldCheck, StickyNote, Ticket, UserPlus, UsersRound } from "lucide-react"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MessageSquare, Moon, Plus, Search, Settings, ShieldCheck, StickyNote, Sun, Ticket, UserPlus, UsersRound } from "lucide-react"
+import { useTheme } from "next-themes"
 import { NotesPanel } from "@/components/notes-panel"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -31,7 +31,9 @@ import {
 
 export type NavChild = {
   label: string
-  href: string
+  /** Optional for grouping-only nodes that expand into nested children. */
+  href?: string
+  children?: NavChild[]
 }
 
 export type NavItem = {
@@ -39,6 +41,9 @@ export type NavItem = {
   href: string
   icon: React.ReactNode
   children?: NavChild[]
+  /** Render as an external anchor (used by the optional custom sidebar link). */
+  external?: boolean
+  openInNewTab?: boolean
 }
 
 function initials(name: string) {
@@ -180,6 +185,82 @@ function ClockControl() {
   )
 }
 
+/** Full-width theme toggle used inside the profile popover so the whole row is clickable. */
+function ThemeModeItem() {
+  const { theme, resolvedTheme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => setMounted(true), [])
+
+  const current = theme === "system" ? resolvedTheme : theme
+  const isDark = mounted ? current === "dark" : true
+
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(isDark ? "light" : "dark")}
+      className="flex items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted"
+    >
+      {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+      {isDark ? "Light mode" : "Dark mode"}
+    </button>
+  )
+}
+
+/** Recursively determines whether a child (or any descendant) matches the current path. */
+function childActive(child: NavChild, pathname: string): boolean {
+  if (child.href && (pathname === child.href || pathname.startsWith(`${child.href.split("?")[0]}/`))) {
+    // Compare including query so ?kind= variants highlight correctly.
+    if (child.href.includes("?")) return pathname + (typeof window !== "undefined" ? window.location.search : "") === child.href
+    return true
+  }
+  return (child.children ?? []).some((c) => childActive(c, pathname))
+}
+
+/** Renders a single leaf link or a nested collapsible sub-group within the sidebar. */
+function NavChildNode({ child, pathname }: { child: NavChild; pathname: string }) {
+  const hasChildren = !!child.children && child.children.length > 0
+  const [open, setOpen] = useState(() => (child.children ?? []).some((c) => childActive(c, pathname)))
+
+  if (hasChildren) {
+    return (
+      <div className="flex flex-col">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+        >
+          {child.label}
+          <ChevronDown className={cn("ml-auto size-3.5 shrink-0 transition-transform", open && "rotate-180")} />
+        </button>
+        {open && (
+          <div className="mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-3 ml-2">
+            {child.children!.map((c) => (
+              <NavChildNode key={c.href ?? c.label} child={c} pathname={pathname} />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const active = pathname === child.href
+  return (
+    <Link
+      href={child.href!}
+      className={cn(
+        "rounded-md px-3 py-1.5 text-sm transition-colors",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+          : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+      )}
+    >
+      {child.label}
+    </Link>
+  )
+}
+
 function NavGroup({
   item,
   pathname,
@@ -213,23 +294,9 @@ function NavGroup({
 
       {open && (
         <div className="mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-3 ml-4">
-          {item.children!.map((child) => {
-            const active = pathname === child.href
-            return (
-              <Link
-                key={child.href}
-                href={child.href}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-sm transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                    : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-                )}
-              >
-                {child.label}
-              </Link>
-            )
-          })}
+          {item.children!.map((child) => (
+            <NavChildNode key={child.href ?? child.label} child={child} pathname={pathname} />
+          ))}
         </div>
       )}
     </div>
@@ -240,10 +307,14 @@ export function AppShell({
   navItems,
   user,
   children,
+  brandName,
+  logoUrl,
 }: {
   navItems: NavItem[]
   user: { name: string; email: string; role: "admin" | "employee" }
   children: React.ReactNode
+  brandName?: string
+  logoUrl?: string
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -261,9 +332,18 @@ export function AppShell({
     router.refresh()
   }
 
+  function flattenChildren(prefix: string, children: NavChild[]): { label: string; href: string }[] {
+    return children.flatMap((child) =>
+      child.children && child.children.length > 0
+        ? flattenChildren(`${prefix} · ${child.label}`, child.children)
+        : child.href
+          ? [{ label: `${prefix} · ${child.label}`, href: child.href }]
+          : [],
+    )
+  }
   const flatNav = navItems.flatMap((item) =>
     item.children && item.children.length > 0
-      ? item.children.map((child) => ({ label: `${item.label} · ${child.label}`, href: child.href }))
+      ? flattenChildren(item.label, item.children)
       : [{ label: item.label, href: item.href }],
   )
   const searchResults = query.trim()
@@ -281,7 +361,13 @@ export function AppShell({
       <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex items-center px-5 py-5">
           <div className="flex items-center px-1 py-1">
-            <Image src="/muenot-logo-transparent.png" alt="Muenot" width={112} height={25} className="h-5 w-auto object-contain" priority />
+            {logoUrl ? (
+              // Company logo from settings can be any host, so use a plain <img>.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={logoUrl || "/placeholder.svg"} alt={brandName || "Logo"} className="h-6 w-auto max-w-[160px] object-contain" />
+            ) : (
+              <Image src="/muenot-logo-transparent.png" alt={brandName || "Muenot"} width={112} height={25} className="h-5 w-auto object-contain" priority />
+            )}
           </div>
         </div>
 
@@ -296,6 +382,20 @@ export function AppShell({
                   open={openGroup === item.href}
                   onToggle={() => setOpenGroup((cur) => (cur === item.href ? null : item.href))}
                 />
+              )
+            }
+            if (item.external) {
+              return (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  target={item.openInNewTab ? "_blank" : undefined}
+                  rel={item.openInNewTab ? "noopener noreferrer" : undefined}
+                  className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+                >
+                  <span className="size-4 shrink-0">{item.icon}</span>
+                  {item.label}
+                </a>
               )
             }
             const active = pathname === item.href
@@ -327,7 +427,7 @@ export function AppShell({
               </div>
               <div className="flex flex-col gap-1 pt-3">
                 {user.role === "admin" && <Link href="/modules/hr/employees" className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted"><UserPlus className="size-4" /> Add employee</Link>}
-                <div className="flex items-center justify-between rounded-md px-2 py-2 text-sm"><span className="flex items-center gap-3"><ThemeToggle /> Dark mode</span></div>
+                <ThemeModeItem />
                 <button type="button" onClick={handleLogout} className="flex items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted"><LogOut className="size-4" /> Logout</button>
               </div>
             </div>
@@ -358,9 +458,10 @@ export function AppShell({
 
       <div className="flex h-full flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3 md:px-8">
-          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">Dashboard</span></div>
+          <div className="flex items-center gap-3"><span className="text-lg font-semibold tracking-tight">{brandName || "Dashboard"}</span></div>
           <div className="flex items-center gap-1">
             <LiveClock />
+            <ClockControl />
             <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>

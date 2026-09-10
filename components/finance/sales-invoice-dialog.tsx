@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select"
 import { Loader2Icon } from "lucide-react"
 import type { InvoiceRow } from "@/components/finance/sales-invoices-client"
+import { inr, financialYearFor } from "@/lib/finance-calc"
 
 const INVOICE_TYPES = ["Tax Invoice", "Proforma Invoice", "Credit Note", "Debit Note", "Export Invoice", "Bill of Supply"]
 const INVOICE_STATUSES = ["Draft", "Issued", "Sent", "Cancelled"]
@@ -37,17 +38,9 @@ const num = (v: any) => {
 }
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
 
-function financialYearFor(dateStr?: string | null) {
-  if (!dateStr) return ""
-  const d = new Date(dateStr)
-  if (Number.isNaN(d.getTime())) return ""
-  const y = d.getFullYear()
-  const start = d.getMonth() >= 3 ? y : y - 1
-  return `${start}-${String((start + 1) % 100).padStart(2, "0")}`
-}
-
-const currency = (n: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(n || 0)
+// financialYearFor (settings-aware start month) and inr (settings-aware currency)
+// come from the shared finance-calc module.
+const currency = (n: number) => inr(n || 0)
 
 type FormState = Record<string, string> & { tds_applicable: string }
 

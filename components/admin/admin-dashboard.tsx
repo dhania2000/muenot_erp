@@ -11,7 +11,7 @@ import { OperationsOverview } from "@/components/operations/operations-dashboard
 import { FinanceOverview } from "@/components/finance/finance-dashboard-client"
 import { HrDashboardClient } from "@/components/hr/hr-dashboard-client"
 import { TicketOverview } from "@/components/tickets/ticket-overview"
-import { ClientOverview } from "@/components/clients/client-overview"
+import { ClientsOverview } from "@/components/clients/clients-overview"
 
 type Metric = {
   label: string
@@ -138,7 +138,7 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
                 : activeTab === "Ticket"
                   ? "Your ticket dashboard right here without leaving the overview."
                   : activeTab === "Client"
-                    ? "Your client dashboard right here without leaving the overview."
+                    ? "Your client directory right here without leaving the overview."
                     : "Welcome back — here's what's happening across your workspace."}
         </p>
       </div>
@@ -191,7 +191,7 @@ export function AdminDashboard({ employeeTotal, employeeActive }: { employeeTota
         </div>
       ) : activeTab === "Client" ? (
         <div className="rounded-xl border border-border bg-card shadow-sm">
-          <ClientOverview />
+          <ClientsOverview />
         </div>
       ) : (
         <>

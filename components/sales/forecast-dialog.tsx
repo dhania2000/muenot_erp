@@ -145,7 +145,7 @@ export function ForecastDialog({
               <div className="grid grid-cols-2 gap-4">
                 <Field>
                   <FieldLabel htmlFor="quarter">Quarter</FieldLabel>
-                  <Select value={form.quarter} onValueChange={(v) => update("quarter", v)}>
+                  <Select value={form.quarter} onValueChange={(v) => update("quarter", v ?? "")}>
                     <SelectTrigger id="quarter" className="w-full">
                       <SelectValue placeholder="Select quarter" />
                     </SelectTrigger>
@@ -208,7 +208,7 @@ export function ForecastDialog({
               <div className="grid grid-cols-2 gap-4">
                 <Field>
                   <FieldLabel htmlFor="pipeline_coverage">Pipeline coverage</FieldLabel>
-                  <Select value={form.pipeline_coverage} onValueChange={(v) => update("pipeline_coverage", v)}>
+                  <Select value={form.pipeline_coverage} onValueChange={(v) => update("pipeline_coverage", v ?? "")}>
                     <SelectTrigger id="pipeline_coverage" className="w-full">
                       <SelectValue placeholder="Select coverage" />
                     </SelectTrigger>

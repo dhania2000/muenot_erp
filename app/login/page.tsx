@@ -1,5 +1,6 @@
 import Image from "next/image"
-import { LoginForm } from "@/components/login-form"
+import { LoginForm, type SocialProviders } from "@/components/login-form"
+import { getPublicSettings } from "@/lib/settings/server"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2 } from "lucide-react"
 
 const modules = [
@@ -10,22 +11,58 @@ const modules = [
   { name: "Operations", icon: Settings2 },
 ]
 
-export default function LoginPage() {
+function enabled(v: string | undefined) {
+  if (!v) return false
+  const t = v.trim().toLowerCase()
+  return t === "enabled" || t === "true" || t === "1" || t === "yes"
+}
+
+export default async function LoginPage() {
+  const settings = await getPublicSettings()
+
+  const brandName = settings["company.name"] || "Muenot"
+  const logo = settings["company.login_logo"] || settings["company.logo"] || ""
+  const loginBackground = settings["theme.login_background"] || ""
+  const tagline = settings["company.website"]
+    ? `${brandName} · ${settings["company.website"]}`
+    : `${brandName} brings HR, Sales, Finance, Recruitment, and Operations together, with permissions your admin controls down to the feature level.`
+
+  const social: SocialProviders = {
+    google: enabled(settings["social.google_enabled"]),
+    linkedin: enabled(settings["social.linkedin_enabled"]),
+    facebook: enabled(settings["social.facebook_enabled"]),
+  }
+  const signupEnabled = enabled(settings["signup.enabled"])
+
+  // Company logo can be any host, so use a plain <img>; fall back to the bundled mark.
+  const BrandMark = ({ className }: { className?: string }) =>
+    logo ? (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={logo || "/placeholder.svg"} alt={brandName} className={className} />
+    ) : (
+      <Image src="/muenot-logo-transparent.png" alt={brandName} width={132} height={30} className={className} priority />
+    )
+
   return (
     <main className="flex min-h-svh flex-col lg:flex-row">
-      <section className="relative hidden flex-1 flex-col justify-between overflow-hidden bg-sidebar p-10 text-sidebar-foreground lg:flex">
-        <div className="flex items-center">
-          <Image src="/muenot-logo-transparent.png" alt="Muenot" width={132} height={30} className="h-6 w-auto object-contain" priority />
+      <section
+        className="relative hidden flex-1 flex-col justify-between overflow-hidden bg-sidebar p-10 text-sidebar-foreground lg:flex"
+        style={
+          loginBackground
+            ? { backgroundImage: `url(${loginBackground})`, backgroundSize: "cover", backgroundPosition: "center" }
+            : undefined
+        }
+      >
+        {loginBackground && <div className="absolute inset-0 bg-sidebar/80" aria-hidden />}
+        <div className="relative flex items-center">
+          <BrandMark className="h-6 w-auto max-w-[160px] object-contain" />
         </div>
 
-        <div className="flex flex-col gap-8">
+        <div className="relative flex flex-col gap-8">
           <h1 className="max-w-md text-balance text-4xl font-semibold leading-tight tracking-tight">
             One workspace to run every part of the business.
           </h1>
-          <p className="max-w-md text-pretty text-sm leading-relaxed text-sidebar-foreground/70">
-            Muenot brings HR, Sales, Finance, Recruitment, and Operations together, with permissions your admin
-            controls down to the feature level.
-          </p>
+          <p className="max-w-md text-pretty text-sm leading-relaxed text-sidebar-foreground/70">{tagline}</p>
 
           <div className="grid grid-cols-2 gap-3">
             {modules.map((m) => (
@@ -40,7 +77,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <p className="text-xs text-sidebar-foreground/50">
+        <p className="relative text-xs text-sidebar-foreground/50">
           Access is granted per employee, per feature — configured by your administrator.
         </p>
       </section>
@@ -49,7 +86,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           <div className="mb-8 flex flex-col gap-1 lg:hidden">
             <div className="mb-4">
-              <Image src="/muenot-logo-transparent.png" alt="Muenot" width={132} height={30} className="h-6 w-auto object-contain" priority />
+              <BrandMark className="h-6 w-auto max-w-[160px] object-contain" />
             </div>
           </div>
 
@@ -58,11 +95,13 @@ export default function LoginPage() {
             <p className="text-sm text-muted-foreground">Enter your credentials to access your workspace.</p>
           </div>
 
-          <LoginForm />
+          <LoginForm social={social} signupEnabled={signupEnabled} />
 
-          <p className="mt-8 text-center text-xs text-muted-foreground">
-            Don&apos;t have access? Ask your administrator to create an account for you.
-          </p>
+          {!signupEnabled && (
+            <p className="mt-8 text-center text-xs text-muted-foreground">
+              Don&apos;t have access? Ask your administrator to create an account for you.
+            </p>
+          )}
         </div>
       </section>
     </main>

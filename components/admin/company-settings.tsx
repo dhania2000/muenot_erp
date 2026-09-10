@@ -64,14 +64,25 @@ export function CompanySettings() {
     return companySettingsSections.filter(
       (s) =>
         s.label.toLowerCase().includes(q) ||
+        s.module.toLowerCase().includes(q) ||
+        s.submodule.toLowerCase().includes(q) ||
         s.fields.some((f) => f.label.toLowerCase().includes(q)),
     )
   }, [search])
+
+  const tree = useMemo(() => getSettingsTree(filteredSections), [filteredSections])
 
   const active = useMemo<SettingSection>(
     () => companySettingsSections.find((s) => s.id === activeId) ?? companySettingsSections[0],
     [activeId],
   )
+
+  // Which module groups are expanded. Defaults to the module of the active
+  // section; while searching, every matching module is expanded.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const searching = search.trim().length > 0
+  const isModuleOpen = (module: string) =>
+    searching ? true : collapsed[module] === undefined ? module === active.module : !collapsed[module]
 
   function setValue(key: string, value: string) {
     setValues((prev) => ({ ...prev, [key]: value }))
@@ -114,27 +125,61 @@ export function CompanySettings() {
             aria-label="Search settings"
           />
         </div>
-        <nav className="flex max-h-[70vh] flex-col gap-0.5 overflow-y-auto pr-1">
-          {filteredSections.map((s) => {
-            const isActive = s.id === active.id
+        <nav className="flex max-h-[70vh] flex-col gap-1 overflow-y-auto pr-1">
+          {tree.map((group) => {
+            const open = isModuleOpen(group.module)
+            const sectionCount = group.submodules.reduce((n, sm) => n + sm.sections.length, 0)
             return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setActiveId(s.id)}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              <div key={group.module} className="flex flex-col">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCollapsed((prev) => ({ ...prev, [group.module]: open }))
+                  }
+                  aria-expanded={open}
+                  className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
+                  <span className="truncate">{group.module}</span>
+                  <span className="ml-auto rounded-full bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+                    {sectionCount}
+                  </span>
+                </button>
+
+                {open && (
+                  <div className="mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2 ml-3.5">
+                    {group.submodules.map((sm) => (
+                      <div key={sm.submodule} className="flex flex-col">
+                        <p className="px-2 pb-0.5 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                          {sm.submodule}
+                        </p>
+                        {sm.sections.map((s) => {
+                          const isActive = s.id === active.id
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => setActiveId(s.id)}
+                              className={cn(
+                                "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors",
+                                isActive
+                                  ? "bg-primary text-primary-foreground"
+                                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                              )}
+                            >
+                              <SectionIcon
+                                name={s.icon}
+                                className={cn("size-4 shrink-0", isActive ? "" : "text-muted-foreground")}
+                              />
+                              <span className="truncate">{s.label}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    ))}
+                  </div>
                 )}
-              >
-                <SectionIcon
-                  name={s.icon}
-                  className={cn("size-4 shrink-0", isActive ? "" : "text-muted-foreground")}
-                />
-                <span className="truncate">{s.label}</span>
-              </button>
+              </div>
             )
           })}
           {filteredSections.length === 0 && (

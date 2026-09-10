@@ -39,7 +39,7 @@ export function QuestionFields({
             {q.type === "textarea" ? (
               <Textarea id={`q-${id}`} rows={3} value={(value as string) || ""} onChange={(e) => onChange(id, e.target.value)} />
             ) : q.type === "select" || q.type === "radio" ? (
-              <Select value={(value as string) || ""} onValueChange={(v) => onChange(id, v)}>
+              <Select value={(value as string) || ""} onValueChange={(v) => onChange(id, v ?? "")}>
                 <SelectTrigger id={`q-${id}`} className="w-full"><SelectValue placeholder="Select an option" /></SelectTrigger>
                 <SelectContent>
                   {q.options.map((opt) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}

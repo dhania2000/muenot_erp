@@ -1,6 +1,9 @@
 // Client-safe constants and helpers shared by the Recruit module UI.
 // No server-only imports here so it can be used from client components.
 
+import { inr0 } from "@/lib/finance-calc"
+import { rtFormatDate, rtFormatDateTime } from "@/lib/settings/runtime"
+
 export type StageKey = "applied" | "phone_screen" | "interview" | "offered" | "hired" | "rejected"
 
 export const APPLICATION_STAGES: { key: StageKey; label: string; tone: string }[] = [
@@ -80,6 +83,9 @@ export function formatMoney(amount?: number | string | null, currency = "INR") {
   if (amount === null || amount === undefined || amount === "") return "—"
   const n = Number(amount)
   if (Number.isNaN(n)) return "—"
+  // For the default currency, honour the configured symbol/position/separators.
+  // A caller-supplied non-default currency code still uses its ISO formatting.
+  if (currency === "INR") return inr0(n)
   try {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 0 }).format(n)
   } catch {
@@ -110,14 +116,14 @@ export function formatDate(value?: string | null) {
   if (!value) return "—"
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return "—"
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+  return rtFormatDate(d)
 }
 
 export function formatDateTime(value?: string | null) {
   if (!value) return "—"
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return "—"
-  return d.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+  return rtFormatDateTime(d)
 }
 
 export type JobQuestion = {

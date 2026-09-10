@@ -9,9 +9,10 @@ export default async function JobApplicationsPage() {
   if (!session) redirect("/login")
   const canView = await userHasFeature(session.userId, session.role, "recruitment.view_applications")
   if (!canView) redirect("/modules/recruitment")
+  const canCall = await userHasFeature(session.userId, session.role, "recruitment.make_calls")
   return (
     <Suspense fallback={null}>
-      <ApplicationsKanbanClient canManage={canView} />
+      <ApplicationsKanbanClient canManage={canView} canCall={canCall} />
     </Suspense>
   )
 }

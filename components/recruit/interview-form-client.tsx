@@ -85,7 +85,7 @@ export function InterviewFormClient() {
           <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field className="sm:col-span-2">
               <FieldLabel htmlFor="application">Link to application</FieldLabel>
-              <Select value={form.application_id || "none"} onValueChange={pickApplication}>
+              <Select value={form.application_id || "none"} onValueChange={(v) => pickApplication(v ?? "")}>
                 <SelectTrigger id="application" className="w-full"><SelectValue placeholder="Select an application" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Not linked</SelectItem>
@@ -119,7 +119,7 @@ export function InterviewFormClient() {
             </Field>
             <Field>
               <FieldLabel htmlFor="mode">Mode</FieldLabel>
-              <Select value={form.mode} onValueChange={(v) => update("mode", v)}>
+              <Select value={form.mode} onValueChange={(v) => update("mode", v ?? "")}>
                 <SelectTrigger id="mode" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {INTERVIEW_MODES.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
@@ -132,7 +132,7 @@ export function InterviewFormClient() {
             </Field>
             <Field>
               <FieldLabel htmlFor="status">Status</FieldLabel>
-              <Select value={form.status} onValueChange={(v) => update("status", v)}>
+              <Select value={form.status} onValueChange={(v) => update("status", v ?? "")}>
                 <SelectTrigger id="status" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {INTERVIEW_STATUSES.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}

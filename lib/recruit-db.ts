@@ -213,23 +213,122 @@ export async function deleteApplication(applicationId: string) {
 // ---------------------------------------------------------------------------
 // Candidate database (aggregated from applications)
 // ---------------------------------------------------------------------------
-export async function listCandidates() {
-  return query<any[]>(
-    `SELECT
-        candidate_name, email,
-        MAX(phone) AS phone,
-        MAX(location) AS location,
-        MAX(current_company) AS current_company,
-        MAX(experience) AS experience,
-        COUNT(*) AS applications_count,
-        GROUP_CONCAT(DISTINCT job_title SEPARATOR ', ') AS jobs,
-        MAX(rating) AS rating,
-        MAX(applied_at) AS last_applied
+// A candidate may apply to many jobs; each of those stays a separate row in
+// recruit_applications (and in the Job Applications view). The Candidate
+// Database, however, must show each real person exactly once. Two applications
+// belong to the same person when they share a normalized email OR a normalized
+// phone number. Because that "email OR phone" match is transitive (A shares an
+// email with B, B shares a phone with C => A, B and C are one person), we can't
+// express it with a plain SQL GROUP BY. Instead we pull the raw rows and merge
+// them with a small union-find pass.
+function normalizeEmail(email: unknown): string | null {
+  const v = String(email ?? "").trim().toLowerCase()
+  return v || null
+}
+
+function normalizePhone(phone: unknown): string | null {
+  const digits = String(phone ?? "").replace(/\D/g, "")
+  if (!digits) return null
+  // Compare on the last 10 digits so country-code / formatting differences
+  // (e.g. +91 98765 43210 vs 9876543210) still resolve to the same person.
+  return digits.length > 10 ? digits.slice(-10) : digits
+}
+
+type CandidateAggregate = {
+  candidate_name: string
+  email: string | null
+  phone: string | null
+  location: string | null
+  current_company: string | null
+  experience: string | null
+  applications_count: number
+  jobs: string | null
+  rating: number
+  last_applied: string
+}
+
+export async function listCandidates(): Promise<CandidateAggregate[]> {
+  // Newest first so "most recent non-empty value wins" is a simple first-write.
+  const rows = await query<any[]>(
+    `SELECT candidate_name, email, phone, location, current_company, experience,
+            job_title, rating, applied_at
      FROM recruit_applications
-     GROUP BY candidate_name, email
-     ORDER BY last_applied DESC
-     LIMIT 1000`,
+     ORDER BY applied_at DESC
+     LIMIT 5000`,
   )
+
+  // Union-find over application indexes, linked by shared email / phone keys.
+  const parent: number[] = rows.map((_, i) => i)
+  const find = (x: number): number => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]]
+      x = parent[x]
+    }
+    return x
+  }
+  const union = (a: number, b: number) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent[ra] = rb
+  }
+
+  const emailOwner = new Map<string, number>()
+  const phoneOwner = new Map<string, number>()
+  rows.forEach((r, i) => {
+    const e = normalizeEmail(r.email)
+    if (e) {
+      const prev = emailOwner.get(e)
+      if (prev === undefined) emailOwner.set(e, i)
+      else union(prev, i)
+    }
+    const p = normalizePhone(r.phone)
+    if (p) {
+      const prev = phoneOwner.get(p)
+      if (prev === undefined) phoneOwner.set(p, i)
+      else union(prev, i)
+    }
+  })
+
+  // Fold each group into a single aggregated candidate. Rows are already sorted
+  // newest-first, so the first non-empty value we see for a field is the latest.
+  const groups = new Map<number, CandidateAggregate & { _jobs: Set<string> }>()
+  rows.forEach((r, i) => {
+    const root = find(i)
+    let g = groups.get(root)
+    if (!g) {
+      g = {
+        candidate_name: r.candidate_name || "—",
+        email: normalizeEmail(r.email),
+        phone: r.phone || null,
+        location: r.location || null,
+        current_company: r.current_company || null,
+        experience: r.experience || null,
+        applications_count: 0,
+        jobs: null,
+        rating: 0,
+        last_applied: r.applied_at,
+        _jobs: new Set<string>(),
+      }
+      groups.set(root, g)
+    }
+    g.applications_count += 1
+    if (!g.email) g.email = normalizeEmail(r.email)
+    if (!g.phone && r.phone) g.phone = r.phone
+    if (!g.location && r.location) g.location = r.location
+    if (!g.current_company && r.current_company) g.current_company = r.current_company
+    if (!g.experience && r.experience) g.experience = r.experience
+    if (r.job_title) g._jobs.add(r.job_title)
+    const rating = Number(r.rating) || 0
+    if (rating > g.rating) g.rating = rating
+    if (r.applied_at && (!g.last_applied || r.applied_at > g.last_applied)) g.last_applied = r.applied_at
+  })
+
+  return Array.from(groups.values())
+    .map(({ _jobs, ...rest }) => ({
+      ...rest,
+      jobs: _jobs.size ? Array.from(_jobs).join(", ") : null,
+    }))
+    .sort((a, b) => String(b.last_applied || "").localeCompare(String(a.last_applied || "")))
 }
 
 // ---------------------------------------------------------------------------

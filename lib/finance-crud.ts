@@ -6,6 +6,7 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
+import { ensureFreelanceInvoiceColumns } from "@/lib/finance-ensure"
 
 /** Column keys a client is allowed to write (everything except computed fields). */
 function inputKeys(cfg: ModuleConfig) {
@@ -43,10 +44,17 @@ export function createFinanceHandlers(moduleKey: string) {
   if (!cfg) throw new Error(`Unknown finance module: ${moduleKey}`)
   const keys = inputKeys(cfg)
 
+  // Modules with invoice actions carry a few extra columns (recipient email +
+  // send tracking) that aren't in the base migration. Self-heal them once.
+  const ensureSchema = async () => {
+    if (moduleKey === "freelance-invoices") await ensureFreelanceInvoiceColumns()
+  }
+
   async function GET(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    await ensureSchema()
     const { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
     const orderBy = cfg.dateColumn ? `x.${cfg.dateColumn} DESC, x.id DESC` : "x.id DESC"
 
@@ -79,6 +87,7 @@ export function createFinanceHandlers(moduleKey: string) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    await ensureSchema()
     const body = await req.json()
     const derived = cfg.compute ? cfg.compute(body) : {}
 

@@ -2,5 +2,7 @@ minimumReleaseAgeExclude:
   - '@next/*'
   - next
 
-onlyBuiltDependencies:
-  - core-js
+# pnpm v11 removed onlyBuiltDependencies/ignoredBuiltDependencies in favor of allowBuilds.
+# core-js's postinstall only prints a funding banner, so it is reviewed and denied.
+allowBuilds:
+  core-js: false

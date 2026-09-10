@@ -5,7 +5,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink } from "lucide-react"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink, Megaphone } from "lucide-react"
 
 function settingEnabled(v: string | undefined, fallback = true) {
   if (v == null) return fallback
@@ -23,7 +23,22 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
   tickets: <TicketCheck className="size-4" />,
   products: <Package className="size-4" />,
   legal: <Scale className="size-4" />,
+  marketing: <Megaphone className="size-4" />,
 }
+
+// Marketing sub-pages shown in the sidebar dropdown. The Marketing module is
+// not (yet) stored in the `modules` table, so it is injected into the sidebar
+// directly below and its children are not permission-gated.
+const MARKETING_CHILDREN: NavChild[] = [
+  { label: "Dashboard", href: "/modules/marketing/dashboard" },
+  { label: "Contacts", href: "/modules/marketing/contacts" },
+  { label: "Lead Generation", href: "/modules/marketing/lead-generation" },
+  { label: "Journeys", href: "/modules/marketing/journeys" },
+  { label: "Marketing Planner", href: "/modules/marketing/planner" },
+  { label: "Marketing Campaigns", href: "/modules/marketing/campaigns" },
+  { label: "Website Analytics", href: "/modules/marketing/website-analytics" },
+  { label: "Library", href: "/modules/marketing/library" },
+]
 
 type FeatureChild = { label: string; href?: string; feature?: string; children?: FeatureChild[] }
 
@@ -183,6 +198,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
       return item
     }),
   ]
+
+  // Inject the Marketing module (not stored in the modules table) so the
+  // sidebar always exposes it and its sub-pages.
+  if (!navItems.some((i) => i.href === "/modules/marketing")) {
+    navItems.push({
+      label: "Marketing",
+      href: "/modules/marketing",
+      icon: <Megaphone className="size-4" />,
+      children: MARKETING_CHILDREN,
+    })
+  }
 
   // Optional custom sidebar link driven by Custom Link Settings.
   if (settingEnabled(settings["customlink.enabled"], false) && settings["customlink.url"]) {

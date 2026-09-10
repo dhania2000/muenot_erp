@@ -14,9 +14,6 @@ importers:
       '@radix-ui/react-alert-dialog':
         specifier: ^1.1.23
         version: 1.1.23(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@telnyx/webrtc':
-        specifier: ^2.27.10
-        version: 2.27.10
       '@vercel/analytics':
         specifier: 1.6.1
         version: 1.6.1(next@16.3.3(@babel/core@7.29.7)(@types/node@24.10.4)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react@19.2.4)
@@ -582,10 +579,6 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@peermetrics/webrtc-stats@5.9.0':
-    resolution: {integrity: sha512-eQYGGdj+H4MUEuwbccy9bxRV3uAqPM5+Say9PSx/alrtv5ccmKCqGfLbqXrRJ/qThZvjZNBna5K/YnCWoaTQBw==}
-    engines: {node: '>=18'}
-
   '@radix-ui/primitive@1.1.7':
     resolution: {integrity: sha512-rqWnm76nYT8HoNNqEjpgJ7Pw/DrBj5iBTrmEPo6HTX5+VJyBNOqTdv4g89G63HuR5g0AaENoAcH7Is5fF2kZ8Q==}
 
@@ -879,10 +872,6 @@ packages:
 
   '@tailwindcss/postcss@4.3.3':
     resolution: {integrity: sha512-JTSZZGQi1AyKirbLN3azmjVzef92tcX7h+iSqPdaeStyFpGpDlKvvpxeOE8njhbUanbRwr3z8DyzhICWnMtQeg==}
-
-  '@telnyx/webrtc@2.27.10':
-    resolution: {integrity: sha512-Hw9m1xGkoO6muXsEwVh53seHO+hCaO+w7GLZE8zAA2ESrwRK0H1bBv60fEGBEAiRjHiVicRSDlzQkjCj3iBbHQ==}
-    engines: {node: '>=14.x'}
 
   '@ts-morph/common@0.27.0':
     resolution: {integrity: sha512-Wf29UqxWDpc+i61k3oIOzcUfQt79PIT9y/MWfAGlrkjg6lBC1hwDECLXPVJAhWjiGbfBCxZd65F/LIZF3+jeJQ==}
@@ -1375,10 +1364,6 @@ packages:
   eventemitter3@5.0.4:
     resolution: {integrity: sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw==}
 
-  events@3.3.0:
-    resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
-    engines: {node: '>=0.8.x'}
-
   eventsource-parser@3.1.0:
     resolution: {integrity: sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==}
     engines: {node: '>=18.0.0'}
@@ -1825,10 +1810,6 @@ packages:
   log-symbols@6.0.0:
     resolution: {integrity: sha512-i24m8rpwhmPIS4zscNzK6MSEhk0DUWa/8iYQWxhffV8jkI4Phvs3F+quL5xvS0gdQR0FyTCMMH33Y78dDTzzIw==}
     engines: {node: '>=18'}
-
-  loglevel@1.9.2:
-    resolution: {integrity: sha512-HgMmCqIJSAKqo68l0rS2AanEWfkxaZ5wNiEFb5ggm08lDs9Xl2KxBlX3PTcaD2chBM1gXAYf491/M2Rv8Jwayg==}
-    engines: {node: '>= 0.6.0'}
 
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
@@ -2483,16 +2464,6 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  uuid@7.0.3:
-    resolution: {integrity: sha512-DPSke0pXhTZgoF/d+WSt2QaKMCFSfx7QegxEWT+JOuHF5aWrKEn0G+ztjuJg/gG8/ItK+rbPCD/yNv8yyih6Cg==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
-    hasBin: true
-
-  uuid@8.3.2:
-    resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
-    hasBin: true
-
   validate-npm-package-name@7.0.2:
     resolution: {integrity: sha512-hVDIBwsRruT73PbK7uP5ebUt+ezEtCmzZz3F59BSr2F6OVFnJ/6h8liuvdLrQ88Xmnk6/+xGGuq+pG9WwTuy3A==}
     engines: {node: ^20.17.0 || >=22.9.0}
@@ -3026,11 +2997,6 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@peermetrics/webrtc-stats@5.9.0':
-    dependencies:
-      events: 3.3.0
-      uuid: 8.3.2
-
   '@radix-ui/primitive@1.1.7': {}
 
   '@radix-ui/react-alert-dialog@1.1.23(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
@@ -3273,12 +3239,6 @@ snapshots:
       '@tailwindcss/oxide': 4.3.3
       postcss: 8.5.19
       tailwindcss: 4.3.3
-
-  '@telnyx/webrtc@2.27.10':
-    dependencies:
-      '@peermetrics/webrtc-stats': 5.9.0
-      loglevel: 1.9.2
-      uuid: 7.0.3
 
   '@ts-morph/common@0.27.0':
     dependencies:
@@ -3670,8 +3630,6 @@ snapshots:
   etag@1.8.1: {}
 
   eventemitter3@5.0.4: {}
-
-  events@3.3.0: {}
 
   eventsource-parser@3.1.0: {}
 
@@ -4106,8 +4064,6 @@ snapshots:
     dependencies:
       chalk: 5.6.2
       is-unicode-supported: 1.3.0
-
-  loglevel@1.9.2: {}
 
   long@5.3.2: {}
 
@@ -4769,10 +4725,6 @@ snapshots:
       react: 19.2.4
 
   util-deprecate@1.0.2: {}
-
-  uuid@7.0.3: {}
-
-  uuid@8.3.2: {}
 
   validate-npm-package-name@7.0.2: {}
 

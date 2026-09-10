@@ -23,7 +23,6 @@ import {
 } from "@/components/ui/dialog"
 import { KanbanSquare, Mail, MapPin, Phone, Plus, Trash2 } from "lucide-react"
 import { PageHeader, RatingStars } from "@/components/recruit/recruit-shared"
-import { CallDialer, type CallTarget } from "@/components/shared/call-dialer"
 import { RecruitComposeEmailDialog, type ComposeTarget } from "@/components/recruit/recruit-compose-email-dialog"
 import {
   Table,
@@ -57,23 +56,16 @@ type Application = {
   applied_at: string
 }
 
-export function ApplicationsKanbanClient({ canManage, canCall = false }: { canManage: boolean; canCall?: boolean }) {
+export function ApplicationsKanbanClient({ canManage }: { canManage: boolean }) {
   const params = useSearchParams()
   const initialJob = params.get("jobId") || "all"
   const [jobFilter, setJobFilter] = useState(initialJob)
   const { data, isLoading, mutate } = useSWR<{ applications: Application[] }>("/api/recruit/applications", fetcher)
   const { data: jobData } = useSWR<{ jobs: Job[] }>("/api/recruit/jobs", fetcher)
   const [active, setActive] = useState<Application | null>(null)
-  const [callOpen, setCallOpen] = useState(false)
-  const [callTarget, setCallTarget] = useState<CallTarget | null>(null)
   const [stageFilter, setStageFilter] = useState<string>("all")
   const [composeOpen, setComposeOpen] = useState(false)
   const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null)
-
-  function startCall(app: Application) {
-    setCallTarget({ id: app.id, name: app.candidate_name, number: app.phone })
-    setCallOpen(true)
-  }
 
   function startEmail(app: Application) {
     setComposeTarget({
@@ -261,17 +253,6 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
                       >
                         <Mail className="size-4" />
                       </Button>
-                      {canCall && (
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          aria-label="Call candidate"
-                          disabled={!app.phone}
-                          onClick={() => startCall(app)}
-                        >
-                          <Phone className="size-4" />
-                        </Button>
-                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -294,11 +275,6 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
                   {active.email && <span className="inline-flex items-center gap-1.5"><Mail className="size-3.5" />{active.email}</span>}
                   {active.phone && <span className="inline-flex items-center gap-1.5"><Phone className="size-3.5" />{active.phone}</span>}
                   {active.location && <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5" />{active.location}</span>}
-                  {canCall && active.phone && (
-                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => startCall(active)}>
-                      <Phone className="size-3.5" /> Call
-                    </Button>
-                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Detail label="Experience" value={active.experience} />
@@ -355,18 +331,6 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
           )}
         </DialogContent>
       </Dialog>
-
-      {canCall && (
-        <CallDialer
-          open={callOpen}
-          onOpenChange={setCallOpen}
-          target={callTarget}
-          apiBase="/api/recruit/calls"
-          subjectKey="application_id"
-          title={callTarget?.name ? `Call ${callTarget.name}` : "Call applicant"}
-          onLogged={() => mutate()}
-        />
-      )}
 
       <RecruitComposeEmailDialog open={composeOpen} onOpenChange={setComposeOpen} target={composeTarget} />
     </main>

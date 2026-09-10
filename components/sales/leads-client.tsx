@@ -30,11 +30,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Mail, MoreHorizontal, Phone, Plus, Search } from "lucide-react"
+import { Mail, MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { LeadDialog } from "@/components/sales/lead-dialog"
 import { ComposeEmailDialog } from "@/components/sales/compose-email-dialog"
-import { CallDialer, type CallTarget } from "@/components/sales/call-dialer"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
@@ -177,7 +176,7 @@ function effectiveLeadStatus(lead: LeadRow): LeadStatus {
   return "Open"
 }
 
-export function LeadsClient({ canManage, canCall = false }: { canManage: boolean; canCall?: boolean }) {
+export function LeadsClient({ canManage }: { canManage: boolean }) {
   const { data, isLoading, mutate } = useSWR<{ leads: LeadRow[] }>("/api/sales/leads", fetcher)
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all")
   const [search, setSearch] = useState("")
@@ -185,8 +184,6 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
   const [editing, setEditing] = useState<LeadRow | null>(null)
   const [emailLead, setEmailLead] = useState<LeadRow | null>(null)
   const [emailOpen, setEmailOpen] = useState(false)
-  const [callTarget, setCallTarget] = useState<CallTarget | null>(null)
-  const [callOpen, setCallOpen] = useState(false)
 
   const leads = data?.leads ?? []
 
@@ -441,23 +438,6 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
                     >
                       <Mail data-icon="inline-start" /> Email
                     </Button>
-                    {canCall && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!lead.contact_number}
-                        onClick={() => {
-                          setCallTarget({
-                            id: lead.id,
-                            name: lead.contact_person || lead.company_name,
-                            number: lead.contact_number,
-                          })
-                          setCallOpen(true)
-                        }}
-                      >
-                        <Phone data-icon="inline-start" /> Call
-                      </Button>
-                    )}
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground">{lead.assigned_to_name || "Unassigned"}</TableCell>
@@ -499,15 +479,6 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
         emailConfigured={true}
         initialLead={emailLead}
       />
-
-      {canCall && (
-        <CallDialer
-          open={callOpen}
-          onOpenChange={setCallOpen}
-          target={callTarget}
-          onLogged={() => mutate()}
-        />
-      )}
 
       <LeadDialog
         open={dialogOpen}

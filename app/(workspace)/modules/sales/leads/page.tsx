@@ -9,7 +9,6 @@ export default async function LeadsPage() {
   const canView = await userHasFeature(session.userId, session.role, "sales.view_leads")
   if (!canView) redirect("/modules/sales")
   const canManage = await userHasFeature(session.userId, session.role, "sales.manage_leads")
-  const canCall = await userHasFeature(session.userId, session.role, "sales.make_calls")
 
-  return <LeadsClient canManage={canManage} canCall={canCall} />
+  return <LeadsClient canManage={canManage} />
 }

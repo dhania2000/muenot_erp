@@ -26,6 +26,7 @@ import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { OnboardingDialog } from "@/components/sales/onboarding-dialog"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ImportButton } from "@/components/import-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type OnboardingRow = {
@@ -89,6 +90,7 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
           />
         </div>
         <div className="flex items-center gap-2">
+          {canManage && <ImportButton moduleKey="sales-onboarding" onImported={() => mutate()} />}
           <ExcelExportButton
             rows={filtered}
             filename="onboarding"

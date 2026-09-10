@@ -26,6 +26,7 @@ import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { EmailTemplateDialog } from "@/components/sales/email-template-dialog"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ImportButton } from "@/components/import-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type EmailTemplateRow = {
@@ -83,6 +84,7 @@ export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {
           />
         </div>
         <div className="flex items-center gap-2">
+          {canManage && <ImportButton moduleKey="sales-email-templates" onImported={() => mutate()} />}
           <ExcelExportButton
             rows={filtered}
             filename="sales-email-templates"

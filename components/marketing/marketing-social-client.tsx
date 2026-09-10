@@ -278,7 +278,7 @@ export function MarketingSocialClient() {
   const totalReach = accounts.reduce((s, a) => s + a.followers, 0)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <MarketingHeader
         eyebrow="Marketing Campaigns"
         title="Social Campaigns"

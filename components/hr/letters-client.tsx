@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Mail, Plus, Eye, Printer, Trash2 } from "lucide-react"
 import { LETTER_TYPES } from "@/lib/hr-letters"
+import { ExcelExportButton } from "@/components/excel-export-button"
 
 type Letter = { id: number; letter_number: string; employee_name: string; employee_code: string; designation: string; department: string; letter_type: string; subject: string; body: string; issue_date: string; status: string }
 type Template = { id: number; name: string; letter_type: string; subject: string; body: string }
@@ -55,7 +56,10 @@ export function LettersClient() {
           <div className="flex items-center gap-3"><Mail className="size-7 text-primary" /><h1 className="text-2xl font-semibold">Letters</h1></div>
           <p className="mt-1 text-sm text-muted-foreground">Issue letters to employees. Placeholders merge with employee and company details at creation.</p>
         </div>
-        <Button onClick={openNew}><Plus data-icon="inline-start" />Issue letter</Button>
+        <div className="flex items-center gap-2">
+          <ExcelExportButton rows={data?.letters || []} filename="letters" columns={[{ header: "Ref", value: (r: any) => r.letter_number },{ header: "Employee", value: (r: any) => r.employee_name },{ header: "Employee Code", value: (r: any) => r.employee_code },{ header: "Designation", value: (r: any) => r.designation },{ header: "Department", value: (r: any) => r.department },{ header: "Type", value: (r: any) => r.letter_type },{ header: "Subject", value: (r: any) => r.subject },{ header: "Issued", value: (r: any) => r.issue_date },{ header: "Status", value: (r: any) => r.status }]} />
+          <Button onClick={openNew}><Plus data-icon="inline-start" />Issue letter</Button>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border bg-card">

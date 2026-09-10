@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Award, Download, Mail } from "lucide-react"
+import { ExcelExportButton } from "@/components/excel-export-button"
 
 const sections = {
   departments: { label: "Departments", fields: ["department_id", "department_name", "parent_department_id", "head_employee_id", "description", "status"] },
@@ -108,12 +109,19 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(sections).map(([key, v]) => (
-          <Button key={key} variant={key === kind ? "default" : "outline"} onClick={() => setKind(key as Kind)}>
-            {v.label}
-          </Button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(sections).map(([key, v]) => (
+            <Button key={key} variant={key === kind ? "default" : "outline"} onClick={() => setKind(key as Kind)}>
+              {v.label}
+            </Button>
+          ))}
+        </div>
+        <ExcelExportButton
+          rows={data?.rows || []}
+          filename={kind}
+          columns={c.fields.map((f) => ({ header: f.replaceAll("_", " "), value: (r: any) => r[f] }))}
+        />
       </div>
 
       <section className="rounded-xl border bg-card p-5">

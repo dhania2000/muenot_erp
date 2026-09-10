@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog"
 import { FileText, Plus, Pencil, Trash2 } from "lucide-react"
 import { LETTER_TYPES, LETTER_PLACEHOLDERS } from "@/lib/hr-letters"
+import { ExcelExportButton } from "@/components/excel-export-button"
 
 type Template = { id: number; name: string; letter_type: string; subject: string; body: string; status: string }
 const empty = { name: "", letter_type: "Offer Letter", subject: "", body: "", status: "Active" }
@@ -49,7 +50,10 @@ export function LetterTemplatesClient() {
           <div className="flex items-center gap-3"><FileText className="size-7 text-primary" /><h1 className="text-2xl font-semibold">Letter Templates</h1></div>
           <p className="mt-1 text-sm text-muted-foreground">Reusable letter content with placeholders that auto-fill from employee and company data.</p>
         </div>
-        <Button onClick={openNew}><Plus data-icon="inline-start" />New template</Button>
+        <div className="flex items-center gap-2">
+          <ExcelExportButton rows={data?.templates || []} filename="letter-templates" columns={[{ header: "Name", value: (r: any) => r.name },{ header: "Type", value: (r: any) => r.letter_type },{ header: "Subject", value: (r: any) => r.subject },{ header: "Status", value: (r: any) => r.status }]} />
+          <Button onClick={openNew}><Plus data-icon="inline-start" />New template</Button>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border bg-card">

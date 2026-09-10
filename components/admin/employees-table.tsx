@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, ShieldCheck } from "lucide-react"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { InviteEmployeeDialog } from "@/components/admin/invite-employee-dialog"
 import { PermissionsDialog } from "@/components/admin/permissions-dialog"
 import type { ModuleRow, FeatureRow } from "@/lib/permissions"
@@ -76,7 +77,19 @@ export function EmployeesTable({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-2">
+        <ExcelExportButton
+          rows={employees}
+          filename="admin-employees"
+          columns={[
+            { header: "Name", value: (r: EmployeeRow) => r.name },
+            { header: "Email", value: (r: EmployeeRow) => r.email },
+            { header: "Role", value: (r: EmployeeRow) => r.role },
+            { header: "Designation", value: (r: EmployeeRow) => r.designation },
+            { header: "Status", value: (r: EmployeeRow) => r.status },
+            { header: "Created", value: (r: EmployeeRow) => r.created_at },
+          ]}
+        />
         <Button onClick={() => setInviteOpen(true)}>
           <Plus />
           Invite employee

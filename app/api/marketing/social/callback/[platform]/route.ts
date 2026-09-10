@@ -61,32 +61,43 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
 
     const identity = await fetchIdentity({ platform, type, tokens })
 
-    await upsertSocialAccount({
-      platform,
-      accountType: type,
-      connectedByUserId: session.userId,
-      externalId: identity.externalId,
-      handle: identity.handle,
-      displayName: identity.displayName,
-      ownerName: type === "personal" ? session.name : null,
-      followers: identity.followers,
-      accessToken: identity.accessToken,
-      refreshToken: tokens.refreshToken,
-      tokenExpiresAt: tokens.expiresAt,
-      pageId: identity.pageId,
-      scope: tokens.scope,
-    })
+    try {
+      await upsertSocialAccount({
+        platform,
+        accountType: type,
+        connectedByUserId: session.userId,
+        externalId: identity.externalId,
+        handle: identity.handle,
+        displayName: identity.displayName,
+        ownerName: type === "personal" ? session.name : null,
+        followers: identity.followers,
+        accessToken: identity.accessToken,
+        refreshToken: tokens.refreshToken,
+        tokenExpiresAt: tokens.expiresAt,
+        pageId: identity.pageId,
+        scope: tokens.scope,
+      })
+    } catch (dbErr: any) {
+      // Never report a successful connection if persistence failed.
+      throw new Error(`dbsave:${dbErr?.code || dbErr?.message || "unknown"}`)
+    }
 
     returnUrl.searchParams.set("social", "connected")
     returnUrl.searchParams.set("platform", platform)
     return NextResponse.redirect(returnUrl)
   } catch (err: any) {
     const message = String(err?.message || "")
+    // Log server-side only; the reason strings below never contain the code,
+    // access token or client secret.
     console.error("[v0] Social OAuth callback failed:", message)
     if (message.includes("noadmin")) return fail("noadmin")
     if (message.includes("noorgscope")) return fail("noorgscope")
     if (message.includes("nopage")) return fail("nopage")
     if (message.includes("noig")) return fail("noig")
+    if (message.includes("_token")) return fail("tokenfail")
+    if (message.includes("_account") || message.includes("_userinfo") || message.includes("_pages"))
+      return fail("profilefail")
+    if (message.includes("dbsave")) return fail("dbsave")
     return fail("error")
   }
 }

@@ -277,23 +277,34 @@ async function instagramToken(a: { code: string; redirectUri: string; clientId: 
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form,
   })
-  const shortJson = await shortRes.json()
-  if (!shortRes.ok || !shortJson.access_token) throw new Error(`instagram_token:${shortRes.status}`)
+  const shortJson = await shortRes.json().catch(() => ({}) as any)
 
-  // 2. exchange for a 60-day long-lived token
+  // The Business Login for Instagram token endpoint may return the payload
+  // either flat ({ access_token, user_id, permissions }) or wrapped in a data
+  // array ({ data: [{ access_token, user_id, permissions }] }). Normalize both
+  // so a valid authorization is never dropped just because of the envelope.
+  const payload = Array.isArray(shortJson?.data) ? shortJson.data[0] : shortJson
+  const shortToken: string | undefined = payload?.access_token
+  if (!shortRes.ok || !shortToken) {
+    // Surface Instagram's own error text (never the token) for diagnosis.
+    const detail = shortJson?.error_message || shortJson?.error?.message || `status ${shortRes.status}`
+    throw new Error(`instagram_token:${detail}`)
+  }
+
+  // 2. exchange for a 60-day long-lived token (best effort)
   const longParams = new URLSearchParams({
     grant_type: "ig_exchange_token",
     client_secret: a.clientSecret,
-    access_token: shortJson.access_token,
+    access_token: shortToken,
   })
   const longRes = await fetch(`https://graph.instagram.com/access_token?${longParams.toString()}`)
-  const longJson = await longRes.json().catch(() => ({}))
+  const longJson = await longRes.json().catch(() => ({}) as any)
 
-  const accessToken: string = longRes.ok && longJson.access_token ? longJson.access_token : shortJson.access_token
+  const accessToken: string = longRes.ok && longJson.access_token ? longJson.access_token : shortToken
   const expiresAt = longRes.ok ? expiresAtFrom(longJson.expires_in) : null
-  const scope = Array.isArray(shortJson.permissions)
-    ? shortJson.permissions.join(",")
-    : shortJson.permissions ?? null
+  const scope = Array.isArray(payload.permissions)
+    ? payload.permissions.join(",")
+    : payload.permissions ?? null
 
   return { accessToken, refreshToken: null, expiresAt, scope }
 }
@@ -382,18 +393,31 @@ async function facebookIdentity(userAccessToken: string): Promise<ConnectedIdent
 
 async function instagramIdentity(accessToken: string): Promise<ConnectedIdentity> {
   // Instagram API with Instagram Login: the account is resolved directly from
-  // the Instagram Graph, NOT through Facebook Pages.
-  const res = await fetch(
-    `https://graph.instagram.com/me?fields=user_id,username,account_type,followers_count&access_token=${encodeURIComponent(accessToken)}`,
-  )
-  const json = await res.json()
-  if (!res.ok || !(json.user_id || json.id)) throw new Error(`instagram_account:${res.status}`)
-  const igId = String(json.user_id ?? json.id)
+  // the Instagram Graph, NOT through Facebook Pages. followers_count/name can
+  // be unavailable on some accounts and would fail the whole request, so we
+  // fall back to the minimal core fields (id + username) that always resolve.
+  const enc = encodeURIComponent(accessToken)
+  const base = "https://graph.instagram.com/me"
+
+  let res = await fetch(`${base}?fields=user_id,username,name,account_type,followers_count&access_token=${enc}`)
+  let json = await res.json().catch(() => ({}) as any)
+  if (!res.ok) {
+    res = await fetch(`${base}?fields=user_id,username&access_token=${enc}`)
+    json = await res.json().catch(() => ({}) as any)
+  }
+
+  // Instagram returns the profile id as `user_id` (Instagram Login) or `id`.
+  const rawId = json.user_id ?? json.id
+  if (!res.ok || !rawId) {
+    const detail = json?.error?.message || `status ${res.status}`
+    throw new Error(`instagram_account:${detail}`)
+  }
+  const igId = String(rawId)
   return {
     externalId: igId,
     handle: json.username ? `@${json.username}` : `@ig_${igId}`,
-    displayName: json.username ?? null,
-    followers: json.followers_count ?? null,
+    displayName: json.name ?? json.username ?? null,
+    followers: typeof json.followers_count === "number" ? json.followers_count : null,
     accessToken, // Instagram user token drives publishing in this flow
     pageId: igId,
   }

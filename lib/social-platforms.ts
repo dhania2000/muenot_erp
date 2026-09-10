@@ -36,7 +36,8 @@ export const SOCIAL_PLATFORMS: SocialPlatformMeta[] = [
     color: "#E4405F",
     limit: 2200,
     requiresImage: true,
-    setupHint: "Instagram publishing requires a Meta app with an Instagram Business account linked to a Facebook Page.",
+    setupHint:
+      "Instagram uses Business Login for Instagram (INSTAGRAM_APP_ID/SECRET). Connect an Instagram professional (Business or Creator) account — no Facebook Page link required.",
   },
   {
     id: "x",

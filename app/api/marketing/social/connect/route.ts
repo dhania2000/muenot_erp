@@ -24,14 +24,17 @@ function isPlatformId(value: string | null): value is SocialPlatformId {
 }
 
 export function resolveOrigin(request: Request, fallback: string) {
-  // Prefer the pinned base, then proxy-forwarded host (real public host),
-  // and only fall back to the raw request origin (which in dev is the
-  // 0.0.0.0 bind address that OAuth providers will reject).
-  if (process.env.SOCIAL_REDIRECT_BASE) {
-    return process.env.SOCIAL_REDIRECT_BASE.replace(/\/$/, "")
-  }
+  // Prefer the pinned base, then the app's configured public URL, then the
+  // proxy-forwarded host, and only fall back to the raw request origin (which
+  // in dev is the 0.0.0.0 bind address that OAuth providers reject). Every
+  // provider's OAuth redirect URI must be an exact, stable public URL — the
+  // callback here MUST resolve to the same origin used to build the authorize
+  // request, so we never hand a provider a 0.0.0.0/127.0.0.1 redirect.
+  const pinned = process.env.SOCIAL_REDIRECT_BASE || process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL
+  if (pinned) return pinned.replace(/\/$/, "")
+
   const host = request.headers.get("x-forwarded-host") || request.headers.get("host")
-  if (host && !host.startsWith("0.0.0.0") && !host.startsWith("127.0.0.1")) {
+  if (host && !host.startsWith("0.0.0.0") && !host.startsWith("127.0.0.1") && !host.startsWith("localhost")) {
     const proto = request.headers.get("x-forwarded-proto") || "https"
     return `${proto}://${host}`
   }

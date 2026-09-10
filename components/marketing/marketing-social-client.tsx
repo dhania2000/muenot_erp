@@ -189,6 +189,10 @@ export function MarketingSocialClient() {
       toast.error(`${platformName} is not configured yet. Add its developer app credentials to connect.`)
     else if (status === "noadmin")
       toast.error("No LinkedIn company page found where you are an administrator.")
+    else if (status === "noorgscope")
+      toast.error(
+        "LinkedIn company posting requires organization access that isn't enabled on this app. Connect a personal LinkedIn profile instead.",
+      )
     else if (status === "nopage") toast.error("No Facebook Page found on this account.")
     else if (status === "noig")
       toast.error("No Instagram Business account linked to your Facebook Page.")

@@ -3,25 +3,35 @@ import type { SocialPlatformId } from "@/lib/social-platforms"
 import type { SocialAccountType } from "@/lib/social-accounts"
 
 /**
- * Server-only OAuth 2.0 logic for connecting real social accounts. Each
- * platform needs its own developer app credentials, supplied via env vars:
+ * Server-only OAuth logic for connecting real social accounts. Each platform
+ * uses its OWN developer app, its OWN current official OAuth/API flow, its OWN
+ * scopes and its OWN callback route. They are NOT interchangeable.
  *
- *   LinkedIn   → LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
- *   X (Twitter)→ X_CLIENT_ID, X_CLIENT_SECRET
- *   Facebook   → FACEBOOK_APP_ID, FACEBOOK_APP_SECRET
- *   Instagram  → FACEBOOK_APP_ID, FACEBOOK_APP_SECRET (shares the Meta app)
+ *   LinkedIn   → LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET
+ *                OpenID Connect member sign-in (openid profile email w_member_social)
+ *   X (Twitter)→ X_CLIENT_ID / X_CLIENT_SECRET
+ *                OAuth 2.0 Authorization Code + PKCE
+ *   Facebook   → FACEBOOK_APP_ID / FACEBOOK_APP_SECRET
+ *                Facebook Login for Pages (Graph API)
+ *   Instagram  → INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET
+ *                Instagram API with Instagram Login (instagram.com/oauth) —
+ *                NOT the Facebook dialog. Uses its own app id/secret.
  *
- * Optional: SOCIAL_REDIRECT_BASE to pin the OAuth redirect origin in prod.
+ * Optional: SOCIAL_REDIRECT_BASE pins the OAuth redirect origin in production.
  */
 
 const GRAPH_VERSION = "v21.0"
+
+type ScopeSeparator = " " | ","
 
 type PlatformOAuthConfig = {
   clientIdEnv: string
   clientSecretEnv: string
   authorizeUrl: string
   scopes: string[]
-  /** X uses PKCE (public/confidential client with code_verifier). */
+  /** LinkedIn/X/Facebook use space, Instagram Business Login uses commas. */
+  scopeSeparator: ScopeSeparator
+  /** X uses PKCE (code_verifier / code_challenge). */
   usesPkce: boolean
 }
 
@@ -30,14 +40,18 @@ const OAUTH_CONFIG: Record<SocialPlatformId, PlatformOAuthConfig> = {
     clientIdEnv: "LINKEDIN_CLIENT_ID",
     clientSecretEnv: "LINKEDIN_CLIENT_SECRET",
     authorizeUrl: "https://www.linkedin.com/oauth/v2/authorization",
-    scopes: ["openid", "profile", "email", "w_member_social", "w_organization_social", "r_organization_admin"],
+    // Only scopes actually configured on the LinkedIn app. Do NOT request
+    // w_organization_social / r_organization_admin unless approved.
+    scopes: ["openid", "profile", "email", "w_member_social"],
+    scopeSeparator: " ",
     usesPkce: false,
   },
   x: {
     clientIdEnv: "X_CLIENT_ID",
     clientSecretEnv: "X_CLIENT_SECRET",
-    authorizeUrl: "https://twitter.com/i/oauth2/authorize",
+    authorizeUrl: "https://x.com/i/oauth2/authorize",
     scopes: ["tweet.read", "tweet.write", "users.read", "offline.access"],
+    scopeSeparator: " ",
     usesPkce: true,
   },
   facebook: {
@@ -45,19 +59,23 @@ const OAUTH_CONFIG: Record<SocialPlatformId, PlatformOAuthConfig> = {
     clientSecretEnv: "FACEBOOK_APP_SECRET",
     authorizeUrl: `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`,
     scopes: ["public_profile", "pages_show_list", "pages_manage_posts", "pages_read_engagement"],
+    scopeSeparator: " ",
     usesPkce: false,
   },
   instagram: {
-    clientIdEnv: "FACEBOOK_APP_ID",
-    clientSecretEnv: "FACEBOOK_APP_SECRET",
-    authorizeUrl: `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`,
+    // Instagram Business Login uses a dedicated Instagram app — never the
+    // Facebook app id/secret (that causes PLATFORM_INVALID_APP_ID).
+    clientIdEnv: "INSTAGRAM_APP_ID",
+    clientSecretEnv: "INSTAGRAM_APP_SECRET",
+    authorizeUrl: "https://www.instagram.com/oauth/authorize",
     scopes: [
-      "public_profile",
-      "pages_show_list",
-      "pages_read_engagement",
-      "instagram_basic",
-      "instagram_content_publish",
+      "instagram_business_basic",
+      "instagram_business_manage_messages",
+      "instagram_business_manage_comments",
+      "instagram_business_content_publish",
+      "instagram_business_manage_insights",
     ],
+    scopeSeparator: ",",
     usesPkce: false,
   },
 }
@@ -108,7 +126,7 @@ export function buildAuthUrl(opts: {
     response_type: "code",
     client_id: clientId,
     redirect_uri: opts.redirectUri,
-    scope: cfg.scopes.join(" "),
+    scope: cfg.scopes.join(cfg.scopeSeparator),
     state: opts.state,
   })
   if (cfg.usesPkce && opts.codeChallenge) {
@@ -129,6 +147,12 @@ export type OAuthTokens = {
   scope: string | null
 }
 
+function expiresAtFrom(expiresIn: unknown): string | null {
+  const n = Number(expiresIn)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return new Date(Date.now() + n * 1000).toISOString().slice(0, 19).replace("T", " ")
+}
+
 export async function exchangeCode(opts: {
   platform: SocialPlatformId
   code: string
@@ -139,13 +163,9 @@ export async function exchangeCode(opts: {
   const clientId = getClientId(platform)!
   const clientSecret = getClientSecret(platform)!
 
-  if (platform === "linkedin") {
-    return linkedinToken({ code, redirectUri, clientId, clientSecret })
-  }
-  if (platform === "x") {
-    return xToken({ code, redirectUri, clientId, clientSecret, codeVerifier: codeVerifier! })
-  }
-  // facebook + instagram share the Graph token endpoint
+  if (platform === "linkedin") return linkedinToken({ code, redirectUri, clientId, clientSecret })
+  if (platform === "x") return xToken({ code, redirectUri, clientId, clientSecret, codeVerifier: codeVerifier! })
+  if (platform === "instagram") return instagramToken({ code, redirectUri, clientId, clientSecret })
   return facebookToken({ code, redirectUri, clientId, clientSecret })
 }
 
@@ -163,8 +183,13 @@ async function linkedinToken(a: { code: string; redirectUri: string; clientId: s
     body,
   })
   const json = await res.json()
-  if (!res.ok) throw new Error(`LinkedIn token error: ${JSON.stringify(json)}`)
-  return normalizeTokens(json)
+  if (!res.ok) throw new Error(`linkedin_token:${res.status}`)
+  return {
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token ?? null,
+    expiresAt: expiresAtFrom(json.expires_in),
+    scope: json.scope ?? null,
+  }
 }
 
 async function xToken(a: {
@@ -182,7 +207,7 @@ async function xToken(a: {
     client_id: a.clientId,
   })
   const basic = Buffer.from(`${a.clientId}:${a.clientSecret}`).toString("base64")
-  const res = await fetch("https://api.twitter.com/2/oauth2/token", {
+  const res = await fetch("https://api.x.com/2/oauth2/token", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -191,33 +216,86 @@ async function xToken(a: {
     body,
   })
   const json = await res.json()
-  if (!res.ok) throw new Error(`X token error: ${JSON.stringify(json)}`)
-  return normalizeTokens(json)
+  if (!res.ok) throw new Error(`x_token:${res.status}`)
+  return {
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token ?? null,
+    expiresAt: expiresAtFrom(json.expires_in),
+    scope: json.scope ?? null,
+  }
 }
 
 async function facebookToken(a: { code: string; redirectUri: string; clientId: string; clientSecret: string }) {
-  const params = new URLSearchParams({
+  // 1. short-lived user token
+  const shortParams = new URLSearchParams({
     client_id: a.clientId,
     client_secret: a.clientSecret,
     redirect_uri: a.redirectUri,
     code: a.code,
   })
-  const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token?${params.toString()}`)
-  const json = await res.json()
-  if (!res.ok) throw new Error(`Facebook token error: ${JSON.stringify(json)}`)
-  return normalizeTokens(json)
+  const shortRes = await fetch(
+    `https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token?${shortParams.toString()}`,
+  )
+  const shortJson = await shortRes.json()
+  if (!shortRes.ok) throw new Error(`facebook_token:${shortRes.status}`)
+
+  // 2. exchange for a long-lived user token (page tokens derived from it do
+  //    not expire), best-effort — fall back to the short-lived token.
+  let accessToken: string = shortJson.access_token
+  let expiresAt = expiresAtFrom(shortJson.expires_in)
+  const longParams = new URLSearchParams({
+    grant_type: "fb_exchange_token",
+    client_id: a.clientId,
+    client_secret: a.clientSecret,
+    fb_exchange_token: shortJson.access_token,
+  })
+  const longRes = await fetch(
+    `https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token?${longParams.toString()}`,
+  )
+  if (longRes.ok) {
+    const longJson = await longRes.json()
+    if (longJson.access_token) {
+      accessToken = longJson.access_token
+      expiresAt = expiresAtFrom(longJson.expires_in)
+    }
+  }
+
+  return { accessToken, refreshToken: null, expiresAt, scope: null }
 }
 
-function normalizeTokens(json: any): OAuthTokens {
-  const expiresIn = Number(json.expires_in)
-  return {
-    accessToken: json.access_token,
-    refreshToken: json.refresh_token ?? null,
-    expiresAt: Number.isFinite(expiresIn)
-      ? new Date(Date.now() + expiresIn * 1000).toISOString().slice(0, 19).replace("T", " ")
-      : null,
-    scope: json.scope ?? null,
-  }
+async function instagramToken(a: { code: string; redirectUri: string; clientId: string; clientSecret: string }) {
+  // 1. exchange the auth code for a short-lived Instagram token
+  const form = new URLSearchParams({
+    client_id: a.clientId,
+    client_secret: a.clientSecret,
+    grant_type: "authorization_code",
+    redirect_uri: a.redirectUri,
+    code: a.code,
+  })
+  const shortRes = await fetch("https://api.instagram.com/oauth/access_token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form,
+  })
+  const shortJson = await shortRes.json()
+  if (!shortRes.ok || !shortJson.access_token) throw new Error(`instagram_token:${shortRes.status}`)
+
+  // 2. exchange for a 60-day long-lived token
+  const longParams = new URLSearchParams({
+    grant_type: "ig_exchange_token",
+    client_secret: a.clientSecret,
+    access_token: shortJson.access_token,
+  })
+  const longRes = await fetch(`https://graph.instagram.com/access_token?${longParams.toString()}`)
+  const longJson = await longRes.json().catch(() => ({}))
+
+  const accessToken: string = longRes.ok && longJson.access_token ? longJson.access_token : shortJson.access_token
+  const expiresAt = longRes.ok ? expiresAtFrom(longJson.expires_in) : null
+  const scope = Array.isArray(shortJson.permissions)
+    ? shortJson.permissions.join(",")
+    : shortJson.permissions ?? null
+
+  return { accessToken, refreshToken: null, expiresAt, scope }
 }
 
 /* ------------------------------------------------------------------ */
@@ -247,33 +325,16 @@ export async function fetchIdentity(opts: {
 }
 
 async function linkedinIdentity(type: SocialAccountType, accessToken: string): Promise<ConnectedIdentity> {
-  const auth = { Authorization: `Bearer ${accessToken}` }
+  // Company posting needs w_organization_social + r_organization_admin, which
+  // are not enabled on this app. Fail with a clear, safe message instead of
+  // requesting unsupported scopes.
+  if (type === "company") throw new Error("noorgscope")
 
-  if (type === "company") {
-    const res = await fetch(
-      "https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&projection=(elements*(organization~(id,localizedName,vanityName)))",
-      { headers: { ...auth, "X-Restli-Protocol-Version": "2.0.0" } },
-    )
-    const json = await res.json()
-    if (!res.ok) throw new Error(`LinkedIn org error: ${JSON.stringify(json)}`)
-    const el = json.elements?.[0]
-    const org = el?.["organization~"]
-    const orgUrn: string | undefined = el?.organization
-    const orgId = orgUrn?.split(":").pop()
-    if (!orgId) throw new Error("noadmin")
-    return {
-      externalId: `urn:li:organization:${orgId}`,
-      handle: org?.vanityName ? `@${org.vanityName}` : org?.localizedName || `Org ${orgId}`,
-      displayName: org?.localizedName ?? null,
-      followers: null,
-      accessToken,
-      pageId: orgId,
-    }
-  }
-
-  const res = await fetch("https://api.linkedin.com/v2/userinfo", { headers: auth })
+  const res = await fetch("https://api.linkedin.com/v2/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
   const json = await res.json()
-  if (!res.ok) throw new Error(`LinkedIn userinfo error: ${JSON.stringify(json)}`)
+  if (!res.ok) throw new Error(`linkedin_userinfo:${res.status}`)
   return {
     externalId: `urn:li:person:${json.sub}`,
     handle: json.name ? `@${String(json.name).replace(/\s+/g, "").toLowerCase()}` : `@${json.sub}`,
@@ -285,11 +346,11 @@ async function linkedinIdentity(type: SocialAccountType, accessToken: string): P
 }
 
 async function xIdentity(accessToken: string): Promise<ConnectedIdentity> {
-  const res = await fetch("https://api.twitter.com/2/users/me?user.fields=public_metrics,username,name", {
+  const res = await fetch("https://api.x.com/2/users/me?user.fields=public_metrics,username,name", {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   const json = await res.json()
-  if (!res.ok) throw new Error(`X userinfo error: ${JSON.stringify(json)}`)
+  if (!res.ok) throw new Error(`x_userinfo:${res.status}`)
   const u = json.data
   return {
     externalId: u.id,
@@ -306,7 +367,7 @@ async function facebookIdentity(userAccessToken: string): Promise<ConnectedIdent
     `https://graph.facebook.com/${GRAPH_VERSION}/me/accounts?fields=id,name,access_token,followers_count,fan_count&access_token=${encodeURIComponent(userAccessToken)}`,
   )
   const json = await res.json()
-  if (!res.ok) throw new Error(`Facebook pages error: ${JSON.stringify(json)}`)
+  if (!res.ok) throw new Error(`facebook_pages:${res.status}`)
   const page = json.data?.[0]
   if (!page) throw new Error("nopage")
   return {
@@ -319,28 +380,21 @@ async function facebookIdentity(userAccessToken: string): Promise<ConnectedIdent
   }
 }
 
-async function instagramIdentity(userAccessToken: string): Promise<ConnectedIdentity> {
-  const pagesRes = await fetch(
-    `https://graph.facebook.com/${GRAPH_VERSION}/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${encodeURIComponent(userAccessToken)}`,
+async function instagramIdentity(accessToken: string): Promise<ConnectedIdentity> {
+  // Instagram API with Instagram Login: the account is resolved directly from
+  // the Instagram Graph, NOT through Facebook Pages.
+  const res = await fetch(
+    `https://graph.instagram.com/me?fields=user_id,username,account_type,followers_count&access_token=${encodeURIComponent(accessToken)}`,
   )
-  const pagesJson = await pagesRes.json()
-  if (!pagesRes.ok) throw new Error(`Instagram pages error: ${JSON.stringify(pagesJson)}`)
-  const page = (pagesJson.data || []).find((p: any) => p.instagram_business_account)
-  if (!page) throw new Error("noig")
-  const igId = page.instagram_business_account.id
-
-  const igRes = await fetch(
-    `https://graph.facebook.com/${GRAPH_VERSION}/${igId}?fields=username,followers_count&access_token=${encodeURIComponent(page.access_token)}`,
-  )
-  const igJson = await igRes.json()
-  if (!igRes.ok) throw new Error(`Instagram account error: ${JSON.stringify(igJson)}`)
-
+  const json = await res.json()
+  if (!res.ok || !(json.user_id || json.id)) throw new Error(`instagram_account:${res.status}`)
+  const igId = String(json.user_id ?? json.id)
   return {
     externalId: igId,
-    handle: igJson.username ? `@${igJson.username}` : `@ig_${igId}`,
-    displayName: igJson.username ?? null,
-    followers: igJson.followers_count ?? null,
-    accessToken: page.access_token, // page token drives IG publishing
+    handle: json.username ? `@${json.username}` : `@ig_${igId}`,
+    displayName: json.username ?? null,
+    followers: json.followers_count ?? null,
+    accessToken, // Instagram user token drives publishing in this flow
     pageId: igId,
   }
 }

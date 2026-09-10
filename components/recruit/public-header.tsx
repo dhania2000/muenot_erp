@@ -1,5 +1,6 @@
 import Link from "next/link"
 import Image from "next/image"
+import { ArrowLeft } from "lucide-react"
 import { getCareersContent } from "@/lib/careers-settings-server"
 
 export async function PublicHeader() {
@@ -17,7 +18,17 @@ export async function PublicHeader() {
             className="h-9 w-auto md:h-10"
           />
         </Link>
-        <nav className="flex items-center gap-6 text-sm">
+        <nav className="flex items-center gap-4 text-sm md:gap-6">
+          <a
+            href="https://www.muenot.co.in"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="size-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Back to Website</span>
+            <span className="sm:hidden">Website</span>
+          </a>
           <Link href="/careers" className="text-muted-foreground transition-colors hover:text-foreground">
             About
           </Link>

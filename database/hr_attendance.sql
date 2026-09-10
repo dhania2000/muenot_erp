@@ -13,6 +13,9 @@
 --   working_hours  accumulated worked time in hours, breaks excluded
 -- =====================================================================
 
+-- Drop any partially-created table from a previous failed import so this is clean to re-run.
+DROP TABLE IF EXISTS `hr_attendance`;
+
 CREATE TABLE IF NOT EXISTS `hr_attendance` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `attendance_id` VARCHAR(40) NOT NULL,
@@ -39,8 +42,11 @@ CREATE TABLE IF NOT EXISTS `hr_attendance` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_hr_attendance_employee_date` (`employee_id`, `work_date`),
   KEY `idx_hr_attendance_date` (`work_date`),
-  CONSTRAINT `fk_hr_attendance_employee` FOREIGN KEY (`employee_id`) REFERENCES `hr_employees` (`id`) ON DELETE CASCADE
+  KEY `idx_hr_attendance_employee` (`employee_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Note: no foreign key to hr_employees — attendance is scoped by employee_id in
+-- application code. A DB-level FK fails (errno 150) when hr_employees.id has a
+-- different type/charset, and provides no benefit here.
 
 -- If the table already exists without active_since, add it:
 -- ALTER TABLE `hr_attendance` ADD COLUMN `active_since` DATETIME DEFAULT NULL AFTER `clock_out`;

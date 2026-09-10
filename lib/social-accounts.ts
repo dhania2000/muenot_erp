@@ -1,11 +1,13 @@
 import { query } from "@/lib/db"
+import { encryptToken } from "@/lib/token-crypto"
 
 /**
  * Storage for connected social media accounts and the posts published from
  * them. Each account row holds the OAuth tokens we need to publish on behalf
- * of a company page or an individual employee. Tokens are stored the same way
- * the Google integration stores them (see lib/google-accounts.ts) to match the
- * existing codebase convention.
+ * of a company page or an individual employee. Access and refresh tokens are
+ * encrypted at rest with the app's existing AES-256-GCM scheme
+ * (lib/token-crypto, keyed by SETTINGS_ENCRYPTION_KEY) and decrypted only when
+ * a publish actually needs them.
  */
 
 export type SocialPlatform = "linkedin" | "x" | "facebook" | "instagram"
@@ -172,8 +174,8 @@ export async function upsertSocialAccount(data: UpsertSocialAccount) {
       data.displayName,
       data.ownerName,
       data.followers,
-      data.accessToken,
-      data.refreshToken,
+      encryptToken(data.accessToken),
+      encryptToken(data.refreshToken),
       data.tokenExpiresAt,
       data.pageId,
       data.scope,

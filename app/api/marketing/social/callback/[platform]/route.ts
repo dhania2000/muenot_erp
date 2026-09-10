@@ -84,6 +84,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
     const message = String(err?.message || "")
     console.error("[v0] Social OAuth callback failed:", message)
     if (message.includes("noadmin")) return fail("noadmin")
+    if (message.includes("noorgscope")) return fail("noorgscope")
     if (message.includes("nopage")) return fail("nopage")
     if (message.includes("noig")) return fail("noig")
     return fail("error")

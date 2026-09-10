@@ -182,7 +182,45 @@ GOOGLE_REDIRECT_URI=https://erp.muenot.co.in/api/sales/google/callback
 
 
 # =============================================================================
-# 7. AUTO / PLATFORM  [set automatically - usually do NOT set by hand]
+# 7. SOCIAL MEDIA PUBLISHING (Marketing > Social)  [OPTIONAL]
+# =============================================================================
+# Needed only to connect real social accounts and publish to them. Each
+# platform uses its OWN developer app with its OWN credentials - they are NOT
+# interchangeable. Only the platforms you configure appear as connectable.
+#
+# The OAuth redirect URI for each platform is:
+#   <APP_URL>/api/marketing/social/callback/<platform>
+# e.g. https://erp.muenot.co.in/api/marketing/social/callback/linkedin
+# Register that EXACT URL in each provider's developer console. Stored access
+# and refresh tokens are encrypted at rest with SETTINGS_ENCRYPTION_KEY.
+#
+# Optional override if the redirect origin differs from APP_URL:
+# SOCIAL_REDIRECT_BASE=https://erp.muenot.co.in
+
+# ---- LinkedIn (Sign In with LinkedIn using OpenID Connect + Share on LinkedIn) ----
+# Scopes used: openid profile email w_member_social (personal profiles only).
+LINKEDIN_CLIENT_ID=your-linkedin-client-id
+LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret
+
+# ---- X / Twitter (OAuth 2.0 with PKCE) ----
+X_CLIENT_ID=your-x-client-id
+X_CLIENT_SECRET=your-x-client-secret
+
+# ---- Facebook (Facebook Login for Pages / Graph API) ----
+FACEBOOK_APP_ID=your-facebook-app-id
+FACEBOOK_APP_SECRET=your-facebook-app-secret
+
+# ---- Instagram (Instagram API with Instagram Login) ----
+# A DEDICATED Instagram app - do NOT reuse the Facebook app id/secret here,
+# that causes PLATFORM_INVALID_APP_ID. Requires an Instagram Business or
+# Creator account. Register the same callback URL (…/callback/instagram) as an
+# Instagram "OAuth redirect URI".
+INSTAGRAM_APP_ID=your-instagram-app-id
+INSTAGRAM_APP_SECRET=your-instagram-app-secret
+
+
+# =============================================================================
+# 8. AUTO / PLATFORM  [set automatically - usually do NOT set by hand]
 # =============================================================================
 # NODE_ENV is set by the runtime ("production" on the deployed server).
 # NODE_ENV=production

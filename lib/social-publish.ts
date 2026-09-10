@@ -1,12 +1,18 @@
 import type { SocialAccountRow } from "@/lib/social-accounts"
+import { decryptToken } from "@/lib/token-crypto"
 
 /**
  * Real publishing to connected social platforms using each account's stored
  * token. Text posts are supported everywhere the platform allows them
- * (LinkedIn, X, Facebook). Images are attached where the platform accepts a
- * binary upload (LinkedIn, Facebook). Instagram requires a publicly hosted
- * image URL — an in-browser data URL cannot be used, so that case returns a
- * clear error instead of silently failing.
+ * (LinkedIn, X, Facebook, Instagram-as-caption). Images are attached where the
+ * platform accepts a binary upload (LinkedIn, Facebook). Instagram requires a
+ * publicly hosted image URL — an in-browser data URL cannot be used, so that
+ * case returns a clear error instead of silently failing.
+ *
+ * Facebook publishes through the Pages Graph API; Instagram publishes through
+ * its OWN graph.instagram.com host (Instagram API with Instagram Login), not
+ * the Facebook Graph. Tokens arrive encrypted and are decrypted here just
+ * before the outbound API call.
  */
 
 const GRAPH_VERSION = "v21.0"
@@ -39,14 +45,20 @@ export async function publishToAccount(
 ): Promise<PublishResult> {
   const base = { accountId: account.id, platform: account.platform, handle: account.handle }
   try {
-    if (!account.access_token) throw new Error("This account is missing an access token — reconnect it.")
+    // Tokens are stored encrypted — decrypt into a working copy for this call.
+    const decrypted: SocialAccountRow = {
+      ...account,
+      access_token: decryptToken(account.access_token),
+      refresh_token: decryptToken(account.refresh_token),
+    }
+    if (!decrypted.access_token) throw new Error("This account is missing an access token — reconnect it.")
 
     let permalink: string | undefined
-    if (account.platform === "linkedin") permalink = await publishLinkedIn(account, post)
-    else if (account.platform === "x") permalink = await publishX(account, post)
-    else if (account.platform === "facebook") permalink = await publishFacebook(account, post)
-    else if (account.platform === "instagram") permalink = await publishInstagram(account, post)
-    else throw new Error(`Unsupported platform: ${account.platform}`)
+    if (decrypted.platform === "linkedin") permalink = await publishLinkedIn(decrypted, post)
+    else if (decrypted.platform === "x") permalink = await publishX(decrypted, post)
+    else if (decrypted.platform === "facebook") permalink = await publishFacebook(decrypted, post)
+    else if (decrypted.platform === "instagram") permalink = await publishInstagram(decrypted, post)
+    else throw new Error(`Unsupported platform: ${decrypted.platform}`)
 
     return { ...base, ok: true, permalink }
   } catch (err: any) {
@@ -129,7 +141,7 @@ async function publishLinkedIn(account: SocialAccountRow, post: { content: strin
 /* ---------------------------------- X ---------------------------------- */
 
 async function publishX(account: SocialAccountRow, post: { content: string; image?: string | null }) {
-  const res = await fetch("https://api.twitter.com/2/tweets", {
+  const res = await fetch("https://api.x.com/2/tweets", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${account.access_token}`,
@@ -140,7 +152,7 @@ async function publishX(account: SocialAccountRow, post: { content: string; imag
   const json = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(`X post failed: ${JSON.stringify(json)}`)
   const id = json.data?.id
-  return id ? `https://twitter.com/i/web/status/${id}` : undefined
+  return id ? `https://x.com/i/web/status/${id}` : undefined
 }
 
 /* ------------------------------- Facebook ------------------------------- */
@@ -179,6 +191,8 @@ async function publishFacebook(account: SocialAccountRow, post: { content: strin
 /* ------------------------------- Instagram ------------------------------ */
 
 async function publishInstagram(account: SocialAccountRow, post: { content: string; image?: string | null }) {
+  // Instagram API with Instagram Login publishes through graph.instagram.com,
+  // NOT the Facebook Graph. The id is the Instagram user id resolved at connect.
   const igId = account.page_id || account.external_id!
   const token = account.access_token!
 
@@ -189,7 +203,7 @@ async function publishInstagram(account: SocialAccountRow, post: { content: stri
   }
 
   // 1. create a media container
-  const createRes = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${igId}/media`, {
+  const createRes = await fetch(`https://graph.instagram.com/${GRAPH_VERSION}/${igId}/media`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image_url: post.image, caption: post.content, access_token: token }),
@@ -198,7 +212,7 @@ async function publishInstagram(account: SocialAccountRow, post: { content: stri
   if (!createRes.ok) throw new Error(`Instagram container failed: ${JSON.stringify(createJson)}`)
 
   // 2. publish the container
-  const publishRes = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${igId}/media_publish`, {
+  const publishRes = await fetch(`https://graph.instagram.com/${GRAPH_VERSION}/${igId}/media_publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ creation_id: createJson.id, access_token: token }),
@@ -207,7 +221,7 @@ async function publishInstagram(account: SocialAccountRow, post: { content: stri
   if (!publishRes.ok) throw new Error(`Instagram publish failed: ${JSON.stringify(publishJson)}`)
 
   const permRes = await fetch(
-    `https://graph.facebook.com/${GRAPH_VERSION}/${publishJson.id}?fields=permalink&access_token=${encodeURIComponent(token)}`,
+    `https://graph.instagram.com/${publishJson.id}?fields=permalink&access_token=${encodeURIComponent(token)}`,
   )
   const permJson = await permRes.json().catch(() => ({}))
   return permJson.permalink || undefined

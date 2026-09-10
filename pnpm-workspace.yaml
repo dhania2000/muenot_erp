@@ -1,3 +1,6 @@
 minimumReleaseAgeExclude:
   - '@next/*'
   - next
+
+ignoredBuiltDependencies:
+  - core-js

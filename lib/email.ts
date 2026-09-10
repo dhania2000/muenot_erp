@@ -237,11 +237,21 @@ export async function getLatestThreadIdByEmail(toEmail: string): Promise<string 
   return rows[0]?.thread_id ?? null
 }
 
-/** Resolve the domain used inside generated Message-ID headers. */
-function resolveMailDomain() {
-  const from = process.env.SMTP_FROM || process.env.SMTP_USER || ""
-  const match = from.match(/@([^\s>]+)/)
-  if (match) return match[1]
+/**
+ * Resolve the domain used inside generated Message-ID headers. Uses the
+ * department's real sender mailbox (Gmail API sender, then SMTP from/user) so
+ * the Message-ID domain matches the From address — Gmail keeps a supplied
+ * Message-ID only when it is well-formed and plausible, and the recipient's
+ * mailbox threads follow-ups by matching this exact id via In-Reply-To.
+ */
+function resolveMailDomain(department: Department = "sales") {
+  const gmail = gmailApiConfig(department)
+  const smtp = smtpConfig(department)
+  const candidates = [gmail.sender, smtp.from, smtp.user, process.env.SMTP_FROM, process.env.SMTP_USER]
+  for (const candidate of candidates) {
+    const match = (candidate || "").match(/@([^\s>]+)/)
+    if (match) return match[1]
+  }
   const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL
   if (appUrl) {
     try {
@@ -254,8 +264,8 @@ function resolveMailDomain() {
 }
 
 /** Generate a globally-unique RFC 5322 Message-ID for an outgoing email. */
-export function buildMessageId(token: string) {
-  return `<${token}.${Date.now()}@${resolveMailDomain()}>`
+export function buildMessageId(token: string, department: Department = "sales") {
+  return `<${token}.${Date.now()}@${resolveMailDomain(department)}>`
 }
 
 export type ThreadContext = {

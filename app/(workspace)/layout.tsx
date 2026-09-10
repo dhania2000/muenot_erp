@@ -5,7 +5,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink } from "lucide-react"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, Megaphone, ExternalLink } from "lucide-react"
 
 function settingEnabled(v: string | undefined, fallback = true) {
   if (v == null) return fallback
@@ -23,6 +23,7 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
   tickets: <TicketCheck className="size-4" />,
   products: <Package className="size-4" />,
   legal: <Scale className="size-4" />,
+  marketing: <Megaphone className="size-4" />,
 }
 
 type FeatureChild = { label: string; href?: string; feature?: string; children?: FeatureChild[] }
@@ -126,6 +127,10 @@ const LEGAL_CHILDREN = [
   { label: "Esign", href: "/modules/legal/esign", feature: "legal.view_esign" },
 ]
 
+const MARKETING_CHILDREN = [
+  { label: "Campaigns", href: "/modules/marketing/campaigns", feature: "marketing.view_campaigns" },
+]
+
 const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Dashboard", href: "/modules/sales/dashboard", feature: "sales.view_dashboard" },
   { label: "Leads", href: "/modules/sales/leads", feature: "sales.view_leads" },
@@ -166,8 +171,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         href: `/modules/${m.slug}`,
         icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
       }
-      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products", "legal"].includes(m.slug)) {
-        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : m.slug === "legal" ? LEGAL_CHILDREN : SALES_CHILDREN
+      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products", "legal", "marketing"].includes(m.slug)) {
+        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : m.slug === "legal" ? LEGAL_CHILDREN : m.slug === "marketing" ? MARKETING_CHILDREN : SALES_CHILDREN
         // Recursively keep only accessible leaves; drop groups that end up empty.
         const buildChildren = (nodes: FeatureChild[]): NavChild[] =>
           nodes.flatMap<NavChild>((c) => {

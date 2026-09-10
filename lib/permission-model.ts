@@ -178,6 +178,13 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
+    slug: "marketing",
+    label: "Marketing",
+    modules: [
+      { key: "marketing.campaigns", label: "Campaigns", group: "marketing", aliases: ["campaign"], scope: { table: "marketing_campaigns", addedBy: "created_by", ownedBy: "assigned_to" } },
+    ],
+  },
+  {
     slug: "calendar",
     label: "My Calendar",
     modules: [

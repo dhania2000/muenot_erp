@@ -7,7 +7,7 @@ import { NoticeBoardClient } from "@/components/notice-board-client"
 import { KnowledgeBaseClient } from "@/components/knowledge-base-client"
 import { EventsClient } from "@/components/events-client"
 import { CalendarClient } from "@/components/calendar-client"
-import { CalendarDays, FileText, Link2, MessageSquare, Monitor, Newspaper, Package, ScanFace, Users2, TrendingUp, Wallet, UserPlus, Settings2, Ticket } from "lucide-react"
+import { CalendarDays, FileText, Link2, MessageSquare, Monitor, Newspaper, Package, ScanFace, Users2, TrendingUp, Wallet, UserPlus, Settings2, Ticket, Megaphone } from "lucide-react"
 
 const moduleIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   hr: Users2,
@@ -15,6 +15,7 @@ const moduleIcons: Record<string, React.ComponentType<{ className?: string }>> =
   finance: Wallet,
   recruitment: UserPlus,
   operations: Settings2,
+  marketing: Megaphone,
   calendar: CalendarDays, events: Ticket, messages: MessageSquare, "notice-board": Newspaper, "knowledge-base": FileText,
   assets: Package, biolinks: Link2, biometric: ScanFace, letter: FileText, "monitor-center": Monitor,
 }

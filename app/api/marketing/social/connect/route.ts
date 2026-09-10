@@ -14,6 +14,7 @@ import {
 export const SOCIAL_STATE_COOKIE = "social_oauth_state"
 export const SOCIAL_TYPE_COOKIE = "social_oauth_type"
 export const SOCIAL_VERIFIER_COOKIE = "social_oauth_verifier"
+export const SOCIAL_REDIRECT_COOKIE = "social_oauth_redirect"
 
 export const RETURN_PATH = "/modules/marketing/campaigns/social"
 
@@ -82,9 +83,16 @@ export async function GET(request: Request) {
     cookieStore.set(SOCIAL_VERIFIER_COOKIE, verifier, cookieOpts)
   }
 
+  // Pin the EXACT redirect URI used here so the token exchange in the callback
+  // reuses it byte-for-byte. Providers (Instagram especially) reject the code
+  // if the token-step redirect_uri differs at all from the authorize-step one,
+  // which happens when host resolution drifts between the two requests.
+  const redirectUri = resolveRedirectUri(platform, origin)
+  cookieStore.set(SOCIAL_REDIRECT_COOKIE, redirectUri, cookieOpts)
+
   const authUrl = buildAuthUrl({
     platform,
-    redirectUri: resolveRedirectUri(platform, origin),
+    redirectUri,
     state,
     codeChallenge,
   })

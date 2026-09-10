@@ -186,6 +186,12 @@ export async function createApplication(data: any, userId: number | null) {
       Number(data.rating) || 0, data.answers ? JSON.stringify(data.answers) : null, userId,
     ],
   )
+  // Persist / merge the person into the standalone Candidate Database so the
+  // profile survives even if this application (or the whole job) is later
+  // deleted. Best-effort: a failure here must not block the application.
+  try {
+    await upsertCandidateProfile(data)
+  } catch {}
   return { application_id: applicationId }
 }
 
@@ -213,23 +219,240 @@ export async function deleteApplication(applicationId: string) {
 // ---------------------------------------------------------------------------
 // Candidate database (aggregated from applications)
 // ---------------------------------------------------------------------------
-export async function listCandidates() {
-  return query<any[]>(
-    `SELECT
-        candidate_name, email,
-        MAX(phone) AS phone,
-        MAX(location) AS location,
-        MAX(current_company) AS current_company,
-        MAX(experience) AS experience,
-        COUNT(*) AS applications_count,
-        GROUP_CONCAT(DISTINCT job_title SEPARATOR ', ') AS jobs,
-        MAX(rating) AS rating,
-        MAX(applied_at) AS last_applied
-     FROM recruit_applications
-     GROUP BY candidate_name, email
-     ORDER BY last_applied DESC
-     LIMIT 1000`,
+// A candidate may apply to many jobs; each of those stays a separate row in
+// recruit_applications (and in the Job Applications view). The Candidate
+// Database, however, must show each real person exactly once. Two applications
+// belong to the same person when they share a normalized email OR a normalized
+// phone number. Because that "email OR phone" match is transitive (A shares an
+// email with B, B shares a phone with C => A, B and C are one person), we can't
+// express it with a plain SQL GROUP BY. Instead we pull the raw rows and merge
+// them with a small union-find pass.
+function normalizeEmail(email: unknown): string | null {
+  const v = String(email ?? "").trim().toLowerCase()
+  return v || null
+}
+
+function normalizePhone(phone: unknown): string | null {
+  const digits = String(phone ?? "").replace(/\D/g, "")
+  if (!digits) return null
+  // Compare on the last 10 digits so country-code / formatting differences
+  // (e.g. +91 98765 43210 vs 9876543210) still resolve to the same person.
+  return digits.length > 10 ? digits.slice(-10) : digits
+}
+
+type CandidateAggregate = {
+  candidate_name: string
+  email: string | null
+  phone: string | null
+  location: string | null
+  current_company: string | null
+  experience: string | null
+  applications_count: number
+  jobs: string | null
+  rating: number
+  last_applied: string
+}
+
+// The Candidate Database is a standalone profile store: once a person applies
+// they get a persistent row here that must survive even if their application(s)
+// or the whole job get deleted. Applications (and the Job Applications view)
+// stay fully separate — deleting there never removes the profile.
+let candidatesTableEnsured = false
+async function ensureCandidatesTable() {
+  if (candidatesTableEnsured) return
+  await query(
+    `CREATE TABLE IF NOT EXISTS recruit_candidates (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      candidate_name VARCHAR(255) NOT NULL DEFAULT '',
+      email VARCHAR(255) DEFAULT NULL,
+      phone VARCHAR(60) DEFAULT NULL,
+      norm_email VARCHAR(255) DEFAULT NULL,
+      norm_phone VARCHAR(20) DEFAULT NULL,
+      location VARCHAR(255) DEFAULT NULL,
+      current_company VARCHAR(255) DEFAULT NULL,
+      experience VARCHAR(120) DEFAULT NULL,
+      rating INT NOT NULL DEFAULT 0,
+      last_applied TIMESTAMP NULL DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_norm_email (norm_email),
+      KEY idx_norm_phone (norm_phone)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  candidatesTableEnsured = true
+  // One-time backfill so existing applicants already have a persistent profile
+  // (otherwise deleting a pre-existing application would lose that person).
+  const [{ c } = { c: 0 }] = await query<any[]>("SELECT COUNT(*) AS c FROM recruit_candidates")
+  if (Number(c) === 0) {
+    const existing = await query<any[]>(
+      `SELECT candidate_name, email, phone, location, current_company, experience, rating, applied_at
+       FROM recruit_applications ORDER BY applied_at ASC LIMIT 5000`,
+    )
+    for (const r of existing) {
+      try {
+        await upsertCandidateProfile({ ...r, applied_at: r.applied_at })
+      } catch {}
+    }
+  }
+}
+
+// Insert or merge a person into recruit_candidates. Two rows are the same
+// person when they share a normalized email OR phone; on a match we enrich the
+// existing profile (fill blanks, keep the latest name, grow the identity keys).
+export async function upsertCandidateProfile(data: any) {
+  await ensureCandidatesTable()
+  const normEmail = normalizeEmail(data.email)
+  const normPhone = normalizePhone(data.phone)
+  if (!normEmail && !normPhone) return // can't identify the person — skip
+
+  const matches = await query<any[]>(
+    `SELECT * FROM recruit_candidates
+     WHERE (norm_email IS NOT NULL AND norm_email = ?) OR (norm_phone IS NOT NULL AND norm_phone = ?)
+     ORDER BY id ASC LIMIT 1`,
+    [normEmail, normPhone],
+  )
+  const existing = matches[0]
+  const appliedAt = data.applied_at ? new Date(data.applied_at) : new Date()
+  const rating = Number(data.rating) || 0
+
+  if (!existing) {
+    await query(
+      `INSERT INTO recruit_candidates
+        (candidate_name, email, phone, norm_email, norm_phone, location, current_company, experience, rating, last_applied)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [
+        data.candidate_name || "—", data.email || null, data.phone || null, normEmail, normPhone,
+        data.location || null, data.current_company || null, data.experience || null, rating, appliedAt,
+      ],
+    )
+    return
+  }
+
+  // Merge into the existing profile: latest name wins, blanks get filled,
+  // identity keys grow, rating/last_applied take the max.
+  await query(
+    `UPDATE recruit_candidates SET
+       candidate_name = ?,
+       email = COALESCE(email, ?),
+       phone = COALESCE(phone, ?),
+       norm_email = COALESCE(norm_email, ?),
+       norm_phone = COALESCE(norm_phone, ?),
+       location = COALESCE(location, ?),
+       current_company = COALESCE(current_company, ?),
+       experience = COALESCE(experience, ?),
+       rating = GREATEST(rating, ?),
+       last_applied = GREATEST(COALESCE(last_applied, ?), ?)
+     WHERE id = ?`,
+    [
+      data.candidate_name || existing.candidate_name || "—",
+      data.email || null, data.phone || null, normEmail, normPhone,
+      data.location || null, data.current_company || null, data.experience || null,
+      rating, appliedAt, appliedAt, existing.id,
+    ],
+  )
+}
+
+export async function listCandidates(): Promise<CandidateAggregate[]> {
+  await ensureCandidatesTable()
+
+  // Seed identity from BOTH the persistent profiles (so people persist after
+  // their applications are deleted) and the live applications (for accurate
+  // application counts + the list of jobs they applied to).
+  const profiles = await query<any[]>(
+    `SELECT candidate_name, email, phone, location, current_company, experience, rating, last_applied
+     FROM recruit_candidates LIMIT 5000`,
+  )
+  const apps = await query<any[]>(
+    `SELECT candidate_name, email, phone, location, current_company, experience,
+            job_title, rating, applied_at
+     FROM recruit_applications ORDER BY applied_at DESC LIMIT 5000`,
+  )
+
+  type Node = { isApp: boolean; r: any; ts: string }
+  const nodes: Node[] = [
+    ...profiles.map((r) => ({ isApp: false, r, ts: String(r.last_applied || "") })),
+    ...apps.map((r) => ({ isApp: true, r, ts: String(r.applied_at || "") })),
+  ]
+
+  // Union-find over all nodes, linked by shared normalized email / phone.
+  const parent: number[] = nodes.map((_, i) => i)
+  const find = (x: number): number => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]]
+      x = parent[x]
+    }
+    return x
+  }
+  const union = (a: number, b: number) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent[ra] = rb
+  }
+
+  const emailOwner = new Map<string, number>()
+  const phoneOwner = new Map<string, number>()
+  nodes.forEach((n, i) => {
+    const e = normalizeEmail(n.r.email)
+    if (e) {
+      const prev = emailOwner.get(e)
+      if (prev === undefined) emailOwner.set(e, i)
+      else union(prev, i)
+    }
+    const p = normalizePhone(n.r.phone)
+    if (p) {
+      const prev = phoneOwner.get(p)
+      if (prev === undefined) phoneOwner.set(p, i)
+      else union(prev, i)
+    }
+  })
+
+  // Fold each group into one candidate. Process nodes newest-first per group so
+  // the first non-empty value we keep for a field is the most recent one.
+  const order = nodes
+    .map((n, i) => i)
+    .sort((a, b) => nodes[b].ts.localeCompare(nodes[a].ts))
+
+  const groups = new Map<number, CandidateAggregate & { _jobs: Set<string> }>()
+  for (const i of order) {
+    const n = nodes[i]
+    const r = n.r
+    const root = find(i)
+    let g = groups.get(root)
+    if (!g) {
+      g = {
+        candidate_name: r.candidate_name || "—",
+        email: normalizeEmail(r.email),
+        phone: r.phone || null,
+        location: r.location || null,
+        current_company: r.current_company || null,
+        experience: r.experience || null,
+        applications_count: 0,
+        jobs: null,
+        rating: 0,
+        last_applied: n.ts,
+        _jobs: new Set<string>(),
+      }
+      groups.set(root, g)
+    }
+    if (n.isApp) g.applications_count += 1
+    if (!g.candidate_name || g.candidate_name === "—") g.candidate_name = r.candidate_name || g.candidate_name
+    if (!g.email) g.email = normalizeEmail(r.email)
+    if (!g.phone && r.phone) g.phone = r.phone
+    if (!g.location && r.location) g.location = r.location
+    if (!g.current_company && r.current_company) g.current_company = r.current_company
+    if (!g.experience && r.experience) g.experience = r.experience
+    if (n.isApp && r.job_title) g._jobs.add(r.job_title)
+    const rating = Number(r.rating) || 0
+    if (rating > g.rating) g.rating = rating
+    if (n.ts && (!g.last_applied || n.ts > g.last_applied)) g.last_applied = n.ts
+  }
+
+  return Array.from(groups.values())
+    .map(({ _jobs, ...rest }) => ({
+      ...rest,
+      jobs: _jobs.size ? Array.from(_jobs).join(", ") : null,
+    }))
+    .sort((a, b) => String(b.last_applied || "").localeCompare(String(a.last_applied || "")))
 }
 
 // ---------------------------------------------------------------------------

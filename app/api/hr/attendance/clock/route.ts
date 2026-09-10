@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession, type SessionPayload } from "@/lib/auth"
+import { getSetting } from "@/lib/settings/server"
+
+const DEFAULT_TIME_ZONE = "Asia/Kolkata"
+
+/** Configured company timezone, falling back to IST. */
+async function getTimeZone(): Promise<string> {
+  return (await getSetting("app.timezone")) || DEFAULT_TIME_ZONE
+}
 
 type EmployeeRow = { id: number; employee_name: string }
 type AttendanceRow = {
@@ -13,20 +21,38 @@ type AttendanceRow = {
   work_date: string
 }
 
-/** Local date as YYYY-MM-DD (server timezone) so a work day matches the user's day. */
-function today() {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, "0")
-  const d = String(now.getDate()).padStart(2, "0")
-  return `${y}-${m}-${d}`
+/**
+ * Wall-clock parts of `date` in the given IANA timezone. The server runs in UTC
+ * on Vercel, so we must project the instant into the company timezone rather
+ * than read the raw server-local fields (which caused stored punches to be
+ * ~5.5h behind IST).
+ */
+function zonedParts(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date)
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00"
+  const hour = get("hour") === "24" ? "00" : get("hour")
+  return { y: get("year"), m: get("month"), d: get("day"), hh: hour, mm: get("minute"), ss: get("second") }
 }
 
-/** MySQL DATETIME string (YYYY-MM-DD HH:MM:SS) in server local time. */
-function nowDateTime() {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+/** Local date as YYYY-MM-DD in the company timezone so a work day matches the user's day. */
+function today(timeZone: string) {
+  const p = zonedParts(new Date(), timeZone)
+  return `${p.y}-${p.m}-${p.d}`
+}
+
+/** MySQL DATETIME string (YYYY-MM-DD HH:MM:SS) in the company timezone. */
+function nowDateTime(timeZone: string) {
+  const p = zonedParts(new Date(), timeZone)
+  return `${p.y}-${p.m}-${p.d} ${p.hh}:${p.mm}:${p.ss}`
 }
 
 /** Hours between two DATETIME strings (never negative). */
@@ -164,13 +190,13 @@ async function hasSessionColumn(): Promise<boolean> {
   return sessionColumnReady
 }
 
-async function todaysRecord(employeeId: number, withSession: boolean): Promise<AttendanceRow | null> {
+async function todaysRecord(employeeId: number, withSession: boolean, timeZone: string): Promise<AttendanceRow | null> {
   const columns = withSession
     ? "id, clock_in, clock_out, break_minutes, working_hours, active_since, work_date"
     : "id, clock_in, clock_out, break_minutes, working_hours, work_date"
   const rows = await query<AttendanceRow[]>(
     `SELECT ${columns} FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1`,
-    [employeeId, today()],
+    [employeeId, today(timeZone)],
   )
   const row = rows[0]
   if (!row) return null
@@ -189,9 +215,9 @@ function isOpen(record: AttendanceRow | null, withSession: boolean): boolean {
 }
 
 /** Start of the currently open session, used to compute this session's hours. */
-function sessionStart(record: AttendanceRow, withSession: boolean): string {
-  if (withSession) return record.active_since || record.clock_in || nowDateTime()
-  return record.clock_in || nowDateTime()
+function sessionStart(record: AttendanceRow, withSession: boolean, timeZone: string): string {
+  if (withSession) return record.active_since || record.clock_in || nowDateTime(timeZone)
+  return record.clock_in || nowDateTime(timeZone)
 }
 
 export async function GET() {
@@ -201,9 +227,10 @@ export async function GET() {
 
     await ensureTable()
     const withSession = await hasSessionColumn()
+    const timeZone = await getTimeZone()
     const employee = await ensureEmployee(session)
 
-    const record = await todaysRecord(employee.id, withSession)
+    const record = await todaysRecord(employee.id, withSession, timeZone)
     return NextResponse.json({
       linked: true,
       state: isOpen(record, withSession) ? "in" : "out",
@@ -223,6 +250,7 @@ export async function POST(request: Request) {
 
     await ensureTable()
     const withSession = await hasSessionColumn()
+    const timeZone = await getTimeZone()
     const employee = await ensureEmployee(session)
 
     // Optional geolocation captured by the browser at punch time.
@@ -237,15 +265,15 @@ export async function POST(request: Request) {
     const location =
       typeof body.location === "string" && body.location.trim() ? body.location.trim().slice(0, 255) : null
 
-    const record = await todaysRecord(employee.id, withSession)
-    const now = nowDateTime()
+    const record = await todaysRecord(employee.id, withSession, timeZone)
+    const now = nowDateTime(timeZone)
     const withLocation = await hasLocationColumns()
 
     // First punch of the day → create the row and open a session (clock in).
     if (!record) {
-      const attendanceId = `ATT-${employee.id}-${today().replace(/-/g, "")}`
+      const attendanceId = `ATT-${employee.id}-${today(timeZone).replace(/-/g, "")}`
       const cols = ["attendance_id", "employee_id", "employee_name", "work_date", "clock_in", "status", "source"]
-      const vals: unknown[] = [attendanceId, employee.id, employee.employee_name, today(), now, "Present", "Portal"]
+      const vals: unknown[] = [attendanceId, employee.id, employee.employee_name, today(timeZone), now, "Present", "Portal"]
       if (withSession) {
         cols.splice(5, 0, "active_since")
         vals.splice(5, 0, now)
@@ -264,8 +292,8 @@ export async function POST(request: Request) {
     // Currently in an open session → clock out, accumulate worked hours, and
     // recompute the break total as the day's span minus worked time.
     if (isOpen(record, withSession)) {
-      const firstIn = record.clock_in || sessionStart(record, withSession)
-      const sessionHours = hoursBetween(sessionStart(record, withSession), now)
+      const firstIn = record.clock_in || sessionStart(record, withSession, timeZone)
+      const sessionHours = hoursBetween(sessionStart(record, withSession, timeZone), now)
       const worked = Number((Number(record.working_hours || 0) + sessionHours).toFixed(2))
       const spanMinutes = hoursBetween(firstIn, now) * 60
       const breakMinutes = Math.max(0, Math.round(spanMinutes - worked * 60))

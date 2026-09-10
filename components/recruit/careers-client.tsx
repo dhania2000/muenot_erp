@@ -49,7 +49,7 @@ export function CareersClient({ content = CAREERS_DEFAULTS }: { content?: Career
                   href={content.websiteUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-1 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-blue-600"
+                  className="mt-1 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-[var(--careers-accent)]"
                 >
                   <Globe className="size-3.5" /> {content.websiteUrl}
                 </a>
@@ -58,7 +58,8 @@ export function CareersClient({ content = CAREERS_DEFAULTS }: { content?: Career
           </div>
           <Link
             href="/job-opening"
-            className="inline-flex items-center justify-center gap-2 self-start rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 sm:self-auto"
+            style={{ backgroundColor: "var(--careers-accent)" }}
+            className="inline-flex items-center justify-center gap-2 self-start rounded-md px-5 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 sm:self-auto"
           >
             <Briefcase className="size-4" />
             Jobs{openCount > 0 ? ` (${openCount})` : ""}
@@ -99,7 +100,8 @@ export function CareersClient({ content = CAREERS_DEFAULTS }: { content?: Career
         <div className="mt-8 border-t border-border pt-6">
           <Link
             href="/job-opening"
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            style={{ backgroundColor: "var(--careers-accent)" }}
+            className="inline-flex items-center justify-center gap-2 rounded-md px-5 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
           >
             <Briefcase className="size-4" />
             View open roles{openCount > 0 ? ` (${openCount})` : ""}

@@ -12,6 +12,8 @@ export type CareersContent = {
   companyName: string
   tagline: string
   websiteUrl: string
+  /** Brand/accent color (any CSS color, stored as a hex string) applied across the public careers site. */
+  accentColor: string
   heroImage: string
   logoMark: string
   headerLogo: string
@@ -30,6 +32,7 @@ export const CAREERS_KEYS: Record<keyof CareersContent, string> = {
   companyName: "careers.company_name",
   tagline: "careers.tagline",
   websiteUrl: "careers.website_url",
+  accentColor: "careers.accent_color",
   heroImage: "careers.hero_image",
   logoMark: "careers.logo_mark",
   headerLogo: "careers.header_logo",
@@ -46,6 +49,7 @@ export const CAREERS_DEFAULTS: CareersContent = {
   companyName: "Muenot",
   tagline: "Infinite Learning, Endless Possibilities",
   websiteUrl: "https://muenot.co.in",
+  accentColor: "#2563eb",
   heroImage: "/careers-hero.png",
   logoMark: "/muenot-mark.png",
   headerLogo: "/muenot-logo.png",

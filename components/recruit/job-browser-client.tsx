@@ -133,8 +133,13 @@ export function JobBrowserClient({ initialHash }: { initialHash?: string }) {
                   <button
                     type="button"
                     onClick={() => setSelected(job.public_hash)}
+                    style={
+                      active
+                        ? { backgroundColor: "color-mix(in srgb, var(--careers-accent) 10%, transparent)" }
+                        : undefined
+                    }
                     className={`flex w-full flex-col gap-2 px-5 py-4 text-left transition-colors ${
-                      active ? "bg-blue-50" : "hover:bg-muted/60"
+                      active ? "" : "hover:bg-muted/60"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -237,7 +242,11 @@ function JobDetailPanel({ hash }: { hash: string }) {
           <Button variant="outline" onClick={share}>
             <Share2 data-icon="inline-start" /> Share Link
           </Button>
-          <Button onClick={() => setApplyOpen(true)} className="bg-blue-600 text-white hover:bg-blue-700">
+          <Button
+            onClick={() => setApplyOpen(true)}
+            style={{ backgroundColor: "var(--careers-accent)" }}
+            className="text-white hover:opacity-90"
+          >
             <Briefcase data-icon="inline-start" /> Apply
           </Button>
         </div>
@@ -416,7 +425,13 @@ function ApplyDialog({
                 </div>
               )}
 
-              <Button type="submit" size="lg" disabled={submitting} className="mt-2 w-full bg-blue-600 text-white hover:bg-blue-700 sm:w-auto">
+              <Button
+                type="submit"
+                size="lg"
+                disabled={submitting}
+                style={{ backgroundColor: "var(--careers-accent)" }}
+                className="mt-2 w-full text-white hover:opacity-90 sm:w-auto"
+              >
                 {submitting && <Loader2 className="size-4 animate-spin" data-icon="inline-start" />}
                 Submit application
               </Button>

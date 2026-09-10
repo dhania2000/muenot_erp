@@ -23,7 +23,8 @@ export async function PublicHeader() {
           </Link>
           <Link
             href="/job-opening"
-            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 font-medium text-white transition-colors hover:bg-blue-700"
+            style={{ backgroundColor: content.accentColor }}
+            className="inline-flex items-center rounded-md px-4 py-2 font-medium text-white transition-opacity hover:opacity-90"
           >
             Jobs
           </Link>

@@ -11,7 +11,10 @@ export const metadata: Metadata = {
 export default async function CareersPage() {
   const content = await getCareersContent()
   return (
-    <div className="light flex min-h-screen flex-col bg-muted text-foreground [color-scheme:light]">
+    <div
+      className="light flex min-h-screen flex-col bg-muted text-foreground [color-scheme:light]"
+      style={{ "--careers-accent": content.accentColor } as React.CSSProperties}
+    >
       <PublicHeader />
       <main className="flex-1">
         <CareersClient content={content} />

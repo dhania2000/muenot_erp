@@ -11,9 +11,10 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ExternalLink, Globe, ImageUp, Loader2, RotateCcw, Save } from "lucide-react"
+import { ExternalLink, Globe, ImageUp, Loader2, Monitor, RotateCcw, Save } from "lucide-react"
 import { PageHeader } from "@/components/recruit/recruit-shared"
 import { CAREERS_DEFAULTS, type CareersContent } from "@/lib/careers-content"
+import { CareersClient } from "@/components/recruit/careers-client"
 
 type ImageField = "headerLogo" | "logoMark" | "heroImage"
 
@@ -142,7 +143,8 @@ export function CareerSiteClient() {
         }
       />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,560px)] xl:items-start">
+        <div className="grid grid-cols-1 gap-6">
         <Card>
           <CardHeader>
             <CardTitle>Branding</CardTitle>
@@ -173,6 +175,27 @@ export function CareerSiteClient() {
             <Field>
               <FieldLabel>Website URL</FieldLabel>
               <Input value={form.websiteUrl} onChange={(e) => set("websiteUrl", e.target.value)} placeholder="https://…" />
+            </Field>
+            <Field>
+              <FieldLabel>Accent color</FieldLabel>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  aria-label="Pick accent color"
+                  value={form.accentColor}
+                  onChange={(e) => set("accentColor", e.target.value)}
+                  className="size-10 shrink-0 cursor-pointer rounded-md border border-border bg-transparent p-1"
+                />
+                <Input
+                  value={form.accentColor}
+                  onChange={(e) => set("accentColor", e.target.value)}
+                  placeholder="#2563eb"
+                  className="font-mono"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Used for buttons, links and highlights across the public careers site.
+              </p>
             </Field>
           </CardContent>
         </Card>
@@ -234,7 +257,7 @@ export function CareerSiteClient() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2">
+        <Card>
           <CardHeader>
             <CardTitle>Our Team</CardTitle>
           </CardHeader>
@@ -249,6 +272,43 @@ export function CareerSiteClient() {
             </Field>
           </CardContent>
         </Card>
+        </div>
+
+        <aside className="xl:sticky xl:top-6">
+          <Card className="overflow-hidden">
+            <CardHeader className="flex-row items-center gap-2 space-y-0 border-b border-border">
+              <Monitor className="size-4 text-muted-foreground" />
+              <CardTitle className="text-sm">Live preview</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div
+                className="light max-h-[70vh] overflow-y-auto bg-muted text-foreground [color-scheme:light]"
+                style={{ "--careers-accent": form.accentColor } as React.CSSProperties}
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-3">
+                  {form.headerLogo ? (
+                    <Image
+                      src={form.headerLogo || "/placeholder.svg"}
+                      alt={`${form.companyName} logo`}
+                      width={120}
+                      height={28}
+                      className="h-6 w-auto object-contain"
+                    />
+                  ) : (
+                    <span className="text-sm font-semibold">{form.companyName}</span>
+                  )}
+                  <span
+                    style={{ backgroundColor: "var(--careers-accent)" }}
+                    className="rounded-md px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Jobs
+                  </span>
+                </div>
+                <CareersClient content={form} />
+              </div>
+            </CardContent>
+          </Card>
+        </aside>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">

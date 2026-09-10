@@ -35,7 +35,17 @@ const MARKETING_CHILDREN: NavChild[] = [
   { label: "Lead Generation", href: "/modules/marketing/lead-generation" },
   { label: "Journeys", href: "/modules/marketing/journeys" },
   { label: "Marketing Planner", href: "/modules/marketing/planner" },
-  { label: "Marketing Campaigns", href: "/modules/marketing/campaigns" },
+  {
+    label: "Marketing Campaigns",
+    children: [
+      { label: "Overview", href: "/modules/marketing/campaigns" },
+      { label: "Email", href: "/modules/marketing/campaigns/email" },
+      { label: "Social", href: "/modules/marketing/campaigns/social" },
+      { label: "SMS", href: "/modules/marketing/campaigns/sms" },
+      { label: "WhatsApp", href: "/modules/marketing/campaigns/whatsapp" },
+      { label: "Engagement Pop-Ups", href: "/modules/marketing/campaigns/engagement-popups" },
+    ],
+  },
   { label: "Website Analytics", href: "/modules/marketing/website-analytics" },
   { label: "Library", href: "/modules/marketing/library" },
 ]

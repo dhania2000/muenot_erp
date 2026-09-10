@@ -8,7 +8,7 @@ import {
   buildRecipientKey,
   ensureEmailTables,
   generateTrackingToken,
-  getLatestThreadId,
+  getLatestThreadIdByEmail,
   getThreadContext,
   isEmailConfigured,
   loadAttachment,
@@ -86,7 +86,13 @@ export async function POST(request: Request) {
   let threadId: string
   let thread = null as Awaited<ReturnType<typeof getThreadContext>>
   if (mailType === "followup") {
-    const latest = await getLatestThreadId(recipientKey)
+    // Identify the recipient by their EMAIL ADDRESS so the follow-up joins the
+    // last email actually sent to that person — regardless of whether the
+    // earlier email (New, bulk, or another follow-up) was linked to a lead or
+    // which lead it was linked to. Keying on the lead-based recipient_key here
+    // is what caused follow-ups to break out into a separate thread whenever the
+    // lead linkage differed between sends.
+    const latest = await getLatestThreadIdByEmail(to_email)
     threadId = latest ?? buildNewThreadId(recipientKey, token)
     thread = latest ? await getThreadContext(latest) : null
   } else {

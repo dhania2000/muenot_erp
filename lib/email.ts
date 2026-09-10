@@ -212,6 +212,31 @@ export async function getLatestThreadId(recipientKey: string): Promise<string | 
   return rows[0]?.thread_id ?? null
 }
 
+/**
+ * Find the most recent thread id for a recipient identified purely by their
+ * EMAIL ADDRESS, independent of whether (or which) lead was linked on the
+ * earlier email. This is what a follow-up must use: the recipient is the same
+ * person whether their previous message was a New email, a bulk send, or
+ * another follow-up, and whether or not it was linked to a lead. Matching on
+ * the lead-based recipient_key instead would miss the last email whenever the
+ * lead linkage differed between the two sends, causing the follow-up to start a
+ * brand-new (separate) thread. Failed sends are ignored so the follow-up
+ * anchors on an email that actually went out. Returns null when the address has
+ * never been successfully emailed before.
+ */
+export async function getLatestThreadIdByEmail(toEmail: string): Promise<string | null> {
+  const email = (toEmail || "").trim().toLowerCase()
+  if (!email) return null
+  const rows = await query<any[]>(
+    `SELECT thread_id FROM sales_emails
+     WHERE LOWER(to_email) = ? AND thread_id IS NOT NULL AND status <> 'Failed'
+     ORDER BY sent_at DESC, id DESC
+     LIMIT 1`,
+    [email],
+  )
+  return rows[0]?.thread_id ?? null
+}
+
 /** Resolve the domain used inside generated Message-ID headers. */
 function resolveMailDomain() {
   const from = process.env.SMTP_FROM || process.env.SMTP_USER || ""

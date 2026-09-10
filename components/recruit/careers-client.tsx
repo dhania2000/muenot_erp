@@ -39,6 +39,7 @@ export function CareersClient({ content = CAREERS_DEFAULTS }: { content?: Career
                 alt={`${content.companyName} logo`}
                 width={128}
                 height={128}
+                priority
                 className="size-full object-contain"
               />
             </span>

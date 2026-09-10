@@ -214,9 +214,32 @@ export function resolveFeatureSlug(slug: string): { moduleKey: string; action: P
   const [group, rest] = slug.split(".")
   if (!group || !rest) return null
 
-  const viewVerbs = ["view", "list", "read", "get", "make", "download", "export"]
+  // Decide whether the slug is a WRITE action or a plain view/navigation slug.
+  // Only an explicit set of write verbs counts as "update"; everything else
+  // (including noun-first read pages like `gst_filing`, `tds_filing`,
+  // `journal_entries`, `general_ledger`, `financial_reports`) is treated as
+  // "view". Defaulting unknown verbs to "update" was the bug: it demanded a
+  // write scope to even see those pages, so granting an employee "View" access
+  // left the page hidden or behaving wrong.
+  const writeVerbs = [
+    "manage",
+    "create",
+    "add",
+    "edit",
+    "update",
+    "delete",
+    "remove",
+    "send",
+    "schedule",
+    "assign",
+    "approve",
+    "reject",
+    "import",
+    "upload",
+    "revoke",
+  ]
   const verb = rest.split("_")[0]
-  const action: PermissionAction = viewVerbs.includes(verb) ? "view" : "update"
+  const action: PermissionAction = writeVerbs.includes(verb) ? "update" : "view"
 
   const groupModules = PERMISSION_MODULES.filter((m) => m.group === group)
   if (groupModules.length === 0) return null

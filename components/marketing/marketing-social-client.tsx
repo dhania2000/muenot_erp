@@ -14,8 +14,14 @@ import {
   Share2,
   FileText,
   Users,
+  Building2,
+  User,
   Sparkles,
   X,
+  ChevronLeft,
+  Megaphone,
+  Smile,
+  ImageUp,
 } from "lucide-react"
 
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
@@ -91,9 +97,15 @@ const platformById = (id: PlatformId) => PLATFORMS.find((p) => p.id === id)!
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
+type AccountType = "company" | "personal"
+
 type Account = {
+  id: string
   platform: PlatformId
+  type: AccountType
   handle: string
+  /** employee name — only set for personal accounts */
+  owner?: string
   followers: number
   connectedAt: string
 }
@@ -105,20 +117,28 @@ type SocialPost = {
   name: string
   content: string
   targets: PlatformId[]
+  /** specific connected accounts selected for this post */
+  accountIds?: string[]
+  /** optional attached image (object URL / data URL) */
+  image?: string
+  brand?: string
   status: PostStatus
   folder: string
   createdAt: string
   publishedAt?: string
 }
 
+const BRANDS = ["Muenot Technologies", "Muenot Labs", "Muenot Academy"]
+
 /* ------------------------------------------------------------------ */
 /* Seed data                                                           */
 /* ------------------------------------------------------------------ */
 
 const INITIAL_ACCOUNTS: Account[] = [
-  { platform: "linkedin", handle: "@muenot", followers: 12400, connectedAt: "2026-08-02" },
-  { platform: "instagram", handle: "@muenot.official", followers: 8600, connectedAt: "2026-08-10" },
-  { platform: "x", handle: "@muenot", followers: 5200, connectedAt: "2026-08-14" },
+  { id: "ACC-1", platform: "linkedin", type: "company", handle: "@muenot", followers: 12400, connectedAt: "2026-08-02" },
+  { id: "ACC-2", platform: "instagram", type: "company", handle: "@muenot.official", followers: 8600, connectedAt: "2026-08-10" },
+  { id: "ACC-3", platform: "x", type: "company", handle: "@muenot", followers: 5200, connectedAt: "2026-08-14" },
+  { id: "ACC-4", platform: "linkedin", type: "personal", handle: "@priya.sharma", owner: "Priya Sharma", followers: 3200, connectedAt: "2026-08-20" },
 ]
 
 const INITIAL_POSTS: SocialPost[] = [
@@ -207,8 +227,9 @@ export function MarketingSocialClient() {
   const [folder, setFolder] = React.useState("all")
   const [statusFilter, setStatusFilter] = React.useState("all")
   const [query, setQuery] = React.useState("")
+  const [composing, setComposing] = React.useState(false)
 
-  const connectedIds = accounts.map((a) => a.platform)
+  const connectedIds = Array.from(new Set(accounts.map((a) => a.platform)))
   const folders = React.useMemo(
     () => Array.from(new Set(posts.map((p) => p.folder))),
     [posts],
@@ -222,19 +243,22 @@ export function MarketingSocialClient() {
   })
 
   /* ---- account actions ---- */
-  function connect(platform: PlatformId, handle: string) {
+  function connect(input: { platform: PlatformId; type: AccountType; handle: string; owner?: string }) {
     setAccounts((prev) => [
-      ...prev.filter((a) => a.platform !== platform),
+      ...prev,
       {
-        platform,
-        handle: handle.startsWith("@") ? handle : `@${handle}`,
+        id: `ACC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        platform: input.platform,
+        type: input.type,
+        handle: input.handle.startsWith("@") ? input.handle : `@${input.handle}`,
+        owner: input.owner?.trim() ? input.owner.trim() : undefined,
         followers: Math.floor(1000 + Math.random() * 20000),
         connectedAt: new Date().toISOString().slice(0, 10),
       },
     ])
   }
-  function disconnect(platform: PlatformId) {
-    setAccounts((prev) => prev.filter((a) => a.platform !== platform))
+  function disconnect(id: string) {
+    setAccounts((prev) => prev.filter((a) => a.id !== id))
   }
 
   /* ---- post actions ---- */
@@ -277,19 +301,28 @@ export function MarketingSocialClient() {
   const publishedCount = posts.filter((p) => p.status === "Published").length
   const totalReach = accounts.reduce((s, a) => s + a.followers, 0)
 
+  if (composing) {
+    return (
+      <ComposeWizard
+        accounts={accounts}
+        onCancel={() => setComposing(false)}
+        onCreate={addPost}
+        onPublish={publishPost}
+      />
+    )
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <MarketingHeader
         eyebrow="Marketing Campaigns"
         title="Social Campaigns"
         description="Connect your social accounts and publish posts straight to every connected platform from one place."
         action={
-          <ComposeDialog
-            connectedIds={connectedIds}
-            folders={folders}
-            onCreate={addPost}
-            onPublish={publishPost}
-          />
+          <Button onClick={() => setComposing(true)}>
+            <Plus className="size-4" />
+            Create
+          </Button>
         }
       />
 
@@ -378,42 +411,75 @@ export function MarketingSocialClient() {
         </TabsContent>
 
         {/* ------------------------------ Accounts ------------------------------ */}
-        <TabsContent value="accounts">
+        <TabsContent value="accounts" className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Connect a company page to publish as the brand, or let employees link their own accounts to
+            post under their name. You can connect multiple accounts per platform.
+          </p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {PLATFORMS.map((p) => {
-              const account = accounts.find((a) => a.platform === p.id)
+              const list = accounts.filter((a) => a.platform === p.id)
               return (
                 <Card key={p.id}>
                   <CardContent className="flex flex-col gap-4 pt-6">
                     <div className="flex items-center gap-3">
                       <PlatformBadge id={p.id} size="md" />
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="truncate font-medium">{p.name}</p>
-                        {account ? (
-                          <p className="truncate text-xs text-muted-foreground">
-                            {account.handle} · {formatCount(account.followers)} followers
-                          </p>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">Not connected</p>
-                        )}
+                        <p className="text-xs text-muted-foreground">
+                          {list.length === 0
+                            ? "Not connected"
+                            : `${list.length} account${list.length > 1 ? "s" : ""} connected`}
+                        </p>
                       </div>
+                      {list.length > 0 ? (
+                        <Badge className="bg-chart-2/15 text-chart-2">Active</Badge>
+                      ) : null}
                     </div>
-                    {account ? (
-                      <div className="flex items-center justify-between">
-                        <Badge className="bg-chart-2/15 text-chart-2">Connected</Badge>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-muted-foreground"
-                          onClick={() => disconnect(p.id)}
-                        >
-                          <Unlink className="size-4" />
-                          Disconnect
-                        </Button>
-                      </div>
-                    ) : (
-                      <ConnectDialog platform={p} onConnect={connect} />
-                    )}
+
+                    {list.length > 0 ? (
+                      <ul className="space-y-2">
+                        {list.map((account) => (
+                          <li
+                            key={account.id}
+                            className="flex items-center justify-between gap-2 rounded-lg border p-2.5"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate text-sm font-medium">{account.handle}</span>
+                                <Badge variant="outline" className="shrink-0 gap-1 text-[10px] font-normal">
+                                  {account.type === "company" ? (
+                                    <>
+                                      <Building2 className="size-3" />
+                                      Company
+                                    </>
+                                  ) : (
+                                    <>
+                                      <User className="size-3" />
+                                      {account.owner ?? "Employee"}
+                                    </>
+                                  )}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                {formatCount(account.followers)} followers
+                              </p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              className="text-muted-foreground"
+                              onClick={() => disconnect(account.id)}
+                              aria-label={`Disconnect ${account.handle}`}
+                            >
+                              <Unlink className="size-4" />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+
+                    <ConnectDialog platform={p} onConnect={connect} hasAccounts={list.length > 0} />
                   </CardContent>
                 </Card>
               )
@@ -506,20 +572,32 @@ function PostRow({
 function ConnectDialog({
   platform,
   onConnect,
+  hasAccounts,
 }: {
   platform: Platform
-  onConnect: (id: PlatformId, handle: string) => void
+  onConnect: (input: { platform: PlatformId; type: AccountType; handle: string; owner?: string }) => void
+  hasAccounts: boolean
 }) {
   const [open, setOpen] = React.useState(false)
+  const [type, setType] = React.useState<AccountType>("company")
   const [handle, setHandle] = React.useState("")
+  const [owner, setOwner] = React.useState("")
+
+  const reset = () => {
+    setType("company")
+    setHandle("")
+    setOwner("")
+  }
+
+  const canSubmit = handle.trim().length > 0 && (type === "company" || owner.trim().length > 0)
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
       <DialogTrigger
         render={
           <Button variant="outline" size="sm" className="w-full">
-            <LinkIcon className="size-4" />
-            Connect
+            {hasAccounts ? <Plus className="size-4" /> : <LinkIcon className="size-4" />}
+            {hasAccounts ? "Add another account" : "Connect"}
           </Button>
         }
       />
@@ -529,29 +607,86 @@ function ConnectDialog({
             <PlatformBadge id={platform.id} size="md" />
             <div>
               <DialogTitle>Connect {platform.name}</DialogTitle>
-              <DialogDescription>Authorize the account to publish from this ERP.</DialogDescription>
+              <DialogDescription>Authorize an account to publish from this ERP.</DialogDescription>
             </div>
           </div>
         </DialogHeader>
-        <div className="space-y-2">
-          <Label htmlFor="handle">Account handle</Label>
-          <Input
-            id="handle"
-            placeholder={`@your-${platform.id}-handle`}
-            value={handle}
-            onChange={(e) => setHandle(e.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">
-            Demo mode — this simulates the OAuth authorization step without leaving the app.
-          </p>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Account type</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setType("company")}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
+                  type === "company"
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <Building2 className="size-4" />
+                Company page
+              </button>
+              <button
+                type="button"
+                onClick={() => setType("personal")}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
+                  type === "personal"
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <User className="size-4" />
+                Employee account
+              </button>
+            </div>
+          </div>
+
+          {type === "personal" ? (
+            <div className="space-y-2">
+              <Label htmlFor={`owner-${platform.id}`}>Employee name</Label>
+              <Input
+                id={`owner-${platform.id}`}
+                placeholder="e.g. Priya Sharma"
+                value={owner}
+                onChange={(e) => setOwner(e.target.value)}
+              />
+            </div>
+          ) : null}
+
+          <div className="space-y-2">
+            <Label htmlFor={`handle-${platform.id}`}>
+              {type === "company" ? "Page handle" : "Account handle"}
+            </Label>
+            <Input
+              id={`handle-${platform.id}`}
+              placeholder={`@your-${platform.id}-handle`}
+              value={handle}
+              onChange={(e) => setHandle(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              {type === "company"
+                ? "Directly connect your company page to publish as the brand."
+                : "Employees can connect their own account to publish under their name."}
+            </p>
+          </div>
         </div>
+
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button
-            disabled={!handle.trim()}
+            disabled={!canSubmit}
             onClick={() => {
-              onConnect(platform.id, handle.trim())
-              setHandle("")
+              onConnect({
+                platform: platform.id,
+                type,
+                handle: handle.trim(),
+                owner: type === "personal" ? owner.trim() : undefined,
+              })
+              reset()
               setOpen(false)
             }}
           >
@@ -564,41 +699,78 @@ function ConnectDialog({
 }
 
 /* ------------------------------------------------------------------ */
-/* Compose dialog                                                      */
+/* Compose wizard (full page)                                          */
 /* ------------------------------------------------------------------ */
 
-function ComposeDialog({
-  connectedIds,
-  folders,
+const EMOJIS = ["😀", "😎", "🚀", "🎉", "🔥", "💡", "👏", "❤️", "✅", "📢", "📈", "🙌", "✨", "🎯", "💬", "👀"]
+
+function AccountAvatar({ account, size = "md" }: { account: Account; size?: "sm" | "md" }) {
+  const p = platformById(account.platform)
+  const initial = (account.owner ?? account.handle.replace(/^@/, "")).charAt(0).toUpperCase()
+  const dim = size === "sm" ? "size-8 text-xs" : "size-12 text-base"
+  return (
+    <span className={cn("relative inline-flex shrink-0", size === "sm" ? "size-8" : "size-12")}>
+      <span
+        className={cn(
+          "inline-flex items-center justify-center rounded-full bg-muted font-semibold text-foreground",
+          dim,
+        )}
+      >
+        {initial}
+      </span>
+      <span
+        className="absolute -right-0.5 -bottom-0.5 inline-flex size-4 items-center justify-center rounded-full text-[8px] font-semibold text-white ring-2 ring-background"
+        style={{ backgroundColor: p.color }}
+        title={p.name}
+      >
+        {p.abbr}
+      </span>
+    </span>
+  )
+}
+
+function ComposeWizard({
+  accounts,
+  onCancel,
   onCreate,
   onPublish,
 }: {
-  connectedIds: PlatformId[]
-  folders: string[]
+  accounts: Account[]
+  onCancel: () => void
   onCreate: (post: SocialPost) => void
   onPublish: (id: string) => void
 }) {
-  const [open, setOpen] = React.useState(false)
+  const [step, setStep] = React.useState<1 | 2>(1)
+
+  // step 1
   const [name, setName] = React.useState("")
+  const [brand, setBrand] = React.useState("")
+  const [nameTouched, setNameTouched] = React.useState(false)
+
+  // step 2
+  const [selectedAccounts, setSelectedAccounts] = React.useState<string[]>([])
   const [content, setContent] = React.useState("")
-  const [targets, setTargets] = React.useState<PlatformId[]>([])
+  const [image, setImage] = React.useState<string | undefined>(undefined)
+  const [showEmoji, setShowEmoji] = React.useState(false)
+  const fileRef = React.useRef<HTMLInputElement>(null)
 
-  const reset = () => {
-    setName("")
-    setContent("")
-    setTargets([])
-  }
+  const nameValid = name.trim().length > 0
 
-  const toggleTarget = (id: PlatformId) =>
-    setTargets((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
+  const toggleAccount = (id: string) =>
+    setSelectedAccounts((prev) => (prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]))
 
-  // Tightest character limit across the selected platforms.
-  const activeLimit = targets.length
-    ? Math.min(...targets.map((t) => platformById(t).limit))
-    : null
+  const chosen = accounts.filter((a) => selectedAccounts.includes(a.id))
+  const targets = Array.from(new Set(chosen.map((a) => a.platform)))
+  const activeLimit = targets.length ? Math.min(...targets.map((t) => platformById(t).limit)) : null
   const overLimit = activeLimit !== null && content.length > activeLimit
 
-  const canSubmit = name.trim().length > 0 && content.trim().length > 0
+  const canProceed = selectedAccounts.length > 0 && content.trim().length > 0 && !overLimit
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImage(URL.createObjectURL(file))
+  }
 
   function build(status: PostStatus): SocialPost {
     return {
@@ -606,6 +778,9 @@ function ComposeDialog({
       name: name.trim(),
       content: content.trim(),
       targets,
+      accountIds: selectedAccounts,
+      image,
+      brand: brand || undefined,
       status,
       folder: "Unclassified",
       createdAt: new Date().toISOString(),
@@ -614,123 +789,252 @@ function ComposeDialog({
 
   function saveDraft() {
     onCreate(build("Draft"))
-    reset()
-    setOpen(false)
+    onCancel()
   }
 
   function publishNow() {
     const post = build("Publishing")
     onCreate(post)
-    // kick off the simulated pipeline on the freshly created post
     window.setTimeout(() => onPublish(post.id), 50)
-    reset()
-    setOpen(false)
+    onCancel()
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
-      <DialogTrigger
-        render={
-          <Button>
-            <Plus className="size-4" />
-            Create
+    <div className="flex min-h-full flex-col">
+      {/* Top bar */}
+      <div className="flex items-center justify-between gap-4 border-b p-6">
+        <div className="flex items-start gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Back"
+            onClick={() => (step === 2 ? setStep(1) : onCancel())}
+          >
+            <ChevronLeft className="size-5" />
           </Button>
-        }
-      />
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New Social Post</DialogTitle>
-          <DialogDescription>
-            Write once and publish to every selected connected platform.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="post-name">Campaign name</Label>
-            <Input
-              id="post-name"
-              placeholder="e.g. Autumn product launch"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Publish to</Label>
-            {connectedIds.length === 0 ? (
-              <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-                No accounts connected yet. Connect one from the Connected Accounts tab to publish.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {connectedIds.map((id) => {
-                  const active = targets.includes(id)
-                  const p = platformById(id)
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => toggleTarget(id)}
-                      className={cn(
-                        "flex items-center gap-2 rounded-full border py-1 pr-3 pl-1 text-sm transition-colors",
-                        active
-                          ? "border-primary bg-primary/10 text-foreground"
-                          : "border-border text-muted-foreground hover:bg-muted",
-                      )}
-                    >
-                      <PlatformBadge id={id} />
-                      {p.name}
-                      {active ? <X className="size-3.5" /> : null}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="post-content">Post content</Label>
-              {activeLimit !== null ? (
-                <span className={cn("text-xs", overLimit ? "text-destructive" : "text-muted-foreground")}>
-                  {content.length}/{activeLimit}
-                </span>
-              ) : null}
-            </div>
-            <Textarea
-              id="post-content"
-              rows={5}
-              placeholder="What do you want to share?"
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-            />
-            {overLimit ? (
-              <p className="text-xs text-destructive">
-                Content exceeds the limit for the tightest selected platform.
-              </p>
-            ) : (
-              <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Sparkles className="size-3" />
-                Tip: keep it under 280 characters to fit every platform.
-              </p>
-            )}
+          <div>
+            <p className="text-sm font-medium text-primary">Social Campaigns</p>
+            <h1 className="text-xl font-semibold tracking-tight">
+              {step === 1 ? "Create Social Post" : name || "Untitled campaign"}
+            </h1>
           </div>
         </div>
+        {step === 2 ? (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={saveDraft} disabled={!canProceed}>
+              Save Draft
+            </Button>
+            <Button onClick={publishNow} disabled={!canProceed}>
+              <Send className="size-4" />
+              Save and Proceed
+            </Button>
+          </div>
+        ) : null}
+      </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={saveDraft} disabled={!canSubmit}>
-            Save Draft
-          </Button>
-          <Button
-            onClick={publishNow}
-            disabled={!canSubmit || targets.length === 0 || overLimit}
-          >
-            <Send className="size-4" />
-            Publish Now
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {/* Body */}
+      {step === 1 ? (
+        <div className="grid flex-1 gap-0 p-6 lg:grid-cols-[minmax(0,360px)_1fr]">
+          {/* Left info panel */}
+          <div className="hidden flex-col items-center justify-center gap-4 rounded-l-xl bg-muted/40 p-8 text-center lg:flex">
+            <div className="flex size-20 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Megaphone className="size-9" />
+            </div>
+            <h2 className="text-lg font-semibold">General Details</h2>
+            <p className="max-w-xs text-sm leading-relaxed text-muted-foreground text-pretty">
+              General information about your campaign gives an overview of its purpose. Give it a name
+              and pick the brand to proceed.
+            </p>
+          </div>
+
+          {/* Form */}
+          <Card className="rounded-xl lg:rounded-l-none">
+            <CardContent className="flex flex-col gap-6 pt-6">
+              <div className="space-y-2">
+                <Label htmlFor="wiz-name">Name</Label>
+                <Input
+                  id="wiz-name"
+                  placeholder="Enter your campaign name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onBlur={() => setNameTouched(true)}
+                  aria-invalid={nameTouched && !nameValid}
+                />
+                {nameTouched && !nameValid ? (
+                  <p className="text-xs text-destructive">Enter a campaign name</p>
+                ) : null}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Choose Brand</Label>
+                <Select value={brand} onValueChange={setBrand}>
+                  <SelectTrigger aria-label="Choose brand">
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BRANDS.map((b) => (
+                      <SelectItem key={b} value={b}>
+                        {b}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => {
+                    setNameTouched(true)
+                    if (nameValid) setStep(2)
+                  }}
+                >
+                  Next
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <div className="flex-1 p-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Social Content</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Account selector */}
+              {accounts.length === 0 ? (
+                <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                  No accounts connected yet. Connect one from the Connected Accounts tab to publish.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <Label>Post to</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {accounts.map((account) => {
+                      const active = selectedAccounts.includes(account.id)
+                      return (
+                        <button
+                          key={account.id}
+                          type="button"
+                          onClick={() => toggleAccount(account.id)}
+                          title={`${account.handle}${account.owner ? ` · ${account.owner}` : ""}`}
+                          className={cn(
+                            "flex flex-col items-center gap-1.5 rounded-lg border p-2 transition-colors",
+                            active
+                              ? "border-primary bg-primary/10"
+                              : "border-transparent opacity-60 hover:opacity-100",
+                          )}
+                        >
+                          <AccountAvatar account={account} />
+                          <span className="max-w-16 truncate text-[11px] text-muted-foreground">
+                            {account.owner ?? account.handle}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Content editor */}
+              <div className="space-y-2 rounded-lg border">
+                <Textarea
+                  rows={7}
+                  placeholder="Write your post content here..."
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  className="resize-none border-0 focus-visible:ring-0"
+                />
+
+                {image ? (
+                  <div className="relative mx-3 w-fit">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={image || "/placeholder.svg"}
+                      alt="Post attachment preview"
+                      className="max-h-48 rounded-md border object-cover"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="icon-sm"
+                      className="absolute -top-2 -right-2 rounded-full"
+                      onClick={() => setImage(undefined)}
+                      aria-label="Remove image"
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                ) : null}
+
+                <div className="relative flex items-center gap-1 border-t px-3 py-2">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Add emoji"
+                    onClick={() => setShowEmoji((v) => !v)}
+                  >
+                    <Smile className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Upload image"
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    <ImageUp className="size-4" />
+                  </Button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleFile}
+                  />
+                  {activeLimit !== null ? (
+                    <span
+                      className={cn(
+                        "ml-auto text-xs",
+                        overLimit ? "text-destructive" : "text-muted-foreground",
+                      )}
+                    >
+                      {content.length}/{activeLimit}
+                    </span>
+                  ) : null}
+
+                  {showEmoji ? (
+                    <div className="absolute bottom-11 left-0 z-10 grid grid-cols-8 gap-1 rounded-lg border bg-popover p-2 shadow-md">
+                      {EMOJIS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className="rounded p-1 text-lg hover:bg-muted"
+                          onClick={() => {
+                            setContent((c) => c + emoji)
+                            setShowEmoji(false)
+                          }}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {overLimit ? (
+                <p className="text-xs text-destructive">
+                  Content exceeds the limit for the tightest selected platform.
+                </p>
+              ) : (
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Sparkles className="size-3" />
+                  Select the accounts you want to publish to, then write your content.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
   )
 }

@@ -86,6 +86,33 @@ export async function userHasFeature(userId: number, role: "admin" | "employee",
   return rows.length > 0
 }
 
+/**
+ * Build a synchronous predicate that answers "does this user have feature slug X?".
+ * Fetches the permission matrix once so it can be called many times (e.g. while
+ * building the sidebar) without extra DB round-trips. Mirrors `userHasFeature`:
+ * matrix first (with group-visibility fallback for unmapped slugs), then the
+ * legacy feature grants when no matrix is configured.
+ */
+export async function getFeatureChecker(
+  userId: number,
+  role: "admin" | "employee",
+): Promise<(featureSlug: string) => boolean> {
+  if (role === "admin") return () => true
+
+  const matrix = await getUserMatrix(userId)
+  if (matrix) {
+    return (featureSlug: string) => {
+      const granted = matrixGrantsSlug(matrix, featureSlug)
+      if (granted !== null) return granted
+      const group = featureSlug.split(".")[0]
+      return matrixGroupVisible(matrix, group)
+    }
+  }
+
+  const legacy = new Set(await getUserFeatureSlugs(userId))
+  return (featureSlug: string) => legacy.has(featureSlug)
+}
+
 /** Modules (with only the features the user can access) for a given user. Admins get everything. */
 export async function getUserAccessibleModules(userId: number, role: "admin" | "employee") {
   const allModules = await getAllModulesWithFeatures()

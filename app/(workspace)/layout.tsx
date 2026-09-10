@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
-import { getUserAccessibleModules, getUserFeatureSlugs } from "@/lib/permissions"
+import { getUserAccessibleModules, getFeatureChecker } from "@/lib/permissions"
 import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
@@ -31,7 +31,7 @@ type FeatureChild = { label: string; href?: string; feature?: string; children?:
 const HR_CHILDREN: FeatureChild[] = [
   { label: "HR Dashboard", href: "/modules/hr/dashboard", feature: "hr.view_dashboard" },
   { label: "Employees", href: "/modules/hr/employees", feature: "hr.view_employees" },
-  { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_employees" },
+  { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_documents" },
   { label: "Attendance", href: "/modules/hr/attendance", feature: "hr.view_attendance" },
   { label: "Attendance Regularisation", href: "/modules/hr/attendance-regularisation", feature: "hr.view_regularisation" },
   { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
@@ -152,8 +152,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
     // Respect the Module Settings toggles (module.hr, module.finance, ...).
     .filter((m) => settingEnabled(settings[`module.${m.slug.toLowerCase()}`]))
 
-  const granted = session.role === "admin" ? null : new Set(await getUserFeatureSlugs(session.userId))
-  const canAccess = (feature: string) => session.role === "admin" || granted!.has(feature)
+  // Matrix-aware feature check so sidebar sub-navigation reflects the permission
+  // matrix an admin configured (not just the legacy user_permissions grants).
+  const canAccess = await getFeatureChecker(session.userId, session.role)
 
   const navItems: NavItem[] = [
     ...(session.role === "admin"

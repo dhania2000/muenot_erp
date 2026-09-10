@@ -693,6 +693,15 @@ export async function sendEmail(opts: {
   // blocks on shared hosting that cause ETIMEDOUT/CONN. The message is composed
   // with the exact same headers (threading, attachments, tracking) and sent
   // over port 443, so recipients see no difference.
+  console.log("[v0][thread] transport", {
+    department: opts.department ?? "sales",
+    usingGmailApi: isGmailApiConfigured(opts.department),
+    subject: opts.subject,
+    inReplyTo: opts.inReplyTo ?? null,
+    references: opts.references ?? null,
+    incomingProviderThreadId: opts.providerThreadId ?? null,
+  })
+
   if (isGmailApiConfigured(opts.department)) {
     const raw = await composeMime(mailOptions)
     const encoded = raw.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
@@ -715,6 +724,13 @@ export async function sendEmail(opts: {
     // thread the follow-up. Read the message back and capture the real
     // Message-ID so future follow-ups can reference the id the recipient
     // actually received.
+    console.log("[v0][thread] gmail send response", {
+      sentMessageId: res.data.id ?? null,
+      requestedThreadId: opts.providerThreadId ?? null,
+      returnedThreadId: res.data.threadId ?? null,
+      threadIdHonored: Boolean(opts.providerThreadId) && res.data.threadId === opts.providerThreadId,
+    })
+
     let realMessageId = opts.messageId
     if (res.data.id) {
       try {

@@ -106,4 +106,10 @@ export type ModuleConfig = {
   summarySelect: string
   /** Enables the "Import" action and drives the bulk upload mapping. */
   importSpec?: ImportSpec
+  /**
+   * Enables per-row invoice actions (Download PDF + Send by email). Only the
+   * Freelance Invoices module uses this today; the endpoints live under
+   * /api/finance/freelance-invoices/[id].
+   */
+  invoiceActions?: boolean
 }

@@ -101,6 +101,51 @@ function LiveClock() {
 type Geo = { lat: number; lng: number; label: string }
 
 /**
+ * Lightweight static map preview built from plain OpenStreetMap tile <img>
+ * elements (no interactive iframe / map JS / WebGL). A 3x3 tile grid is
+ * positioned so the location sits at the center under a pin. This avoids the
+ * renderer crashes that an embedded interactive map iframe can trigger and
+ * needs no API key.
+ */
+function StaticMap({ lat, lng }: { lat: number; lng: number }) {
+  const z = 16
+  const n = 2 ** z
+  const xTile = ((lng + 180) / 360) * n
+  const latRad = (lat * Math.PI) / 180
+  const yTile = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n
+  const x = Math.floor(xTile)
+  const y = Math.floor(yTile)
+  const offsetX = (xTile - x) * 256
+  const offsetY = (yTile - y) * 256
+
+  const deltas = [-1, 0, 1]
+  const tiles = deltas.flatMap((dy) => deltas.map((dx) => ({ dx, dy })))
+
+  return (
+    <div className="relative h-40 w-full overflow-hidden bg-muted">
+      {tiles.map(({ dx, dy }) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={`${dx}:${dy}`}
+          src={`https://tile.openstreetmap.org/${z}/${x + dx}/${y + dy}.png`}
+          alt=""
+          width={256}
+          height={256}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          className="pointer-events-none absolute left-1/2 top-1/2 select-none"
+          style={{
+            maxWidth: "none",
+            transform: `translate(${dx * 256 - offsetX}px, ${dy * 256 - offsetY}px)`,
+          }}
+        />
+      ))}
+      <MapPin className="pointer-events-none absolute left-1/2 top-1/2 size-6 -translate-x-1/2 -translate-y-full fill-primary text-primary drop-shadow" />
+    </div>
+  )
+}
+
+/**
  * Fetch the browser location and reverse-geocode it to a readable address via
  * OpenStreetMap's Nominatim (no API key required). Resolves to null if the user
  * denies permission or geolocation is unavailable — clock in/out still works.
@@ -191,9 +236,6 @@ function ClockControl() {
   }
 
   const dotColor = state === "in" ? "bg-emerald-500" : state === "done" ? "bg-muted-foreground" : "bg-amber-500"
-  const bbox = geo
-    ? `${geo.lng - 0.004}%2C${geo.lat - 0.003}%2C${geo.lng + 0.004}%2C${geo.lat + 0.003}`
-    : ""
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -247,17 +289,19 @@ function ClockControl() {
                 {geo ? (
                   <>
                     <div className="mb-2 overflow-hidden rounded border border-border">
-                      <iframe
-                        title="Your current location on map"
-                        className="h-32 w-full"
-                        loading="lazy"
-                        referrerPolicy="no-referrer-when-downgrade"
-                        src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${geo.lat}%2C${geo.lng}`}
-                      />
+                      <StaticMap lat={geo.lat} lng={geo.lng} />
                     </div>
                     <p className="text-[11px] leading-snug text-muted-foreground">
                       {geo.label || `${geo.lat.toFixed(5)}, ${geo.lng.toFixed(5)}`}
                     </p>
+                    <a
+                      href={`https://www.openstreetmap.org/?mlat=${geo.lat}&mlon=${geo.lng}#map=16/${geo.lat}/${geo.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 inline-block text-[11px] text-primary hover:underline"
+                    >
+                      View on map
+                    </a>
                   </>
                 ) : geoBusy ? (
                   <p className="text-[11px] text-muted-foreground">Fetching your location…</p>

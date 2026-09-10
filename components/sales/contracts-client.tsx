@@ -25,6 +25,7 @@ import {
 import { MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ContractDialog } from "@/components/sales/contract-dialog"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type ContractRow = {
@@ -87,17 +88,36 @@ export function ContractsClient({ canManage }: { canManage: boolean }) {
             className="w-64 pl-8"
           />
         </div>
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Create contract
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={filtered}
+            filename="contracts"
+            columns={[
+              { header: "Contract Code", value: (r) => r.contract_code },
+              { header: "Date", value: (r) => r.contract_date },
+              { header: "Company", value: (r) => r.company_name },
+              { header: "Start Date", value: (r) => r.start_date },
+              { header: "End Date", value: (r) => r.end_date },
+              { header: "Value", value: (r) => r.value },
+              { header: "Type", value: (r) => r.contract_type },
+              { header: "Status", value: (r) => r.status },
+              { header: "Signed By Client", value: (r) => r.signed_by_client },
+              { header: "Signed By Company", value: (r) => r.signed_by_company },
+              { header: "Added By", value: (r) => r.added_by_name },
+            ]}
+          />
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus data-icon="inline-start" />
+              Create contract
+            </Button>
+          )}
+        </div>
       </div>
 
       {canManage && (

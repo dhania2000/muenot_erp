@@ -24,6 +24,7 @@ import {
 import { MoreHorizontal, Plus } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ForecastDialog } from "@/components/sales/forecast-dialog"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type ForecastRow = {
@@ -71,17 +72,34 @@ export function ForecastClient({ canManage }: { canManage: boolean }) {
           <h2 className="text-sm font-medium">Quarterly revenue forecast</h2>
           <p className="text-xs text-muted-foreground">Expected, best-case, and worst-case revenue by quarter.</p>
         </div>
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Add forecast
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={forecasts}
+            filename="forecast"
+            columns={[
+              { header: "Forecast Code", value: (r) => r.forecast_code },
+              { header: "Date", value: (r) => r.forecast_date },
+              { header: "Quarter", value: (r) => r.quarter },
+              { header: "Year", value: (r) => r.year },
+              { header: "Expected Revenue", value: (r) => r.expected_revenue },
+              { header: "Best Case", value: (r) => r.best_case },
+              { header: "Worst Case", value: (r) => r.worst_case },
+              { header: "Pipeline Coverage", value: (r) => r.pipeline_coverage },
+              { header: "Owner", value: (r) => r.owner },
+            ]}
+          />
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus data-icon="inline-start" />
+              Add forecast
+            </Button>
+          )}
+        </div>
       </div>
 
       {canManage && (

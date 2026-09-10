@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table"
 import { Loader2, Plus, Tag, Trash2 } from "lucide-react"
 import { PageHeader } from "@/components/recruit/recruit-shared"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { formatDate } from "@/lib/recruit"
 
 type Skill = { skill_id: string; name: string; created_at: string }
@@ -53,7 +54,22 @@ export function SkillsClient({ canManage }: { canManage: boolean }) {
 
   return (
     <main className="flex flex-col gap-6 p-6 md:p-8">
-      <PageHeader title="Job Skills" description="Maintain the master list of skills used across your job postings." icon={Tag} />
+      <PageHeader
+        title="Job Skills"
+        description="Maintain the master list of skills used across your job postings."
+        icon={Tag}
+        action={
+          <ExcelExportButton
+            rows={skills}
+            filename="job-skills"
+            columns={[
+              { header: "Skill ID", value: (r) => r.skill_id },
+              { header: "Name", value: (r) => r.name },
+              { header: "Added", value: (r) => r.created_at },
+            ]}
+          />
+        }
+      />
 
       {canManage && (
         <Card>

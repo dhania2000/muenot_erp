@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { PageHeader } from "@/components/recruit/recruit-shared"
 import { formatDateTime } from "@/lib/recruit"
 import { RecruitComposeEmailDialog } from "@/components/recruit/recruit-compose-email-dialog"
+import { ExcelExportButton } from "@/components/excel-export-button"
 
 type EmailRow = {
   id: number
@@ -55,9 +56,24 @@ export function RecruitEmailsClient() {
         description="Send emails to candidates and review everything that's gone out."
         icon={Mail}
         action={
-          <Button onClick={() => setComposeOpen(true)}>
-            <Plus data-icon="inline-start" /> Compose email
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExcelExportButton
+              rows={filtered}
+              filename="recruit-emails"
+              columns={[
+                { header: "Recipient Name", value: (r) => r.to_name },
+                { header: "Recipient Email", value: (r) => r.to_email },
+                { header: "Subject", value: (r) => r.subject },
+                { header: "Status", value: (r) => r.status },
+                { header: "Application ID", value: (r) => r.application_id },
+                { header: "Sent By", value: (r) => r.sent_by_name },
+                { header: "Sent At", value: (r) => r.sent_at },
+              ]}
+            />
+            <Button onClick={() => setComposeOpen(true)}>
+              <Plus data-icon="inline-start" /> Compose email
+            </Button>
+          </div>
         }
       />
 

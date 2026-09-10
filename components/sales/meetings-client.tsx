@@ -25,6 +25,7 @@ import {
 import { MoreHorizontal, Plus, Search, Video } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { MeetingDialog } from "@/components/sales/meeting-dialog"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
 
 export type MeetingRow = {
@@ -106,17 +107,35 @@ export function MeetingsClient({ canManage }: { canManage: boolean }) {
             className="w-64 pl-8"
           />
         </div>
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Schedule meeting
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={filtered}
+            filename="meetings"
+            columns={[
+              { header: "Meeting Code", value: (r) => r.meeting_code },
+              { header: "Date", value: (r) => r.meeting_date },
+              { header: "Time", value: (r) => r.meeting_time },
+              { header: "Company", value: (r) => r.company_name },
+              { header: "Contact Person", value: (r) => r.contact_person },
+              { header: "Type", value: (r) => r.meeting_type },
+              { header: "Agenda", value: (r) => r.agenda },
+              { header: "Outcome Notes", value: (r) => r.outcome_notes },
+              { header: "Next Steps", value: (r) => r.next_steps },
+              { header: "Added By", value: (r) => r.added_by_name },
+            ]}
+          />
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus data-icon="inline-start" />
+              Schedule meeting
+            </Button>
+          )}
+        </div>
       </div>
 
       {canManage && google?.oauthConfigured && (

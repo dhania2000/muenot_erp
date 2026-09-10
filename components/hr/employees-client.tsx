@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Plus, Search, Users2, ShieldCheck, Pencil, Trash2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { ExcelImportButton } from "@/components/sales/excel-import-button";
+import { ExcelExportButton } from "@/components/excel-export-button";
 
 const EMPLOYEE_IMPORT_ALIASES = Object.fromEntries(
   [
@@ -333,6 +334,27 @@ export function EmployeesClient() {
           <p className="mt-1 text-sm text-muted-foreground">Complete employee master records and workforce details.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ExcelExportButton
+            rows={employees}
+            filename="employees"
+            columns={[
+              { header: "Employee ID", value: (r) => r.employee_id },
+              { header: "Name", value: (r) => r.employee_name },
+              { header: "Gender", value: (r) => r.gender },
+              { header: "DOB", value: (r) => r.dob },
+              { header: "Personal Email", value: (r) => r.personal_email },
+              { header: "Official Email", value: (r) => r.official_email },
+              { header: "Mobile", value: (r) => r.mobile },
+              { header: "Department", value: (r) => r.department },
+              { header: "Designation", value: (r) => r.designation },
+              { header: "Reporting Manager", value: (r) => r.reporting_manager },
+              { header: "Employment Type", value: (r) => r.employment_type },
+              { header: "Joining Date", value: (r) => r.joining_date },
+              { header: "Employment Status", value: (r) => r.employment_status },
+              { header: "Work Mode", value: (r) => r.work_mode },
+              { header: "Work Location", value: (r) => r.work_location },
+            ]}
+          />
           <ExcelImportButton
             endpoint="/api/hr/employees/import"
             aliases={EMPLOYEE_IMPORT_ALIASES}

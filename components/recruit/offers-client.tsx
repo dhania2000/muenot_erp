@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dialog"
 import { FileText, MoreHorizontal, Plus, Search } from "lucide-react"
 import { PageHeader, StatusPill } from "@/components/recruit/recruit-shared"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import { OFFER_STATUSES, formatDate, formatMoney } from "@/lib/recruit"
 
 type Offer = {
@@ -77,11 +78,29 @@ export function OffersClient({ canManage }: { canManage: boolean }) {
         title="Job Offer Letter"
         description="Draft, send and track offer letters for selected candidates."
         icon={FileText}
-        action={canManage ? (
-          <Button render={<Link href="/modules/recruitment/job-offer-letter/create" />}>
-            <Plus data-icon="inline-start" /> Create Offer
-          </Button>
-        ) : undefined}
+        action={
+          <div className="flex items-center gap-2">
+            <ExcelExportButton
+              rows={filtered}
+              filename="offers"
+              columns={[
+                { header: "Offer ID", value: (r) => r.offer_id },
+                { header: "Candidate", value: (r) => r.candidate_name },
+                { header: "Job", value: (r) => r.job_title },
+                { header: "Salary", value: (r) => r.salary },
+                { header: "Currency", value: (r) => r.currency },
+                { header: "Joining Date", value: (r) => r.joining_date },
+                { header: "Expiry Date", value: (r) => r.expiry_date },
+                { header: "Status", value: (r) => r.status },
+              ]}
+            />
+            {canManage && (
+              <Button render={<Link href="/modules/recruitment/job-offer-letter/create" />}>
+                <Plus data-icon="inline-start" /> Create Offer
+              </Button>
+            )}
+          </div>
+        }
       />
 
       <div className="relative">

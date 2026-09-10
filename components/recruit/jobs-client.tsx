@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Briefcase, ExternalLink, MoreHorizontal, Plus, Search, Users } from "lucide-react"
 import { PageHeader, StatusPill } from "@/components/recruit/recruit-shared"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import type { Job } from "@/lib/recruit-db"
 import { JOB_STATUSES, JOB_TYPES, WORK_MODES, labelFor, salaryRange } from "@/lib/recruit"
 
@@ -78,12 +79,32 @@ export function JobsClient({ canManage }: { canManage: boolean }) {
         description="Post openings, manage custom application questions and share them on your careers site."
         icon={Briefcase}
         action={
-          canManage ? (
-            <Button render={<Link href="/modules/recruitment/jobs/create" />}>
-              <Plus data-icon="inline-start" />
-              Add Job
-            </Button>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            <ExcelExportButton
+              rows={filtered}
+              filename="jobs"
+              columns={[
+                { header: "Job ID", value: (r) => r.job_id },
+                { header: "Title", value: (r) => r.title },
+                { header: "Department", value: (r) => r.department },
+                { header: "Type", value: (r) => labelFor(JOB_TYPES, r.job_type) },
+                { header: "Work Mode", value: (r) => labelFor(WORK_MODES, r.work_mode) },
+                { header: "Location", value: (r) => r.location },
+                { header: "Salary From", value: (r) => r.salary_from },
+                { header: "Salary To", value: (r) => r.salary_to },
+                { header: "Currency", value: (r) => r.currency },
+                { header: "Applications", value: (r) => r.applications_count ?? 0 },
+                { header: "Status", value: (r) => r.status },
+                { header: "Recruiter", value: (r) => r.recruiter },
+              ]}
+            />
+            {canManage && (
+              <Button render={<Link href="/modules/recruitment/jobs/create" />}>
+                <Plus data-icon="inline-start" />
+                Add Job
+              </Button>
+            )}
+          </div>
         }
       />
 

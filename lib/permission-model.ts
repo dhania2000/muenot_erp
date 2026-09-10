@@ -177,6 +177,15 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "legal.esign", label: "Esign", group: "legal", aliases: ["esign", "sign", "signature"], scope: { table: "legal_esign_requests", addedBy: "created_by" } },
     ],
   },
+  {
+    slug: "calendar",
+    label: "My Calendar",
+    modules: [
+      // The calendar reads each employee's own Google Calendar per-user, so
+      // record-level scoping doesn't apply — only view access is meaningful.
+      { key: "calendar.calendar", label: "My Calendar", group: "calendar", aliases: ["calendar"], scope: { table: "calendar_events" } },
+    ],
+  },
 ]
 
 export const PERMISSION_MODULES: PermissionModule[] = PERMISSION_GROUPS.flatMap((g) => g.modules)

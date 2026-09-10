@@ -27,9 +27,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
   if (!session) return NextResponse.redirect(new URL("/login", origin))
 
   const returnUrl = new URL(RETURN_PATH, origin)
-  const fail = (reason: string) => {
+  const fail = (reason: string, detail?: string) => {
     returnUrl.searchParams.set("social", reason)
     returnUrl.searchParams.set("platform", platform)
+    if (detail) returnUrl.searchParams.set("detail", detail.slice(0, 200))
     return NextResponse.redirect(returnUrl)
   }
 
@@ -90,14 +91,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
     // Log server-side only; the reason strings below never contain the code,
     // access token or client secret.
     console.error("[v0] Social OAuth callback failed:", message)
+    // The text after the first colon is the provider's own error message; it
+    // never contains the auth code, access token or client secret.
+    const detail = message.includes(":") ? message.slice(message.indexOf(":") + 1).trim() : undefined
     if (message.includes("noadmin")) return fail("noadmin")
     if (message.includes("noorgscope")) return fail("noorgscope")
     if (message.includes("nopage")) return fail("nopage")
     if (message.includes("noig")) return fail("noig")
-    if (message.includes("_token")) return fail("tokenfail")
+    if (message.includes("_token")) return fail("tokenfail", detail)
     if (message.includes("_account") || message.includes("_userinfo") || message.includes("_pages"))
-      return fail("profilefail")
-    if (message.includes("dbsave")) return fail("dbsave")
+      return fail("profilefail", detail)
+    if (message.includes("dbsave")) return fail("dbsave", detail)
     return fail("error")
   }
 }

@@ -383,9 +383,14 @@ function smtpConfig(department: Department = "sales") {
  *   <DEPT>_GMAIL_CLIENT_EMAIL  - service account email
  *   <DEPT>_GMAIL_PRIVATE_KEY   - service account private key (with \n escapes)
  *   <DEPT>_GMAIL_SENDER        - the Workspace mailbox to send as / impersonate
- * The service account must have domain-wide delegation for the scope
- * https://www.googleapis.com/auth/gmail.send authorized in the Google
- * Workspace Admin console.
+ * The service account must have domain-wide delegation authorized in the
+ * Google Workspace Admin console for BOTH scopes:
+ *   https://www.googleapis.com/auth/gmail.send      (send mail)
+ *   https://www.googleapis.com/auth/gmail.metadata   (read back Message-ID)
+ * The gmail.metadata scope is required for follow-up threading: it lets us read
+ * the real Message-ID Gmail assigns to the sent mail so the next follow-up can
+ * reference the exact id the recipient received. Without it, follow-ups open a
+ * new thread on the recipient side.
  */
 function gmailApiConfig(department: Department = "sales") {
   const prefix = department.toUpperCase()
@@ -487,7 +492,17 @@ function getGmailClient(department: Department = "sales") {
   const auth = new google.auth.JWT({
     email: config.clientEmail,
     key,
-    scopes: ["https://www.googleapis.com/auth/gmail.send"],
+    // gmail.send lets us send. gmail.metadata lets us read back the delivered
+    // message's headers (specifically the real Message-ID Gmail stamps on the
+    // outgoing mail) so follow-ups can reference an id the recipient's mailbox
+    // actually received — without it, follow-ups start a NEW thread on the
+    // recipient side. Both scopes must be authorized in the Workspace Admin
+    // domain-wide delegation for the service account, otherwise the read-back
+    // returns 403 and threading silently degrades.
+    scopes: [
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/gmail.metadata",
+    ],
     subject: config.sender,
   })
   const client = google.gmail({ version: "v1", auth })
@@ -672,11 +687,22 @@ export async function sendEmail(opts: {
         const header = (sent.data.payload?.headers || []).find(
           (h) => (h.name || "").toLowerCase() === "message-id",
         )?.value
-        if (header) realMessageId = header
+        if (header) {
+          realMessageId = header
+          console.log("[v0] Captured real Gmail Message-ID for threading:", header)
+        } else {
+          console.warn("[v0] Gmail read-back returned no Message-ID header; using generated id", opts.messageId)
+        }
       } catch (err) {
         // Non-fatal: fall back to our generated id. Threading may be weaker but
         // the send already succeeded, so we never fail the request over this.
-        console.error("[v0] Could not read back Gmail Message-ID:", (err as any)?.message)
+        // A 403 here almost always means the gmail.metadata scope is not yet
+        // authorized in the Workspace domain-wide delegation.
+        console.error(
+          "[v0] Could not read back Gmail Message-ID (follow-ups may not thread). " +
+            "Ensure gmail.metadata scope is authorized for the service account:",
+          (err as any)?.message,
+        )
       }
     }
 

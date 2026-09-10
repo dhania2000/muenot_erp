@@ -58,7 +58,14 @@ const OAUTH_CONFIG: Record<SocialPlatformId, PlatformOAuthConfig> = {
     clientIdEnv: "FACEBOOK_APP_ID",
     clientSecretEnv: "FACEBOOK_APP_SECRET",
     authorizeUrl: `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`,
-    scopes: ["public_profile", "pages_show_list", "pages_manage_posts", "pages_read_engagement"],
+    // Standard Facebook Login permissions required to list a user's Pages and
+    // publish to a selected Page (Graph API v21). These are the current,
+    // supported permissions for Page publishing — NOT obsolete ones. They can
+    // be overridden with the FACEBOOK_SCOPES env var to match exactly what the
+    // Meta app has enabled. "Invalid Scopes" at the dialog means these are not
+    // yet added/approved on the app, or the app is a business-portfolio app
+    // that requires FACEBOOK_CONFIG_ID (Facebook Login for Business) instead.
+    scopes: ["pages_show_list", "pages_read_engagement", "pages_manage_posts"],
     scopeSeparator: " ",
     usesPkce: false,
   },
@@ -95,6 +102,25 @@ export function platformUsesPkce(platform: SocialPlatformId) {
   return OAUTH_CONFIG[platform].usesPkce
 }
 
+/**
+ * Resolves the scopes actually requested for a platform. Facebook scopes can be
+ * overridden with FACEBOOK_SCOPES (comma/space separated) so they can be
+ * aligned with exactly what the Meta app has enabled without a code change.
+ */
+export function getPlatformScopes(platform: SocialPlatformId): string[] {
+  if (platform === "facebook" && process.env.FACEBOOK_SCOPES) {
+    return process.env.FACEBOOK_SCOPES.split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }
+  return OAUTH_CONFIG[platform].scopes
+}
+
+/** Facebook Login for Business config id, used by business-portfolio apps. */
+export function getFacebookConfigId() {
+  return process.env.FACEBOOK_CONFIG_ID || null
+}
+
 export function resolveRedirectUri(platform: SocialPlatformId, origin: string) {
   const base = process.env.SOCIAL_REDIRECT_BASE || origin
   return `${base.replace(/\/$/, "")}/api/marketing/social/callback/${platform}`
@@ -126,9 +152,21 @@ export function buildAuthUrl(opts: {
     response_type: "code",
     client_id: clientId,
     redirect_uri: opts.redirectUri,
-    scope: cfg.scopes.join(cfg.scopeSeparator),
     state: opts.state,
   })
+
+  // Facebook business-portfolio apps use Facebook Login for Business, which
+  // passes a dashboard-defined config_id INSTEAD of raw scopes (sending scopes
+  // to such an app yields "Invalid Scopes"). Standard Facebook Login apps that
+  // manage their own Pages send the scopes directly. Every other platform
+  // always sends scopes.
+  const fbConfigId = opts.platform === "facebook" ? getFacebookConfigId() : null
+  if (fbConfigId) {
+    params.set("config_id", fbConfigId)
+  } else {
+    params.set("scope", getPlatformScopes(opts.platform).join(cfg.scopeSeparator))
+  }
+
   if (cfg.usesPkce && opts.codeChallenge) {
     params.set("code_challenge", opts.codeChallenge)
     params.set("code_challenge_method", "S256")

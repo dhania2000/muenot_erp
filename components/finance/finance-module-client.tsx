@@ -28,6 +28,7 @@ import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { FinanceModuleDialog } from "@/components/finance/finance-module-dialog"
 import { FinanceImportDialog } from "@/components/finance/finance-import-dialog"
+import { ImportButton } from "@/components/import-button"
 import type { BadgeVariant, ModuleConfig, TableColumn } from "@/lib/finance-schema"
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -119,6 +120,7 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
               Import statement
             </Button>
           )}
+          <ImportButton moduleKey={`finance-${cfg.key}`} onImported={() => mutate()} />
           <Button onClick={openNew}>
             <Plus data-icon="inline-start" />
             {cfg.addLabel}

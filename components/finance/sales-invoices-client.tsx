@@ -17,6 +17,7 @@ import {
 import { Plus, FilterX, Receipt, Wallet, TrendingUp, Clock, Pencil, Eye, Trash2, FileDown } from "lucide-react"
 import { SalesInvoiceDialog } from "@/components/finance/sales-invoice-dialog"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ImportButton } from "@/components/import-button"
 import { inr, inr0 } from "@/lib/finance-calc"
 
 export type InvoiceRow = {
@@ -161,6 +162,7 @@ export function SalesInvoicesClient() {
               { header: "Invoice Status", value: (r) => r.invoice_status },
             ]}
           />
+          <ImportButton moduleKey="finance-sales-invoices" onImported={() => mutate()} />
           <Button onClick={openNew}>
             <Plus data-icon="inline-start" />
             New invoice
@@ -353,7 +355,7 @@ function InvoiceDetailDialog({ invoice, onClose }: { invoice: InvoiceRow | null;
                 ["Rate", money(invoice.rate)],
                 ["Discount", money(invoice.discount)],
                 ["Taxable amount", money(invoice.taxable_amount)],
-                ["CGST", `${invoice.cgst_percent}% · ${money(invoice.cgst_amount)}`],
+                ["CGST", `${invoice.cgst_percent}% �� ${money(invoice.cgst_amount)}`],
                 ["SGST", `${invoice.sgst_percent}% · ${money(invoice.sgst_amount)}`],
                 ["IGST", `${invoice.igst_percent}% · ${money(invoice.igst_amount)}`],
                 ["Other tax / cess", money(invoice.other_tax_cess)],

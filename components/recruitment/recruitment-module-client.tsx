@@ -23,6 +23,7 @@ import {
 import { inr, inr0 } from "@/lib/finance-calc"
 import { RECRUITMENT_MODULE_CONFIGS } from "@/lib/recruitment-module-configs"
 import { RecruitmentModuleDialog } from "@/components/recruitment/recruitment-module-dialog"
+import { ImportButton } from "@/components/import-button"
 import type { BadgeVariant, ModuleConfig, TableColumn } from "@/lib/finance-schema"
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -98,10 +99,13 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
           <p className="text-sm text-muted-foreground">{cfg.subtitle}</p>
           <h1 className="text-3xl font-semibold tracking-tight text-balance">{cfg.label}</h1>
         </div>
-        <Button onClick={openNew}>
-          <Plus data-icon="inline-start" />
-          {cfg.addLabel}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton moduleKey={`recruit-${cfg.key}`} onImported={() => mutate()} />
+          <Button onClick={openNew}>
+            <Plus data-icon="inline-start" />
+            {cfg.addLabel}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

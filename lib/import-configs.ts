@@ -9,6 +9,10 @@
  * can be shared by both the client button and the server route.
  */
 
+import type { ModuleConfig, FieldType } from "@/lib/finance-schema"
+import { RECRUITMENT_MODULE_CONFIGS } from "@/lib/recruitment-module-configs"
+import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
+
 export type ImportColumnType = "string" | "number" | "date"
 
 export type ImportColumn = {
@@ -349,6 +353,210 @@ Object.assign(IMPORT_CONFIGS, {
       { key: "level_name", label: "Level", sample: "L2" },
       { key: "description", label: "Description", sample: "" },
       { key: "status", label: "Status", default: "Active", sample: "Active" },
+    ],
+  },
+} satisfies Record<string, ImportConfig>)
+
+/* ------------------------------------------------------------------ *
+ * Config-driven modules (Recruit + Finance)
+ *
+ * The Recruitment and Finance families already describe every column, its
+ * type, and its id strategy in their ModuleConfig definitions. Rather than
+ * restate all of that here, we derive an ImportConfig from each ModuleConfig
+ * so one source of truth drives both the CRUD screens and the bulk importer.
+ * ------------------------------------------------------------------ */
+
+function importTypeForField(type: FieldType): ImportColumnType {
+  if (type === "number" || type === "checkbox") return "number"
+  if (type === "date") return "date"
+  return "string"
+}
+
+function moduleConfigToImportConfig(cfg: ModuleConfig): ImportConfig {
+  // Auto-generated ids are minted server-side; hand-entered (manual) ids must
+  // travel in the spreadsheet, so only the auto case is excluded from columns.
+  const autoId = !cfg.manualId && !!cfg.idPrefix
+  const columns: ImportColumn[] = []
+
+  for (const f of cfg.fields) {
+    if (f.computed) continue // derived server-side; never imported
+    if (autoId && f.key === cfg.idColumn) continue // minted on insert, not imported
+
+    const col: ImportColumn = { key: f.key, label: f.label, type: importTypeForField(f.type) }
+    if (f.required || (cfg.manualId && f.key === cfg.idColumn)) col.required = true
+    if (f.type === "checkbox") col.default = 0 // NOT NULL tinyint flags settle to 0
+    columns.push(col)
+  }
+
+  const config: ImportConfig = { table: cfg.table, columns }
+  if (autoId) {
+    config.idColumn = cfg.idColumn
+    // Shares the record_id_sequences counter with the CRUD factory, so imported
+    // and hand-created ids never collide. allowCustom lets newer prefixes that
+    // aren't in the built-in whitelist through.
+    config.id = { strategy: "sequence", prefix: cfg.idPrefix as string, allowCustom: true }
+  }
+  return config
+}
+
+// Recruit: every config-driven recruitment sub-module (keyed "recruit-<key>").
+for (const cfg of Object.values(RECRUITMENT_MODULE_CONFIGS)) {
+  IMPORT_CONFIGS[`recruit-${cfg.key}`] = moduleConfigToImportConfig(cfg)
+}
+
+// Finance: every config-driven module that doesn't already ship a bespoke
+// importer (bank-transactions has its own statement-import dialog).
+for (const cfg of Object.values(FINANCE_MODULE_CONFIGS)) {
+  if (cfg.importSpec) continue
+  IMPORT_CONFIGS[`finance-${cfg.key}`] = moduleConfigToImportConfig(cfg)
+}
+
+/* ------------------------------------------------------------------ *
+ * Operations (delivery cockpit)
+ *
+ * Operations records live in AUTO_INCREMENT-keyed tables with no created_by
+ * column, so these configs mint no id and stamp no user. Columns mirror the
+ * writable set accepted by /api/operations.
+ * ------------------------------------------------------------------ */
+const OP_NUMERIC = new Set([
+  "capacity_hours", "cost_rate", "required_resources", "allocated_resources", "resources_deficiency",
+  "allocation_percent", "working_capacity", "allocated_capacity", "available_capacity",
+  "quality_score", "quality_target", "error_rate", "rework_count", "sla_actual", "sla_score",
+])
+
+function opColumns(fields: string[], required: string[] = []): ImportColumn[] {
+  return fields.map((key) => {
+    const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+    const type: ImportColumnType = key.includes("date") ? "date" : OP_NUMERIC.has(key) ? "number" : "string"
+    const col: ImportColumn = { key, label, type }
+    if (required.includes(key)) col.required = true
+    return col
+  })
+}
+
+Object.assign(IMPORT_CONFIGS, {
+  "operations-resources": {
+    table: "operations_resources",
+    createdBy: null,
+    columns: opColumns(
+      ["employee_id", "resource_name", "resource_type", "department", "designation", "skill_category", "primary_skills", "secondary_skills", "skill_set", "capacity_hours", "employment_status", "joining_date", "exit_date", "current_location", "work_mode", "availability_status", "cost_rate", "rate_type", "reporting_manager", "personal_email", "official_email", "contact_mobile", "vendor_agency", "shift", "status", "notes", "remarks"],
+      ["resource_name"],
+    ),
+  },
+  "operations-projects": {
+    table: "operations_projects",
+    createdBy: null,
+    columns: opColumns(
+      ["project_name", "client_id", "client_name", "service_vertical", "project_type", "project_manager", "operations_manager", "manager_name", "start_date", "end_date", "status", "billing_model", "required_resources", "allocated_resources", "resources_deficiency", "sla_target", "sla_due_date", "priority", "shift", "work_mode", "client_poc", "client_email", "client_contact", "description", "remarks"],
+      ["project_name"],
+    ),
+  },
+  "operations-allocations": {
+    table: "operations_allocations",
+    createdBy: null,
+    columns: opColumns(
+      ["project_id", "client_name", "resource_id", "resource_name", "resource_type", "role", "allocation_percent", "from_date", "to_date", "shift", "working_capacity", "allocated_capacity", "available_capacity", "status", "project_manager", "operations_manager", "assigned_by", "notes", "remarks"],
+      ["resource_name"],
+    ),
+  },
+  "operations-quality": {
+    table: "operations_quality_reviews",
+    createdBy: null,
+    columns: opColumns(
+      ["task_id", "project_id", "client_name", "resource_id", "resource_name", "resource_type", "review_date", "quality_score", "quality_target", "error_rate", "rework_count", "sla_target", "sla_actual", "sla_score", "sla_status", "client_escalation", "root_cause", "corrective_action", "action_owner", "action_due_date", "closure_date", "status", "reviewer_name", "remarks"],
+      ["review_date"],
+    ),
+  },
+  "operations-issues": {
+    table: "operations_issues",
+    createdBy: null,
+    columns: opColumns(
+      ["date_reported", "project_id", "client_name", "issue_type", "issue_category", "priority", "title", "description", "impact", "reported_by", "assigned_to", "root_cause", "corrective_action", "preventive_action", "target_date", "due_date", "closure_date", "status", "escalation_level", "client_impact", "business_impact", "remarks"],
+      ["date_reported"],
+    ),
+  },
+} satisfies Record<string, ImportConfig>)
+
+/* ------------------------------------------------------------------ *
+ * Shared masters (used across modules)
+ * ------------------------------------------------------------------ */
+Object.assign(IMPORT_CONFIGS, {
+  clients: {
+    table: "clients",
+    feature: "clients.manage_clients",
+    idColumn: "client_code",
+    id: { strategy: "sequence", prefix: "CLI" },
+    columns: [
+      { key: "salutation", label: "Salutation", sample: "Mr" },
+      { key: "client_name", label: "Client Name", required: true, sample: "Jane Doe" },
+      { key: "email", label: "Email", required: true, sample: "jane@acme.com" },
+      { key: "mobile", label: "Mobile", sample: "9876543210" },
+      { key: "gender", label: "Gender", sample: "Female" },
+      { key: "language", label: "Language", sample: "English" },
+      { key: "company_name", label: "Company Name", sample: "Acme Corp" },
+      { key: "website", label: "Website", sample: "https://acme.com" },
+      { key: "tax_name", label: "Tax Name", sample: "" },
+      { key: "gst_number", label: "GST/VAT Number", sample: "" },
+      { key: "office_phone", label: "Office Phone", sample: "" },
+      { key: "address", label: "Address", sample: "" },
+      { key: "city", label: "City", sample: "Mumbai" },
+      { key: "state", label: "State", sample: "MH" },
+      { key: "country", label: "Country", sample: "India" },
+      { key: "postal_code", label: "Postal Code", sample: "400001" },
+      { key: "category", label: "Category", sample: "" },
+      { key: "sub_category", label: "Sub Category", sample: "" },
+      { key: "currency", label: "Currency", sample: "INR" },
+      { key: "login_allowed", label: "Login Allowed", default: "No", sample: "No" },
+      { key: "email_notifications", label: "Email Notifications", default: "Yes", sample: "Yes" },
+      { key: "status", label: "Status", default: "Active", sample: "Active" },
+      { key: "notes", label: "Notes", sample: "" },
+    ],
+  },
+  "finance-sales-invoices": {
+    table: "sales_invoices",
+    idColumn: "invoice_id",
+    id: { strategy: "sequence", prefix: "INV", allowCustom: true },
+    columns: [
+      { key: "invoice_date", label: "Invoice Date", type: "date", default: "@today", sample: "2025-01-15" },
+      { key: "invoice_type", label: "Invoice Type", default: "Tax Invoice", sample: "Tax Invoice" },
+      { key: "financial_year", label: "Financial Year", sample: "2024-25" },
+      { key: "client_id", label: "Client ID", sample: "CLI-0001" },
+      { key: "client_name", label: "Client", required: true, sample: "Acme Corp" },
+      { key: "project_id", label: "Project ID", sample: "" },
+      { key: "project_name", label: "Project", sample: "" },
+      { key: "billing_period_from", label: "Billing From", type: "date", sample: "" },
+      { key: "billing_period_to", label: "Billing To", type: "date", sample: "" },
+      { key: "description", label: "Description", sample: "" },
+      { key: "hsn_sac", label: "HSN/SAC", sample: "" },
+      { key: "quantity", label: "Quantity", type: "number", default: 0, sample: "1" },
+      { key: "unit", label: "Unit", sample: "" },
+      { key: "rate", label: "Rate", type: "number", default: 0, sample: "100000" },
+      { key: "taxable_amount", label: "Taxable Amount", type: "number", default: 0, sample: "100000" },
+      { key: "discount", label: "Discount", type: "number", default: 0, sample: "0" },
+      { key: "cgst_percent", label: "CGST %", type: "number", default: 0, sample: "9" },
+      { key: "cgst_amount", label: "CGST Amount", type: "number", default: 0, sample: "9000" },
+      { key: "sgst_percent", label: "SGST %", type: "number", default: 0, sample: "9" },
+      { key: "sgst_amount", label: "SGST Amount", type: "number", default: 0, sample: "9000" },
+      { key: "igst_percent", label: "IGST %", type: "number", default: 0, sample: "0" },
+      { key: "igst_amount", label: "IGST Amount", type: "number", default: 0, sample: "0" },
+      { key: "other_tax_cess", label: "Other Tax/Cess", type: "number", default: 0, sample: "0" },
+      { key: "invoice_total", label: "Invoice Total", type: "number", default: 0, sample: "118000" },
+      { key: "tds_applicable", label: "TDS Applicable", type: "number", default: 0, sample: "0" },
+      { key: "tds_section", label: "TDS Section", sample: "" },
+      { key: "tds_rate", label: "TDS Rate", type: "number", default: 0, sample: "0" },
+      { key: "tds_amount", label: "TDS Amount", type: "number", default: 0, sample: "0" },
+      { key: "net_receivable", label: "Net Receivable", type: "number", default: 0, sample: "118000" },
+      { key: "due_date", label: "Due Date", type: "date", sample: "2025-02-15" },
+      { key: "amount_received", label: "Amount Received", type: "number", default: 0, sample: "0" },
+      { key: "outstanding_amount", label: "Outstanding", type: "number", default: 0, sample: "118000" },
+      { key: "payment_status", label: "Payment Status", default: "Unpaid", sample: "Unpaid" },
+      { key: "payment_date", label: "Payment Date", type: "date", sample: "" },
+      { key: "payment_reference", label: "Payment Reference", sample: "" },
+      { key: "irn_reference", label: "IRN Reference", sample: "" },
+      { key: "eway_bill_no", label: "E-Way Bill No", sample: "" },
+      { key: "credit_debit_note_ref", label: "Credit/Debit Note Ref", sample: "" },
+      { key: "notes", label: "Notes", sample: "" },
+      { key: "invoice_status", label: "Invoice Status", default: "Draft", sample: "Draft" },
     ],
   },
 } satisfies Record<string, ImportConfig>)

@@ -38,6 +38,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search, BriefcaseBusiness } from "lucide-react"
+import { ExcelExportButton } from "@/components/excel-export-button"
 
 export type ClientRow = {
   id: number
@@ -314,16 +315,40 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
             Manage client accounts, company details and portal access.
           </p>
         </div>
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus className="size-4" /> Add client
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={filtered}
+            filename="clients"
+            columns={[
+              { header: "Client Code", value: (r: ClientRow) => r.client_code },
+              { header: "Client Name", value: (r: ClientRow) => `${r.salutation ? r.salutation + " " : ""}${r.client_name}` },
+              { header: "Email", value: (r: ClientRow) => r.email },
+              { header: "Mobile", value: (r: ClientRow) => r.mobile },
+              { header: "Company", value: (r: ClientRow) => r.company_name },
+              { header: "Website", value: (r: ClientRow) => r.website },
+              { header: "GST Number", value: (r: ClientRow) => r.gst_number },
+              { header: "Category", value: (r: ClientRow) => r.category },
+              { header: "Sub Category", value: (r: ClientRow) => r.sub_category },
+              { header: "City", value: (r: ClientRow) => r.city },
+              { header: "State", value: (r: ClientRow) => r.state },
+              { header: "Country", value: (r: ClientRow) => r.country },
+              { header: "Currency", value: (r: ClientRow) => r.currency },
+              { header: "Login Allowed", value: (r: ClientRow) => r.login_allowed },
+              { header: "Status", value: (r: ClientRow) => r.status },
+              { header: "Added", value: (r: ClientRow) => r.created_at },
+            ]}
+          />
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null)
+                setDialogOpen(true)
+              }}
+            >
+              <Plus className="size-4" /> Add client
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="relative max-w-sm">

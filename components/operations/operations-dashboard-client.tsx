@@ -18,6 +18,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog"
 import { Plus } from "lucide-react"
+import { ExcelExportButton } from "@/components/excel-export-button"
 import {
   Table,
   TableHeader,
@@ -283,6 +284,12 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
         </div>
 
         {kind !== "overview" && c && (
+          <div className="flex items-center gap-2">
+          <ExcelExportButton
+            rows={rows}
+            filename={kind}
+            columns={c.fields.map((f) => ({ header: formatLabel(f), value: (r: any) => r[f] }))}
+          />
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger
               render={
@@ -320,6 +327,7 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         )}
       </div>
 

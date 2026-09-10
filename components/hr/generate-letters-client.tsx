@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { FilePlus2, Eye, Printer, Trash2, Search, FileSignature } from "lucide-react"
+import { ExcelExportButton } from "@/components/excel-export-button"
 
 type Letter = {
   id: number
@@ -63,10 +64,13 @@ export function GenerateLettersClient() {
             Generate letters for employees from a template. Placeholders merge with employee and company details.
           </p>
         </div>
-        <Link href="/modules/hr/letters/generate/create" className={buttonVariants()}>
-          <FilePlus2 data-icon="inline-start" />
-          Generate Letter
-        </Link>
+        <div className="flex items-center gap-2">
+          <ExcelExportButton rows={letters} filename="letters" columns={[{ header: "Ref", value: (r: any) => r.letter_number },{ header: "Employee", value: (r: any) => r.employee_name },{ header: "Employee Code", value: (r: any) => r.employee_code },{ header: "Designation", value: (r: any) => r.designation },{ header: "Department", value: (r: any) => r.department },{ header: "Type", value: (r: any) => r.letter_type },{ header: "Subject", value: (r: any) => r.subject },{ header: "Issued", value: (r: any) => r.issue_date },{ header: "Status", value: (r: any) => r.status }]} />
+          <Link href="/modules/hr/letters/generate/create" className={buttonVariants()}>
+            <FilePlus2 data-icon="inline-start" />
+            Generate Letter
+          </Link>
+        </div>
       </div>
 
       <div className="relative max-w-sm">

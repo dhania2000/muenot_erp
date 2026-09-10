@@ -9,6 +9,7 @@ import {
   SOCIAL_STATE_COOKIE,
   SOCIAL_TYPE_COOKIE,
   SOCIAL_VERIFIER_COOKIE,
+  resolveOrigin,
 } from "@/app/api/marketing/social/connect/route"
 
 const PLATFORM_IDS = SOCIAL_PLATFORMS.map((p) => p.id)
@@ -19,12 +20,13 @@ function isPlatformId(value: string): value is SocialPlatformId {
 
 export async function GET(request: Request, ctx: { params: Promise<{ platform: string }> }) {
   const url = new URL(request.url)
+  const origin = resolveOrigin(request, url.origin)
   const { platform } = await ctx.params
 
   const session = await getSession()
-  if (!session) return NextResponse.redirect(new URL("/login", url.origin))
+  if (!session) return NextResponse.redirect(new URL("/login", origin))
 
-  const returnUrl = new URL(RETURN_PATH, url.origin)
+  const returnUrl = new URL(RETURN_PATH, origin)
   const fail = (reason: string) => {
     returnUrl.searchParams.set("social", reason)
     returnUrl.searchParams.set("platform", platform)
@@ -53,7 +55,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
     const tokens = await exchangeCode({
       platform,
       code,
-      redirectUri: resolveRedirectUri(platform, url.origin),
+      redirectUri: resolveRedirectUri(platform, origin),
       codeVerifier: verifier,
     })
 

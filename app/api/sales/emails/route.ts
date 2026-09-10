@@ -137,6 +137,10 @@ export async function POST(request: Request) {
   // Carry the follow-up's Gmail conversation id forward, then overwrite it with
   // whatever the send returns so the very first email in a thread stores its own.
   let providerThreadId: string | null = thread?.providerThreadId ?? null
+  // Start with our generated id; the send may return the REAL Message-ID that
+  // Gmail stamped on the delivered message. Persisting the real one is what lets
+  // the next follow-up build In-Reply-To / References the recipient can thread.
+  let effectiveMessageId = messageId
   try {
     const sendResult = await sendEmail({
       to: to_email,
@@ -153,6 +157,7 @@ export async function POST(request: Request) {
       providerThreadId: thread?.providerThreadId ?? undefined,
     })
     providerThreadId = sendResult.providerThreadId ?? providerThreadId
+    effectiveMessageId = sendResult.messageId ?? effectiveMessageId
   } catch (err: any) {
     status = "Failed"
     // Nodemailer/SMTP errors often carry the useful detail in `code` and
@@ -191,11 +196,12 @@ export async function POST(request: Request) {
       status,
       errorMessage,
       session.userId,
-      messageId,
+      effectiveMessageId,
       inReplyTo || null,
       // Store the full references chain including this message so the next
-      // follow-up can build on it.
-      [references, messageId].filter(Boolean).join(" "),
+      // follow-up can build on it. Use the real (Gmail-assigned) id so the
+      // recipient's mail client can match it.
+      [references, effectiveMessageId].filter(Boolean).join(" "),
       threadId,
       recipientKey,
       // Gmail conversation id — reused by the next follow-up so it lands in the

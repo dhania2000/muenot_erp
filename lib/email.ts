@@ -641,7 +641,8 @@ export async function sendEmail(opts: {
   if (isGmailApiConfigured(opts.department)) {
     const raw = await composeMime(mailOptions)
     const encoded = raw.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
-    const res = await getGmailClient(opts.department).users.messages.send({
+    const gmail = getGmailClient(opts.department)
+    const res = await gmail.users.messages.send({
       userId: "me",
       // Passing threadId is what makes Gmail place a follow-up in the SAME
       // conversation as the original. Without it Gmail always opens a new
@@ -650,9 +651,38 @@ export async function sendEmail(opts: {
         ? { raw: encoded, threadId: opts.providerThreadId }
         : { raw: encoded },
     })
+
+    // Gmail REWRITES the outgoing Message-ID header, discarding the one we put
+    // in the MIME and stamping its own (<...@mail.gmail.com>). The recipient's
+    // mailbox only ever sees Gmail's value, so a follow-up whose In-Reply-To /
+    // References point at OUR generated id references a message that never
+    // existed on the recipient side — which is exactly why Gmail refuses to
+    // thread the follow-up. Read the message back and capture the real
+    // Message-ID so future follow-ups can reference the id the recipient
+    // actually received.
+    let realMessageId = opts.messageId
+    if (res.data.id) {
+      try {
+        const sent = await gmail.users.messages.get({
+          userId: "me",
+          id: res.data.id,
+          format: "metadata",
+          metadataHeaders: ["Message-ID", "Message-Id"],
+        })
+        const header = (sent.data.payload?.headers || []).find(
+          (h) => (h.name || "").toLowerCase() === "message-id",
+        )?.value
+        if (header) realMessageId = header
+      } catch (err) {
+        // Non-fatal: fall back to our generated id. Threading may be weaker but
+        // the send already succeeded, so we never fail the request over this.
+        console.error("[v0] Could not read back Gmail Message-ID:", (err as any)?.message)
+      }
+    }
+
     // Capture the conversation id so the first email in a thread can persist it
     // and later follow-ups can rejoin the same Gmail thread.
-    return { messageId: opts.messageId, providerThreadId: res.data.threadId ?? opts.providerThreadId ?? null }
+    return { messageId: realMessageId, providerThreadId: res.data.threadId ?? opts.providerThreadId ?? null }
   }
 
   const info = await getTransporter(opts.department).sendMail(mailOptions)

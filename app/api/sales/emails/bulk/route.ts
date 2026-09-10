@@ -122,6 +122,9 @@ export async function POST(request: Request) {
     let status: "Sent" | "Failed" = "Sent"
     let errorMessage: string | null = null
     let providerThreadId: string | null = null
+    // Persist the REAL Gmail-assigned Message-ID (not our placeholder) so a
+    // later follow-up to this recipient can reference an id their mailbox saw.
+    let effectiveMessageId = messageId
     try {
       const sendResult = await sendEmail({
         to: toEmail,
@@ -133,6 +136,7 @@ export async function POST(request: Request) {
         attachments: outgoingAttachment ? [outgoingAttachment] : undefined,
       })
       providerThreadId = sendResult.providerThreadId ?? null
+      effectiveMessageId = sendResult.messageId ?? effectiveMessageId
     } catch (err: any) {
       status = "Failed"
       const parts = [
@@ -161,9 +165,9 @@ export async function POST(request: Request) {
         status,
         errorMessage,
         session.userId,
-        messageId,
+        effectiveMessageId,
         null,
-        messageId,
+        effectiveMessageId,
         threadId,
         recipientKey,
         providerThreadId,

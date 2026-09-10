@@ -7,7 +7,7 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import useSWR from "swr"
-import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MapPin, MessageSquare, Moon, Plus, RefreshCw, Search, Settings, ShieldCheck, StickyNote, Sun, Ticket, UserPlus, UsersRound } from "lucide-react"
+import { Bell, ChevronDown, Clock3, FileText, Loader2, LogOut, MapPin, MessageSquare, Moon, Plus, Search, Settings, ShieldCheck, StickyNote, Sun, Ticket, UserPlus, UsersRound } from "lucide-react"
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
 import { NotesPanel } from "@/components/notes-panel"
@@ -110,51 +110,6 @@ function LiveClock() {
 type Geo = { lat: number; lng: number; label: string }
 
 /**
- * Lightweight static map preview built from plain OpenStreetMap tile <img>
- * elements (no interactive iframe / map JS / WebGL). A 3x3 tile grid is
- * positioned so the location sits at the center under a pin. This avoids the
- * renderer crashes that an embedded interactive map iframe can trigger and
- * needs no API key.
- */
-function StaticMap({ lat, lng }: { lat: number; lng: number }) {
-  const z = 16
-  const n = 2 ** z
-  const xTile = ((lng + 180) / 360) * n
-  const latRad = (lat * Math.PI) / 180
-  const yTile = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n
-  const x = Math.floor(xTile)
-  const y = Math.floor(yTile)
-  const offsetX = (xTile - x) * 256
-  const offsetY = (yTile - y) * 256
-
-  const deltas = [-1, 0, 1]
-  const tiles = deltas.flatMap((dy) => deltas.map((dx) => ({ dx, dy })))
-
-  return (
-    <div className="relative h-40 w-full overflow-hidden bg-muted">
-      {tiles.map(({ dx, dy }) => (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          key={`${dx}:${dy}`}
-          src={`https://tile.openstreetmap.org/${z}/${x + dx}/${y + dy}.png`}
-          alt=""
-          width={256}
-          height={256}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          className="pointer-events-none absolute left-1/2 top-1/2 select-none"
-          style={{
-            maxWidth: "none",
-            transform: `translate(${dx * 256 - offsetX}px, ${dy * 256 - offsetY}px)`,
-          }}
-        />
-      ))}
-      <MapPin className="pointer-events-none absolute left-1/2 top-1/2 size-6 -translate-x-1/2 -translate-y-full fill-primary text-primary drop-shadow" />
-    </div>
-  )
-}
-
-/**
  * Fetch the browser location and reverse-geocode it to a readable address via
  * OpenStreetMap's Nominatim (no API key required). Resolves to null if the user
  * denies permission or geolocation is unavailable — clock in/out still works.
@@ -193,175 +148,10 @@ function getBrowserLocation(): Promise<Geo | null> {
   return Promise.race([capture, cap])
 }
 
-/** Clock in / clock out control wired to today's attendance record. */
-function ClockControl() {
-  const { data, mutate, isLoading } = useSWR<ClockStatus>("/api/hr/attendance/clock", fetcher)
-  const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [geo, setGeo] = useState<Geo | null>(null)
-  const [geoBusy, setGeoBusy] = useState(false)
-  const [geoDenied, setGeoDenied] = useState(false)
-
-  const state = data?.state ?? "out"
-  const linked = data?.linked ?? true
-
-  async function detectLocation() {
-    setGeoBusy(true)
-    setGeoDenied(false)
-    const result = await getBrowserLocation()
-    if (result) setGeo(result)
-    else setGeoDenied(true)
-    setGeoBusy(false)
-    return result
-  }
-
-  // Auto-detect location when the panel opens and there is a punch to make.
-  useEffect(() => {
-    if (open && linked && !geo && !geoBusy) {
-      void detectLocation()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, linked, state])
-
-  async function toggle() {
-    setBusy(true)
-    setError(null)
-    try {
-      // Use the already-detected location, or make a fresh attempt at punch time.
-      const location = geo ?? (await detectLocation())
-      const res = await fetch("/api/hr/attendance/clock", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          location
-            ? { latitude: location.lat, longitude: location.lng, location: location.label }
-            : {},
-        ),
-      })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) setError(json.error || "Something went wrong")
-      await mutate()
-    } catch {
-      setError("Network error — please try again")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const dotColor = state === "in" ? "bg-emerald-500" : data?.clockOut ? "bg-muted-foreground" : "bg-amber-500"
-
-  return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label="Attendance clock in and out" className="relative text-muted-foreground hover:bg-primary/10 hover:text-primary" />}
-      >
-        <Clock3 className="size-5" />
-        {linked && <span className={cn("absolute right-1 top-1 size-2 rounded-full ring-2 ring-card", dotColor)} />}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel>Attendance</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-
-        {isLoading ? (
-          <p className="px-2 py-2 text-sm text-muted-foreground">Loading status…</p>
-        ) : !linked ? (
-          <p className="px-2 py-2 text-sm text-muted-foreground">
-            No employee record is linked to your account. Ask HR to set your official email on your employee profile.
-          </p>
-        ) : (
-          <div className="px-2 py-1.5">
-            <div className="mb-3 flex flex-col gap-1 text-sm">
-              <div className="flex items-center gap-2">
-                <span className={cn("size-2 rounded-full", dotColor)} />
-                {state === "in" ? (
-                  <span>Clocked in at {formatClockTime(data?.clockIn)}</span>
-                ) : data?.clockOut ? (
-                  <span className="text-muted-foreground">Last clocked out at {formatClockTime(data?.clockOut)}</span>
-                ) : (
-                  <span className="text-muted-foreground">Not clocked in today</span>
-                )}
-              </div>
-              <span className="pl-4 text-xs text-muted-foreground">
-                Worked today: <span className="font-medium text-foreground">{formatWorked(data?.workedHours)}</span>
-                {" "}(breaks excluded)
-              </span>
-            </div>
-
-            <div className="mb-3 rounded-md border border-border bg-muted/30 p-2">
-              <div className="mb-2 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                    <MapPin className="size-3.5 text-primary" />
-                    Your location
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => detectLocation()}
-                    disabled={geoBusy}
-                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                  >
-                    <RefreshCw className={cn("size-3", geoBusy && "animate-spin")} />
-                    {geoBusy ? "Locating…" : "Refresh"}
-                  </button>
-                </div>
-
-                {geo ? (
-                  <>
-                    <div className="mb-2 overflow-hidden rounded border border-border">
-                      <StaticMap lat={geo.lat} lng={geo.lng} />
-                    </div>
-                    <p className="text-[11px] leading-snug text-muted-foreground">
-                      {geo.label || `${geo.lat.toFixed(5)}, ${geo.lng.toFixed(5)}`}
-                    </p>
-                    <a
-                      href={`https://www.openstreetmap.org/?mlat=${geo.lat}&mlon=${geo.lng}#map=16/${geo.lat}/${geo.lng}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-1 inline-block text-[11px] text-primary hover:underline"
-                    >
-                      View on map
-                    </a>
-                  </>
-                ) : geoBusy ? (
-                  <p className="text-[11px] text-muted-foreground">Fetching your location…</p>
-                ) : geoDenied ? (
-                  <p className="text-[11px] text-amber-600 dark:text-amber-500">
-                    Location unavailable. You can still clock {state === "in" ? "out" : "in"}, but it won&apos;t be recorded.
-                  </p>
-                ) : (
-                  <p className="text-[11px] text-muted-foreground">Waiting for location permission…</p>
-                )}
-              </div>
-
-            {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
-
-            <Button
-              className="w-full gap-2"
-              variant={state === "in" ? "outline" : "default"}
-              onClick={toggle}
-              disabled={busy}
-            >
-              {busy ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : state === "in" ? (
-                <LogOut className="size-4" />
-              ) : (
-                <LogIn className="size-4" />
-              )}
-              {state === "in" ? "Clock Out" : "Clock In"}
-            </Button>
-          </div>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 /**
  * Prominent text button shown in the header center. No icon — just a clear
  * "Clock In" that flips to "Clock Out" while a session is open, and back to
  * "Clock In" after clocking out so more sessions can be recorded the same day.
- * Shares the SWR cache key with ClockControl so both stay in sync.
  */
 function HeaderClockButton() {
   const { data, mutate } = useSWR<ClockStatus>("/api/hr/attendance/clock", fetcher)
@@ -689,7 +479,6 @@ export function AppShell({
           <HeaderClockButton />
           <div className="flex items-center gap-1">
             <LiveClock />
-            <ClockControl />
             <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>

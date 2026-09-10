@@ -603,6 +603,13 @@ export function buildTaxInvoicePdf(data: TaxInvoiceData): Buffer {
   }
   const colLines = [cx.desc, cx.hsn, cx.qty, cx.rate, right - 60]
 
+  // Right-edge anchors for the numeric columns (with a small inset), so their
+  // values align to their own column's right divider instead of drifting left
+  // and crossing into the neighbouring cell.
+  const qtyR = cx.rate - 6 // right edge of the QTY column (QTY|RATE divider)
+  const rateR = right - 60 - 6 // right edge of the RATE column (RATE|TOTAL divider)
+  const totalR = cx.total - 6 // right edge of the TOTAL column
+
   const thH = 20
   setDraw(INK)
   doc.setFillColor(HEAD[0], HEAD[1], HEAD[2])
@@ -614,9 +621,9 @@ export function buildTaxInvoicePdf(data: TaxInvoiceData): Buffer {
   doc.text("#", cx.sno + 6, thy)
   doc.text("DESCRIPTION OF GOODS / SERVICES", cx.desc + 6, thy)
   doc.text("HSN/SAC", cx.hsn + 4, thy)
-  doc.text("QTY", cx.qty + 30, thy, { align: "right" })
-  doc.text("RATE", cx.rate + 25, thy, { align: "right" })
-  doc.text("TOTAL", cx.total - 6, thy, { align: "right" })
+  doc.text("QTY", qtyR, thy, { align: "right" })
+  doc.text("RATE", rateR, thy, { align: "right" })
+  doc.text("TOTAL", totalR, thy, { align: "right" })
   y += thH
 
   doc.setTextColor(INK[0], INK[1], INK[2])
@@ -630,9 +637,9 @@ export function buildTaxInvoicePdf(data: TaxInvoiceData): Buffer {
     doc.text(String(i + 1), cx.sno + 6, ty)
     doc.text(descLines, cx.desc + 6, ty)
     doc.text(line.hsnSac || "—", cx.hsn + 4, ty)
-    doc.text(line.quantity || "—", cx.qty + 30, ty, { align: "right" })
-    doc.text(line.rate || "—", cx.rate + 25, ty, { align: "right" })
-    doc.text(line.amount || "—", cx.total - 6, ty, { align: "right" })
+    doc.text(line.quantity || "—", qtyR, ty, { align: "right" })
+    doc.text(line.rate || "—", rateR, ty, { align: "right" })
+    doc.text(line.amount || "—", totalR, ty, { align: "right" })
     y += rowH
     setDraw(LINE)
     doc.line(M, y, right, y)
@@ -648,9 +655,9 @@ export function buildTaxInvoicePdf(data: TaxInvoiceData): Buffer {
   doc.setFont("helvetica", "bold")
   doc.setFontSize(8.5)
   setColor(MUTED)
-  doc.text("Taxable Value", cx.rate + 25, y + 13, { align: "right" })
+  doc.text("Taxable Value", rateR, y + 13, { align: "right" })
   setColor(INK)
-  doc.text(data.taxableValue, cx.total - 6, y + 13, { align: "right" })
+  doc.text(data.taxableValue, totalR, y + 13, { align: "right" })
   y += subH
 
   const tableBottom = y

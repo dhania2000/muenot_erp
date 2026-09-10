@@ -14,6 +14,8 @@ import {
   Share2,
   FileText,
   Users,
+  Building2,
+  User,
   Sparkles,
   X,
 } from "lucide-react"
@@ -91,9 +93,15 @@ const platformById = (id: PlatformId) => PLATFORMS.find((p) => p.id === id)!
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
+type AccountType = "company" | "personal"
+
 type Account = {
+  id: string
   platform: PlatformId
+  type: AccountType
   handle: string
+  /** employee name — only set for personal accounts */
+  owner?: string
   followers: number
   connectedAt: string
 }
@@ -116,9 +124,10 @@ type SocialPost = {
 /* ------------------------------------------------------------------ */
 
 const INITIAL_ACCOUNTS: Account[] = [
-  { platform: "linkedin", handle: "@muenot", followers: 12400, connectedAt: "2026-08-02" },
-  { platform: "instagram", handle: "@muenot.official", followers: 8600, connectedAt: "2026-08-10" },
-  { platform: "x", handle: "@muenot", followers: 5200, connectedAt: "2026-08-14" },
+  { id: "ACC-1", platform: "linkedin", type: "company", handle: "@muenot", followers: 12400, connectedAt: "2026-08-02" },
+  { id: "ACC-2", platform: "instagram", type: "company", handle: "@muenot.official", followers: 8600, connectedAt: "2026-08-10" },
+  { id: "ACC-3", platform: "x", type: "company", handle: "@muenot", followers: 5200, connectedAt: "2026-08-14" },
+  { id: "ACC-4", platform: "linkedin", type: "personal", handle: "@priya.sharma", owner: "Priya Sharma", followers: 3200, connectedAt: "2026-08-20" },
 ]
 
 const INITIAL_POSTS: SocialPost[] = [
@@ -208,7 +217,7 @@ export function MarketingSocialClient() {
   const [statusFilter, setStatusFilter] = React.useState("all")
   const [query, setQuery] = React.useState("")
 
-  const connectedIds = accounts.map((a) => a.platform)
+  const connectedIds = Array.from(new Set(accounts.map((a) => a.platform)))
   const folders = React.useMemo(
     () => Array.from(new Set(posts.map((p) => p.folder))),
     [posts],
@@ -222,19 +231,22 @@ export function MarketingSocialClient() {
   })
 
   /* ---- account actions ---- */
-  function connect(platform: PlatformId, handle: string) {
+  function connect(input: { platform: PlatformId; type: AccountType; handle: string; owner?: string }) {
     setAccounts((prev) => [
-      ...prev.filter((a) => a.platform !== platform),
+      ...prev,
       {
-        platform,
-        handle: handle.startsWith("@") ? handle : `@${handle}`,
+        id: `ACC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        platform: input.platform,
+        type: input.type,
+        handle: input.handle.startsWith("@") ? input.handle : `@${input.handle}`,
+        owner: input.owner?.trim() ? input.owner.trim() : undefined,
         followers: Math.floor(1000 + Math.random() * 20000),
         connectedAt: new Date().toISOString().slice(0, 10),
       },
     ])
   }
-  function disconnect(platform: PlatformId) {
-    setAccounts((prev) => prev.filter((a) => a.platform !== platform))
+  function disconnect(id: string) {
+    setAccounts((prev) => prev.filter((a) => a.id !== id))
   }
 
   /* ---- post actions ---- */
@@ -378,42 +390,75 @@ export function MarketingSocialClient() {
         </TabsContent>
 
         {/* ------------------------------ Accounts ------------------------------ */}
-        <TabsContent value="accounts">
+        <TabsContent value="accounts" className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Connect a company page to publish as the brand, or let employees link their own accounts to
+            post under their name. You can connect multiple accounts per platform.
+          </p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {PLATFORMS.map((p) => {
-              const account = accounts.find((a) => a.platform === p.id)
+              const list = accounts.filter((a) => a.platform === p.id)
               return (
                 <Card key={p.id}>
                   <CardContent className="flex flex-col gap-4 pt-6">
                     <div className="flex items-center gap-3">
                       <PlatformBadge id={p.id} size="md" />
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="truncate font-medium">{p.name}</p>
-                        {account ? (
-                          <p className="truncate text-xs text-muted-foreground">
-                            {account.handle} · {formatCount(account.followers)} followers
-                          </p>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">Not connected</p>
-                        )}
+                        <p className="text-xs text-muted-foreground">
+                          {list.length === 0
+                            ? "Not connected"
+                            : `${list.length} account${list.length > 1 ? "s" : ""} connected`}
+                        </p>
                       </div>
+                      {list.length > 0 ? (
+                        <Badge className="bg-chart-2/15 text-chart-2">Active</Badge>
+                      ) : null}
                     </div>
-                    {account ? (
-                      <div className="flex items-center justify-between">
-                        <Badge className="bg-chart-2/15 text-chart-2">Connected</Badge>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-muted-foreground"
-                          onClick={() => disconnect(p.id)}
-                        >
-                          <Unlink className="size-4" />
-                          Disconnect
-                        </Button>
-                      </div>
-                    ) : (
-                      <ConnectDialog platform={p} onConnect={connect} />
-                    )}
+
+                    {list.length > 0 ? (
+                      <ul className="space-y-2">
+                        {list.map((account) => (
+                          <li
+                            key={account.id}
+                            className="flex items-center justify-between gap-2 rounded-lg border p-2.5"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate text-sm font-medium">{account.handle}</span>
+                                <Badge variant="outline" className="shrink-0 gap-1 text-[10px] font-normal">
+                                  {account.type === "company" ? (
+                                    <>
+                                      <Building2 className="size-3" />
+                                      Company
+                                    </>
+                                  ) : (
+                                    <>
+                                      <User className="size-3" />
+                                      {account.owner ?? "Employee"}
+                                    </>
+                                  )}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                {formatCount(account.followers)} followers
+                              </p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              className="text-muted-foreground"
+                              onClick={() => disconnect(account.id)}
+                              aria-label={`Disconnect ${account.handle}`}
+                            >
+                              <Unlink className="size-4" />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+
+                    <ConnectDialog platform={p} onConnect={connect} hasAccounts={list.length > 0} />
                   </CardContent>
                 </Card>
               )
@@ -506,20 +551,32 @@ function PostRow({
 function ConnectDialog({
   platform,
   onConnect,
+  hasAccounts,
 }: {
   platform: Platform
-  onConnect: (id: PlatformId, handle: string) => void
+  onConnect: (input: { platform: PlatformId; type: AccountType; handle: string; owner?: string }) => void
+  hasAccounts: boolean
 }) {
   const [open, setOpen] = React.useState(false)
+  const [type, setType] = React.useState<AccountType>("company")
   const [handle, setHandle] = React.useState("")
+  const [owner, setOwner] = React.useState("")
+
+  const reset = () => {
+    setType("company")
+    setHandle("")
+    setOwner("")
+  }
+
+  const canSubmit = handle.trim().length > 0 && (type === "company" || owner.trim().length > 0)
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
       <DialogTrigger
         render={
           <Button variant="outline" size="sm" className="w-full">
-            <LinkIcon className="size-4" />
-            Connect
+            {hasAccounts ? <Plus className="size-4" /> : <LinkIcon className="size-4" />}
+            {hasAccounts ? "Add another account" : "Connect"}
           </Button>
         }
       />
@@ -529,29 +586,86 @@ function ConnectDialog({
             <PlatformBadge id={platform.id} size="md" />
             <div>
               <DialogTitle>Connect {platform.name}</DialogTitle>
-              <DialogDescription>Authorize the account to publish from this ERP.</DialogDescription>
+              <DialogDescription>Authorize an account to publish from this ERP.</DialogDescription>
             </div>
           </div>
         </DialogHeader>
-        <div className="space-y-2">
-          <Label htmlFor="handle">Account handle</Label>
-          <Input
-            id="handle"
-            placeholder={`@your-${platform.id}-handle`}
-            value={handle}
-            onChange={(e) => setHandle(e.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">
-            Demo mode — this simulates the OAuth authorization step without leaving the app.
-          </p>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Account type</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setType("company")}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
+                  type === "company"
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <Building2 className="size-4" />
+                Company page
+              </button>
+              <button
+                type="button"
+                onClick={() => setType("personal")}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
+                  type === "personal"
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <User className="size-4" />
+                Employee account
+              </button>
+            </div>
+          </div>
+
+          {type === "personal" ? (
+            <div className="space-y-2">
+              <Label htmlFor={`owner-${platform.id}`}>Employee name</Label>
+              <Input
+                id={`owner-${platform.id}`}
+                placeholder="e.g. Priya Sharma"
+                value={owner}
+                onChange={(e) => setOwner(e.target.value)}
+              />
+            </div>
+          ) : null}
+
+          <div className="space-y-2">
+            <Label htmlFor={`handle-${platform.id}`}>
+              {type === "company" ? "Page handle" : "Account handle"}
+            </Label>
+            <Input
+              id={`handle-${platform.id}`}
+              placeholder={`@your-${platform.id}-handle`}
+              value={handle}
+              onChange={(e) => setHandle(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              {type === "company"
+                ? "Directly connect your company page to publish as the brand."
+                : "Employees can connect their own account to publish under their name."}
+            </p>
+          </div>
         </div>
+
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button
-            disabled={!handle.trim()}
+            disabled={!canSubmit}
             onClick={() => {
-              onConnect(platform.id, handle.trim())
-              setHandle("")
+              onConnect({
+                platform: platform.id,
+                type,
+                handle: handle.trim(),
+                owner: type === "personal" ? owner.trim() : undefined,
+              })
+              reset()
               setOpen(false)
             }}
           >

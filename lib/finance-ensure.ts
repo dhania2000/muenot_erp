@@ -28,3 +28,18 @@ export async function ensureFreelanceInvoiceColumns() {
   await ensureColumn("freelance_invoices", "invoice_last_sent_to", "VARCHAR(190) DEFAULT NULL")
   ensured = true
 }
+
+let fteEnsured = false
+
+/**
+ * Self-healing schema for the FTE Invoices sub-module. Mirrors the freelance
+ * helper: the config now carries an `employee_email` recipient field plus the
+ * invoice-send tracking columns, none of which exist in the base migration.
+ */
+export async function ensureFteInvoiceColumns() {
+  if (fteEnsured) return
+  await ensureColumn("fte_invoices", "employee_email", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn("fte_invoices", "invoice_last_sent_at", "DATETIME DEFAULT NULL")
+  await ensureColumn("fte_invoices", "invoice_last_sent_to", "VARCHAR(190) DEFAULT NULL")
+  fteEnsured = true
+}

@@ -117,4 +117,9 @@ export type ModuleConfig = {
    * When set, the module list renders a "Download PDF" action per row.
    */
   pdfPath?: string
+  /**
+   * Field key holding the recipient email, used to pre-fill the "Send by email"
+   * dialog (e.g. "freelancer_email" for Freelance, "employee_email" for FTE).
+   */
+  emailField?: string
 }

@@ -76,7 +76,7 @@ export async function POST(request: Request) {
   }
 
   const token = generateTrackingToken()
-  const messageId = buildMessageId(token)
+  const messageId = buildMessageId(token, department)
 
   // Decide which conversation this email belongs to.
   // - New:       always a brand-new thread, even for a known recipient.
@@ -113,12 +113,16 @@ export async function POST(request: Request) {
   const references = thread ? thread.references : ""
   const inReplyTo = thread ? thread.inReplyTo : ""
 
-  // X-Entity-Ref-ID controls how Gmail groups messages that share a subject line.
-  // - New:       a unique value per email so Gmail (and Outlook) never merge it
-  //              into an earlier same-subject conversation.
-  // - Follow Up: the thread id, shared by every message in the thread, so the
-  //              reply reliably groups with the last email sent to this recipient.
-  const entityRefId = mailType === "followup" ? threadId : `${threadId}:${token}`
+  // X-Entity-Ref-ID controls how Gmail groups messages that share a subject line:
+  // Gmail will NOT merge two emails whose values differ, even when the
+  // In-Reply-To / References headers and "Re:" subject say they belong together.
+  // So every message in a conversation MUST carry the exact same value. The
+  // thread id already satisfies both needs: a New email's thread id is unique
+  // (recipient + token), so it never merges into an older same-subject thread,
+  // and a Follow Up reuses the thread id of the email it continues, so Gmail
+  // stacks it under the original. Do not append anything per-message here —
+  // that is precisely what made follow-ups land in a separate thread.
+  const entityRefId = threadId
 
   // Resolve the file to attach. An explicit attachment pathname from the
   // composer wins; otherwise fall back to the selected template's stored file.

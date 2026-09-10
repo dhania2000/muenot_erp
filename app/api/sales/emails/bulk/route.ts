@@ -131,7 +131,10 @@ export async function POST(request: Request) {
         subject: renderedSubject,
         html: htmlWithPixel,
         messageId,
-        headers: { "X-Entity-Ref-ID": `${threadId}:${token}` },
+        // Must equal the thread id exactly (no per-message suffix) so a later
+        // Follow Up to this recipient — which reuses this thread id — carries an
+        // identical X-Entity-Ref-ID and Gmail groups it into this conversation.
+        headers: { "X-Entity-Ref-ID": threadId },
         department,
         attachments: outgoingAttachment ? [outgoingAttachment] : undefined,
       })

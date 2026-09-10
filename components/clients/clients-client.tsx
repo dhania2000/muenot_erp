@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search, BriefcaseBusiness } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ImportButton } from "@/components/import-button"
 
 export type ClientRow = {
   id: number
@@ -338,6 +339,7 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
               { header: "Added", value: (r: ClientRow) => r.created_at },
             ]}
           />
+          {canManage && <ImportButton moduleKey="clients" onImported={() => mutate()} />}
           {canManage && (
             <Button
               onClick={() => {

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog"
 import { Plus } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ImportButton } from "@/components/import-button"
 import {
   Table,
   TableHeader,
@@ -290,6 +291,7 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
             filename={kind}
             columns={c.fields.map((f) => ({ header: formatLabel(f), value: (r: any) => r[f] }))}
           />
+          <ImportButton moduleKey={`operations-${kind}`} onImported={() => mutate()} />
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger
               render={

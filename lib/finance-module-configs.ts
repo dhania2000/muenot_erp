@@ -277,6 +277,7 @@ const freelanceInvoices: ModuleConfig = {
   idPrefix: "FRL",
   trackingId: true,
   invoiceActions: true,
+  pdfPath: "/api/finance/freelance-invoices",
   dateColumn: "invoice_date",
   financialYearColumn: "financial_year",
   statusColumn: "payment_status",

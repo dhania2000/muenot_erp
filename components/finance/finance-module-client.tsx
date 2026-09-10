@@ -15,10 +15,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Plus, FilterX, Pencil, Eye, Trash2, Upload, FileDown,
+  Plus, FilterX, Pencil, Eye, Trash2, Upload, FileDown, Send, Loader2Icon,
   Receipt, Coins, Wallet, Clock, Landmark, FileText, Users, TrendingUp,
   Banknote, BookOpen, CreditCard, ArrowLeftRight,
 } from "lucide-react"
+import { Field, FieldLabel } from "@/components/ui/field"
+import { Textarea } from "@/components/ui/textarea"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { DialogFooter } from "@/components/ui/dialog"
 import { inr, inr0 } from "@/lib/finance-calc"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import { FinanceModuleDialog } from "@/components/finance/finance-module-dialog"
@@ -60,6 +64,7 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
   const [importOpen, setImportOpen] = useState(false)
   const [editing, setEditing] = useState<Row | null>(null)
   const [viewing, setViewing] = useState<Row | null>(null)
+  const [sending, setSending] = useState<Row | null>(null)
 
   const queryKey = useMemo(() => {
     const params = new URLSearchParams()
@@ -229,6 +234,11 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
                             <FileDown className="size-4" />
                           </Button>
                         )}
+                        {cfg.invoiceActions && (
+                          <Button variant="ghost" size="icon" aria-label="Send by email" onClick={() => setSending(row)}>
+                            <Send className="size-4" />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" aria-label="View" onClick={() => setViewing(row)}>
                           <Eye className="size-4" />
                         </Button>
@@ -269,6 +279,18 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
       )}
 
       <DetailDialog cfg={cfg} row={viewing} onClose={() => setViewing(null)} />
+
+      {cfg.invoiceActions && (
+        <SendInvoiceDialog
+          cfg={cfg}
+          row={sending}
+          onClose={() => setSending(null)}
+          onSent={() => {
+            setSending(null)
+            mutate()
+          }}
+        />
+      )}
     </main>
   )
 }
@@ -290,6 +312,120 @@ function TableCellContent({ col, row }: { col: TableColumn; row: Row }) {
     )
   }
   return <>{main}</>
+}
+
+function SendInvoiceDialog({
+  cfg,
+  row,
+  onClose,
+  onSent,
+}: {
+  cfg: ModuleConfig
+  row: Row | null
+  onClose: () => void
+  onSent: () => void
+}) {
+  const [to, setTo] = useState("")
+  const [subject, setSubject] = useState("")
+  const [message, setMessage] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [lastRowId, setLastRowId] = useState<number | null>(null)
+
+  // Reset the form whenever a different row is opened.
+  if (row && row.id !== lastRowId) {
+    setLastRowId(row.id)
+    setTo(row.freelancer_email || "")
+    setSubject("")
+    setMessage("")
+    setError(null)
+    setBusy(false)
+  }
+
+  async function submit() {
+    if (!row) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`${cfg.pdfPath}/${row.id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: to.trim(), subject: subject.trim(), message: message.trim() }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(json.error || "Failed to send the invoice.")
+        return
+      }
+      onSent()
+    } catch {
+      setError("Network error while sending the invoice.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        {row && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Send invoice by email</DialogTitle>
+              <DialogDescription>
+                Emails <span className="font-mono">{row[cfg.idColumn]}</span> with the PDF attached.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              <Field>
+                <FieldLabel htmlFor="send-to">Recipient email</FieldLabel>
+                <Input
+                  id="send-to"
+                  type="email"
+                  placeholder="freelancer@example.com"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="send-subject">Subject</FieldLabel>
+                <Input
+                  id="send-subject"
+                  placeholder="Leave blank for the default subject"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="send-message">Message</FieldLabel>
+                <Textarea
+                  id="send-message"
+                  rows={4}
+                  placeholder="Leave blank for the default message"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                />
+              </Field>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose} disabled={busy}>
+                Cancel
+              </Button>
+              <Button onClick={submit} disabled={busy || !to.trim()}>
+                {busy ? <Loader2Icon className="size-4 animate-spin" data-icon="inline-start" /> : <Send data-icon="inline-start" />}
+                {busy ? "Sending..." : "Send invoice"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 function DetailDialog({ cfg, row, onClose }: { cfg: ModuleConfig; row: Row | null; onClose: () => void }) {

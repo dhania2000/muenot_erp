@@ -9,6 +9,7 @@ import { usePathname } from "next/navigation"
 import useSWR from "swr"
 import { Bell, ChevronDown, Clock3, FileText, Loader2, LogIn, LogOut, MapPin, MessageSquare, Moon, Plus, RefreshCw, Search, Settings, ShieldCheck, StickyNote, Sun, Ticket, UserPlus, UsersRound } from "lucide-react"
 import { useTheme } from "next-themes"
+import { toast } from "sonner"
 import { NotesPanel } from "@/components/notes-panel"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -159,7 +160,7 @@ function StaticMap({ lat, lng }: { lat: number; lng: number }) {
  * denies permission or geolocation is unavailable — clock in/out still works.
  */
 function getBrowserLocation(): Promise<Geo | null> {
-  return new Promise((resolve) => {
+  const capture = new Promise<Geo | null>((resolve) => {
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
       resolve(null)
       return
@@ -170,9 +171,10 @@ function getBrowserLocation(): Promise<Geo | null> {
         const lng = pos.coords.longitude
         let label = ""
         try {
+          // Bound the reverse-geocode so a slow/blocked Nominatim can never hang the punch.
           const res = await fetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
-            { headers: { Accept: "application/json" } },
+            { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(4000) },
           )
           const json = await res.json()
           label = typeof json?.display_name === "string" ? json.display_name : ""
@@ -182,9 +184,13 @@ function getBrowserLocation(): Promise<Geo | null> {
         resolve({ lat, lng, label })
       },
       () => resolve(null),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 },
     )
   })
+  // Overall safety cap: whatever happens with permissions/geolocation, resolve
+  // within 8s so clocking in/out is never blocked by location capture.
+  const cap = new Promise<Geo | null>((resolve) => setTimeout(() => resolve(null), 8000))
+  return Promise.race([capture, cap])
 }
 
 /** Clock in / clock out control wired to today's attendance record. */
@@ -370,14 +376,24 @@ function HeaderClockButton() {
     setBusy(true)
     try {
       const location = await getBrowserLocation()
-      await fetch("/api/hr/attendance/clock", {
+      const res = await fetch("/api/hr/attendance/clock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           location ? { latitude: location.lat, longitude: location.lng, location: location.label } : {},
         ),
       })
+      const json = await res.json().catch(() => ({}) as Record<string, unknown>)
+      if (!res.ok) {
+        toast.error((json as { error?: string }).error || "Could not record attendance. Please try again.")
+      } else if ((json as { state?: string }).state === "in") {
+        toast.success("Clocked in")
+      } else if ((json as { state?: string }).state === "out") {
+        toast.success("Clocked out")
+      }
       await mutate()
+    } catch {
+      toast.error("Network error — please try again")
     } finally {
       setBusy(false)
     }

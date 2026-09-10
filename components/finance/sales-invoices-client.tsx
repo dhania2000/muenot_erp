@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Plus, FilterX, Receipt, Wallet, TrendingUp, Clock, Pencil, Eye, Trash2 } from "lucide-react"
+import { Plus, FilterX, Receipt, Wallet, TrendingUp, Clock, Pencil, Eye, Trash2, FileDown } from "lucide-react"
 import { SalesInvoiceDialog } from "@/components/finance/sales-invoice-dialog"
 import { inr, inr0 } from "@/lib/finance-calc"
 
@@ -250,6 +250,20 @@ export function SalesInvoicesClient() {
                     </td>
                     <td className="p-2">
                       <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Download PDF"
+                          render={
+                            <a
+                              href={`/api/finance/sales-invoices/${row.id}/pdf?download=1`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            />
+                          }
+                        >
+                          <FileDown className="size-4" />
+                        </Button>
                         <Button variant="ghost" size="icon" aria-label="View" onClick={() => setViewing(row)}>
                           <Eye className="size-4" />
                         </Button>

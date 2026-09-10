@@ -28,6 +28,7 @@ const purchaseBills: ModuleConfig = {
   dateColumn: "bill_date",
   financialYearColumn: "financial_year",
   statusColumn: "payment_status",
+  pdfPath: "/api/finance/purchase-bills",
   searchColumns: ["po_number", "vendor_name", "project_name", "description"],
   fields: [
     fld("Bill details", "po_number", "PO Number", "text", { placeholder: "Auto-generated if left blank" }),

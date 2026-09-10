@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Plus, FilterX, Pencil, Eye, Trash2, Upload,
+  Plus, FilterX, Pencil, Eye, Trash2, Upload, FileDown,
   Receipt, Coins, Wallet, Clock, Landmark, FileText, Users, TrendingUp,
   Banknote, BookOpen, CreditCard, ArrowLeftRight,
 } from "lucide-react"
@@ -213,6 +213,22 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
                     ))}
                     <td className="p-2">
                       <div className="flex items-center justify-end gap-1">
+                        {cfg.pdfPath && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Download PDF"
+                            render={
+                              <a
+                                href={`${cfg.pdfPath}/${row.id}/pdf?download=1`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              />
+                            }
+                          >
+                            <FileDown className="size-4" />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" aria-label="View" onClick={() => setViewing(row)}>
                           <Eye className="size-4" />
                         </Button>

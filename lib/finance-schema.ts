@@ -112,4 +112,9 @@ export type ModuleConfig = {
    * /api/finance/freelance-invoices/[id].
    */
   invoiceActions?: boolean
+  /**
+   * Base API path that serves a per-row invoice PDF at `${pdfPath}/${row.id}/pdf`.
+   * When set, the module list renders a "Download PDF" action per row.
+   */
+  pdfPath?: string
 }

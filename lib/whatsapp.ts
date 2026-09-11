@@ -16,8 +16,47 @@ import { encryptToken, decryptToken } from "@/lib/token-crypto"
  * only when a Graph API call actually needs it.
  */
 
-const GRAPH_VERSION = "v21.0"
+/**
+ * Graph API version is centralized here and overridable via env so we never
+ * have to touch code when Meta deprecates a version. Keep the default on a
+ * currently-supported version.
+ */
+export const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION?.trim() || "v23.0"
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`
+
+/** Structured Graph API error, surfaced to callers without leaking secrets. */
+export type GraphError = {
+  code?: number
+  subcode?: number
+  type?: string
+  message: string
+}
+
+/**
+ * Parses a Graph API error body into a useful, human-readable message. Adds
+ * actionable guidance for the errors administrators actually hit, without ever
+ * echoing tokens, secrets or PINs.
+ */
+export function parseGraphError(
+  error: { message?: string; type?: string; code?: number; error_subcode?: number } | undefined,
+  status: number,
+): GraphError {
+  const code = error?.code
+  const base = error?.message || `Graph API returned ${status}`
+  let message = base
+
+  if (code === 133010) {
+    message = `${base}. This number is not registered with the WhatsApp Cloud API yet — open "Register number" and set a 6-digit Cloud API PIN, then try again.`
+  } else if (code === 190) {
+    message = `${base}. The access token is invalid or expired — an administrator needs to generate a new permanent System User token.`
+  } else if (code === 10 || code === 200 || code === 3) {
+    message = `${base}. The System User token is missing a required WhatsApp permission (whatsapp_business_messaging / whatsapp_business_management).`
+  } else if (code === 131030) {
+    message = `${base}. The recipient's number is not in the allowed list for this (test) number.`
+  }
+
+  return { code, subcode: error?.error_subcode, type: error?.type, message }
+}
 
 let tableEnsured = false
 
@@ -185,6 +224,10 @@ export async function deleteWhatsAppIntegration(id: number) {
 
 export type RegisterResult = {
   ok: boolean
+  /** true when the number is confirmed registered (freshly or already). */
+  registered?: boolean
+  /** true when Meta reported the number was already registered. */
+  alreadyRegistered?: boolean
   error?: string
 }
 
@@ -192,8 +235,14 @@ export type RegisterResult = {
  * Registers the connected phone number with the WhatsApp Cloud API. Meta
  * requires this one-time call before a number can send or receive messages via
  * Cloud API — until it succeeds every send fails with `(#133010) Account not
- * registered`. The `pin` is the number's 6-digit two-step verification PIN; on
- * a brand-new number this call also sets that PIN.
+ * registered`.
+ *
+ * The `pin` is the 6-digit Cloud API registration PIN. This is NOT the
+ * WhatsApp app password shown under two-step verification; the caller sets a
+ * fresh 6-digit PIN here. We NEVER store the PIN anywhere.
+ *
+ * We handle the already-registered case gracefully and NEVER deregister the
+ * number — coexistence with the WhatsApp Business App must stay intact.
  */
 export async function registerWhatsAppNumber(input: {
   integration: WhatsAppIntegrationRow
@@ -215,12 +264,33 @@ export async function registerWhatsAppNumber(input: {
     })
     const data = (await res.json().catch(() => ({}))) as {
       success?: boolean
-      error?: { message?: string }
+      error?: { message?: string; type?: string; code?: number; error_subcode?: number }
     }
-    if (!res.ok || data.error) {
-      return { ok: false, error: data.error?.message || `Graph API returned ${res.status}` }
+
+    if (res.ok && data.success) return { ok: true, registered: true }
+
+    const err = parseGraphError(data.error, res.status)
+
+    // Meta uses code 133005 for PIN problems and 131000-range for state. When
+    // the number is already registered we treat it as a safe success rather
+    // than surfacing a scary error — and we never attempt to deregister.
+    const already =
+      err.code === 133006 ||
+      /already\s+registered/i.test(err.message) ||
+      /already\s+been\s+registered/i.test(err.message)
+    if (already) {
+      return { ok: true, registered: true, alreadyRegistered: true }
     }
-    return { ok: true }
+
+    if (err.code === 133005) {
+      return {
+        ok: false,
+        error:
+          "Meta rejected the PIN. If two-step verification was set previously, enter that same 6-digit PIN, or reset it in WhatsApp Manager and try again.",
+      }
+    }
+
+    return { ok: false, error: err.message }
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   }
@@ -230,6 +300,7 @@ export type SendResult = {
   ok: boolean
   messageId?: string
   error?: string
+  errorCode?: number
 }
 
 /**
@@ -264,10 +335,11 @@ export async function sendWhatsAppText(input: {
     })
     const data = (await res.json().catch(() => ({}))) as {
       messages?: { id: string }[]
-      error?: { message?: string; code?: number }
+      error?: { message?: string; type?: string; code?: number; error_subcode?: number }
     }
     if (!res.ok || data.error) {
-      return { ok: false, error: describeSendError(data.error, res.status) }
+      const err = parseGraphError(data.error, res.status)
+      return { ok: false, error: err.message, errorCode: err.code }
     }
     return { ok: true, messageId: data.messages?.[0]?.id }
   } catch (err) {
@@ -311,10 +383,70 @@ export async function sendWhatsAppTemplate(input: {
     })
     const data = (await res.json().catch(() => ({}))) as {
       messages?: { id: string }[]
-      error?: { message?: string; code?: number }
+      error?: { message?: string; type?: string; code?: number; error_subcode?: number }
     }
     if (!res.ok || data.error) {
-      return { ok: false, error: describeSendError(data.error, res.status) }
+      const err = parseGraphError(data.error, res.status)
+      return { ok: false, error: err.message, errorCode: err.code }
+    }
+    return { ok: true, messageId: data.messages?.[0]?.id }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Media, mark-as-read and template helpers                            */
+/* ------------------------------------------------------------------ */
+
+export type MediaKind = "image" | "document" | "video" | "audio"
+
+/**
+ * Sends a media message by Meta media id (already uploaded to Meta) or by a
+ * public link. Structured so image/document/video/audio all share one path.
+ */
+export async function sendWhatsAppMedia(input: {
+  integration: WhatsAppIntegrationRow
+  to: string
+  kind: MediaKind
+  mediaId?: string
+  link?: string
+  caption?: string
+  filename?: string
+}): Promise<SendResult> {
+  const token = decryptToken(input.integration.access_token)
+  if (!token) return { ok: false, error: "Stored access token could not be read." }
+  if (!input.mediaId && !input.link) {
+    return { ok: false, error: "A media id or a public link is required." }
+  }
+
+  const media: Record<string, unknown> = {}
+  if (input.mediaId) media.id = input.mediaId
+  if (input.link) media.link = input.link
+  if (input.caption && input.kind !== "audio") media.caption = input.caption
+  if (input.filename && input.kind === "document") media.filename = input.filename
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(input.integration.phone_number_id)}/messages`
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: input.to,
+        type: input.kind,
+        [input.kind]: media,
+      }),
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      messages?: { id: string }[]
+      error?: { message?: string; type?: string; code?: number; error_subcode?: number }
+    }
+    if (!res.ok || data.error) {
+      const err = parseGraphError(data.error, res.status)
+      return { ok: false, error: err.message, errorCode: err.code }
     }
     return { ok: true, messageId: data.messages?.[0]?.id }
   } catch (err) {
@@ -323,17 +455,111 @@ export async function sendWhatsAppTemplate(input: {
 }
 
 /**
- * Turns a Graph API send error into a human-friendly message, adding a hint for
- * the common `(#133010) Account not registered` case that points the user at
- * the one-time registration step.
+ * Marks an inbound message as read (the blue ticks on the customer's side).
+ * Best-effort: a failure here should never block opening a conversation.
  */
-function describeSendError(
-  error: { message?: string; code?: number } | undefined,
-  status: number,
-): string {
-  const base = error?.message || `Graph API returned ${status}`
-  if (error?.code === 133010) {
-    return `${base}. This number hasn't been registered with the WhatsApp Cloud API yet — use "Register number" and enter its 6-digit PIN, then try again.`
+export async function markWhatsAppMessageRead(input: {
+  integration: WhatsAppIntegrationRow
+  wamid: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const token = decryptToken(input.integration.access_token)
+  if (!token) return { ok: false, error: "Stored access token could not be read." }
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(input.integration.phone_number_id)}/messages`
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: input.wamid,
+      }),
+      cache: "no-store",
+    })
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: { message?: string; code?: number }
+      }
+      return { ok: false, error: parseGraphError(data.error, res.status).message }
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
   }
-  return base
+}
+
+export type WhatsAppTemplate = {
+  name: string
+  language: string
+  status: string
+  category: string | null
+}
+
+/**
+ * Fetches message templates from the configured WABA so the UI can offer a
+ * real selector instead of hardcoding `hello_world`.
+ */
+export async function getWhatsAppTemplates(
+  integration: WhatsAppIntegrationRow,
+): Promise<{ ok: boolean; templates: WhatsAppTemplate[]; error?: string }> {
+  const token = decryptToken(integration.access_token)
+  if (!token) return { ok: false, templates: [], error: "Stored access token could not be read." }
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(
+    integration.waba_id,
+  )}/message_templates?fields=name,language,status,category&limit=200`
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      data?: { name: string; language: string; status: string; category?: string }[]
+      error?: { message?: string; code?: number }
+    }
+    if (!res.ok || data.error) {
+      return { ok: false, templates: [], error: parseGraphError(data.error, res.status).message }
+    }
+    const templates = (data.data ?? []).map((t) => ({
+      name: t.name,
+      language: t.language,
+      status: t.status,
+      category: t.category ?? null,
+    }))
+    return { ok: true, templates }
+  } catch (err) {
+    return { ok: false, templates: [], error: (err as Error).message }
+  }
+}
+
+/**
+ * Resolves a Meta media id to a short-lived download URL. The URL itself must
+ * be fetched with the access token, so downloads stay server-side.
+ */
+export async function getWhatsAppMedia(input: {
+  integration: WhatsAppIntegrationRow
+  mediaId: string
+}): Promise<{ ok: boolean; url?: string; mimeType?: string; error?: string }> {
+  const token = decryptToken(input.integration.access_token)
+  if (!token) return { ok: false, error: "Stored access token could not be read." }
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(input.mediaId)}`
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      url?: string
+      mime_type?: string
+      error?: { message?: string; code?: number }
+    }
+    if (!res.ok || data.error) {
+      return { ok: false, error: parseGraphError(data.error, res.status).message }
+    }
+    return { ok: true, url: data.url, mimeType: data.mime_type }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
 }

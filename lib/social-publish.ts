@@ -23,7 +23,30 @@ export type PublishResult = {
   handle: string
   ok: boolean
   permalink?: string
+  /**
+   * The id of the post AS IT LIVES ON THE PLATFORM (tweet id, LinkedIn ugcPost
+   * urn, Facebook post id, Instagram media id). Stored so a later delete or
+   * edit in the ERP can act on the real published post, not just our DB row.
+   */
+  remoteId?: string
   error?: string
+}
+
+/** What each platform publisher returns once a post is live. */
+type PublishedRef = { permalink?: string; remoteId?: string }
+
+/**
+ * Outcome of propagating a delete or edit to a live platform post. `skipped`
+ * marks platforms whose API cannot perform the action (e.g. Instagram delete,
+ * non-Facebook edit) so the UI can warn instead of reporting a hard failure.
+ */
+export type PlatformActionResult = {
+  accountId: number
+  platform: string
+  handle: string
+  ok: boolean
+  skipped?: boolean
+  message?: string
 }
 
 type DecodedImage = { buffer: Buffer; contentType: string } | null
@@ -72,14 +95,14 @@ export async function publishToAccount(
     }
     if (!decrypted.access_token) throw new Error("This account is missing an access token — reconnect it.")
 
-    let permalink: string | undefined
-    if (decrypted.platform === "linkedin") permalink = await publishLinkedIn(decrypted, post)
-    else if (decrypted.platform === "x") permalink = await publishX(decrypted, post)
-    else if (decrypted.platform === "facebook") permalink = await publishFacebook(decrypted, post)
-    else if (decrypted.platform === "instagram") permalink = await publishInstagram(decrypted, post)
+    let published: PublishedRef = {}
+    if (decrypted.platform === "linkedin") published = await publishLinkedIn(decrypted, post)
+    else if (decrypted.platform === "x") published = await publishX(decrypted, post)
+    else if (decrypted.platform === "facebook") published = await publishFacebook(decrypted, post)
+    else if (decrypted.platform === "instagram") published = await publishInstagram(decrypted, post)
     else throw new Error(`Unsupported platform: ${decrypted.platform}`)
 
-    return { ...base, ok: true, permalink }
+    return { ...base, ok: true, permalink: published.permalink, remoteId: published.remoteId }
   } catch (err: any) {
     return { ...base, ok: false, error: err?.message || "Publish failed" }
   }
@@ -87,7 +110,10 @@ export async function publishToAccount(
 
 /* ------------------------------- LinkedIn ------------------------------- */
 
-async function publishLinkedIn(account: SocialAccountRow, post: { content: string; image?: string | null }) {
+async function publishLinkedIn(
+  account: SocialAccountRow,
+  post: { content: string; image?: string | null },
+): Promise<PublishedRef> {
   const author = account.external_id! // urn:li:person:… or urn:li:organization:…
   const token = account.access_token!
   const headers = {
@@ -154,12 +180,18 @@ async function publishLinkedIn(account: SocialAccountRow, post: { content: strin
   const json = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(`LinkedIn post failed: ${JSON.stringify(json)}`)
   const id = res.headers.get("x-restli-id") || json.id
-  return id ? `https://www.linkedin.com/feed/update/${id}` : undefined
+  return {
+    remoteId: id || undefined,
+    permalink: id ? `https://www.linkedin.com/feed/update/${id}` : undefined,
+  }
 }
 
 /* ---------------------------------- X ---------------------------------- */
 
-async function publishX(account: SocialAccountRow, post: { content: string; image?: string | null }) {
+async function publishX(
+  account: SocialAccountRow,
+  post: { content: string; image?: string | null },
+): Promise<PublishedRef> {
   const res = await fetch("https://api.x.com/2/tweets", {
     method: "POST",
     headers: {
@@ -171,12 +203,15 @@ async function publishX(account: SocialAccountRow, post: { content: string; imag
   const json = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(`X post failed: ${JSON.stringify(json)}`)
   const id = json.data?.id
-  return id ? `https://x.com/i/web/status/${id}` : undefined
+  return { remoteId: id, permalink: id ? `https://x.com/i/web/status/${id}` : undefined }
 }
 
 /* ------------------------------- Facebook ------------------------------- */
 
-async function publishFacebook(account: SocialAccountRow, post: { content: string; image?: string | null }) {
+async function publishFacebook(
+  account: SocialAccountRow,
+  post: { content: string; image?: string | null },
+): Promise<PublishedRef> {
   const pageId = account.page_id || account.external_id!
   const token = account.access_token!
   const img = await resolveImageBytes(post.image)
@@ -193,7 +228,7 @@ async function publishFacebook(account: SocialAccountRow, post: { content: strin
     const json = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(`Facebook photo post failed: ${JSON.stringify(json)}`)
     const id = json.post_id || json.id
-    return id ? `https://www.facebook.com/${id}` : undefined
+    return { remoteId: id, permalink: id ? `https://www.facebook.com/${id}` : undefined }
   }
 
   const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/feed`, {
@@ -204,7 +239,7 @@ async function publishFacebook(account: SocialAccountRow, post: { content: strin
   const json = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(`Facebook post failed: ${JSON.stringify(json)}`)
   const id = json.id
-  return id ? `https://www.facebook.com/${id}` : undefined
+  return { remoteId: id, permalink: id ? `https://www.facebook.com/${id}` : undefined }
 }
 
 /* ------------------------------- Instagram ------------------------------ */
@@ -234,7 +269,10 @@ async function waitForContainerReady(creationId: string, token: string) {
   throw new Error("Instagram media is still processing after 30s. Please try publishing again in a moment.")
 }
 
-async function publishInstagram(account: SocialAccountRow, post: { content: string; image?: string | null }) {
+async function publishInstagram(
+  account: SocialAccountRow,
+  post: { content: string; image?: string | null },
+): Promise<PublishedRef> {
   // Instagram API with Instagram Login publishes through graph.instagram.com,
   // NOT the Facebook Graph. The id is the Instagram user id resolved at connect.
   const igId = account.page_id || account.external_id!
@@ -275,5 +313,137 @@ async function publishInstagram(account: SocialAccountRow, post: { content: stri
     `https://graph.instagram.com/${publishJson.id}?fields=permalink&access_token=${encodeURIComponent(token)}`,
   )
   const permJson = await permRes.json().catch(() => ({}))
-  return permJson.permalink || undefined
+  return { remoteId: publishJson.id, permalink: permJson.permalink || undefined }
+}
+
+/* ------------------------------------------------------------------ */
+/* Deleting a live post                                                */
+/* ------------------------------------------------------------------ */
+
+const PLATFORM_LABEL: Record<string, string> = {
+  linkedin: "LinkedIn",
+  x: "X",
+  facebook: "Facebook",
+  instagram: "Instagram",
+}
+
+/**
+ * Removes a post from the platform it was published to, using the remote id we
+ * stored at publish time. LinkedIn, X, and Facebook all support programmatic
+ * deletion. Instagram's official API has NO endpoint to delete a published
+ * post, so it is reported as `skipped` with a message telling the user to
+ * remove it by hand in the app.
+ */
+export async function deleteFromAccount(
+  account: SocialAccountRow,
+  remoteId: string | null | undefined,
+): Promise<PlatformActionResult> {
+  const base = { accountId: account.id, platform: account.platform, handle: account.handle }
+  const label = PLATFORM_LABEL[account.platform] ?? account.platform
+
+  if (account.platform === "instagram") {
+    return {
+      ...base,
+      ok: false,
+      skipped: true,
+      message:
+        "Instagram's API can't delete a published post — open the Instagram app and delete it manually.",
+    }
+  }
+
+  try {
+    const token = decryptToken(account.access_token)
+    if (!token) throw new Error("this account is missing an access token — reconnect it")
+    if (!remoteId) throw new Error("no published id was stored, so the live post couldn't be located")
+
+    if (account.platform === "linkedin") await deleteLinkedIn(remoteId, token)
+    else if (account.platform === "x") await deleteX(remoteId, token)
+    else if (account.platform === "facebook") await deleteFacebook(remoteId, token)
+    else throw new Error(`deleting on ${label} isn't supported`)
+
+    return { ...base, ok: true }
+  } catch (err: any) {
+    return { ...base, ok: false, message: `${label}: ${err?.message || "delete failed"}` }
+  }
+}
+
+async function deleteLinkedIn(remoteId: string, token: string) {
+  const res = await fetch(`https://api.linkedin.com/v2/ugcPosts/${encodeURIComponent(remoteId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}`, "X-Restli-Protocol-Version": "2.0.0" },
+  })
+  // 404 means it's already gone — treat that as success (idempotent delete).
+  if (!res.ok && res.status !== 404) {
+    const json = await res.json().catch(() => ({}))
+    throw new Error(`delete rejected (${res.status}) ${JSON.stringify(json)}`)
+  }
+}
+
+async function deleteX(remoteId: string, token: string) {
+  const res = await fetch(`https://api.x.com/2/tweets/${remoteId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok && res.status !== 404) {
+    const json = await res.json().catch(() => ({}))
+    throw new Error(`delete rejected (${res.status}) ${JSON.stringify(json)}`)
+  }
+}
+
+async function deleteFacebook(remoteId: string, token: string) {
+  const res = await fetch(
+    `https://graph.facebook.com/${GRAPH_VERSION}/${remoteId}?access_token=${encodeURIComponent(token)}`,
+    { method: "DELETE" },
+  )
+  if (!res.ok && res.status !== 404) {
+    const json = await res.json().catch(() => ({}))
+    throw new Error(`delete rejected (${res.status}) ${JSON.stringify(json)}`)
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Editing a live post                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Propagates an edited caption to the live post. Only Facebook exposes an edit
+ * endpoint for an already-published post; X, LinkedIn, and Instagram do not
+ * allow editing a live post through their APIs, so those are reported as
+ * `skipped` — the ERP copy still updates, but the live post is left untouched.
+ */
+export async function editOnAccount(
+  account: SocialAccountRow,
+  remoteId: string | null | undefined,
+  post: { content: string },
+): Promise<PlatformActionResult> {
+  const base = { accountId: account.id, platform: account.platform, handle: account.handle }
+  const label = PLATFORM_LABEL[account.platform] ?? account.platform
+
+  if (account.platform !== "facebook") {
+    return {
+      ...base,
+      ok: false,
+      skipped: true,
+      message: `${label} doesn't allow editing a live post through its API — the ERP was updated, but the published ${label} post is unchanged.`,
+    }
+  }
+
+  try {
+    const token = decryptToken(account.access_token)
+    if (!token) throw new Error("this account is missing an access token — reconnect it")
+    if (!remoteId) throw new Error("no published id was stored, so the live post couldn't be located")
+
+    const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${remoteId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: post.content, access_token: token }),
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      throw new Error(`edit rejected (${res.status}) ${JSON.stringify(json)}`)
+    }
+    return { ...base, ok: true }
+  } catch (err: any) {
+    return { ...base, ok: false, message: `${label}: ${err?.message || "edit failed"}` }
+  }
 }

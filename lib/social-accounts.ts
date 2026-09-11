@@ -303,6 +303,25 @@ export async function createSocialPost(data: CreateSocialPost): Promise<number> 
   return result.insertId
 }
 
+export type UpdateSocialPost = {
+  name: string
+  content: string
+  brand: string | null
+  imageUrl: string | null
+  folder: string
+}
+
+/** Edits the editable fields of a post (used by the ERP edit flow). */
+export async function updateSocialPost(id: number, data: UpdateSocialPost) {
+  await ensureSocialPostsTable()
+  await query(
+    `UPDATE \`marketing_social_posts\`
+     SET name = ?, content = ?, brand = ?, image_url = ?, folder = ?
+     WHERE id = ?`,
+    [data.name, data.content, data.brand, data.imageUrl, data.folder, id],
+  )
+}
+
 export async function updateSocialPostStatus(
   id: number,
   status: SocialPostStatus,

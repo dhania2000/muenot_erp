@@ -286,6 +286,7 @@ export function AttendanceClient() {
                   <th className="p-3 font-medium">In / Out</th>
                   <th className="p-3 font-medium">Hours</th>
                   <th className="p-3 font-medium">Status</th>
+                  <th className="p-3 font-medium">Location</th>
                   <th className="p-3 font-medium">Regularisation</th>
                   <th className="p-3 font-medium">Source</th>
                   <th className="p-3 font-medium text-right">Actions</th>
@@ -330,6 +331,13 @@ export function AttendanceClient() {
                         </div>
                       </td>
                       <td className="p-3">
+                        {row.location ? (
+                          <span className="text-sm">{row.location}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="p-3">
                         {row.regularisation_status ? (
                           <Badge
                             variant={
@@ -355,14 +363,14 @@ export function AttendanceClient() {
                 })}
                 {!isLoading && rows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="p-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={10} className="p-10 text-center text-sm text-muted-foreground">
                       {hasFilters ? "No records match these filters." : "No attendance records yet."}
                     </td>
                   </tr>
                 )}
                 {isLoading && (
                   <tr>
-                    <td colSpan={9} className="p-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={10} className="p-10 text-center text-sm text-muted-foreground">
                       Loading…
                     </td>
                   </tr>

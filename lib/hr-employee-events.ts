@@ -15,6 +15,15 @@ export type EmployeeEventType =
   | "imported"
   | "bulk_updated"
   | "login_created"
+  // Employee Documents lifecycle — surfaced in the profile Timeline/Audit tabs.
+  | "document_uploaded"
+  | "document_verified"
+  | "document_rejected"
+  | "document_replaced"
+  | "document_archived"
+  | "document_restored"
+  | "document_deleted"
+  | "document_downloaded"
 
 export type EmployeeFieldChange = { field: string; label: string; from: unknown; to: unknown }
 

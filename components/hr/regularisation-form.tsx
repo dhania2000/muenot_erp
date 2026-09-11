@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { formatTime, statusVariant, ATTENDANCE_STATUSES } from "@/lib/attendance-ui"
-import { Loader2, Upload } from "lucide-react"
+import { ArrowRight, Loader2, Upload } from "lucide-react"
 
 const CORRECTION_TYPES = [
   "Missing Clock In",
@@ -32,6 +32,8 @@ const REASON_PRESETS = [
   "Official work outside office",
   "Other",
 ]
+
+const KEEP = "__keep__"
 
 type EmployeeOption = { id: number; employee_name: string; employee_id: string; department: string | null }
 type SelfContext = { id: number; employee_name: string; employee_id: string; department: string | null } | null
@@ -88,8 +90,8 @@ export function RegularisationForm({
   const { data: lookup, isLoading: lookupLoading } = useSWR<LookupResponse>(lookupKey, fetcher)
 
   // Seed the requested fields from the current attendance once per lookup so the
-  // approver/employee edits real values instead of blank datetime pickers. This
-  // effect only mirrors already-fetched data into local state (no fetching).
+  // approver/employee edits real values instead of blank pickers. This effect
+  // only mirrors already-fetched data into local state (no fetching).
   useEffect(() => {
     if (!lookup || !lookupKey || seededKey === lookupKey) return
     setSeededKey(lookupKey)
@@ -100,6 +102,12 @@ export function RegularisationForm({
   }, [lookup, lookupKey, seededKey])
 
   const att = lookup?.attendance ?? null
+
+  // Per-field change detection drives the highlight + the "no change" guard.
+  const inChanged = toLocalInput(att?.clock_in) !== requestedIn
+  const outChanged = toLocalInput(att?.clock_out) !== requestedOut
+  const statusChanged = Boolean(requestedStatus) && requestedStatus !== (att?.status ?? "")
+  const anyChange = inChanged || outChanged || statusChanged
 
   const dayBanner = useMemo(() => {
     if (!lookup) return null
@@ -150,6 +158,7 @@ export function RegularisationForm({
     if (!workDate) return toast.error("Select a work date.")
     if (lookup?.blocked && !canManage) return toast.error(lookup.blocked.reason)
     if (lookup?.pendingExists) return toast.error("A pending request already exists for this date.")
+    if (!anyChange) return toast.error("Change at least one value before submitting.")
     if (!reasonPreset) return toast.error("Select a reason.")
     if (reasonPreset === "Other" && reasonDetail.trim().length < 3) return toast.error("Please explain the reason.")
 
@@ -189,8 +198,11 @@ export function RegularisationForm({
     }
   }
 
+  const submitDisabled = submitting || Boolean(lookup?.pendingExists) || (canLookup && !anyChange)
+
   return (
-    <form onSubmit={submit} className="grid gap-5 rounded-xl border bg-card p-5">
+    <form onSubmit={submit} className="grid gap-6 rounded-xl border bg-card p-5">
+      {/* Who + when */}
       <div className="grid gap-4 md:grid-cols-2">
         <div className="grid gap-1.5">
           <Label>Employee</Label>
@@ -219,142 +231,170 @@ export function RegularisationForm({
         </div>
       </div>
 
-      {/* Auto-loaded current attendance + day context */}
+      {!canLookup && (
+        <p className="rounded-lg border border-dashed bg-muted/20 p-4 text-center text-sm text-muted-foreground">
+          Select {canManage ? "an employee and " : ""}a work date to load the current attendance and propose changes.
+        </p>
+      )}
+
       {canLookup && (
-        <div className="rounded-lg border bg-background/60 p-4">
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Current → Requested</span>
+              {anyChange && !lookupLoading ? (
+                <Badge variant="default" className="text-[11px]">
+                  {[inChanged && "In", outChanged && "Out", statusChanged && "Status"].filter(Boolean).join(" · ")} changed
+                </Badge>
+              ) : lookupLoading ? null : (
+                <Badge variant="outline" className="text-[11px]">No changes yet</Badge>
+              )}
+            </div>
+            {lookup?.shift && (
+              <span className="text-xs text-muted-foreground">
+                Shift: {lookup.shift.name} ({lookup.shift.start}–{lookup.shift.end})
+                {lookup.shift.isOvernight ? " · overnight" : ""}
+              </span>
+            )}
+          </div>
+
+          {dayBanner && (
+            <Badge variant={dayBanner.tone as never} className="whitespace-normal text-left">
+              {dayBanner.text}
+            </Badge>
+          )}
+
           {lookupLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 rounded-lg border bg-background/60 p-4 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" /> Loading current attendance…
             </div>
           ) : (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current attendance</span>
-                {lookup?.shift && (
-                  <span className="text-xs text-muted-foreground">
-                    Shift: {lookup.shift.name} ({lookup.shift.start}–{lookup.shift.end})
-                    {lookup.shift.isOvernight ? " · overnight" : ""}
-                  </span>
-                )}
-              </div>
-              {dayBanner && (
-                <Badge variant={dayBanner.tone as never} className="whitespace-normal text-left">
-                  {dayBanner.text}
-                </Badge>
-              )}
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <Field label="Clock In" value={formatTime(att?.clock_in)} />
-                <Field label="Clock Out" value={formatTime(att?.clock_out)} />
-                <div className="space-y-1">
-                  <div className="text-xs text-muted-foreground">Status</div>
-                  {att ? <Badge variant={statusVariant(att.status)}>{att.status}</Badge> : <span className="text-sm">—</span>}
+            <div className="overflow-hidden rounded-lg border">
+              {/* Column headers */}
+              <div className="grid grid-cols-[100px_1fr_1fr] items-center gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <div>Field</div>
+                <div>Current</div>
+                <div className="flex items-center gap-1">
+                  <ArrowRight className="size-3" /> Requested
                 </div>
-                <Field label="Hours" value={att?.workedHuman ?? "—"} />
               </div>
+
+              <CompareRow label="Clock in" changed={inChanged} current={formatTime(att?.clock_in)}>
+                <Input
+                  aria-label="Requested clock in"
+                  type="datetime-local"
+                  value={requestedIn}
+                  onChange={(e) => setRequestedIn(e.target.value)}
+                />
+              </CompareRow>
+
+              <CompareRow label="Clock out" changed={outChanged} current={formatTime(att?.clock_out)}>
+                <Input
+                  aria-label="Requested clock out"
+                  type="datetime-local"
+                  value={requestedOut}
+                  onChange={(e) => setRequestedOut(e.target.value)}
+                />
+              </CompareRow>
+
+              <CompareRow
+                label="Status"
+                changed={statusChanged}
+                border={false}
+                current={att ? <Badge variant={statusVariant(att.status)}>{att.status}</Badge> : "—"}
+              >
+                <Select value={requestedStatus || KEEP} onValueChange={(v) => setRequestedStatus(v === KEEP ? "" : v)}>
+                  <SelectTrigger aria-label="Requested status">
+                    <SelectValue placeholder="Keep computed status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={KEEP}>Keep computed status</SelectItem>
+                    {ATTENDANCE_STATUSES.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </CompareRow>
             </div>
           )}
-        </div>
-      )}
 
-      {/* Requested correction */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="grid gap-1.5">
-          <Label>Correction type</Label>
-          <Select value={correctionType} onValueChange={setCorrectionType}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select correction type" />
-            </SelectTrigger>
-            <SelectContent>
-              {CORRECTION_TYPES.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label>Requested status (optional)</Label>
-          <Select value={requestedStatus || "__keep__"} onValueChange={(v) => setRequestedStatus(v === "__keep__" ? "" : v)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Keep computed status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__keep__">Keep computed status</SelectItem>
-              {ATTENDANCE_STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="reg-req-in">Requested clock in</Label>
-          <Input id="reg-req-in" type="datetime-local" value={requestedIn} onChange={(e) => setRequestedIn(e.target.value)} />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="reg-req-out">Requested clock out</Label>
-          <Input id="reg-req-out" type="datetime-local" value={requestedOut} onChange={(e) => setRequestedOut(e.target.value)} />
-        </div>
-      </div>
+          {/* Correction type + reason */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label>Correction type</Label>
+              <Select value={correctionType} onValueChange={setCorrectionType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select correction type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CORRECTION_TYPES.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Reason</Label>
+              <Select value={reasonPreset} onValueChange={setReasonPreset}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a reason" />
+                </SelectTrigger>
+                <SelectContent>
+                  {REASON_PRESETS.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
-      {/* Reason + attachment */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="grid gap-1.5">
-          <Label>Reason</Label>
-          <Select value={reasonPreset} onValueChange={setReasonPreset}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select a reason" />
-            </SelectTrigger>
-            <SelectContent>
-              {REASON_PRESETS.map((r) => (
-                <SelectItem key={r} value={r}>
-                  {r}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="reg-attach">Supporting document (optional)</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              id="reg-attach"
-              type="file"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) upload(f)
-              }}
+          <div className="grid gap-1.5">
+            <Label htmlFor="reg-reason-detail">
+              {reasonPreset === "Other" ? "Explain the reason" : "Additional details (optional)"}
+            </Label>
+            <Textarea
+              id="reg-reason-detail"
+              rows={2}
+              value={reasonDetail}
+              onChange={(e) => setReasonDetail(e.target.value)}
+              placeholder={reasonPreset === "Other" ? "Describe what needs correcting and why" : "Any extra context for the approver"}
             />
-            <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => document.getElementById("reg-attach")?.click()}>
-              {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-              {attachment ? "Replace file" : "Upload file"}
-            </Button>
-            {attachment && <span className="truncate text-xs text-muted-foreground">{attachment.name}</span>}
+          </div>
+
+          {/* Attachment */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="reg-attach">Supporting document (optional)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="reg-attach"
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) upload(f)
+                }}
+              />
+              <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => document.getElementById("reg-attach")?.click()}>
+                {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                {attachment ? "Replace file" : "Upload file"}
+              </Button>
+              {attachment && <span className="truncate text-xs text-muted-foreground">{attachment.name}</span>}
+            </div>
           </div>
         </div>
-      </div>
-
-      <div className="grid gap-1.5">
-        <Label htmlFor="reg-reason-detail">
-          {reasonPreset === "Other" ? "Explain the reason" : "Additional details (optional)"}
-        </Label>
-        <Textarea
-          id="reg-reason-detail"
-          rows={2}
-          value={reasonDetail}
-          onChange={(e) => setReasonDetail(e.target.value)}
-          placeholder={reasonPreset === "Other" ? "Describe what needs correcting and why" : "Any extra context for the approver"}
-        />
-      </div>
+      )}
 
       <div className="flex items-center justify-end gap-2">
         <Button type="button" variant="ghost" onClick={resetForm} disabled={submitting}>
           Clear
         </Button>
-        <Button type="submit" disabled={submitting || Boolean(lookup?.pendingExists)}>
+        <Button type="submit" disabled={submitDisabled}>
           {submitting && <Loader2 className="size-4 animate-spin" />}
           Submit request
         </Button>
@@ -363,11 +403,29 @@ export function RegularisationForm({
   )
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+/** A single Field / Current / Requested row in the comparison grid. */
+function CompareRow({
+  label,
+  current,
+  changed,
+  border = true,
+  children,
+}: {
+  label: string
+  current: React.ReactNode
+  changed: boolean
+  border?: boolean
+  children: React.ReactNode
+}) {
   return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-sm font-medium tabular-nums">{value}</div>
+    <div
+      className={`grid grid-cols-[100px_1fr_1fr] items-center gap-3 px-4 py-3 ${border ? "border-b" : ""} ${
+        changed ? "bg-primary/5" : ""
+      }`}
+    >
+      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="text-sm font-medium tabular-nums">{current}</div>
+      <div>{children}</div>
     </div>
   )
 }

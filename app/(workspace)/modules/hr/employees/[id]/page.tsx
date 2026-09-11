@@ -17,6 +17,7 @@ export default async function EmployeeProfilePage({
 
   const canView = await userHasFeature(session.userId, session.role, "hr.view_employees")
   if (!canView) redirect("/dashboard")
+  const canManage = await userHasFeature(session.userId, session.role, "hr.manage_employees")
 
   await ensurePermissionSchema()
   const { id } = await params
@@ -48,6 +49,7 @@ export default async function EmployeeProfilePage({
       employee={employee}
       linkedUser={linkedUser}
       isAdmin={session.role === "admin"}
+      canManage={canManage}
       defaultTab={tab === "permissions" ? "permissions" : "overview"}
     />
   )

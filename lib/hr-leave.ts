@@ -1,5 +1,6 @@
 import { pool, query } from "@/lib/db"
 import { logEmployeeEvent } from "@/lib/hr-employee-events"
+import { nextRecordId } from "@/lib/record-ids"
 
 /**
  * HR Leave engine.
@@ -139,6 +140,77 @@ async function extendAvailableExpression() {
   }
 }
 
+/**
+ * Ledger hardening for hr_leave_quota_history: a stable human-readable event id
+ * (LQE-######), a source channel, and a reversal link. Backfills legacy rows
+ * deterministically from the PK so ids stay unique, then seeds the LQE sequence
+ * past the highest event id so freshly generated ids can never collide with the
+ * backfilled ones. Idempotent — safe to run on every request.
+ */
+async function ensureQuotaLedgerColumns() {
+  await addColumn("hr_leave_quota_history", "quota_event_id", "VARCHAR(40) DEFAULT NULL")
+  await addColumn("hr_leave_quota_history", "source", "VARCHAR(30) DEFAULT NULL")
+  await addColumn("hr_leave_quota_history", "reversal_of", "VARCHAR(40) DEFAULT NULL")
+
+  try {
+    await query(
+      `UPDATE hr_leave_quota_history SET source = CASE event_type
+         WHEN 'accrual' THEN 'Accrual'
+         WHEN 'carry_forward' THEN 'Carry Forward'
+         WHEN 'expiry' THEN 'Expiry'
+         WHEN 'leave_approved' THEN 'Leave Request'
+         WHEN 'leave_reversed' THEN 'Leave Request'
+         WHEN 'adjustment' THEN 'Adjustment'
+         WHEN 'reversal' THEN 'Adjustment'
+         WHEN 'opening' THEN 'System'
+         ELSE 'System' END
+       WHERE source IS NULL OR source = ''`,
+    )
+  } catch (error) {
+    console.log("[v0] leave.backfill source skipped", (error as Error).message)
+  }
+
+  try {
+    await query(
+      `UPDATE hr_leave_quota_history SET quota_event_id = CONCAT('LQE-', LPAD(event_id, 6, '0'))
+       WHERE quota_event_id IS NULL OR quota_event_id = ''`,
+    )
+  } catch (error) {
+    console.log("[v0] leave.backfill quota_event_id skipped", (error as Error).message)
+  }
+
+  try {
+    const rows = await query<{ max_id: number }[]>(
+      `SELECT COALESCE(MAX(event_id), 0) AS max_id FROM hr_leave_quota_history`,
+    )
+    const maxId = Number(rows[0]?.max_id || 0)
+    await query(
+      `INSERT INTO record_id_sequences (prefix, next_number) VALUES ('LQE', ?)
+       ON DUPLICATE KEY UPDATE next_number = GREATEST(next_number, ?)`,
+      [maxId, maxId],
+    )
+  } catch (error) {
+    console.log("[v0] leave.seed LQE sequence skipped", (error as Error).message)
+  }
+
+  for (const [name, definition] of [
+    ["uq_quota_event_id", "ADD UNIQUE KEY uq_quota_event_id (quota_event_id)"],
+    ["idx_quota_reference", "ADD INDEX idx_quota_reference (reference)"],
+    ["idx_quota_reversal_of", "ADD INDEX idx_quota_reversal_of (reversal_of)"],
+  ] as const) {
+    try {
+      const idx = await query<any[]>(
+        `SELECT 1 FROM information_schema.statistics
+         WHERE table_schema = DATABASE() AND table_name = 'hr_leave_quota_history' AND index_name = ? LIMIT 1`,
+        [name],
+      )
+      if (!idx.length) await query(`ALTER TABLE hr_leave_quota_history ${definition}`)
+    } catch (error) {
+      console.log("[v0] leave.quota index skipped", name, (error as Error).message)
+    }
+  }
+}
+
 export async function ensureLeaveSchema() {
   if (schemaReady) return
 
@@ -217,6 +289,9 @@ export async function ensureLeaveSchema() {
       INDEX idx_leave_timeline_request (request_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+
+  // Immutable-ledger hardening for the quota history table.
+  await ensureQuotaLedgerColumns()
 
   schemaReady = true
 }
@@ -715,12 +790,58 @@ function emailShell(title: string, body: string) {
 // Quota history + attendance (defensive writes inside a transaction)
 // ---------------------------------------------------------------------------
 
+/** Human-readable labels for the stored event_type values. */
+export const QUOTA_EVENT_LABEL: Record<string, string> = {
+  opening: "Opening Balance",
+  accrual: "Accrual",
+  carry_forward: "Carry Forward",
+  adjustment: "Adjustment",
+  leave_approved: "Leave Used",
+  leave_reversed: "Leave Reversal",
+  expiry: "Expiry / Lapse",
+  reversal: "Reversal",
+}
+
+/** Default source channel implied by an event type. */
+const SOURCE_FOR_EVENT: Record<string, string> = {
+  opening: "System",
+  accrual: "Accrual",
+  carry_forward: "Carry Forward",
+  expiry: "Expiry",
+  leave_approved: "Leave Request",
+  leave_reversed: "Leave Request",
+  adjustment: "Adjustment",
+  reversal: "Adjustment",
+}
+
 async function writeQuotaHistory(
   conn: any,
   cols: Set<string>,
-  data: { employee_id: number; leave_type_id: number; year: number; event_type: string; days: number; reference: string; reason: string; created_by: number | null },
-) {
+  data: {
+    employee_id: number
+    leave_type_id: number
+    year: number
+    event_type: string
+    days: number
+    reference: string
+    reason: string
+    created_by: number | null
+    source?: string
+    reversal_of?: string | null
+  },
+): Promise<string | null> {
+  // Server-side, race-safe, immutable event id. Generated from the shared
+  // record-id sequence (seeded past legacy ids) so it is never duplicated.
+  let quotaEventId: string | null = null
+  if (cols.has("quota_event_id")) {
+    try {
+      quotaEventId = await nextRecordId("LQE", { digits: 6 })
+    } catch (error) {
+      console.log("[v0] leave.LQE id generation skipped", (error as Error).message)
+    }
+  }
   const row: Record<string, any> = {
+    quota_event_id: quotaEventId,
     employee_id: data.employee_id,
     leave_type_id: data.leave_type_id,
     year: data.year,
@@ -728,14 +849,17 @@ async function writeQuotaHistory(
     days: data.days,
     reference: data.reference,
     reason: data.reason,
+    source: data.source || SOURCE_FOR_EVENT[data.event_type] || "System",
+    reversal_of: data.reversal_of ?? null,
     created_by: data.created_by,
   }
   const keys = Object.keys(row).filter((k) => cols.has(k))
-  if (!keys.length) return
+  if (!keys.length) return null
   await conn.query(
     `INSERT INTO hr_leave_quota_history (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`,
     keys.map((k) => row[k]),
   )
+  return quotaEventId
 }
 
 async function markAttendance(conn: any, requestId: string, employeeId: number, breakdown: DayBreakdown[]) {
@@ -1566,5 +1690,150 @@ export async function getBalanceDetail(employeeId: number, leaveTypeId: string |
     adjustments,
     audit,
     reconciliation,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Quota-history ledger: reversal + single-event detail (traceability)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reverse a posted ledger event without ever mutating or deleting the original.
+ * Books an opposite-sign `reversal` row that references the source event and
+ * moves the balance's `adjusted` bucket by the same net amount, so the ledger
+ * and stored balance stay reconciled. Idempotent per source event: a second
+ * call is rejected once a reversal already exists.
+ */
+export async function reverseQuotaEvent(
+  eventRef: string,
+  actor: Actor,
+  reason?: string,
+): Promise<{ ok: true; quotaEventId: string | null; reversalOf: string } | { ok: false; error: string }> {
+  await ensureLeaveSchema()
+  const rows = await query<any[]>(
+    `SELECT * FROM hr_leave_quota_history WHERE quota_event_id = ? OR CAST(event_id AS CHAR) = ? LIMIT 1`,
+    [eventRef, eventRef],
+  )
+  const original = rows[0]
+  if (!original) return { ok: false, error: "Ledger event not found." }
+  if (original.event_type === "reversal") return { ok: false, error: "A reversal cannot itself be reversed." }
+
+  const originalId = original.quota_event_id || `LQE-${String(original.event_id).padStart(6, "0")}`
+  const existing = await query<any[]>(`SELECT 1 FROM hr_leave_quota_history WHERE reversal_of = ? LIMIT 1`, [originalId])
+  if (existing.length) return { ok: false, error: `${originalId} has already been reversed.` }
+
+  const type = await resolveLeaveType(original.leave_type_id)
+  if (!type) return { ok: false, error: "The leave type for this event no longer exists." }
+
+  const year = Number(original.year)
+  const reversalDays = Math.round(-Number(original.days) * 100) / 100
+  const cols = await quotaColumns()
+
+  let newId: string | null = null
+  const conn = await pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    await getOrCreateBalance(conn, Number(original.employee_id), type, year)
+    await conn.query(
+      `UPDATE hr_leave_balances SET adjusted = adjusted + ? WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?`,
+      [reversalDays, original.employee_id, type.id, year],
+    )
+    newId = await writeQuotaHistory(conn, cols, {
+      employee_id: Number(original.employee_id),
+      leave_type_id: type.id,
+      year,
+      event_type: "reversal",
+      days: reversalDays,
+      reference: originalId,
+      reason: (reason || "").trim() || `Reversal of ${originalId} (${QUOTA_EVENT_LABEL[original.event_type] || original.event_type})`,
+      created_by: actor.userId,
+      source: "Adjustment",
+      reversal_of: originalId,
+    })
+    await conn.commit()
+  } catch (error) {
+    await conn.rollback()
+    throw error
+  } finally {
+    conn.release()
+  }
+
+  const employee = await getEmployeeById(Number(original.employee_id))
+  if (employee) {
+    await logEmployeeEvent({
+      employeeId: employee.id,
+      employeeRef: employee.employee_id,
+      employeeName: employee.employee_name,
+      type: "leave_balance_adjusted",
+      summary: `Reversed ${originalId}: ${reversalDays > 0 ? "+" : ""}${reversalDays} ${type.leave_type} (${year})`,
+      actorId: actor.userId,
+      actorName: actor.name,
+    })
+  }
+
+  return { ok: true, quotaEventId: newId, reversalOf: originalId }
+}
+
+/**
+ * Single-event detail with a ledger-derived balance impact (before/after) and
+ * the originating source record where one genuinely exists. Nothing here is
+ * fabricated — the balance impact is the running sum of prior ledger rows in
+ * the same employee/leave-type/year scope.
+ */
+export async function getQuotaEventDetail(eventRef: string) {
+  await ensureLeaveSchema()
+  const rows = await query<any[]>(
+    `SELECT h.*, e.employee_name, e.employee_id AS employee_code, e.department, e.designation,
+            lt.leave_type, lt.leave_type_id AS leave_type_code, u.name AS created_by_name
+     FROM hr_leave_quota_history h
+     JOIN hr_employees e ON e.id = h.employee_id
+     LEFT JOIN hr_leave_types lt ON lt.id = h.leave_type_id
+     LEFT JOIN users u ON u.id = h.created_by
+     WHERE h.quota_event_id = ? OR CAST(h.event_id AS CHAR) = ? LIMIT 1`,
+    [eventRef, eventRef],
+  )
+  const event = rows[0]
+  if (!event) return null
+
+  const [beforeRow] = await query<{ total: number }[]>(
+    `SELECT COALESCE(SUM(days), 0) AS total FROM hr_leave_quota_history
+     WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?
+       AND (created_at < ? OR (created_at = ? AND event_id < ?))`,
+    [event.employee_id, event.leave_type_id, event.year, event.created_at, event.created_at, event.event_id],
+  )
+  const before = Math.round((Number(beforeRow?.total) || 0) * 100) / 100
+  const txn = Math.round(Number(event.days) * 100) / 100
+  const after = Math.round((before + txn) * 100) / 100
+
+  const eventId = event.quota_event_id || `LQE-${String(event.event_id).padStart(6, "0")}`
+  const [reversedBy] = await query<any[]>(
+    `SELECT quota_event_id, days, reason, created_at FROM hr_leave_quota_history WHERE reversal_of = ? LIMIT 1`,
+    [eventId],
+  )
+
+  // Resolve the genuine source record behind the reference, when one exists.
+  let source: any = null
+  const ref = String(event.reference || "")
+  if (event.reversal_of) {
+    source = { kind: "reversal", reference: event.reversal_of }
+  } else if (/^LR/i.test(ref)) {
+    const [lr] = await query<any[]>(
+      `SELECT request_id, from_date, to_date, days, status, reason, requested_at FROM hr_leave_requests WHERE request_id = ? LIMIT 1`,
+      [ref],
+    )
+    if (lr) source = { kind: "leave_request", ...lr }
+  } else if (/^LADJ/i.test(ref)) {
+    const [adj] = await query<any[]>(
+      `SELECT adjustment_id, days, reason, status, actor_name, created_at FROM hr_leave_adjustments WHERE adjustment_id = ? LIMIT 1`,
+      [ref],
+    )
+    if (adj) source = { kind: "adjustment", ...adj }
+  }
+
+  return {
+    event: { ...event, quota_event_id: eventId },
+    balanceImpact: { before, txn, after },
+    reversedBy: reversedBy || null,
+    source,
   }
 }

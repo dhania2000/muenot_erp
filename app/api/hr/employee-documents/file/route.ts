@@ -6,7 +6,9 @@ import { getUserMatrix } from "@/lib/permission-store"
 export async function GET(request: Request) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const pathname = new URL(request.url).searchParams.get("pathname")
+  const url = new URL(request.url)
+  const pathname = url.searchParams.get("pathname")
+  const asDownload = url.searchParams.get("download") === "1"
   if (!pathname) return NextResponse.json({ error: "Missing pathname" }, { status: 400 })
 
   const rows = await query<any[]>(
@@ -41,11 +43,13 @@ export async function GET(request: Request) {
   }
 
   const body = new Uint8Array(doc.file_data as Buffer)
+  const safeName = String(doc.file_name || "document").replace(/"/g, "")
   return new NextResponse(body, {
     headers: {
       "Content-Type": doc.file_mime || "application/octet-stream",
-      "Content-Disposition": `inline; filename="${String(doc.file_name || "document").replace(/"/g, "")}"`,
+      "Content-Disposition": `${asDownload ? "attachment" : "inline"}; filename="${safeName}"`,
       "Cache-Control": "private, no-cache",
+      "X-Content-Type-Options": "nosniff",
     },
   })
 }

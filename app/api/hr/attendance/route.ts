@@ -65,9 +65,17 @@ export async function GET(request: NextRequest) {
     if (search) add("(a.employee_name LIKE ? OR e.employee_id LIKE ? OR a.attendance_id LIKE ?)", `%${search}%`, `%${search}%`, `%${search}%`)
 
     // Latest relevant regularisation for the same employee + date (Pending first).
-    const regExpr = `(SELECT r.status FROM hr_attendance_regularisation r
+    // Guard against the table being absent (missed migration): fall back to a
+    // constant NULL so the attendance list still loads instead of 500-ing.
+    const regTable = await query<{ c: number }[]>(
+      "SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'hr_attendance_regularisation'",
+    ).catch(() => [{ c: 0 }])
+    const hasRegTable = Number(regTable[0]?.c || 0) > 0
+    const regExpr = hasRegTable
+      ? `(SELECT r.status FROM hr_attendance_regularisation r
         WHERE r.employee_id = a.employee_id AND r.work_date = a.work_date
         ORDER BY FIELD(r.status,'Pending','Approved','Rejected'), r.id DESC LIMIT 1)`
+      : `(NULL)`
 
     if (sp.get("regularisation") === "pending") add(`${regExpr} = 'Pending'`)
     if (sp.get("regularisation") === "regularised") add(`${regExpr} = 'Approved'`)

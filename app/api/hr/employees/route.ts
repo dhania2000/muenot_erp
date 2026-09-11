@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { ensureEmployeeEventsSchema, logEmployeeEvent } from "@/lib/hr-employee-events"
+import { initializeEmployeeBalances } from "@/lib/hr-leave"
 
 // Columns that can be written via create/update.
 const ALLOWED = new Set([
@@ -164,6 +165,19 @@ export async function POST(request: Request) {
     actorId: session.userId,
     actorName: session.name,
   })
+
+  // Auto-initialize this year's leave balances for the new hire (best-effort:
+  // a leave-engine hiccup must never fail employee creation).
+  try {
+    await initializeEmployeeBalances(Number(result.insertId), new Date().getFullYear(), {
+      userId: session.userId,
+      name: session.name,
+      email: session.email,
+      role: session.role,
+    })
+  } catch (error) {
+    console.log("[v0] employee auto-init leave balances failed", (error as Error).message)
+  }
 
   return NextResponse.json({ ok: true, id: result.insertId, employee_id: employeeId }, { status: 201 })
 }

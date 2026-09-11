@@ -238,9 +238,11 @@ export type RegisterResult = {
  * Cloud API — until it succeeds every send fails with `(#133010) Account not
  * registered`.
  *
- * The `pin` is the 6-digit Cloud API registration PIN. This is NOT the
- * WhatsApp app password shown under two-step verification; the caller sets a
- * fresh 6-digit PIN here. We NEVER store the PIN anywhere.
+ * The `pin` is the number's 6-digit two-step verification PIN, which Meta uses
+ * as the Cloud API registration PIN. If two-step verification is already
+ * enabled on the number, the caller must pass that same PIN; otherwise this
+ * call sets a new one. It is NOT the Meta account password. We NEVER store the
+ * PIN anywhere.
  *
  * We handle the already-registered case gracefully and NEVER deregister the
  * number — coexistence with the WhatsApp Business App must stay intact.

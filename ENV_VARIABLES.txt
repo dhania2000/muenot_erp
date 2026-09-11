@@ -261,7 +261,34 @@ INSTAGRAM_APP_SECRET=your-instagram-app-secret
 
 
 # =============================================================================
-# 8. AUTO / PLATFORM  [set automatically - usually do NOT set by hand]
+# 8. WHATSAPP BUSINESS (Marketing > WhatsApp)  [OPTIONAL]
+# =============================================================================
+# Needed only to connect a WhatsApp Business (Cloud API) number and use the
+# WhatsApp inbox. The WABA ID, Phone Number ID and permanent access token are
+# entered in the app UI (Marketing > WhatsApp > Integrate); the token is stored
+# ENCRYPTED at rest with SETTINGS_ENCRYPTION_KEY (section 1), so make sure that
+# key is set. The variables below power INBOUND delivery (the webhook) and are
+# read from the server environment.
+
+# Token Meta echoes back during the webhook verification handshake. Choose any
+# hard-to-guess string and paste the SAME value into the Meta app dashboard
+# under WhatsApp > Configuration > Webhook > "Verify token".
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=change-me-to-a-long-random-string
+
+# App secret used to verify the signature (X-Hub-Signature-256) on inbound
+# webhook POSTs. Without a valid secret, inbound messages are rejected. If it
+# is unset, the app falls back to META_APP_SECRET, then FACEBOOK_APP_SECRET —
+# so if you already set FACEBOOK_APP_SECRET (section 7) for the SAME Meta app,
+# you can omit this.
+WHATSAPP_APP_SECRET=your-meta-app-secret
+
+# Optional: pin the Graph API version used for all WhatsApp calls. Defaults to
+# a currently-supported version; only set this to override.
+# WHATSAPP_GRAPH_VERSION=v23.0
+
+
+# =============================================================================
+# 9. AUTO / PLATFORM  [set automatically - usually do NOT set by hand]
 # =============================================================================
 # NODE_ENV is set by the runtime ("production" on the deployed server).
 # NODE_ENV=production

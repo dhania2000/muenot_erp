@@ -252,13 +252,15 @@ export function AttendanceRegularisationClient() {
                     <TableCell>{formatDate(r.work_date)}</TableCell>
                     <TableCell className="text-sm">{r.correction_type ?? "—"}</TableCell>
                     <TableCell className="text-sm tabular-nums">
-                      <span className="text-muted-foreground">
-                        {formatTime(r.current_clock_in)}/{formatTime(r.current_clock_out)}
-                      </span>
-                      <span className="mx-1">→</span>
-                      <span className="font-medium">
-                        {formatTime(r.requested_clock_in)}/{formatTime(r.requested_clock_out)}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                          {formatTime(r.current_clock_in)}/{formatTime(r.current_clock_out)}
+                        </span>
+                        <span aria-hidden className="text-muted-foreground">→</span>
+                        <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-foreground">
+                          {formatTime(r.requested_clock_in)}/{formatTime(r.requested_clock_out)}
+                        </span>
+                      </div>
                     </TableCell>
                     <TableCell className="max-w-[220px]">
                       <div className="truncate text-sm" title={r.reason}>

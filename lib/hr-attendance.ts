@@ -109,6 +109,38 @@ async function addColumn(table: string, definition: string) {
 }
 
 async function doEnsureSchema() {
+  // The attendance list joins a correlated subquery against this table for the
+  // regularisation status column. On databases where its migration was never
+  // applied the whole list query would throw (empty table + zero summary),
+  // even though clock in/out — which never touches it — keeps working. Create
+  // it lazily and idempotently so the list is resilient to a missed migration.
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS hr_attendance_regularisation (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        request_id VARCHAR(40) NOT NULL,
+        attendance_id BIGINT UNSIGNED DEFAULT NULL,
+        employee_id BIGINT UNSIGNED NOT NULL,
+        employee_name VARCHAR(180) NOT NULL,
+        work_date DATE NOT NULL,
+        requested_clock_in DATETIME DEFAULT NULL,
+        requested_clock_out DATETIME DEFAULT NULL,
+        reason TEXT NOT NULL,
+        attachment_path VARCHAR(500) DEFAULT NULL,
+        status ENUM('Pending','Approved','Rejected') NOT NULL DEFAULT 'Pending',
+        requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        reviewed_by VARCHAR(180) DEFAULT NULL,
+        reviewed_at DATETIME DEFAULT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_hr_regularisation_request (request_id),
+        KEY idx_hr_regularisation_status (status),
+        KEY idx_hr_regularisation_employee (employee_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+  } catch {
+    // Best-effort: if creation fails, the list route's guard still degrades gracefully.
+  }
+
   // Shift rule columns — drive late/early/overtime/weekly-off without hardcoding.
   await addColumn("hr_shifts", "`grace_minutes` INT UNSIGNED NOT NULL DEFAULT 10")
   await addColumn("hr_shifts", "`overtime_threshold_minutes` INT UNSIGNED NOT NULL DEFAULT 0")

@@ -108,18 +108,36 @@ function LiveClock() {
 }
 
 type Geo = { lat: number; lng: number; label: string }
+type GeoResult = { ok: true; geo: Geo } | { ok: false; reason: string }
 
 /**
  * Fetch the browser location and reverse-geocode it to a readable address via
- * OpenStreetMap's Nominatim (no API key required). Resolves to null if the user
- * denies permission or geolocation is unavailable — clock in/out still works.
+ * OpenStreetMap's Nominatim (no API key required). Location is MANDATORY for a
+ * punch: this resolves with `ok: false` and a human reason when geolocation is
+ * unsupported, denied, unavailable, or times out, and the caller must abort the
+ * clock in/out in that case. Only coordinates are required — a failed reverse
+ * geocode still yields a valid result with an empty label.
  */
-function getBrowserLocation(): Promise<Geo | null> {
-  const capture = new Promise<Geo | null>((resolve) => {
+function getBrowserLocation(): Promise<GeoResult> {
+  return new Promise<GeoResult>((resolve) => {
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      resolve(null)
+      resolve({ ok: false, reason: "Location is not supported on this device, so attendance cannot be recorded." })
       return
     }
+
+    let settled = false
+    const finish = (r: GeoResult) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(r)
+    }
+    // Overall safety cap so a hung permission prompt cannot freeze the button.
+    const timer = setTimeout(
+      () => finish({ ok: false, reason: "Fetching your location timed out. Enable location and try again." }),
+      15000,
+    )
+
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const lat = pos.coords.latitude
@@ -134,18 +152,22 @@ function getBrowserLocation(): Promise<Geo | null> {
           const json = await res.json()
           label = typeof json?.display_name === "string" ? json.display_name : ""
         } catch {
-          // Reverse geocoding is best-effort; coordinates are still captured.
+          // Reverse geocoding is best-effort; the coordinates alone satisfy the requirement.
         }
-        resolve({ lat, lng, label })
+        finish({ ok: true, geo: { lat, lng, label } })
       },
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 },
+      (err) => {
+        const reason =
+          err.code === err.PERMISSION_DENIED
+            ? "Location access is blocked. Allow location for this site, then clock in again."
+            : err.code === err.POSITION_UNAVAILABLE
+              ? "Your location is unavailable right now. Turn on location/GPS and try again."
+              : "Fetching your location timed out. Enable location and try again."
+        finish({ ok: false, reason })
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
     )
   })
-  // Overall safety cap: whatever happens with permissions/geolocation, resolve
-  // within 8s so clocking in/out is never blocked by location capture.
-  const cap = new Promise<Geo | null>((resolve) => setTimeout(() => resolve(null), 8000))
-  return Promise.race([capture, cap])
 }
 
 /**
@@ -165,13 +187,20 @@ function HeaderClockButton() {
   async function toggle() {
     setBusy(true)
     try {
+      // Location is required — abort the punch (send nothing) if we can't get it.
       const location = await getBrowserLocation()
+      if (!location.ok) {
+        toast.error(location.reason)
+        return
+      }
       const res = await fetch("/api/hr/attendance/clock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          location ? { latitude: location.lat, longitude: location.lng, location: location.label } : {},
-        ),
+        body: JSON.stringify({
+          latitude: location.geo.lat,
+          longitude: location.geo.lng,
+          location: location.geo.label,
+        }),
       })
       const json = await res.json().catch(() => ({}) as Record<string, unknown>)
       if (!res.ok) {

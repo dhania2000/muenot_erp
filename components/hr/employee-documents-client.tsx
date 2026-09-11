@@ -868,7 +868,7 @@ function FilterSelect({
   return (
     <div className="grid gap-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
-      <Select value={value || ALL} onValueChange={(v) => onChange(v === ALL ? "" : v)}>
+      <Select value={value || ALL} onValueChange={(v) => onChange(!v || v === ALL ? "" : v)}>
         <SelectTrigger className="w-[160px]">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>

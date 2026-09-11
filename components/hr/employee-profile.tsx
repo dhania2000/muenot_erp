@@ -127,6 +127,23 @@ function StatusBadge({ status }: { status?: string }) {
   return <Badge variant="secondary">{status || "—"}</Badge>
 }
 
+function DocStat({ label, value, tone }: { label: string; value: number; tone?: "amber" | "red" | "emerald" }) {
+  const toneClass =
+    tone === "amber"
+      ? "text-amber-500"
+      : tone === "red"
+        ? "text-red-500"
+        : tone === "emerald"
+          ? "text-emerald-500"
+          : "text-foreground"
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={`mt-1 text-xl font-semibold ${toneClass}`}>{value}</div>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Related-data tabs (documents / attendance / leaves / shift / support / team)
 // All powered by the shared /related endpoint.
@@ -142,33 +159,98 @@ function RelatedTabs({ employeeId, active }: { employeeId: number; active: strin
 
   if (active === "documents") {
     const docs = data.documents || []
+    const summary = data.documentSummary
+    const checklist: { type: string; uploaded: boolean; verified: boolean }[] = data.documentChecklist || []
+    const expiryStyles: Record<string, string> = {
+      "Expiring Soon": "border-amber-500/40 bg-amber-500/10 text-amber-500",
+      Expired: "border-red-500/40 bg-red-500/10 text-red-500",
+    }
     return (
-      <DataCard title="Documents" icon={FileText}>
-        {docs.length === 0 ? (
-          <EmptyState icon={FileText} label="No documents linked to this employee." />
-        ) : (
-          <ul className="divide-y">
-            {docs.map((d: any) => (
-              <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0">
-                <div>
-                  <p className="text-sm font-medium">{d.document_type || d.file_name || "Document"}</p>
-                  <p className="text-xs text-muted-foreground">{d.file_name}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {d.verified ? (
-                    <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
-                      Verified
-                    </Badge>
-                  ) : (
-                    <StatusBadge status={d.status || "Pending"} />
-                  )}
-                  <span className="text-xs text-muted-foreground">{fmtDate(d.created_at)}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
+      <div className="flex flex-col gap-5">
+        {summary && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <DocStat label="Total" value={summary.total} />
+            <DocStat label="Verified" value={summary.verified} tone="emerald" />
+            <DocStat label="Pending" value={summary.pending} tone="amber" />
+            <DocStat label="Rejected" value={summary.rejected} tone={summary.rejected ? "red" : undefined} />
+            <DocStat
+              label="Missing req."
+              value={summary.missingRequired}
+              tone={summary.missingRequired ? "red" : undefined}
+            />
+            <DocStat
+              label="Expiring/Expired"
+              value={summary.expiringSoon + summary.expired}
+              tone={summary.expired ? "red" : summary.expiringSoon ? "amber" : undefined}
+            />
+          </div>
         )}
-      </DataCard>
+
+        {checklist.length > 0 && (
+          <DataCard title="Required Document Checklist" icon={ShieldCheck}>
+            <div className="flex flex-wrap gap-2">
+              {checklist.map((c) => (
+                <Badge
+                  key={c.type}
+                  variant="outline"
+                  className={
+                    c.verified
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
+                      : c.uploaded
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-500"
+                        : "border-red-500/40 bg-red-500/10 text-red-500"
+                  }
+                >
+                  {c.type}: {c.verified ? "Verified" : c.uploaded ? "Uploaded" : "Missing"}
+                </Badge>
+              ))}
+            </div>
+          </DataCard>
+        )}
+
+        <DataCard title="Documents" icon={FileText}>
+          <div className="mb-3 flex justify-end">
+            <Button variant="outline" size="sm" render={<Link href="/modules/hr/employee-documents" />}>
+              Manage in Employee Documents
+            </Button>
+          </div>
+          {docs.length === 0 ? (
+            <EmptyState icon={FileText} label="No documents linked to this employee." />
+          ) : (
+            <ul className="divide-y">
+              {docs.map((d: any) => (
+                <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0">
+                  <div>
+                    <p className="text-sm font-medium">
+                      {d.document_type || d.file_name || "Document"}
+                      {d.version ? <span className="ml-1 text-xs text-muted-foreground">v{d.version}</span> : null}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {d.document_ref ? `${d.document_ref} · ` : ""}
+                      {d.file_name || "No file"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {d.expiry_status && d.expiry_status !== "None" && d.expiry_status !== "Valid" && (
+                      <Badge variant="outline" className={expiryStyles[d.expiry_status] || ""}>
+                        {d.expiry_status}
+                      </Badge>
+                    )}
+                    {d.verified ? (
+                      <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                        Verified
+                      </Badge>
+                    ) : (
+                      <StatusBadge status={d.status || "Pending"} />
+                    )}
+                    <span className="text-xs text-muted-foreground">{fmtDate(d.created_at)}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </DataCard>
+      </div>
     )
   }
 

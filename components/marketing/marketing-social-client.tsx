@@ -88,6 +88,7 @@ type PublishResult = {
   handle: string
   ok: boolean
   permalink?: string
+  remoteId?: string
   error?: string
 }
 
@@ -178,6 +179,7 @@ export function MarketingSocialClient() {
   const [statusFilter, setStatusFilter] = React.useState("all")
   const [query, setQuery] = React.useState("")
   const [composing, setComposing] = React.useState(false)
+  const [editing, setEditing] = React.useState<SocialPost | null>(null)
 
   // Surface the OAuth redirect result (?social=...) as a toast, then clean the URL.
   React.useEffect(() => {
@@ -254,9 +256,39 @@ export function MarketingSocialClient() {
     mutatePosts()
   }
   async function deletePost(id: number) {
-    await fetch(`/api/marketing/social/posts/${id}`, { method: "DELETE" })
-    toast.success("Post deleted")
+    const res = await fetch(`/api/marketing/social/posts/${id}`, { method: "DELETE" })
+    const json = await res.json().catch(() => ({}))
     mutatePosts()
+    const warnings: string[] = Array.isArray(json?.warnings) ? json.warnings : []
+    if (warnings.length) {
+      toast.warning("Removed from the ERP — some live posts need attention", {
+        description: warnings.join(" · "),
+      })
+    } else {
+      toast.success("Post deleted here and on connected platforms")
+    }
+  }
+
+  async function saveEdit(
+    id: number,
+    data: { name: string; content: string; brand: string | null },
+  ) {
+    const res = await fetch(`/api/marketing/social/posts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(json?.error || "Update failed")
+    mutatePosts()
+    const warnings: string[] = Array.isArray(json?.warnings) ? json.warnings : []
+    if (warnings.length) {
+      toast.warning("Saved — some live posts couldn't be updated", {
+        description: warnings.join(" · "),
+      })
+    } else {
+      toast.success("Post updated")
+    }
   }
 
   async function publishPost(id: number) {
@@ -304,6 +336,11 @@ export function MarketingSocialClient() {
 
   return (
     <div className="space-y-6 p-6">
+      <EditPostDialog
+        post={editing}
+        onClose={() => setEditing(null)}
+        onSave={saveEdit}
+      />
       <MarketingHeader
         eyebrow="Marketing Campaigns"
         title="Social Campaigns"
@@ -410,6 +447,7 @@ export function MarketingSocialClient() {
                     key={post.id}
                     post={post}
                     onClone={() => clonePost(post)}
+                    onEdit={() => setEditing(post)}
                     onDelete={() => deletePost(post.id)}
                     onPublish={() => publishPost(post.id)}
                   />
@@ -524,14 +562,118 @@ export function MarketingSocialClient() {
 /* Post row                                                            */
 /* ------------------------------------------------------------------ */
 
+function EditPostDialog({
+  post,
+  onClose,
+  onSave,
+}: {
+  post: SocialPost | null
+  onClose: () => void
+  onSave: (
+    id: number,
+    data: { name: string; content: string; brand: string | null },
+  ) => Promise<void>
+}) {
+  const [name, setName] = React.useState("")
+  const [content, setContent] = React.useState("")
+  const [brand, setBrand] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
+
+  React.useEffect(() => {
+    if (post) {
+      setName(post.name)
+      setContent(post.content)
+      setBrand(post.brand ?? "")
+    }
+  }, [post])
+
+  const isPublished = post?.status === "Published"
+
+  async function handleSave() {
+    if (!post) return
+    if (!name.trim() || !content.trim()) {
+      toast.error("Name and content are required")
+      return
+    }
+    setSaving(true)
+    try {
+      await onSave(post.id, {
+        name: name.trim(),
+        content: content.trim(),
+        brand: brand.trim() || null,
+      })
+      onClose()
+    } catch (err: any) {
+      toast.error(err?.message || "Update failed")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={!!post} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit post</DialogTitle>
+          <DialogDescription>
+            Update the post content. Changes save to the ERP and, where the platform allows it, sync to the live post.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isPublished && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              This post is already live. Only Facebook supports editing a published post via API. On X, LinkedIn, and
+              Instagram the ERP copy updates but the live post keeps its original text.
+            </span>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="edit-name">Name</Label>
+            <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-content">Content</Label>
+            <Textarea
+              id="edit-content"
+              rows={5}
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-brand">Brand (optional)</Label>
+            <Input id="edit-brand" value={brand} onChange={(e) => setBrand(e.target.value)} />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" disabled={saving} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function PostRow({
   post,
   onClone,
+  onEdit,
   onDelete,
   onPublish,
 }: {
   post: SocialPost
   onClone: () => void
+  onEdit: () => void
   onDelete: () => void
   onPublish: () => void
 }) {
@@ -602,6 +744,7 @@ function PostRow({
             }
           />
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem>
             <DropdownMenuItem onClick={onClone}>Clone</DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onClick={onDelete}>
               Delete

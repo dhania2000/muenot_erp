@@ -198,9 +198,28 @@ GOOGLE_REDIRECT_URI=https://erp.muenot.co.in/api/sales/google/callback
 # SOCIAL_REDIRECT_BASE=https://erp.muenot.co.in
 
 # ---- LinkedIn (Sign In with LinkedIn using OpenID Connect + Share on LinkedIn) ----
-# Scopes used: openid profile email w_member_social (personal profiles only).
+# Base scopes (always requested): openid profile email w_member_social.
+#   -> Enables PERSONAL profile posting out of the box.
 LINKEDIN_CLIENT_ID=your-linkedin-client-id
 LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret
+#
+# ---- LinkedIn COMPANY PAGE posting (optional, requires external approval) ----
+# Posting as the Muenot Company Page needs the "Community Management API"
+# product on your LinkedIn app. That is an approval in the LinkedIn Developer
+# portal (developer.linkedin.com) — it CANNOT be enabled from code. Once your
+# app is granted it, turn it on here so the extra scopes
+# (r_organization_admin, w_organization_social) start being requested:
+# LINKEDIN_ORG_ENABLED=true
+#
+# Optional: pin the exact org (the number in urn:li:organization:<id>).
+# If unset, the app picks the admin org whose name/vanity matches
+# LINKEDIN_ORGANIZATION_NAME (defaults to "muenot"), else the first admin org.
+# LINKEDIN_ORGANIZATION_ID=
+# LINKEDIN_ORGANIZATION_NAME=Muenot
+#
+# Advanced: fully override the requested scope list (space/comma separated).
+# Including w_organization_social also implicitly enables company posting.
+# LINKEDIN_SCOPES=openid profile email w_member_social r_organization_admin w_organization_social
 
 # ---- X / Twitter (OAuth 2.0 with PKCE) ----
 X_CLIENT_ID=your-x-client-id

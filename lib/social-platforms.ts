@@ -27,7 +27,8 @@ export const SOCIAL_PLATFORMS: SocialPlatformMeta[] = [
     color: "#0A66C2",
     limit: 3000,
     requiresImage: false,
-    setupHint: "Create a LinkedIn app at linkedin.com/developers and add the Sign In + Share on LinkedIn products.",
+    setupHint:
+      "Create a LinkedIn app at linkedin.com/developers and add the Sign In + Share on LinkedIn products. Personal posting works with these. Company Page posting additionally requires the Community Management API product (external LinkedIn approval), then set LINKEDIN_ORG_ENABLED=true.",
   },
   {
     id: "instagram",

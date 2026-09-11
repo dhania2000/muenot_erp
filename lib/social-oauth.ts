@@ -40,8 +40,13 @@ const OAUTH_CONFIG: Record<SocialPlatformId, PlatformOAuthConfig> = {
     clientIdEnv: "LINKEDIN_CLIENT_ID",
     clientSecretEnv: "LINKEDIN_CLIENT_SECRET",
     authorizeUrl: "https://www.linkedin.com/oauth/v2/authorization",
-    // Only scopes actually configured on the LinkedIn app. Do NOT request
-    // w_organization_social / r_organization_admin unless approved.
+    // BASE scopes only — always safe because they come from the "Sign In with
+    // LinkedIn using OpenID Connect" + "Share on LinkedIn" products every
+    // LinkedIn app can enable. Organization/company-page scopes
+    // (r_organization_admin, w_organization_social) are added ONLY when the
+    // app has actually been granted the Community Management API — see
+    // getPlatformScopes()/linkedinOrgEnabled(). Requesting them without that
+    // product yields "unauthorized_scope_error" at the authorize step.
     scopes: ["openid", "profile", "email", "w_member_social"],
     scopeSeparator: " ",
     usesPkce: false,
@@ -103,15 +108,56 @@ export function platformUsesPkce(platform: SocialPlatformId) {
 }
 
 /**
+ * Whether LinkedIn COMPANY-PAGE posting is available. This is gated on the app
+ * actually holding the LinkedIn "Community Management API" product, which is an
+ * external LinkedIn Developer approval — it cannot be self-served in code.
+ *
+ * Enable it only once that product is granted, via either:
+ *   LINKEDIN_ORG_ENABLED=true                 (explicit switch), or
+ *   LINKEDIN_SCOPES="... w_organization_social ..."  (custom scope override)
+ *
+ * While it is off we request ONLY member scopes so personal posting keeps
+ * working and the authorize step never fails with unauthorized_scope_error.
+ */
+export function linkedinOrgEnabled(): boolean {
+  const flag = process.env.LINKEDIN_ORG_ENABLED
+  if (flag) return /^(1|true|yes|on)$/i.test(flag.trim())
+  if (process.env.LINKEDIN_SCOPES) return /w_organization_social/i.test(process.env.LINKEDIN_SCOPES)
+  return false
+}
+
+/** Optional exact organization id (the number in urn:li:organization:<id>). */
+export function getLinkedInTargetOrgId(): string | null {
+  return process.env.LINKEDIN_ORGANIZATION_ID?.trim() || null
+}
+
+/** Name/vanity used to pick the Muenot page among the member's admin orgs. */
+function getLinkedInTargetOrgName(): string {
+  return (process.env.LINKEDIN_ORGANIZATION_NAME || "muenot").trim().toLowerCase()
+}
+
+/**
  * Resolves the scopes actually requested for a platform. Facebook scopes can be
- * overridden with FACEBOOK_SCOPES (comma/space separated) so they can be
- * aligned with exactly what the Meta app has enabled without a code change.
+ * overridden with FACEBOOK_SCOPES (comma/space separated); LinkedIn scopes can
+ * be overridden with LINKEDIN_SCOPES, and otherwise gain the organization
+ * scopes only when Community Management access is enabled (linkedinOrgEnabled).
  */
 export function getPlatformScopes(platform: SocialPlatformId): string[] {
   if (platform === "facebook" && process.env.FACEBOOK_SCOPES) {
     return process.env.FACEBOOK_SCOPES.split(/[\s,]+/)
       .map((s) => s.trim())
       .filter(Boolean)
+  }
+  if (platform === "linkedin") {
+    if (process.env.LINKEDIN_SCOPES) {
+      return process.env.LINKEDIN_SCOPES.split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    }
+    const base = OAUTH_CONFIG.linkedin.scopes
+    // r_organization_admin → discover the orgs the member administers.
+    // w_organization_social → publish as the organization.
+    return linkedinOrgEnabled() ? [...base, "r_organization_admin", "w_organization_social"] : base
   }
   return OAUTH_CONFIG[platform].scopes
 }
@@ -374,11 +420,10 @@ export async function fetchIdentity(opts: {
 }
 
 async function linkedinIdentity(type: SocialAccountType, accessToken: string): Promise<ConnectedIdentity> {
-  // Company posting needs w_organization_social + r_organization_admin, which
-  // are not enabled on this app. Fail with a clear, safe message instead of
-  // requesting unsupported scopes.
-  if (type === "company") throw new Error("noorgscope")
+  if (type === "company") return linkedinCompanyIdentity(accessToken)
 
+  // Personal profile — resolved from the OpenID Connect userinfo endpoint. The
+  // author URN for member posts is urn:li:person:<sub>.
   const res = await fetch("https://api.linkedin.com/v2/userinfo", {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
@@ -391,6 +436,88 @@ async function linkedinIdentity(type: SocialAccountType, accessToken: string): P
     followers: null,
     accessToken,
     pageId: null,
+  }
+}
+
+/**
+ * Resolves the Muenot Company Page the authenticated member administers.
+ *
+ * Flow (Community Management API):
+ *   1. Refuse early if org access is not enabled on the app (safe — no
+ *      unsupported scope was ever requested).
+ *   2. List the organizations where the member is an APPROVED ADMINISTRATOR
+ *      via organizationAcls (needs r_organization_admin).
+ *   3. Pick the Muenot page (by LINKEDIN_ORGANIZATION_ID, else by name/vanity,
+ *      else the only/first admin org).
+ *   4. Return the ORGANIZATION author URN (urn:li:organization:<id>) — never
+ *      the member/person URN — so publishing posts as the company.
+ */
+async function linkedinCompanyIdentity(accessToken: string): Promise<ConnectedIdentity> {
+  if (!linkedinOrgEnabled()) throw new Error("noorgscope")
+
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    "X-Restli-Protocol-Version": "2.0.0",
+  }
+  const url =
+    "https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED" +
+    "&projection=(elements*(*,organization~(id,localizedName,vanityName)))"
+  const res = await fetch(url, { headers })
+  const json = await res.json().catch(() => ({}) as any)
+  if (!res.ok) {
+    const detail = json?.message || `status ${res.status}`
+    throw new Error(`linkedin_orgacls:${detail}`)
+  }
+
+  const elements: any[] = Array.isArray(json.elements) ? json.elements : []
+  // No APPROVED ADMINISTRATOR role on any organization for this member.
+  if (elements.length === 0) throw new Error("noadmin")
+
+  const orgs = elements
+    .map((el) => {
+      const urn: string | undefined = el.organization
+      const decorated = el["organization~"] || {}
+      const id = urn ? urn.split(":").pop()! : undefined
+      return {
+        id,
+        urn: urn ?? (id ? `urn:li:organization:${id}` : undefined),
+        name: decorated.localizedName ?? null,
+        vanity: decorated.vanityName ?? null,
+      }
+    })
+    .filter((o): o is { id: string; urn: string; name: string | null; vanity: string | null } =>
+      Boolean(o.id && o.urn),
+    )
+
+  if (orgs.length === 0) throw new Error("noadmin")
+
+  const targetId = getLinkedInTargetOrgId()
+  const targetName = getLinkedInTargetOrgName()
+
+  let chosen = targetId ? orgs.find((o) => o.id === targetId) : undefined
+  // If an exact id was configured but the member does not administer it, this
+  // member cannot post as that page — surface it rather than posting elsewhere.
+  if (targetId && !chosen) throw new Error("noadmin")
+
+  if (!chosen) {
+    chosen = orgs.find(
+      (o) =>
+        o.name?.toLowerCase().includes(targetName) || o.vanity?.toLowerCase().includes(targetName),
+    )
+  }
+  if (!chosen) chosen = orgs[0]
+
+  return {
+    externalId: chosen.urn, // urn:li:organization:<id> — the company author URN
+    handle: chosen.vanity
+      ? `@${chosen.vanity}`
+      : chosen.name
+        ? `@${chosen.name.replace(/\s+/g, "").toLowerCase()}`
+        : `@org_${chosen.id}`,
+    displayName: chosen.name,
+    followers: null,
+    accessToken,
+    pageId: chosen.id,
   }
 }
 

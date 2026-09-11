@@ -104,7 +104,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
     if (message.includes("nopage")) return fail("nopage")
     if (message.includes("noig")) return fail("noig")
     if (message.includes("_token")) return fail("tokenfail", detail)
-    if (message.includes("_account") || message.includes("_userinfo") || message.includes("_pages"))
+    if (
+      message.includes("_account") ||
+      message.includes("_userinfo") ||
+      message.includes("_pages") ||
+      message.includes("_orgacls")
+    )
       return fail("profilefail", detail)
     if (message.includes("dbsave")) return fail("dbsave", detail)
     return fail("error")

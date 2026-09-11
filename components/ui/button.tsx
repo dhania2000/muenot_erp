@@ -44,12 +44,20 @@ function Button({
   className,
   variant = 'default',
   size = 'default',
+  render,
+  nativeButton,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  // Base UI's Button assumes it renders a native <button> and throws when the
+  // `render` prop swaps in a non-button element (e.g. a Next.js <Link>, which
+  // outputs an <a>). Whenever a caller provides `render` we default
+  // `nativeButton` to false so those link-style buttons don't crash the page.
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      render={render}
+      nativeButton={nativeButton ?? (render ? false : undefined)}
       {...props}
     />
   )

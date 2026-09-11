@@ -206,7 +206,7 @@ export function MarketingSocialClient() {
       toast.error(withDetail(`${platformName} connection failed: could not load your profile`))
     else if (status === "dbsave")
       toast.error(withDetail(`${platformName} connection failed: could not save the account`))
-    else toast.error(`Could not connect your ${platformName} account`)
+    else toast.error(withDetail(`Could not connect your ${platformName} account`))
     params.delete("social")
     params.delete("platform")
     params.delete("detail")

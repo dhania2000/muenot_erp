@@ -56,7 +56,8 @@ export const SOCIAL_PLATFORMS: SocialPlatformMeta[] = [
     color: "#1877F2",
     limit: 63206,
     requiresImage: false,
-    setupHint: "Create a Meta app at developers.facebook.com and request the pages_manage_posts permission.",
+    setupHint:
+      "Create a Meta app (developers.facebook.com) and add pages_show_list, pages_read_engagement and pages_manage_posts. If it is a 'Facebook Login for Business' app, do NOT pass scopes — create a Login configuration and set FACEBOOK_CONFIG_ID instead (raw scopes there cause 'Invalid Scopes'). Connect a user who is an admin of the Page.",
   },
 ]
 

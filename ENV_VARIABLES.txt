@@ -225,9 +225,31 @@ LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret
 X_CLIENT_ID=your-x-client-id
 X_CLIENT_SECRET=your-x-client-secret
 
-# ---- Facebook (Facebook Login for Pages / Graph API) ----
+# ---- Facebook (Page publishing via Graph API v21) ----
+# Publishes as a Facebook Page the connecting user administers. Flow:
+#   user authorizes -> list managed Pages (/me/accounts) -> pick a Page ->
+#   use that Page's access token -> publish as the Page.
 FACEBOOK_APP_ID=your-facebook-app-id
 FACEBOOK_APP_SECRET=your-facebook-app-secret
+#
+# There are TWO kinds of Meta apps and they authorize DIFFERENTLY:
+#
+#   A) Classic Facebook Login app (Consumer/Business, standard "Facebook Login"
+#      product). It accepts raw scopes. The app requests exactly:
+#          pages_show_list  pages_read_engagement  pages_manage_posts
+#      Add these under App > Use cases / Permissions and you are done. Do NOT
+#      set FACEBOOK_CONFIG_ID for this kind of app.
+#
+#   B) "Facebook Login for Business" app. It REJECTS raw scopes with
+#      "Invalid Scopes". Instead you create a Login configuration in the Meta
+#      dashboard (which itself contains pages_show_list / pages_read_engagement
+#      / pages_manage_posts) and pass its configuration id here. When set, the
+#      app sends config_id and NO scope param:
+# FACEBOOK_CONFIG_ID=your-facebook-login-configuration-id
+#
+# Advanced: override the exact scope list for the classic-login path
+# (space/comma separated). Ignored when FACEBOOK_CONFIG_ID is set.
+# FACEBOOK_SCOPES=pages_show_list pages_read_engagement pages_manage_posts
 
 # ---- Instagram (Instagram API with Instagram Login) ----
 # A DEDICATED Instagram app - do NOT reuse the Facebook app id/secret here,

@@ -63,13 +63,18 @@ const OAUTH_CONFIG: Record<SocialPlatformId, PlatformOAuthConfig> = {
     clientIdEnv: "FACEBOOK_APP_ID",
     clientSecretEnv: "FACEBOOK_APP_SECRET",
     authorizeUrl: `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`,
-    // Standard Facebook Login permissions required to list a user's Pages and
-    // publish to a selected Page (Graph API v21). These are the current,
-    // supported permissions for Page publishing — NOT obsolete ones. They can
-    // be overridden with the FACEBOOK_SCOPES env var to match exactly what the
-    // Meta app has enabled. "Invalid Scopes" at the dialog means these are not
-    // yet added/approved on the app, or the app is a business-portfolio app
-    // that requires FACEBOOK_CONFIG_ID (Facebook Login for Business) instead.
+    // Current, supported Graph API v21 permissions to list the user's Pages and
+    // publish to a selected Page. These are NOT obsolete — they are exactly the
+    // permissions Meta requires for Page publishing today:
+    //   pages_show_list      → enumerate the Pages the user manages
+    //   pages_read_engagement→ read Page metadata (name, followers)
+    //   pages_manage_posts   → publish posts to the selected Page
+    // IMPORTANT: these raw scopes are ONLY sent when the Meta app is a classic
+    // "Consumer/Business" app using standard Facebook Login. If the app is a
+    // "Facebook Login for Business" app, Meta REJECTS raw scopes with
+    // "Invalid Scopes" and instead requires a dashboard-defined config_id
+    // (set FACEBOOK_CONFIG_ID) that already encapsulates these permissions —
+    // see buildAuthUrl(). Override the list with FACEBOOK_SCOPES if needed.
     scopes: ["pages_show_list", "pages_read_engagement", "pages_manage_posts"],
     scopeSeparator: " ",
     usesPkce: false,
@@ -162,9 +167,16 @@ export function getPlatformScopes(platform: SocialPlatformId): string[] {
   return OAUTH_CONFIG[platform].scopes
 }
 
-/** Facebook Login for Business config id, used by business-portfolio apps. */
+/**
+ * Facebook Login for Business "configuration id". Business-type Meta apps do
+ * NOT accept raw scopes at the login dialog — they reject them with
+ * "Invalid Scopes" and require this dashboard-defined config_id instead (the
+ * config already contains the permissions like pages_manage_posts). Set
+ * FACEBOOK_CONFIG_ID for such apps; leave it unset for classic Facebook Login
+ * apps that send scopes directly.
+ */
 export function getFacebookConfigId() {
-  return process.env.FACEBOOK_CONFIG_ID || null
+  return process.env.FACEBOOK_CONFIG_ID?.trim() || null
 }
 
 export function resolveRedirectUri(platform: SocialPlatformId, origin: string) {
@@ -201,14 +213,17 @@ export function buildAuthUrl(opts: {
     state: opts.state,
   })
 
-  // Facebook business-portfolio apps use Facebook Login for Business, which
-  // passes a dashboard-defined config_id INSTEAD of raw scopes (sending scopes
-  // to such an app yields "Invalid Scopes"). Standard Facebook Login apps that
+  // Facebook "Login for Business" apps pass a dashboard-defined config_id
+  // INSTEAD of raw scopes — sending scopes to such an app is exactly what
+  // produces the "Invalid Scopes" error. Classic Facebook Login apps that
   // manage their own Pages send the scopes directly. Every other platform
   // always sends scopes.
   const fbConfigId = opts.platform === "facebook" ? getFacebookConfigId() : null
   if (fbConfigId) {
     params.set("config_id", fbConfigId)
+    // Business Login expects the code response type explicitly and must NOT
+    // receive a scope param alongside config_id.
+    params.set("response_type", "code")
   } else {
     params.set("scope", getPlatformScopes(opts.platform).join(cfg.scopeSeparator))
   }
@@ -218,6 +233,46 @@ export function buildAuthUrl(opts: {
     params.set("code_challenge_method", "S256")
   }
   return `${cfg.authorizeUrl}?${params.toString()}`
+}
+
+/**
+ * Returns a SAFE, redacted view of the authorize URL a platform will generate,
+ * for diagnostics/support. client_id and any code_challenge are masked; no
+ * client secret is ever part of an authorize URL. Used by the debug endpoint
+ * to confirm exactly which scopes (or config_id) are being requested without
+ * leaking credentials.
+ */
+export function describeAuthUrl(platform: SocialPlatformId, redirectUri: string) {
+  const cfg = OAUTH_CONFIG[platform]
+  const configured = isPlatformConfigured(platform)
+  const fbConfigId = platform === "facebook" ? getFacebookConfigId() : null
+  const usesConfigId = Boolean(fbConfigId)
+  const scopes = usesConfigId ? [] : getPlatformScopes(platform)
+
+  const params: Record<string, string> = {
+    response_type: "code",
+    client_id: "<FACEBOOK_APP_ID>".replace("FACEBOOK_APP_ID", cfg.clientIdEnv),
+    redirect_uri: redirectUri,
+    state: "<random-state>",
+  }
+  if (usesConfigId) params.config_id = "<FACEBOOK_CONFIG_ID>"
+  else params.scope = scopes.join(cfg.scopeSeparator)
+  if (cfg.usesPkce) {
+    params.code_challenge = "<pkce-challenge>"
+    params.code_challenge_method = "S256"
+  }
+
+  return {
+    platform,
+    configured,
+    authorizeUrl: cfg.authorizeUrl,
+    usesConfigId,
+    scopeSeparator: cfg.scopeSeparator,
+    scopes,
+    params,
+    // A human-readable, fully redacted URL string.
+    exampleUrl: `${cfg.authorizeUrl}?${new URLSearchParams(params).toString()}`,
+  }
 }
 
 /* ------------------------------------------------------------------ */

@@ -31,7 +31,9 @@ export async function GET(request: Request) {
     verifyTokenConfigured: Boolean(verifyToken),
     verifyTokenMasked: mask(verifyToken),
     appSecretConfigured: Boolean(appSecret),
-    subscribeField: "messages",
+    // For coexistence numbers Meta also emits echoes of messages sent from the
+    // WhatsApp Business App on the `smb_message_echoes` field.
+    subscribeField: "messages, smb_message_echoes",
   })
 }
 

@@ -47,7 +47,7 @@ export function parseGraphError(
   let message = base
 
   if (code === 133010) {
-    message = `${base}. This number is not registered with the WhatsApp Cloud API yet — open "Register number" and set a 6-digit Cloud API PIN, then try again.`
+    message = `${base}. This number is not connected to the WhatsApp Cloud API yet — use "Connect WhatsApp Business App" to run Meta's coexistence onboarding (QR scan), then try again.`
   } else if (code === 190) {
     message = `${base}. The access token is invalid or expired — an administrator needs to generate a new permanent System User token.`
   } else if (code === 10 || code === 200 || code === 3) {
@@ -61,6 +61,22 @@ export function parseGraphError(
 
 let tableEnsured = false
 
+/**
+ * Adds a column only if it does not already exist. MySQL has no portable
+ * `ADD COLUMN IF NOT EXISTS`, so we probe information_schema first. Used to
+ * evolve the integration table (coexistence fields) without a manual migration.
+ */
+async function ensureColumn(table: string, column: string, ddl: string) {
+  const rows = await query<{ c: number }[]>(
+    `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column],
+  )
+  if (!rows[0]?.c) {
+    await query(`ALTER TABLE \`${table}\` ADD COLUMN ${ddl}`)
+  }
+}
+
 export async function ensureWhatsAppTable() {
   if (tableEnsured) return
   await query(
@@ -72,6 +88,8 @@ export async function ensureWhatsAppTable() {
       \`verified_name\` VARCHAR(191) DEFAULT NULL,
       \`business_name\` VARCHAR(191) DEFAULT NULL,
       \`quality_rating\` VARCHAR(32) DEFAULT NULL,
+      \`platform_type\` VARCHAR(32) DEFAULT NULL,
+      \`is_on_biz_app\` TINYINT(1) DEFAULT NULL,
       \`access_token\` TEXT NOT NULL,
       \`connected_by_user_id\` INT UNSIGNED DEFAULT NULL,
       \`connected_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -79,6 +97,17 @@ export async function ensureWhatsAppTable() {
       PRIMARY KEY (\`id\`),
       UNIQUE KEY \`uniq_phone_number\` (\`phone_number_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+  // Older deployments predate the coexistence columns — add them idempotently.
+  await ensureColumn(
+    "marketing_whatsapp_integration",
+    "platform_type",
+    "`platform_type` VARCHAR(32) DEFAULT NULL",
+  )
+  await ensureColumn(
+    "marketing_whatsapp_integration",
+    "is_on_biz_app",
+    "`is_on_biz_app` TINYINT(1) DEFAULT NULL",
   )
   tableEnsured = true
 }
@@ -91,6 +120,8 @@ export type WhatsAppIntegrationRow = {
   verified_name: string | null
   business_name: string | null
   quality_rating: string | null
+  platform_type: string | null
+  is_on_biz_app: number | null
   access_token: string
   connected_by_user_id: number | null
   connected_at: string
@@ -106,6 +137,9 @@ export type WhatsAppIntegrationPublic = {
   verifiedName: string | null
   businessName: string | null
   qualityRating: string | null
+  platformType: string | null
+  /** True when this number also runs in the WhatsApp Business App (coexistence). */
+  coexistence: boolean
   connectedAt: string
 }
 
@@ -118,6 +152,8 @@ export function toPublicIntegration(row: WhatsAppIntegrationRow): WhatsAppIntegr
     verifiedName: row.verified_name,
     businessName: row.business_name,
     qualityRating: row.quality_rating,
+    platformType: row.platform_type,
+    coexistence: row.is_on_biz_app === 1,
     connectedAt: row.connected_at,
   }
 }
@@ -135,47 +171,79 @@ export type PhoneNumberProfile = {
   displayPhoneNumber: string | null
   verifiedName: string | null
   qualityRating: string | null
+  /** CLOUD_API | ON_PREMISE | NOT_APPLICABLE (when Meta reports it). */
+  platformType: string | null
+  /** True when the number is also active in the WhatsApp Business App (coexistence). */
+  isOnBizApp: boolean | null
 }
 
-/**
- * Validates the supplied credentials by asking the Graph API for the phone
- * number's profile. Throws with a human-friendly message on failure so the
- * connect flow can surface exactly why Meta rejected the credentials.
- */
-export async function verifyWhatsAppCredentials(input: {
-  phoneNumberId: string
-  accessToken: string
-}): Promise<PhoneNumberProfile> {
-  const url = `${GRAPH_BASE}/${encodeURIComponent(
-    input.phoneNumberId,
-  )}?fields=display_phone_number,verified_name,quality_rating`
+type RawPhoneProfile = {
+  display_phone_number?: string
+  verified_name?: string
+  quality_rating?: string
+  platform_type?: string
+  is_on_biz_app?: boolean
+  error?: { message?: string; type?: string; code?: number; error_subcode?: number }
+}
 
+/** Requests the phone-number node for a specific field set, throwing on error. */
+async function requestPhoneProfile(
+  phoneNumberId: string,
+  accessToken: string,
+  fields: string,
+): Promise<RawPhoneProfile> {
+  const url = `${GRAPH_BASE}/${encodeURIComponent(phoneNumberId)}?fields=${fields}`
   let res: Response
   try {
     res = await fetch(url, {
-      headers: { Authorization: `Bearer ${input.accessToken}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
       cache: "no-store",
     })
   } catch (err) {
     throw new Error(`Could not reach the WhatsApp API: ${(err as Error).message}`)
   }
-
-  const data = (await res.json().catch(() => ({}))) as {
-    display_phone_number?: string
-    verified_name?: string
-    quality_rating?: string
-    error?: { message?: string; type?: string; code?: number }
-  }
-
+  const data = (await res.json().catch(() => ({}))) as RawPhoneProfile
   if (!res.ok || data.error) {
-    const msg = data.error?.message || `Graph API returned ${res.status}`
-    throw new Error(msg)
+    throw new Error(data.error?.message || `Graph API returned ${res.status}`)
+  }
+  return data
+}
+
+/**
+ * Validates the credentials by asking the Graph API for the phone number's
+ * profile, including the coexistence signals `platform_type` and
+ * `is_on_biz_app`. Some numbers / API versions do not expose those extra
+ * fields, so we transparently retry with the base field set rather than
+ * failing the connect flow. Throws a human-friendly message when Meta rejects
+ * the credentials outright.
+ */
+export async function verifyWhatsAppCredentials(input: {
+  phoneNumberId: string
+  accessToken: string
+}): Promise<PhoneNumberProfile> {
+  let data: RawPhoneProfile
+  try {
+    data = await requestPhoneProfile(
+      input.phoneNumberId,
+      input.accessToken,
+      "display_phone_number,verified_name,quality_rating,platform_type,is_on_biz_app",
+    )
+  } catch {
+    // Retry with the base fields (covers numbers/versions without coexistence fields
+    // and re-surfaces a genuine auth error from the second attempt).
+    data = await requestPhoneProfile(
+      input.phoneNumberId,
+      input.accessToken,
+      "display_phone_number,verified_name,quality_rating",
+    )
   }
 
   return {
     displayPhoneNumber: data.display_phone_number ?? null,
     verifiedName: data.verified_name ?? null,
     qualityRating: data.quality_rating ?? null,
+    platformType: data.platform_type ?? null,
+    isOnBizApp: typeof data.is_on_biz_app === "boolean" ? data.is_on_biz_app : null,
   }
 }
 
@@ -186,6 +254,8 @@ export type ConnectWhatsApp = {
   verifiedName: string | null
   businessName: string | null
   qualityRating: string | null
+  platformType: string | null
+  isOnBizApp: boolean | null
   accessToken: string
   connectedByUserId: number | null
 }
@@ -195,14 +265,16 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
   await query(
     `INSERT INTO \`marketing_whatsapp_integration\`
       (waba_id, phone_number_id, display_phone_number, verified_name, business_name,
-       quality_rating, access_token, connected_by_user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       quality_rating, platform_type, is_on_biz_app, access_token, connected_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        waba_id = VALUES(waba_id),
        display_phone_number = VALUES(display_phone_number),
        verified_name = VALUES(verified_name),
        business_name = VALUES(business_name),
        quality_rating = VALUES(quality_rating),
+       platform_type = VALUES(platform_type),
+       is_on_biz_app = VALUES(is_on_biz_app),
        access_token = VALUES(access_token),
        connected_by_user_id = VALUES(connected_by_user_id)`,
     [
@@ -212,6 +284,8 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
       data.verifiedName,
       data.businessName,
       data.qualityRating,
+      data.platformType,
+      data.isOnBizApp == null ? null : data.isOnBizApp ? 1 : 0,
       encryptToken(data.accessToken),
       data.connectedByUserId,
     ],
@@ -223,79 +297,84 @@ export async function deleteWhatsAppIntegration(id: number) {
   await query("DELETE FROM `marketing_whatsapp_integration` WHERE id = ?", [id])
 }
 
-export type RegisterResult = {
-  ok: boolean
-  /** true when the number is confirmed registered (freshly or already). */
-  registered?: boolean
-  /** true when Meta reported the number was already registered. */
-  alreadyRegistered?: boolean
-  error?: string
+/* ------------------------------------------------------------------ */
+/* Embedded Signup (coexistence / QR onboarding)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The public Meta App ID used to launch Embedded Signup on the client. We
+ * accept a dedicated WhatsApp app id first, then fall back to a shared Meta /
+ * Facebook app id when the same app powers both features. The client reads the
+ * NEXT_PUBLIC_ variants directly; this helper is for server-side exchange.
+ */
+export function getAppId(): string | null {
+  return (
+    process.env.WHATSAPP_APP_ID?.trim() ||
+    process.env.NEXT_PUBLIC_WHATSAPP_APP_ID?.trim() ||
+    process.env.META_APP_ID?.trim() ||
+    process.env.FACEBOOK_APP_ID?.trim() ||
+    null
+  )
 }
 
 /**
- * Registers the connected phone number with the WhatsApp Cloud API. Meta
- * requires this one-time call before a number can send or receive messages via
- * Cloud API — until it succeeds every send fails with `(#133010) Account not
- * registered`.
- *
- * The `pin` is the number's 6-digit two-step verification PIN, which Meta uses
- * as the Cloud API registration PIN. If two-step verification is already
- * enabled on the number, the caller must pass that same PIN; otherwise this
- * call sets a new one. It is NOT the Meta account password. We NEVER store the
- * PIN anywhere.
- *
- * We handle the already-registered case gracefully and NEVER deregister the
- * number — coexistence with the WhatsApp Business App must stay intact.
+ * Exchanges the short-lived authorization `code` returned by Meta's Embedded
+ * Signup popup for a business access token, using the app id + app secret. This
+ * is the coexistence onboarding path: the QR scan and number selection happen
+ * inside Meta's popup, so we NEVER call `/{phone-number-id}/register` and NEVER
+ * deregister the number — the WhatsApp Business App number and its coexistence
+ * stay intact. The returned token is what we store (encrypted) and use for all
+ * subsequent Graph API calls.
  */
-export async function registerWhatsAppNumber(input: {
-  integration: WhatsAppIntegrationRow
-  pin: string
-}): Promise<RegisterResult> {
-  const token = decryptToken(input.integration.access_token)
-  if (!token) return { ok: false, error: "Stored access token could not be read." }
+export async function exchangeEmbeddedSignupCode(
+  code: string,
+): Promise<{ ok: boolean; accessToken?: string; error?: string }> {
+  const appId = getAppId()
+  const appSecret = getAppSecret()
+  if (!appId || !appSecret) {
+    return {
+      ok: false,
+      error:
+        "The server is missing the Meta app id/secret needed to finish WhatsApp onboarding. Set WHATSAPP_APP_ID and WHATSAPP_APP_SECRET (or the shared META_/FACEBOOK_ equivalents).",
+    }
+  }
 
-  const url = `${GRAPH_BASE}/${encodeURIComponent(input.integration.phone_number_id)}/register`
+  const url =
+    `${GRAPH_BASE}/oauth/access_token?client_id=${encodeURIComponent(appId)}` +
+    `&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(code)}`
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ messaging_product: "whatsapp", pin: input.pin }),
-      cache: "no-store",
-    })
+    const res = await fetch(url, { cache: "no-store" })
     const data = (await res.json().catch(() => ({}))) as {
-      success?: boolean
+      access_token?: string
       error?: { message?: string; type?: string; code?: number; error_subcode?: number }
     }
-
-    if (res.ok && data.success) return { ok: true, registered: true }
-
-    const err = parseGraphError(data.error, res.status)
-
-    // Meta uses code 133005 for PIN problems and 131000-range for state. When
-    // the number is already registered we treat it as a safe success rather
-    // than surfacing a scary error — and we never attempt to deregister.
-    const already =
-      err.code === 133006 ||
-      /already\s+registered/i.test(err.message) ||
-      /already\s+been\s+registered/i.test(err.message)
-    if (already) {
-      return { ok: true, registered: true, alreadyRegistered: true }
+    if (!res.ok || data.error || !data.access_token) {
+      return { ok: false, error: parseGraphError(data.error, res.status).message }
     }
-
-    if (err.code === 133005) {
-      return {
-        ok: false,
-        error:
-          "Meta rejected the PIN. If two-step verification was set previously, enter that same 6-digit PIN, or reset it in WhatsApp Manager and try again.",
-      }
-    }
-
-    return { ok: false, error: err.message }
+    return { ok: true, accessToken: data.access_token }
   } catch (err) {
     return { ok: false, error: (err as Error).message }
+  }
+}
+
+/**
+ * Best-effort lookup of the WABA's business name so the connected view has a
+ * friendly label. Never throws — a failure just leaves the name unset.
+ */
+export async function getWabaName(input: {
+  wabaId: string
+  accessToken: string
+}): Promise<string | null> {
+  const url = `${GRAPH_BASE}/${encodeURIComponent(input.wabaId)}?fields=name`
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as { name?: string }
+    return data.name ?? null
+  } catch {
+    return null
   }
 }
 

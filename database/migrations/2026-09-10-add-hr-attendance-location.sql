@@ -3,10 +3,8 @@
 -- so tables that already existed before the location feature never received
 -- these columns. Run this once against such databases.
 --
--- MySQL 8 has no ADD COLUMN IF NOT EXISTS, so if a column already exists the
--- statement errors with "Duplicate column name" — that is safe to ignore.
--- (MariaDB supports IF NOT EXISTS and can be run repeatedly.)
-
-ALTER TABLE `hr_attendance` ADD COLUMN `location` VARCHAR(180) DEFAULT NULL AFTER `overtime_hours`;
-ALTER TABLE `hr_attendance` ADD COLUMN `latitude` DECIMAL(10,7) DEFAULT NULL AFTER `location`;
-ALTER TABLE `hr_attendance` ADD COLUMN `longitude` DECIMAL(10,7) DEFAULT NULL AFTER `latitude`;
+-- Idempotent: uses ADD COLUMN IF NOT EXISTS so it re-imports cleanly even when
+-- the runtime self-heal already created these columns (MariaDB / MySQL 8.0.29+).
+ALTER TABLE `hr_attendance` ADD COLUMN IF NOT EXISTS `location` VARCHAR(180) DEFAULT NULL AFTER `overtime_hours`;
+ALTER TABLE `hr_attendance` ADD COLUMN IF NOT EXISTS `latitude` DECIMAL(10,7) DEFAULT NULL AFTER `location`;
+ALTER TABLE `hr_attendance` ADD COLUMN IF NOT EXISTS `longitude` DECIMAL(10,7) DEFAULT NULL AFTER `latitude`;

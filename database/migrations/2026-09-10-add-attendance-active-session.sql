@@ -4,4 +4,7 @@
 -- (breaks) are stored in `break_minutes` and never counted as worked time.
 -- The app also creates this column at runtime if it is missing, so running
 -- this migration is optional but recommended for fresh setups.
-ALTER TABLE `hr_attendance` ADD COLUMN `active_since` DATETIME NULL DEFAULT NULL AFTER `clock_out`;
+--
+-- Idempotent: uses ADD COLUMN IF NOT EXISTS so it re-imports cleanly even when
+-- the runtime self-heal already created the column (MariaDB / MySQL 8.0.29+).
+ALTER TABLE `hr_attendance` ADD COLUMN IF NOT EXISTS `active_since` DATETIME NULL DEFAULT NULL AFTER `clock_out`;

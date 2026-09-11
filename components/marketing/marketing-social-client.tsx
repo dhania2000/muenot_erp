@@ -159,10 +159,11 @@ export function MarketingSocialClient() {
     data: accountsData,
     isLoading: accountsLoading,
     mutate: mutateAccounts,
-  } = useSWR<{ accounts: Account[]; configured: Record<string, boolean> }>(
-    "/api/marketing/social/accounts",
-    fetcher,
-  )
+  } = useSWR<{
+    accounts: Account[]
+    configured: Record<string, boolean>
+    capabilities?: { linkedinOrg?: boolean }
+  }>("/api/marketing/social/accounts", fetcher)
   const { data: postsData, mutate: mutatePosts } = useSWR<{ posts: SocialPost[] }>(
     "/api/marketing/social/posts",
     fetcher,
@@ -170,6 +171,7 @@ export function MarketingSocialClient() {
 
   const accounts = accountsData?.accounts ?? []
   const configured = accountsData?.configured ?? {}
+  const linkedinOrgEnabled = Boolean(accountsData?.capabilities?.linkedinOrg)
   const posts = postsData?.posts ?? []
 
   const [folder, setFolder] = React.useState("all")
@@ -204,7 +206,7 @@ export function MarketingSocialClient() {
       toast.error(withDetail(`${platformName} connection failed: could not load your profile`))
     else if (status === "dbsave")
       toast.error(withDetail(`${platformName} connection failed: could not save the account`))
-    else toast.error(`Could not connect your ${platformName} account`)
+    else toast.error(withDetail(`Could not connect your ${platformName} account`))
     params.delete("social")
     params.delete("platform")
     params.delete("detail")
@@ -503,6 +505,7 @@ export function MarketingSocialClient() {
                         platform={p}
                         configured={Boolean(configured[p.id])}
                         hasAccounts={list.length > 0}
+                        linkedinOrgEnabled={linkedinOrgEnabled}
                         onConnect={connect}
                       />
                     </CardContent>
@@ -618,15 +621,23 @@ function ConnectDialog({
   platform,
   configured,
   hasAccounts,
+  linkedinOrgEnabled,
   onConnect,
 }: {
   platform: (typeof SOCIAL_PLATFORMS)[number]
   configured: boolean
   hasAccounts: boolean
+  linkedinOrgEnabled: boolean
   onConnect: (platform: SocialPlatformId, type: AccountType) => void
 }) {
+  // LinkedIn company-page posting needs the Community Management API, which is
+  // an external LinkedIn approval. Until it is granted, only personal posting
+  // (w_member_social) is offered so the company option can't produce a broken
+  // OAuth request.
+  const companyBlocked = platform.id === "linkedin" && !linkedinOrgEnabled
+
   const [open, setOpen] = React.useState(false)
-  const [type, setType] = React.useState<AccountType>("company")
+  const [type, setType] = React.useState<AccountType>(companyBlocked ? "personal" : "company")
 
   // Facebook & Instagram publishing is always page/business based.
   const pageOnly = platform.id === "facebook" || platform.id === "instagram"
@@ -682,12 +693,15 @@ function ConnectDialog({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
+                    disabled={companyBlocked}
                     onClick={() => setType("company")}
                     className={cn(
                       "flex items-center gap-2 rounded-lg border p-3 text-sm transition-colors",
-                      type === "company"
-                        ? "border-primary bg-primary/10 text-foreground"
-                        : "border-border text-muted-foreground hover:bg-muted",
+                      companyBlocked
+                        ? "cursor-not-allowed border-dashed border-border text-muted-foreground/60"
+                        : type === "company"
+                          ? "border-primary bg-primary/10 text-foreground"
+                          : "border-border text-muted-foreground hover:bg-muted",
                     )}
                   >
                     <Building2 className="size-4" />
@@ -707,11 +721,23 @@ function ConnectDialog({
                     Employee account
                   </button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {type === "company"
-                    ? "Publish as the brand from a page you administer."
-                    : "Publish under your own name from your personal account."}
-                </p>
+                {companyBlocked ? (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
+                    <p className="text-muted-foreground">
+                      Publishing as the Muenot Company Page needs LinkedIn&apos;s{" "}
+                      <span className="font-medium text-foreground">Community Management API</span> access,
+                      which is a separate approval in the LinkedIn Developer portal. Until it is granted,
+                      only personal LinkedIn posting is available.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {type === "company"
+                      ? "Publish as the Muenot Company Page you administer."
+                      : "Publish under your own name from your personal account."}
+                  </p>
+                )}
               </div>
             )}
           </div>

@@ -198,17 +198,58 @@ GOOGLE_REDIRECT_URI=https://erp.muenot.co.in/api/sales/google/callback
 # SOCIAL_REDIRECT_BASE=https://erp.muenot.co.in
 
 # ---- LinkedIn (Sign In with LinkedIn using OpenID Connect + Share on LinkedIn) ----
-# Scopes used: openid profile email w_member_social (personal profiles only).
+# Base scopes (always requested): openid profile email w_member_social.
+#   -> Enables PERSONAL profile posting out of the box.
 LINKEDIN_CLIENT_ID=your-linkedin-client-id
 LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret
+#
+# ---- LinkedIn COMPANY PAGE posting (optional, requires external approval) ----
+# Posting as the Muenot Company Page needs the "Community Management API"
+# product on your LinkedIn app. That is an approval in the LinkedIn Developer
+# portal (developer.linkedin.com) — it CANNOT be enabled from code. Once your
+# app is granted it, turn it on here so the extra scopes
+# (r_organization_admin, w_organization_social) start being requested:
+# LINKEDIN_ORG_ENABLED=true
+#
+# Optional: pin the exact org (the number in urn:li:organization:<id>).
+# If unset, the app picks the admin org whose name/vanity matches
+# LINKEDIN_ORGANIZATION_NAME (defaults to "muenot"), else the first admin org.
+# LINKEDIN_ORGANIZATION_ID=
+# LINKEDIN_ORGANIZATION_NAME=Muenot
+#
+# Advanced: fully override the requested scope list (space/comma separated).
+# Including w_organization_social also implicitly enables company posting.
+# LINKEDIN_SCOPES=openid profile email w_member_social r_organization_admin w_organization_social
 
 # ---- X / Twitter (OAuth 2.0 with PKCE) ----
 X_CLIENT_ID=your-x-client-id
 X_CLIENT_SECRET=your-x-client-secret
 
-# ---- Facebook (Facebook Login for Pages / Graph API) ----
+# ---- Facebook (Page publishing via Graph API v21) ----
+# Publishes as a Facebook Page the connecting user administers. Flow:
+#   user authorizes -> list managed Pages (/me/accounts) -> pick a Page ->
+#   use that Page's access token -> publish as the Page.
 FACEBOOK_APP_ID=your-facebook-app-id
 FACEBOOK_APP_SECRET=your-facebook-app-secret
+#
+# There are TWO kinds of Meta apps and they authorize DIFFERENTLY:
+#
+#   A) Classic Facebook Login app (Consumer/Business, standard "Facebook Login"
+#      product). It accepts raw scopes. The app requests exactly:
+#          pages_show_list  pages_read_engagement  pages_manage_posts
+#      Add these under App > Use cases / Permissions and you are done. Do NOT
+#      set FACEBOOK_CONFIG_ID for this kind of app.
+#
+#   B) "Facebook Login for Business" app. It REJECTS raw scopes with
+#      "Invalid Scopes". Instead you create a Login configuration in the Meta
+#      dashboard (which itself contains pages_show_list / pages_read_engagement
+#      / pages_manage_posts) and pass its configuration id here. When set, the
+#      app sends config_id and NO scope param:
+# FACEBOOK_CONFIG_ID=your-facebook-login-configuration-id
+#
+# Advanced: override the exact scope list for the classic-login path
+# (space/comma separated). Ignored when FACEBOOK_CONFIG_ID is set.
+# FACEBOOK_SCOPES=pages_show_list pages_read_engagement pages_manage_posts
 
 # ---- Instagram (Instagram API with Instagram Login) ----
 # A DEDICATED Instagram app - do NOT reuse the Facebook app id/secret here,

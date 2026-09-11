@@ -40,8 +40,13 @@ const OAUTH_CONFIG: Record<SocialPlatformId, PlatformOAuthConfig> = {
     clientIdEnv: "LINKEDIN_CLIENT_ID",
     clientSecretEnv: "LINKEDIN_CLIENT_SECRET",
     authorizeUrl: "https://www.linkedin.com/oauth/v2/authorization",
-    // Only scopes actually configured on the LinkedIn app. Do NOT request
-    // w_organization_social / r_organization_admin unless approved.
+    // BASE scopes only — always safe because they come from the "Sign In with
+    // LinkedIn using OpenID Connect" + "Share on LinkedIn" products every
+    // LinkedIn app can enable. Organization/company-page scopes
+    // (r_organization_admin, w_organization_social) are added ONLY when the
+    // app has actually been granted the Community Management API — see
+    // getPlatformScopes()/linkedinOrgEnabled(). Requesting them without that
+    // product yields "unauthorized_scope_error" at the authorize step.
     scopes: ["openid", "profile", "email", "w_member_social"],
     scopeSeparator: " ",
     usesPkce: false,
@@ -58,13 +63,18 @@ const OAUTH_CONFIG: Record<SocialPlatformId, PlatformOAuthConfig> = {
     clientIdEnv: "FACEBOOK_APP_ID",
     clientSecretEnv: "FACEBOOK_APP_SECRET",
     authorizeUrl: `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`,
-    // Standard Facebook Login permissions required to list a user's Pages and
-    // publish to a selected Page (Graph API v21). These are the current,
-    // supported permissions for Page publishing — NOT obsolete ones. They can
-    // be overridden with the FACEBOOK_SCOPES env var to match exactly what the
-    // Meta app has enabled. "Invalid Scopes" at the dialog means these are not
-    // yet added/approved on the app, or the app is a business-portfolio app
-    // that requires FACEBOOK_CONFIG_ID (Facebook Login for Business) instead.
+    // Current, supported Graph API v21 permissions to list the user's Pages and
+    // publish to a selected Page. These are NOT obsolete — they are exactly the
+    // permissions Meta requires for Page publishing today:
+    //   pages_show_list      → enumerate the Pages the user manages
+    //   pages_read_engagement→ read Page metadata (name, followers)
+    //   pages_manage_posts   → publish posts to the selected Page
+    // IMPORTANT: these raw scopes are ONLY sent when the Meta app is a classic
+    // "Consumer/Business" app using standard Facebook Login. If the app is a
+    // "Facebook Login for Business" app, Meta REJECTS raw scopes with
+    // "Invalid Scopes" and instead requires a dashboard-defined config_id
+    // (set FACEBOOK_CONFIG_ID) that already encapsulates these permissions —
+    // see buildAuthUrl(). Override the list with FACEBOOK_SCOPES if needed.
     scopes: ["pages_show_list", "pages_read_engagement", "pages_manage_posts"],
     scopeSeparator: " ",
     usesPkce: false,
@@ -103,9 +113,39 @@ export function platformUsesPkce(platform: SocialPlatformId) {
 }
 
 /**
+ * Whether LinkedIn COMPANY-PAGE posting is available. This is gated on the app
+ * actually holding the LinkedIn "Community Management API" product, which is an
+ * external LinkedIn Developer approval — it cannot be self-served in code.
+ *
+ * Enable it only once that product is granted, via either:
+ *   LINKEDIN_ORG_ENABLED=true                 (explicit switch), or
+ *   LINKEDIN_SCOPES="... w_organization_social ..."  (custom scope override)
+ *
+ * While it is off we request ONLY member scopes so personal posting keeps
+ * working and the authorize step never fails with unauthorized_scope_error.
+ */
+export function linkedinOrgEnabled(): boolean {
+  const flag = process.env.LINKEDIN_ORG_ENABLED
+  if (flag) return /^(1|true|yes|on)$/i.test(flag.trim())
+  if (process.env.LINKEDIN_SCOPES) return /w_organization_social/i.test(process.env.LINKEDIN_SCOPES)
+  return false
+}
+
+/** Optional exact organization id (the number in urn:li:organization:<id>). */
+export function getLinkedInTargetOrgId(): string | null {
+  return process.env.LINKEDIN_ORGANIZATION_ID?.trim() || null
+}
+
+/** Name/vanity used to pick the Muenot page among the member's admin orgs. */
+function getLinkedInTargetOrgName(): string {
+  return (process.env.LINKEDIN_ORGANIZATION_NAME || "muenot").trim().toLowerCase()
+}
+
+/**
  * Resolves the scopes actually requested for a platform. Facebook scopes can be
- * overridden with FACEBOOK_SCOPES (comma/space separated) so they can be
- * aligned with exactly what the Meta app has enabled without a code change.
+ * overridden with FACEBOOK_SCOPES (comma/space separated); LinkedIn scopes can
+ * be overridden with LINKEDIN_SCOPES, and otherwise gain the organization
+ * scopes only when Community Management access is enabled (linkedinOrgEnabled).
  */
 export function getPlatformScopes(platform: SocialPlatformId): string[] {
   if (platform === "facebook" && process.env.FACEBOOK_SCOPES) {
@@ -113,12 +153,30 @@ export function getPlatformScopes(platform: SocialPlatformId): string[] {
       .map((s) => s.trim())
       .filter(Boolean)
   }
+  if (platform === "linkedin") {
+    if (process.env.LINKEDIN_SCOPES) {
+      return process.env.LINKEDIN_SCOPES.split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    }
+    const base = OAUTH_CONFIG.linkedin.scopes
+    // r_organization_admin → discover the orgs the member administers.
+    // w_organization_social → publish as the organization.
+    return linkedinOrgEnabled() ? [...base, "r_organization_admin", "w_organization_social"] : base
+  }
   return OAUTH_CONFIG[platform].scopes
 }
 
-/** Facebook Login for Business config id, used by business-portfolio apps. */
+/**
+ * Facebook Login for Business "configuration id". Business-type Meta apps do
+ * NOT accept raw scopes at the login dialog — they reject them with
+ * "Invalid Scopes" and require this dashboard-defined config_id instead (the
+ * config already contains the permissions like pages_manage_posts). Set
+ * FACEBOOK_CONFIG_ID for such apps; leave it unset for classic Facebook Login
+ * apps that send scopes directly.
+ */
 export function getFacebookConfigId() {
-  return process.env.FACEBOOK_CONFIG_ID || null
+  return process.env.FACEBOOK_CONFIG_ID?.trim() || null
 }
 
 export function resolveRedirectUri(platform: SocialPlatformId, origin: string) {
@@ -155,14 +213,17 @@ export function buildAuthUrl(opts: {
     state: opts.state,
   })
 
-  // Facebook business-portfolio apps use Facebook Login for Business, which
-  // passes a dashboard-defined config_id INSTEAD of raw scopes (sending scopes
-  // to such an app yields "Invalid Scopes"). Standard Facebook Login apps that
+  // Facebook "Login for Business" apps pass a dashboard-defined config_id
+  // INSTEAD of raw scopes — sending scopes to such an app is exactly what
+  // produces the "Invalid Scopes" error. Classic Facebook Login apps that
   // manage their own Pages send the scopes directly. Every other platform
   // always sends scopes.
   const fbConfigId = opts.platform === "facebook" ? getFacebookConfigId() : null
   if (fbConfigId) {
     params.set("config_id", fbConfigId)
+    // Business Login expects the code response type explicitly and must NOT
+    // receive a scope param alongside config_id.
+    params.set("response_type", "code")
   } else {
     params.set("scope", getPlatformScopes(opts.platform).join(cfg.scopeSeparator))
   }
@@ -172,6 +233,46 @@ export function buildAuthUrl(opts: {
     params.set("code_challenge_method", "S256")
   }
   return `${cfg.authorizeUrl}?${params.toString()}`
+}
+
+/**
+ * Returns a SAFE, redacted view of the authorize URL a platform will generate,
+ * for diagnostics/support. client_id and any code_challenge are masked; no
+ * client secret is ever part of an authorize URL. Used by the debug endpoint
+ * to confirm exactly which scopes (or config_id) are being requested without
+ * leaking credentials.
+ */
+export function describeAuthUrl(platform: SocialPlatformId, redirectUri: string) {
+  const cfg = OAUTH_CONFIG[platform]
+  const configured = isPlatformConfigured(platform)
+  const fbConfigId = platform === "facebook" ? getFacebookConfigId() : null
+  const usesConfigId = Boolean(fbConfigId)
+  const scopes = usesConfigId ? [] : getPlatformScopes(platform)
+
+  const params: Record<string, string> = {
+    response_type: "code",
+    client_id: "<FACEBOOK_APP_ID>".replace("FACEBOOK_APP_ID", cfg.clientIdEnv),
+    redirect_uri: redirectUri,
+    state: "<random-state>",
+  }
+  if (usesConfigId) params.config_id = "<FACEBOOK_CONFIG_ID>"
+  else params.scope = scopes.join(cfg.scopeSeparator)
+  if (cfg.usesPkce) {
+    params.code_challenge = "<pkce-challenge>"
+    params.code_challenge_method = "S256"
+  }
+
+  return {
+    platform,
+    configured,
+    authorizeUrl: cfg.authorizeUrl,
+    usesConfigId,
+    scopeSeparator: cfg.scopeSeparator,
+    scopes,
+    params,
+    // A human-readable, fully redacted URL string.
+    exampleUrl: `${cfg.authorizeUrl}?${new URLSearchParams(params).toString()}`,
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -374,11 +475,10 @@ export async function fetchIdentity(opts: {
 }
 
 async function linkedinIdentity(type: SocialAccountType, accessToken: string): Promise<ConnectedIdentity> {
-  // Company posting needs w_organization_social + r_organization_admin, which
-  // are not enabled on this app. Fail with a clear, safe message instead of
-  // requesting unsupported scopes.
-  if (type === "company") throw new Error("noorgscope")
+  if (type === "company") return linkedinCompanyIdentity(accessToken)
 
+  // Personal profile — resolved from the OpenID Connect userinfo endpoint. The
+  // author URN for member posts is urn:li:person:<sub>.
   const res = await fetch("https://api.linkedin.com/v2/userinfo", {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
@@ -391,6 +491,88 @@ async function linkedinIdentity(type: SocialAccountType, accessToken: string): P
     followers: null,
     accessToken,
     pageId: null,
+  }
+}
+
+/**
+ * Resolves the Muenot Company Page the authenticated member administers.
+ *
+ * Flow (Community Management API):
+ *   1. Refuse early if org access is not enabled on the app (safe — no
+ *      unsupported scope was ever requested).
+ *   2. List the organizations where the member is an APPROVED ADMINISTRATOR
+ *      via organizationAcls (needs r_organization_admin).
+ *   3. Pick the Muenot page (by LINKEDIN_ORGANIZATION_ID, else by name/vanity,
+ *      else the only/first admin org).
+ *   4. Return the ORGANIZATION author URN (urn:li:organization:<id>) — never
+ *      the member/person URN — so publishing posts as the company.
+ */
+async function linkedinCompanyIdentity(accessToken: string): Promise<ConnectedIdentity> {
+  if (!linkedinOrgEnabled()) throw new Error("noorgscope")
+
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    "X-Restli-Protocol-Version": "2.0.0",
+  }
+  const url =
+    "https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED" +
+    "&projection=(elements*(*,organization~(id,localizedName,vanityName)))"
+  const res = await fetch(url, { headers })
+  const json = await res.json().catch(() => ({}) as any)
+  if (!res.ok) {
+    const detail = json?.message || `status ${res.status}`
+    throw new Error(`linkedin_orgacls:${detail}`)
+  }
+
+  const elements: any[] = Array.isArray(json.elements) ? json.elements : []
+  // No APPROVED ADMINISTRATOR role on any organization for this member.
+  if (elements.length === 0) throw new Error("noadmin")
+
+  const orgs = elements
+    .map((el) => {
+      const urn: string | undefined = el.organization
+      const decorated = el["organization~"] || {}
+      const id = urn ? urn.split(":").pop()! : undefined
+      return {
+        id,
+        urn: urn ?? (id ? `urn:li:organization:${id}` : undefined),
+        name: decorated.localizedName ?? null,
+        vanity: decorated.vanityName ?? null,
+      }
+    })
+    .filter((o): o is { id: string; urn: string; name: string | null; vanity: string | null } =>
+      Boolean(o.id && o.urn),
+    )
+
+  if (orgs.length === 0) throw new Error("noadmin")
+
+  const targetId = getLinkedInTargetOrgId()
+  const targetName = getLinkedInTargetOrgName()
+
+  let chosen = targetId ? orgs.find((o) => o.id === targetId) : undefined
+  // If an exact id was configured but the member does not administer it, this
+  // member cannot post as that page — surface it rather than posting elsewhere.
+  if (targetId && !chosen) throw new Error("noadmin")
+
+  if (!chosen) {
+    chosen = orgs.find(
+      (o) =>
+        o.name?.toLowerCase().includes(targetName) || o.vanity?.toLowerCase().includes(targetName),
+    )
+  }
+  if (!chosen) chosen = orgs[0]
+
+  return {
+    externalId: chosen.urn, // urn:li:organization:<id> — the company author URN
+    handle: chosen.vanity
+      ? `@${chosen.vanity}`
+      : chosen.name
+        ? `@${chosen.name.replace(/\s+/g, "").toLowerCase()}`
+        : `@org_${chosen.id}`,
+    displayName: chosen.name,
+    followers: null,
+    accessToken,
+    pageId: chosen.id,
   }
 }
 

@@ -40,6 +40,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
   const code = url.searchParams.get("code")
   const state = url.searchParams.get("state")
   const oauthError = url.searchParams.get("error")
+  // Providers return the human-readable failure reason here (e.g. Facebook's
+  // "Invalid Scopes: ..."). It contains no code/token/secret, so it is safe to
+  // surface to the admin for diagnosis.
+  const oauthErrorDetail =
+    url.searchParams.get("error_description") || url.searchParams.get("error_message") || undefined
 
   const cookieStore = await cookies()
   const savedStateRaw = cookieStore.get(SOCIAL_STATE_COOKIE)?.value
@@ -53,7 +58,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
   cookieStore.delete(SOCIAL_VERIFIER_COOKIE)
   cookieStore.delete(SOCIAL_REDIRECT_COOKIE)
 
-  if (oauthError || !code || !state || !savedStateRaw) return fail("error")
+  // The provider rejected the authorization at the dialog (e.g. Facebook
+  // "Invalid Scopes"). Surface its reason so the admin can act on it.
+  if (oauthError) return fail("error", oauthErrorDetail ? `${oauthError}: ${oauthErrorDetail}` : oauthError)
+  if (!code || !state || !savedStateRaw) return fail("error")
   const [savedPlatform, savedState] = savedStateRaw.split(":")
   if (savedPlatform !== platform || savedState !== state) return fail("error")
 
@@ -104,7 +112,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ platform: s
     if (message.includes("nopage")) return fail("nopage")
     if (message.includes("noig")) return fail("noig")
     if (message.includes("_token")) return fail("tokenfail", detail)
-    if (message.includes("_account") || message.includes("_userinfo") || message.includes("_pages"))
+    if (
+      message.includes("_account") ||
+      message.includes("_userinfo") ||
+      message.includes("_pages") ||
+      message.includes("_orgacls")
+    )
       return fail("profilefail", detail)
     if (message.includes("dbsave")) return fail("dbsave", detail)
     return fail("error")

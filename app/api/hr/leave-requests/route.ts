@@ -1,31 +1,220 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
+import { userHasFeature } from "@/lib/permissions"
+import { nextRecordId } from "@/lib/record-ids"
+import {
+  ensureLeaveSchema,
+  getEmployeeByEmail,
+  createLeaveRequest,
+  type Actor,
+} from "@/lib/hr-leave"
 
-export async function GET() {
-  const session = await getSession()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const rows = await query<any[]>("SELECT * FROM hr_leave_requests ORDER BY requested_at DESC")
-  return NextResponse.json({ requests: rows })
+/** True when the session may see and act on every employee's leave. */
+async function resolvePrivilege(session: { userId: number; role: "admin" | "employee" }) {
+  if (session.role === "admin") return true
+  return userHasFeature(session.userId, session.role, "hr.view_leave_requests")
 }
 
-export async function POST(request: NextRequest) {
+export async function GET(request: Request) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  await ensureLeaveSchema()
+
+  const canManage = await resolvePrivilege(session)
+  const self = await getEmployeeByEmail(session.email)
+
+  const sp = new URL(request.url).searchParams
+  const where: string[] = []
+  const args: any[] = []
+
+  // Scope: non-privileged users only ever see their own requests.
+  if (!canManage) {
+    if (self) {
+      where.push("(r.employee_id = ? OR r.applied_by = ?)")
+      args.push(self.id, session.userId)
+    } else {
+      where.push("r.applied_by = ?")
+      args.push(session.userId)
+    }
+  } else if (sp.get("scope") === "mine" && self) {
+    where.push("r.employee_id = ?")
+    args.push(self.id)
+  }
+
+  const status = sp.get("status")
+  if (status && status !== "all") {
+    where.push("r.status = ?")
+    args.push(status)
+  }
+
+  const leaveType = sp.get("leave_type")
+  if (leaveType && leaveType !== "all") {
+    where.push("r.leave_type_id = ?")
+    args.push(leaveType)
+  }
+
+  const employeeId = sp.get("employee_id")
+  if (employeeId && canManage) {
+    where.push("r.employee_id = ?")
+    args.push(employeeId)
+  }
+
+  const department = sp.get("department")
+  if (department && department !== "all") {
+    where.push("e.department = ?")
+    args.push(department)
+  }
+
+  const from = sp.get("from")
+  const to = sp.get("to")
+  if (from) {
+    where.push("r.to_date >= ?")
+    args.push(from)
+  }
+  if (to) {
+    where.push("r.from_date <= ?")
+    args.push(to)
+  }
+
+  const q = (sp.get("q") || "").trim()
+  if (q) {
+    const like = `%${q}%`
+    where.push("(r.employee_name LIKE ? OR r.request_id LIKE ? OR r.reason LIKE ?)")
+    args.push(like, like, like)
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
+
+  const countRows = await query<{ total: number }[]>(
+    `SELECT COUNT(*) AS total FROM hr_leave_requests r LEFT JOIN hr_employees e ON e.id = r.employee_id ${whereSql}`,
+    args,
+  )
+  const total = Number(countRows[0]?.total || 0)
+
+  const page = Math.max(1, Number(sp.get("page")) || 1)
+  const pageSize = Math.min(200, Math.max(1, Number(sp.get("pageSize")) || 25))
+  const offset = (page - 1) * pageSize
+
+  const requests = await query<any[]>(
+    `SELECT r.*, e.department, e.designation, lt.leave_type
+     FROM hr_leave_requests r
+     LEFT JOIN hr_employees e ON e.id = r.employee_id
+     LEFT JOIN hr_leave_types lt ON lt.leave_type_id = r.leave_type_id OR CAST(lt.id AS CHAR) = r.leave_type_id
+     ${whereSql}
+     ORDER BY r.requested_at DESC, r.id DESC
+     LIMIT ? OFFSET ?`,
+    [...args, pageSize, offset],
+  )
+
+  // Summary cards over the current filter scope (ignoring status/pagination).
+  const summaryWhere: string[] = []
+  const summaryArgs: any[] = []
+  if (!canManage) {
+    if (self) {
+      summaryWhere.push("(r.employee_id = ? OR r.applied_by = ?)")
+      summaryArgs.push(self.id, session.userId)
+    } else {
+      summaryWhere.push("r.applied_by = ?")
+      summaryArgs.push(session.userId)
+    }
+  } else if (sp.get("scope") === "mine" && self) {
+    summaryWhere.push("r.employee_id = ?")
+    summaryArgs.push(self.id)
+  }
+  const summarySql = summaryWhere.length ? `WHERE ${summaryWhere.join(" AND ")}` : ""
+  const summaryRows = await query<any[]>(
+    `SELECT status, COUNT(*) AS count, COALESCE(SUM(days),0) AS days FROM hr_leave_requests r ${summarySql} GROUP BY status`,
+    summaryArgs,
+  )
+  const summary = {
+    total: 0,
+    pending: 0,
+    managerApproved: 0,
+    approved: 0,
+    rejected: 0,
+    cancelled: 0,
+    awaitingMyAction: 0,
+  }
+  for (const row of summaryRows) {
+    const count = Number(row.count)
+    summary.total += count
+    if (row.status === "Pending") summary.pending += count
+    else if (row.status === "Manager Approved") summary.managerApproved += count
+    else if (row.status === "HR Approved") summary.approved += count
+    else if (row.status === "Manager Rejected" || row.status === "HR Rejected") summary.rejected += count
+    else if (row.status === "Cancelled") summary.cancelled += count
+  }
+  if (canManage) {
+    summary.awaitingMyAction = summary.pending + summary.managerApproved
+  }
+
+  return NextResponse.json({
+    requests,
+    total,
+    page,
+    pageSize,
+    summary,
+    canManage,
+    self: self ? { id: self.id, name: self.employee_name, department: self.department } : null,
+  })
+}
+
+export async function POST(request: Request) {
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  await ensureLeaveSchema()
+
   const body = await request.json()
-  const from = new Date(body.from_date), to = new Date(body.to_date)
-  if (!body.employee_id || !body.leave_type_id || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to < from) return NextResponse.json({ error: "Invalid leave details" }, { status: 400 })
-  const days = Math.floor((to.getTime() - from.getTime()) / 86400000) + 1
-  const requestId = `LR-${Date.now().toString(36).toUpperCase()}`
-  await query("INSERT INTO hr_leave_requests (request_id,employee_id,employee_name,leave_type_id,from_date,to_date,days,reason,attachment_url,manager_id,hr_reviewer_id,remarks) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [requestId, body.employee_id, body.employee_name || "", body.leave_type_id, body.from_date, body.to_date, days, body.reason || "", body.attachment_url || null, body.manager_id || null, body.hr_reviewer_id || null, body.remarks || null])
-  return NextResponse.json({ request_id: requestId }, { status: 201 })
-}
+  const canManage = await resolvePrivilege(session)
 
-export async function PATCH(request: NextRequest) {
-  const session = await getSession()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const { id, status, remarks, manager_id, hr_reviewer_id } = await request.json()
-  if (!id || !status) return NextResponse.json({ error: "Missing update details" }, { status: 400 })
-  await query("UPDATE hr_leave_requests SET status=?, remarks=COALESCE(?,remarks), manager_id=COALESCE(?,manager_id), hr_reviewer_id=COALESCE(?,hr_reviewer_id), manager_action_at=IF(? IN ('Manager Approved','Manager Rejected'),CURRENT_TIMESTAMP,manager_action_at), hr_action_at=IF(? IN ('HR Approved','HR Rejected'),CURRENT_TIMESTAMP,hr_action_at) WHERE id=?", [status, remarks || null, manager_id || null, hr_reviewer_id || null, status, status, id])
-  return NextResponse.json({ ok: true })
+  // Non-privileged applicants can only file for themselves (auto-identified).
+  let employeeId = Number(body.employee_id)
+  if (!canManage) {
+    const self = await getEmployeeByEmail(session.email)
+    if (!self) {
+      return NextResponse.json(
+        { error: "No employee record is linked to your account. Contact HR to apply for leave." },
+        { status: 400 },
+      )
+    }
+    employeeId = self.id
+  }
+
+  if (!employeeId || !body.leave_type_id || !body.from_date || !body.to_date) {
+    return NextResponse.json({ error: "Employee, leave type and dates are required." }, { status: 400 })
+  }
+  if (!body.reason || !String(body.reason).trim()) {
+    return NextResponse.json({ error: "A reason is required." }, { status: 400 })
+  }
+
+  const actor: Actor = { userId: session.userId, name: session.name, email: session.email, role: session.role }
+  const requestId = await nextRecordId("LR")
+
+  try {
+    const result = await createLeaveRequest(
+      {
+        employee_id: employeeId,
+        leave_type_id: body.leave_type_id,
+        from_date: body.from_date,
+        to_date: body.to_date,
+        is_half_day: Boolean(body.is_half_day),
+        half_day_session: body.half_day_session ?? null,
+        reason: String(body.reason),
+        attachment_url: body.attachment_url ?? null,
+      },
+      actor,
+      requestId,
+    )
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.validation.errors[0]?.message || "Validation failed", validation: result.validation },
+        { status: 422 },
+      )
+    }
+    return NextResponse.json({ request_id: result.requestId, validation: result.validation }, { status: 201 })
+  } catch (error) {
+    console.log("[v0] leave create failed", (error as Error).message)
+    return NextResponse.json({ error: "Could not create leave request." }, { status: 500 })
+  }
 }

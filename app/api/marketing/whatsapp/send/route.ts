@@ -2,9 +2,12 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { getWhatsAppIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
 import {
+  assignConversation,
+  canAccessConversation,
   findOrCreateContact,
   findOrCreateConversation,
   getConversation,
+  inboxScopeFor,
   recordOutboundMessage,
 } from "@/lib/whatsapp-store"
 
@@ -57,6 +60,33 @@ export async function POST(request: Request) {
     if (!conversation) {
       return NextResponse.json({ error: "Conversation not found" }, { status: 404 })
     }
+
+    // Shared-inbox RBAC: an agent may only reply to a thread that is theirs or
+    // still unassigned. Admins may reply to anything.
+    const scope = inboxScopeFor(session.role, session.userId)
+    if (!canAccessConversation(conversation, scope)) {
+      return NextResponse.json(
+        { error: "This conversation is assigned to another agent." },
+        { status: 403 },
+      )
+    }
+
+    // Replying to an unassigned thread claims it for the sender so the rest of
+    // the team can see who is handling the customer.
+    if (conversation.assignedAgentId === null) {
+      try {
+        await assignConversation({
+          conversationId,
+          agentId: session.userId,
+          team: conversation.assignedTeam,
+          byUserId: session.userId,
+          note: "Auto-claimed on reply",
+        })
+      } catch (err) {
+        console.error("[v0] Failed to auto-claim conversation on reply:", (err as Error).message)
+      }
+    }
+
     to = conversation.phoneNumber
 
     // Enforce the 24-hour window for free-form text replies.

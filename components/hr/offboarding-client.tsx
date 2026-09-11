@@ -126,7 +126,7 @@ export function OffboardingClient() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-6 p-4 md:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Offboarding</h1>

@@ -461,8 +461,9 @@ function RegisterNumberDialog() {
           <DialogTitle>Register number with Cloud API</DialogTitle>
           <DialogDescription>
               Meta requires a one-time registration before this number can send or receive messages
-              through the Cloud API. Enter the number&apos;s 6-digit two-step verification PIN. If two-step
-              verification is already enabled, use that same PIN; if it isn&apos;t, this sets a new one.
+              through the Cloud API. This is the Cloud API two-step verification PIN and must be
+              exactly 6 digits. If the number already has a Cloud API PIN, enter it; otherwise this
+              sets a new one.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-1">
@@ -480,8 +481,9 @@ function RegisterNumberDialog() {
               className="font-mono tracking-widest"
             />
             <p className="text-xs text-muted-foreground">
-                This is the number&apos;s WhatsApp two-step verification PIN — not your Meta account
-                password. We never store it.
+                This is the Cloud API two-step verification PIN (6 digits) — not the &quot;Password&quot;
+                from the WhatsApp app on your phone, and not your Meta account password. We never
+                store it.
             </p>
           </div>
         </div>

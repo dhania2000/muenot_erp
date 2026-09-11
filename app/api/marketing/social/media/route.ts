@@ -12,8 +12,17 @@ import { insertSocialMedia } from "@/lib/social-media"
 const MAX_BYTES = 8 * 1024 * 1024 // 8 MB
 
 function publicBase(request: Request) {
-  const configured = process.env.SOCIAL_REDIRECT_BASE || process.env.SOCIAL_PUBLIC_BASE
+  const configured = process.env.SOCIAL_PUBLIC_BASE || process.env.SOCIAL_REDIRECT_BASE
   if (configured) return configured.replace(/\/+$/, "")
+
+  // Behind a proxy, request.url reflects the internal bind address
+  // (e.g. 0.0.0.0:3000), which platforms like Instagram cannot fetch. Prefer
+  // the forwarded host/proto headers set by the proxy when present.
+  const forwardedHost = request.headers.get("x-forwarded-host") || request.headers.get("host")
+  const forwardedProto = request.headers.get("x-forwarded-proto") || "https"
+  if (forwardedHost && !/^0\.0\.0\.0|^localhost|^127\./.test(forwardedHost)) {
+    return `${forwardedProto}://${forwardedHost}`
+  }
   return new URL(request.url).origin
 }
 

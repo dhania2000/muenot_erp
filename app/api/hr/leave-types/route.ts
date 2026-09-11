@@ -10,9 +10,14 @@ const fields = [
   "allow_half_day", "min_days_per_request", "max_days_per_request", "advance_notice_days",
   "allow_backdated", "backdated_limit_days", "applicable_gender", "applicable_employment_type",
   "count_weekends", "count_holidays", "max_requests_per_year",
+  // Balance / entitlement policy fields (drive initialization, accrual and status).
+  "accrual_method", "prorate_on_join", "allow_negative", "low_balance_threshold",
 ] as const
 
-const boolFields = new Set(["requires_document", "paid", "allow_half_day", "allow_backdated", "count_weekends", "count_holidays"])
+const boolFields = new Set([
+  "requires_document", "paid", "allow_half_day", "allow_backdated", "count_weekends", "count_holidays",
+  "prorate_on_join", "allow_negative",
+])
 
 function normalize(field: string, value: any) {
   if (boolFields.has(field)) return value ? 1 : 0

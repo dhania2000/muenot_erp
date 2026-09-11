@@ -57,11 +57,15 @@ function DropdownMenuLabel({
   className,
   inset,
   ...props
-}: MenuPrimitive.GroupLabel.Props & {
+}: React.ComponentProps<"div"> & {
   inset?: boolean
 }) {
+  // Rendered as a plain div rather than Base UI's Menu.GroupLabel, which throws
+  // "MenuGroupContext is missing" when a label is placed directly in the menu
+  // content instead of inside a <Menu.Group>. A div-based label is safe in
+  // every position and matches the classic shadcn behavior.
   return (
-    <MenuPrimitive.GroupLabel
+    <div
       data-slot="dropdown-menu-label"
       data-inset={inset}
       className={cn(

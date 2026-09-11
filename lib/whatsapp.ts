@@ -158,13 +158,55 @@ export function toPublicIntegration(row: WhatsAppIntegrationRow): WhatsAppIntegr
   }
 }
 
-/** Returns the most recently connected WhatsApp integration, if any. */
+/**
+ * Builds an integration row from the server environment when an administrator
+ * has provisioned the coexistence number via env vars instead of the UI.
+ *
+ * This is the admin-only backend configuration path (see section 19/20 of the
+ * spec): the WhatsApp Business App number stays live and we NEVER call
+ * `/register`. The access token is read from the env only on the server and is
+ * treated as plaintext by decryptToken (it has no `enc:v1:` marker), so no key
+ * is needed. Returns null unless the three core identifiers are all present.
+ */
+export function getEnvIntegration(): WhatsAppIntegrationRow | null {
+  const wabaId = process.env.WHATSAPP_WABA_ID?.trim()
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim()
+  if (!wabaId || !phoneNumberId || !accessToken) return null
+
+  const now = new Date().toISOString().slice(0, 19).replace("T", " ")
+  const businessName = process.env.WHATSAPP_BUSINESS_NAME?.trim() || null
+  return {
+    // id 0 marks an env-provisioned integration — it lives in no DB row, so the
+    // UI's "Disconnect" (DELETE by id) is a harmless no-op against it.
+    id: 0,
+    waba_id: wabaId,
+    phone_number_id: phoneNumberId,
+    display_phone_number: process.env.WHATSAPP_DISPLAY_PHONE_NUMBER?.trim() || null,
+    verified_name: businessName,
+    business_name: businessName,
+    quality_rating: null,
+    // Signals coexistence so the UI shows the "also on the Business App" badge.
+    platform_type: "SMB_COEXISTENCE",
+    is_on_biz_app: 1,
+    access_token: accessToken,
+    connected_by_user_id: null,
+    connected_at: now,
+    updated_at: now,
+  }
+}
+
+/**
+ * Returns the active WhatsApp integration. A row saved through the UI (Embedded
+ * Signup or manual credentials) takes precedence; otherwise we fall back to the
+ * env-provisioned coexistence number so the connection works out of the box.
+ */
 export async function getWhatsAppIntegration(): Promise<WhatsAppIntegrationRow | null> {
   await ensureWhatsAppTable()
   const rows = await query<WhatsAppIntegrationRow[]>(
     "SELECT * FROM `marketing_whatsapp_integration` ORDER BY connected_at DESC LIMIT 1",
   )
-  return rows[0] ?? null
+  return rows[0] ?? getEnvIntegration()
 }
 
 export type PhoneNumberProfile = {

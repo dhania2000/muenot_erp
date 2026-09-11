@@ -810,6 +810,7 @@ function ComposeWizard({
   const [selectedAccounts, setSelectedAccounts] = React.useState<number[]>([])
   const [content, setContent] = React.useState("")
   const [image, setImage] = React.useState<string | undefined>(undefined)
+  const [uploading, setUploading] = React.useState(false)
   const [showEmoji, setShowEmoji] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
   const fileRef = React.useRef<HTMLInputElement>(null)
@@ -825,13 +826,34 @@ function ComposeWizard({
   const overLimit = activeLimit !== null && content.length > activeLimit
   const needsImage = targets.includes("instagram") && !image
 
-  const canProceed = selectedAccounts.length > 0 && content.trim().length > 0 && !overLimit && !needsImage
+  const canProceed =
+    selectedAccounts.length > 0 && content.trim().length > 0 && !overLimit && !needsImage && !uploading
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = () => setImage(reader.result as string)
+    reader.onload = async () => {
+      const dataUrl = reader.result as string
+      setImage(dataUrl) // instant local preview
+      // Upload to public storage so platforms (Instagram especially) can fetch it.
+      setUploading(true)
+      try {
+        const res = await fetch("/api/marketing/social/media", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: dataUrl }),
+        })
+        const json = await res.json()
+        if (!res.ok) throw new Error(json.error || "Image upload failed")
+        setImage(json.url as string) // swap preview for the public https URL
+      } catch (err: any) {
+        toast.error(err?.message || "Image upload failed")
+        setImage(undefined)
+      } finally {
+        setUploading(false)
+      }
+    }
     reader.readAsDataURL(file)
   }
 
@@ -1029,12 +1051,18 @@ function ComposeWizard({
                       alt="Post attachment preview"
                       className="max-h-48 rounded-md border object-cover"
                     />
+                    {uploading ? (
+                      <div className="absolute inset-0 flex items-center justify-center rounded-md bg-black/50 text-xs font-medium text-white">
+                        Uploading…
+                      </div>
+                    ) : null}
                     <Button
                       variant="secondary"
                       size="icon-sm"
                       className="absolute -top-2 -right-2 rounded-full"
                       onClick={() => setImage(undefined)}
                       aria-label="Remove image"
+                      disabled={uploading}
                     >
                       <X className="size-4" />
                     </Button>
@@ -1055,6 +1083,7 @@ function ComposeWizard({
                     size="icon-sm"
                     aria-label="Upload image"
                     onClick={() => fileRef.current?.click()}
+                    disabled={uploading}
                   >
                     <ImageUp className="size-4" />
                   </Button>

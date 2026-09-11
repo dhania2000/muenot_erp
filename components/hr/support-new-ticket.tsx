@@ -34,6 +34,8 @@ type Context = {
   categories: Category[]
   recentRegularisations: any[]
   recentLeaves: any[]
+  recentAttendance: any[]
+  recentDocuments: any[]
   employees: { id: number; employee_id: string; employee_name: string; department: string | null }[]
 }
 
@@ -55,6 +57,8 @@ export function SupportNewTicket({
   const [onBehalf, setOnBehalf] = useState("")
   const [linkReg, setLinkReg] = useState("")
   const [linkLeave, setLinkLeave] = useState("")
+  const [linkAttendance, setLinkAttendance] = useState("")
+  const [linkDocument, setLinkDocument] = useState("")
   const [attachment, setAttachment] = useState<{ path: string; name: string } | null>(null)
   const [uploading, setUploading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -65,6 +69,7 @@ export function SupportNewTicket({
   const reset = () => {
     setCategory(""); setPriority("Medium"); setSubject(""); setDescription("")
     setSubcategory(""); setOnBehalf(""); setLinkReg(""); setLinkLeave(""); setAttachment(null)
+    setLinkAttendance(""); setLinkDocument("")
   }
 
   const onCategoryChange = (value: string) => {
@@ -109,6 +114,8 @@ export function SupportNewTicket({
           employee_id: ctx?.canManage && onBehalf ? Number(onBehalf) : undefined,
           related_regularisation_id: linkReg ? Number(linkReg) : undefined,
           related_leave_id: linkLeave ? Number(linkLeave) : undefined,
+          related_attendance_id: linkAttendance ? Number(linkAttendance) : undefined,
+          related_document_id: linkDocument ? Number(linkDocument) : undefined,
           attachment_path: attachment?.path,
           attachment_name: attachment?.name,
         }),
@@ -208,8 +215,23 @@ export function SupportNewTicket({
             </div>
           </div>
 
-          {(ctx?.recentRegularisations?.length || ctx?.recentLeaves?.length) ? (
+          {(ctx?.recentRegularisations?.length || ctx?.recentLeaves?.length || ctx?.recentAttendance?.length || ctx?.recentDocuments?.length) ? (
             <div className="grid gap-4 sm:grid-cols-2">
+              {ctx?.recentAttendance?.length ? (
+                <div className="grid gap-2">
+                  <Label>Link an attendance record (optional)</Label>
+                  <Select value={linkAttendance} onValueChange={setLinkAttendance}>
+                    <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                    <SelectContent>
+                      {ctx.recentAttendance.map((a) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          {String(a.work_date).slice(0, 10)} · {a.status}{a.working_hours != null ? ` · ${a.working_hours}h` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
               {ctx?.recentRegularisations?.length ? (
                 <div className="grid gap-2">
                   <Label>Link a regularisation (optional)</Label>
@@ -233,7 +255,22 @@ export function SupportNewTicket({
                     <SelectContent>
                       {ctx.recentLeaves.map((l) => (
                         <SelectItem key={l.id} value={String(l.id)}>
-                          {l.leave_id} · {l.leave_type} · {l.status}
+                          {l.request_id} · {l.leave_type_name || "Leave"} · {l.status}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              {ctx?.recentDocuments?.length ? (
+                <div className="grid gap-2">
+                  <Label>Link a document (optional)</Label>
+                  <Select value={linkDocument} onValueChange={setLinkDocument}>
+                    <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                    <SelectContent>
+                      {ctx.recentDocuments.map((d) => (
+                        <SelectItem key={d.id} value={String(d.id)}>
+                          {d.document_ref || `#${d.id}`} · {d.document_type || "Document"}{d.status ? ` · ${d.status}` : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>

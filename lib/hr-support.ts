@@ -456,3 +456,70 @@ export async function getEmployeeEmail(employeeId: number | null | undefined): P
   )
   return rows[0]?.official_email || rows[0]?.personal_email || null
 }
+
+/** Email of a user account (for assignee/agent notifications). */
+export async function getUserEmail(userId: number | null | undefined): Promise<string | null> {
+  if (!userId) return null
+  const rows = await query<{ email: string | null }[]>("SELECT email FROM users WHERE id = ? LIMIT 1", [userId])
+  return rows[0]?.email || null
+}
+
+// ---------------------------------------------------------------------------
+// Related ERP records — Section 18. We never copy the source rows into the
+// ticket; we store only the foreign keys and resolve a light summary on demand
+// so authorised users can jump to the originating module. Every lookup is
+// best-effort: a missing table or row simply yields no card.
+// ---------------------------------------------------------------------------
+
+export type RelatedRecord = {
+  kind: string
+  label: string
+  reference: string
+  sublabel: string | null
+  status: string | null
+  href: string | null
+}
+
+async function safe<T>(sql: string, params: unknown[]): Promise<T[]> {
+  try {
+    return await query<T[]>(sql, params)
+  } catch {
+    return []
+  }
+}
+
+/** Resolve display summaries for whichever related_* ids a ticket carries. */
+export async function getRelatedRecords(ticket: Record<string, any>): Promise<RelatedRecord[]> {
+  const out: RelatedRecord[] = []
+
+  if (ticket.related_attendance_id) {
+    const r = (await safe<any>("SELECT id, attendance_id, work_date, status, working_hours FROM hr_attendance WHERE id = ? LIMIT 1", [ticket.related_attendance_id]))[0]
+    if (r) out.push({ kind: "Attendance", label: "Attendance", reference: r.attendance_id || `#${r.id}`, sublabel: r.work_date ? String(r.work_date).slice(0, 10) : null, status: r.status ?? null, href: "/modules/hr/attendance" })
+  }
+  if (ticket.related_regularisation_id) {
+    const r = (await safe<any>("SELECT id, request_id, work_date, status FROM hr_attendance_regularisation WHERE id = ? LIMIT 1", [ticket.related_regularisation_id]))[0]
+    if (r) out.push({ kind: "Regularisation", label: "Attendance Regularisation", reference: r.request_id || `#${r.id}`, sublabel: r.work_date ? String(r.work_date).slice(0, 10) : null, status: r.status ?? null, href: "/modules/hr/attendance-regularisation" })
+  }
+  if (ticket.related_leave_id) {
+    const r = (await safe<any>(
+      `SELECT lr.id, lr.request_id, lr.from_date, lr.to_date, lr.status, lt.leave_type AS leave_type_name
+       FROM hr_leave_requests lr LEFT JOIN hr_leave_types lt ON lt.leave_type_id = lr.leave_type_id
+       WHERE lr.id = ? LIMIT 1`,
+      [ticket.related_leave_id],
+    ))[0]
+    if (r) out.push({ kind: "Leave", label: r.leave_type_name || "Leave request", reference: r.request_id || `#${r.id}`, sublabel: r.from_date ? `${String(r.from_date).slice(0, 10)} → ${String(r.to_date).slice(0, 10)}` : null, status: r.status ?? null, href: "/modules/hr/leave-requests" })
+  }
+  if (ticket.related_document_id) {
+    const r = (await safe<any>("SELECT id, document_ref, document_type, status, expiry_date FROM hr_employee_documents WHERE id = ? LIMIT 1", [ticket.related_document_id]))[0]
+    if (r) out.push({ kind: "Document", label: r.document_type || "Employee document", reference: r.document_ref || `#${r.id}`, sublabel: r.expiry_date ? `Expires ${String(r.expiry_date).slice(0, 10)}` : null, status: r.status ?? null, href: "/modules/hr/employee-documents" })
+  }
+  if (ticket.related_offboarding_id) {
+    const r = (await safe<any>("SELECT id, offboarding_id, exit_type, status, last_working_date FROM hr_offboarding WHERE id = ? LIMIT 1", [ticket.related_offboarding_id]))[0]
+    if (r) out.push({ kind: "Offboarding", label: r.exit_type ? `${r.exit_type} exit` : "Offboarding", reference: r.offboarding_id || `#${r.id}`, sublabel: r.last_working_date ? `LWD ${String(r.last_working_date).slice(0, 10)}` : null, status: r.status ?? null, href: "/modules/hr/offboarding" })
+  }
+  if (ticket.related_payroll_id) {
+    out.push({ kind: "Payroll", label: "Payroll record", reference: `#${ticket.related_payroll_id}`, sublabel: null, status: null, href: null })
+  }
+
+  return out
+}

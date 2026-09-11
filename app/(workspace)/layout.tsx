@@ -5,7 +5,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink, Megaphone } from "lucide-react"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink, Megaphone, MessageCircle } from "lucide-react"
 
 function settingEnabled(v: string | undefined, fallback = true) {
   if (v == null) return fallback
@@ -41,7 +41,6 @@ const MARKETING_CHILDREN: NavChild[] = [
       { label: "Overview", href: "/modules/marketing/campaigns" },
       { label: "Email", href: "/modules/marketing/campaigns/email" },
       { label: "Social", href: "/modules/marketing/campaigns/social" },
-      { label: "WhatsApp", href: "/modules/marketing/campaigns/whatsapp" },
     ],
   },
   { label: "Website Analytics", href: "/modules/marketing/website-analytics" },
@@ -206,6 +205,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
       return item
     }),
   ]
+
+  // WhatsApp is its own top-level module (not stored in the modules table).
+  // Place it directly below the Messages module when Messages is present,
+  // otherwise append it so it is always reachable.
+  if (!navItems.some((i) => i.href === "/modules/whatsapp")) {
+    const whatsappItem: NavItem = {
+      label: "WhatsApp",
+      href: "/modules/whatsapp",
+      icon: <MessageCircle className="size-4" />,
+    }
+    const messagesIndex = navItems.findIndex((i) => i.href === "/modules/messages")
+    if (messagesIndex >= 0) navItems.splice(messagesIndex + 1, 0, whatsappItem)
+    else navItems.push(whatsappItem)
+  }
 
   // Inject the Marketing module (not stored in the modules table) so the
   // sidebar always exposes it and its sub-pages.

@@ -76,8 +76,8 @@ export function MarketingWhatsAppClient() {
   return (
     <main className="flex flex-col gap-6 p-6">
       <MarketingHeader
-        eyebrow="Marketing Campaigns"
-        title="WhatsApp Campaigns"
+        eyebrow="Messaging"
+        title="WhatsApp"
         description="Integrate your WhatsApp Business account and send template broadcasts and conversations straight from the ERP."
         action={
           connected ? (

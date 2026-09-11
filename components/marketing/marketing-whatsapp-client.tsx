@@ -15,7 +15,7 @@ import {
   Phone,
   BadgeCheck,
   Gauge,
-  Smartphone,
+  KeyRound,
 } from "lucide-react"
 
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
@@ -110,6 +110,24 @@ export function MarketingWhatsAppClient() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Connect actions — Embedded Signup (primary) + manual fallback       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The connect controls shown in the page header. Meta's guided Embedded Signup
+ * is the primary path (coexistence QR onboarding — no credentials to copy);
+ * the manual credential dialog stays available as an advanced fallback.
+ */
+function ConnectActions({ onConnected }: { onConnected: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <WhatsAppEmbeddedSignup onConnected={onConnected} />
+      <IntegrateDialog onConnected={onConnected} label="Enter credentials manually" variant="outline" />
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* Not connected — Zoho-style "Integrate" screen + prerequisites       */
 /* ------------------------------------------------------------------ */
 
@@ -125,11 +143,13 @@ function IntegrateView({ onConnected }: { onConnected: () => void }) {
             <h2 className="text-lg font-semibold tracking-tight">Integrate with a WhatsApp account</h2>
             <p className="mx-auto max-w-md text-sm text-muted-foreground text-pretty">
               Connect a WhatsApp Business account to send WhatsApp campaigns and conversations directly from your
-              marketing workspace.
+              marketing workspace. The guided setup runs Meta&apos;s coexistence onboarding — keep using the
+              WhatsApp Business App on the same number.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <IntegrateDialog onConnected={onConnected} />
+            <WhatsAppEmbeddedSignup onConnected={onConnected} />
+            <IntegrateDialog onConnected={onConnected} label="Enter credentials manually" variant="outline" />
             <a
               href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
               target="_blank"
@@ -285,7 +305,15 @@ function DetailRow({ label, value, mono }: { label: string; value: string; mono?
 /* Integrate dialog — credential form + verification                   */
 /* ------------------------------------------------------------------ */
 
-function IntegrateDialog({ onConnected }: { onConnected: () => void }) {
+function IntegrateDialog({
+  onConnected,
+  label = "Integrate",
+  variant = "default",
+}: {
+  onConnected: () => void
+  label?: string
+  variant?: React.ComponentProps<typeof Button>["variant"]
+}) {
   const [open, setOpen] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [form, setForm] = React.useState({
@@ -328,9 +356,9 @@ function IntegrateDialog({ onConnected }: { onConnected: () => void }) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
-          <Button>
+          <Button variant={variant}>
             <Plug className="size-4" />
-            Integrate
+            {label}
           </Button>
         }
       />

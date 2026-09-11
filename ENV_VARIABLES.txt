@@ -264,22 +264,52 @@ INSTAGRAM_APP_SECRET=your-instagram-app-secret
 # 8. WHATSAPP BUSINESS (Marketing > WhatsApp)  [OPTIONAL]
 # =============================================================================
 # Needed only to connect a WhatsApp Business (Cloud API) number and use the
-# WhatsApp inbox. The WABA ID, Phone Number ID and permanent access token are
-# entered in the app UI (Marketing > WhatsApp > Integrate); the token is stored
-# ENCRYPTED at rest with SETTINGS_ENCRYPTION_KEY (section 1), so make sure that
-# key is set. The variables below power INBOUND delivery (the webhook) and are
-# read from the server environment.
+# WhatsApp inbox. There are TWO ways to connect a number in the app UI
+# (Marketing > WhatsApp):
+#
+#   A) Embedded Signup (recommended, "Connect WhatsApp Business App")
+#      Meta's guided popup runs coexistence onboarding (number selection + QR
+#      scan). The WABA ID, Phone Number ID and access token are obtained
+#      automatically — nothing to copy by hand. Requires the four "Embedded
+#      Signup" variables below.
+#
+#   B) Manual credentials ("Enter credentials manually")
+#      Paste the WABA ID, Phone Number ID and a permanent System User access
+#      token from the Meta app dashboard. Needs NO extra variables here, but
+#      the token must be created by hand in Meta Business Settings.
+#
+# In BOTH cases the access token is stored ENCRYPTED at rest with
+# SETTINGS_ENCRYPTION_KEY (section 1), so make sure that key is set. The
+# variables in this section power Embedded Signup and INBOUND delivery (the
+# webhook), and are read from the server environment.
 
+# ---- Embedded Signup (guided onboarding) ----
+# Public Meta App ID + Embedded Signup configuration id. These are exposed to
+# the browser (NEXT_PUBLIC_) to launch Meta's popup. Create the configuration
+# under your Meta app > WhatsApp > Embedded Signup. If BOTH are unset, the
+# "Connect WhatsApp Business App" button is disabled and only manual
+# credentials work.
+NEXT_PUBLIC_WHATSAPP_APP_ID=your-meta-app-id
+NEXT_PUBLIC_WHATSAPP_ES_CONFIG_ID=your-embedded-signup-config-id
+
+# Server-side app id used to exchange the popup's authorization code for an
+# access token. If unset, the app falls back to NEXT_PUBLIC_WHATSAPP_APP_ID,
+# then META_APP_ID, then FACEBOOK_APP_ID — so if the public id above already
+# matches your Meta app you can omit this.
+# WHATSAPP_APP_ID=your-meta-app-id
+
+# ---- Webhook (inbound messages) ----
 # Token Meta echoes back during the webhook verification handshake. Choose any
 # hard-to-guess string and paste the SAME value into the Meta app dashboard
 # under WhatsApp > Configuration > Webhook > "Verify token".
 WHATSAPP_WEBHOOK_VERIFY_TOKEN=change-me-to-a-long-random-string
 
-# App secret used to verify the signature (X-Hub-Signature-256) on inbound
-# webhook POSTs. Without a valid secret, inbound messages are rejected. If it
-# is unset, the app falls back to META_APP_SECRET, then FACEBOOK_APP_SECRET —
-# so if you already set FACEBOOK_APP_SECRET (section 7) for the SAME Meta app,
-# you can omit this.
+# App secret used BOTH to verify the signature (X-Hub-Signature-256) on inbound
+# webhook POSTs AND to complete the Embedded Signup code exchange. Without a
+# valid secret, inbound messages are rejected and guided onboarding cannot
+# finish. If it is unset, the app falls back to META_APP_SECRET, then
+# FACEBOOK_APP_SECRET — so if you already set FACEBOOK_APP_SECRET (section 7)
+# for the SAME Meta app, you can omit this.
 WHATSAPP_APP_SECRET=your-meta-app-secret
 
 # Optional: pin the Graph API version used for all WhatsApp calls. Defaults to

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import { getDocumentTypes, expiryStatus } from "@/lib/hr-documents"
 
 // Aggregates cross-module records for the 360° employee profile. Linkage
 // differs per table: documents/attendance are keyed by hr_employees.id, while
@@ -19,13 +20,43 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!emp) return NextResponse.json({ error: "Employee not found" }, { status: 404 })
   const name = emp.employee_name
 
+  // Only the current, non-archived version of each document is surfaced on the
+  // profile so the compliance summary reflects the live state (history and
+  // archived docs remain available in the Employee Documents module itself).
   const documents = await safe(() =>
     query<any[]>(
-      `SELECT id, document_type, file_name, status, verified, created_at
-         FROM hr_employee_documents WHERE employee_id = ? ORDER BY created_at DESC LIMIT 25`,
+      `SELECT id, document_ref, document_type, document_number, file_name, file_path,
+              status, verified, issue_date, expiry_date, version, created_at
+         FROM hr_employee_documents
+         WHERE employee_id = ? AND is_current = 1 AND archived_at IS NULL
+         ORDER BY created_at DESC LIMIT 50`,
       [id],
     ),
   )
+
+  // Compliance summary + required-document checklist, both derived from the
+  // hr_document_types master so they stay in sync with HR Master Data.
+  const docTypes = await safe(() => getDocumentTypes())
+  const warnByName = new Map(docTypes.map((t: any) => [t.type_name, t.expiry_warn_days]))
+  const docsWithExpiry = documents.map((d) => ({
+    ...d,
+    expiry_status: expiryStatus(d.expiry_date, warnByName.get(d.document_type)),
+  }))
+  const requiredTypes = docTypes.filter((t: any) => t.is_required === 1)
+  const documentChecklist = requiredTypes.map((t: any) => {
+    const doc = docsWithExpiry.find((d) => d.document_type === t.type_name)
+    return { type: t.type_name, uploaded: !!doc, verified: !!doc && doc.status === "Verified" }
+  })
+  const documentSummary = {
+    total: docsWithExpiry.length,
+    verified: docsWithExpiry.filter((d) => d.status === "Verified").length,
+    pending: docsWithExpiry.filter((d) => d.status === "Pending" || d.status === "Pending Verification").length,
+    rejected: docsWithExpiry.filter((d) => d.status === "Rejected").length,
+    expiringSoon: docsWithExpiry.filter((d) => d.expiry_status === "Expiring Soon").length,
+    expired: docsWithExpiry.filter((d) => d.expiry_status === "Expired").length,
+    requiredTotal: requiredTypes.length,
+    missingRequired: documentChecklist.filter((c) => !c.uploaded).length,
+  }
 
   const attendance = await safe(() =>
     query<any[]>(
@@ -86,7 +117,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     : null
 
   return NextResponse.json({
-    documents,
+    documents: docsWithExpiry,
+    documentSummary,
+    documentChecklist,
     attendance,
     leaves,
     tickets,
@@ -95,7 +128,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     shift,
     reportingManagerName: emp.reporting_manager || null,
     counts: {
-      documents: documents.length,
+      documents: docsWithExpiry.length,
       attendance: attendance.length,
       leaves: leaves.length,
       tickets: tickets.length,

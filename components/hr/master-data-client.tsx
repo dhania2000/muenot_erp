@@ -17,10 +17,12 @@ import {
 import { Award, Download, Mail } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
+import { DocumentTypesManager } from "@/components/hr/document-types-manager"
 
 const sections = {
   departments: { label: "Departments", fields: ["department_id", "department_name", "parent_department_id", "head_employee_id", "description", "status"] },
   designations: { label: "Designations", fields: ["designation_id", "designation_name", "parent_designation_id", "level_name", "description", "status"] },
+  "document-types": { label: "Document Types", fields: [] as string[] },
   promotions: { label: "Promotions", fields: ["employee_id", "effective_date", "old_designation_id", "new_designation_id", "old_department_id", "new_department_id", "old_grade", "new_grade", "old_salary", "new_salary", "reason", "approved_by", "approver_name", "status"] },
   awards: { label: "Awards", fields: ["employee_id", "award_name", "award_date", "given_by", "description", "badge_url", "status"] },
   appreciations: { label: "Appreciations", fields: ["employee_id", "title", "message", "given_by", "appreciation_date", "category", "status"] },
@@ -43,7 +45,10 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
   const [kind, setKind] = useState<Kind>(initialKind)
   const [form, setForm] = useState<Record<string, string>>({})
   const c = sections[kind]
-  const { data, mutate } = useSWR<any>(`/api/hr/master-data?kind=${kind}`, fetcher)
+  // Document Types has its own dedicated master API/UI (boolean flags + expiry
+  // window), so it opts out of the generic single-table CRUD fetch below.
+  const isDocTypes = kind === "document-types"
+  const { data, mutate } = useSWR<any>(isDocTypes ? null : `/api/hr/master-data?kind=${kind}`, fetcher)
 
   const showCert = CERT_KINDS.has(kind)
 
@@ -122,16 +127,22 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
             </Button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          {IMPORT_KIND[kind] && <ImportButton moduleKey={IMPORT_KIND[kind]!} onImported={mutate} />}
-          <ExcelExportButton
-            rows={data?.rows || []}
-            filename={kind}
-            columns={c.fields.map((f) => ({ header: f.replaceAll("_", " "), value: (r: any) => r[f] }))}
-          />
-        </div>
+        {!isDocTypes && (
+          <div className="flex items-center gap-2">
+            {IMPORT_KIND[kind] && <ImportButton moduleKey={IMPORT_KIND[kind]!} onImported={mutate} />}
+            <ExcelExportButton
+              rows={data?.rows || []}
+              filename={kind}
+              columns={c.fields.map((f) => ({ header: f.replaceAll("_", " "), value: (r: any) => r[f] }))}
+            />
+          </div>
+        )}
       </div>
 
+      {isDocTypes && <DocumentTypesManager />}
+
+      {!isDocTypes && (
+      <>
       <section className="rounded-xl border bg-card p-5">
         <div className="grid gap-3 md:grid-cols-3">
           {c.fields.map((f) => (
@@ -211,6 +222,8 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
           </tbody>
         </table>
       </section>
+      </>
+      )}
 
       <Dialog open={!!mail} onOpenChange={(o) => !o && setMail(null)}>
         <DialogContent className="sm:max-w-lg">

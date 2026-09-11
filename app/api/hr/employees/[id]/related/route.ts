@@ -12,7 +12,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const { id } = await params
   const empRows = await query<any[]>(
-    "SELECT id, employee_name, user_id FROM hr_employees WHERE id = ? LIMIT 1",
+    "SELECT id, employee_name, user_id, reporting_manager, shift FROM hr_employees WHERE id = ? LIMIT 1",
     [id],
   )
   const emp = empRows[0]
@@ -51,16 +51,55 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     ),
   )
 
+  // Reporting hierarchy is derived from the existing reporting_manager column,
+  // so no separate manager table is needed. Manager is matched by name; direct
+  // reports are the active employees who report to this person.
+  const managerRows = emp.reporting_manager
+    ? await safe(() =>
+        query<any[]>(
+          `SELECT id, employee_id, employee_name, designation, department, official_email
+             FROM hr_employees WHERE employee_name = ? AND archived_at IS NULL LIMIT 1`,
+          [emp.reporting_manager],
+        ),
+      )
+    : []
+  const manager = managerRows[0] || null
+
+  const directReports = await safe(() =>
+    query<any[]>(
+      `SELECT id, employee_id, employee_name, designation, department, employment_status, official_email
+         FROM hr_employees WHERE reporting_manager = ? AND archived_at IS NULL
+         ORDER BY employee_name ASC LIMIT 100`,
+      [name],
+    ),
+  )
+
+  // Shift assignment: the employee's shift name resolved against the shift master.
+  const shift = emp.shift
+    ? (await safe(() =>
+        query<any[]>(
+          `SELECT shift_id, shift_name, start_time, end_time, break_minutes, working_hours, status
+             FROM hr_shifts WHERE shift_name = ? OR shift_id = ? LIMIT 1`,
+          [emp.shift, emp.shift],
+        ),
+      ))[0] || { shift_name: emp.shift }
+    : null
+
   return NextResponse.json({
     documents,
     attendance,
     leaves,
     tickets,
+    manager,
+    directReports,
+    shift,
+    reportingManagerName: emp.reporting_manager || null,
     counts: {
       documents: documents.length,
       attendance: attendance.length,
       leaves: leaves.length,
       tickets: tickets.length,
+      directReports: directReports.length,
     },
   })
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { getConversation, listMessages } from "@/lib/whatsapp-store"
+import { canAccessConversation, getConversation, inboxScopeFor, listMessages } from "@/lib/whatsapp-store"
 
 const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000
 
@@ -25,6 +25,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const conversation = await getConversation(conversationId)
   if (!conversation) {
     return NextResponse.json({ error: "Conversation not found" }, { status: 404 })
+  }
+
+  const scope = inboxScopeFor(session.role, session.userId)
+  if (!canAccessConversation(conversation, scope)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
   const messages = await listMessages(conversationId)

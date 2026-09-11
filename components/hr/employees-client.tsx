@@ -1,11 +1,27 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetcher } from "@/lib/fetcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -18,7 +34,27 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Users2, ShieldCheck, Pencil, Trash2, ExternalLink } from "lucide-react";
+import {
+  Plus,
+  Search,
+  Users2,
+  ShieldCheck,
+  Pencil,
+  Trash2,
+  ExternalLink,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  Filter,
+  Archive,
+  ArchiveRestore,
+  History,
+  MoreHorizontal,
+  Loader2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { ExcelImportButton } from "@/components/sales/excel-import-button";
 import { ExcelExportButton } from "@/components/excel-export-button";
@@ -298,12 +334,256 @@ function EmployeeDialog({
     </Dialog>
   );
 }
+
+const ALL = "__all__";
+
+type Facets = Record<string, string[]>;
+
+function FacetSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Select value={value || ALL} onValueChange={(v) => onChange(v === ALL ? "" : v)}>
+      <SelectTrigger size="sm" className="w-[150px]">
+        <SelectValue placeholder={label} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>All {label.toLowerCase()}</SelectItem>
+        {options.map((option) => (
+          <SelectItem key={option} value={option}>
+            {option}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function SortHeader({
+  label,
+  column,
+  sort,
+  dir,
+  onSort,
+  className,
+}: {
+  label: string;
+  column: string;
+  sort: string;
+  dir: string;
+  onSort: (column: string) => void;
+  className?: string;
+}) {
+  const active = sort === column;
+  return (
+    <th className={`px-4 py-3 font-medium ${className || ""}`}>
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className="inline-flex items-center gap-1 hover:text-foreground"
+      >
+        {label}
+        {active ? (
+          dir === "asc" ? (
+            <ArrowUp className="size-3.5" />
+          ) : (
+            <ArrowDown className="size-3.5" />
+          )
+        ) : (
+          <ArrowUpDown className="size-3.5 opacity-40" />
+        )}
+      </button>
+    </th>
+  );
+}
+
+function ImportHistoryDialog() {
+  const [open, setOpen] = useState(false);
+  const { data, isLoading } = useSWR<{ runs: any[] }>(open ? "/api/hr/employees/imports" : null, fetcher);
+  const runs = data?.runs || [];
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <Button variant="outline" size="sm">
+            <History className="size-4" /> Import history
+          </Button>
+        }
+      />
+      <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Import history</DialogTitle>
+        </DialogHeader>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : runs.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">No imports yet.</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {runs.map((run) => (
+              <div key={run.id} className="rounded-md border p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium">{run.file_name || "Spreadsheet import"}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {run.created_at ? new Date(run.created_at).toLocaleString() : ""}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Badge variant="secondary">{run.total_rows} rows</Badge>
+                  <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                    {run.imported} imported
+                  </Badge>
+                  {run.skipped > 0 && <Badge variant="outline">{run.skipped} skipped</Badge>}
+                  {run.failed > 0 && <Badge variant="destructive">{run.failed} failed</Badge>}
+                </div>
+                {run.actor_name && (
+                  <p className="mt-2 text-xs text-muted-foreground">by {run.actor_name}</p>
+                )}
+                {Array.isArray(run.errors) && run.errors.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs text-muted-foreground">
+                      {run.errors.length} message(s)
+                    </summary>
+                    <ul className="mt-1 list-inside list-disc text-xs text-muted-foreground">
+                      {run.errors.slice(0, 25).map((message: string, index: number) => (
+                        <li key={index}>{message}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function EmployeesClient() {
-  const { data, mutate } = useSWR<{ employees: any[] }>("/api/hr/employees", fetcher);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [archived, setArchived] = useState<"active" | "archived" | "all">("active");
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [sort, setSort] = useState("created_at");
+  const [dir, setDir] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
+  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [editEmployee, setEditEmployee] = useState<any>(null);
   const [deleteEmployee, setDeleteEmployee] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // Debounce the search box so we don't hit the API on every keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Reset to the first page whenever the query shape changes.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, archived, filters, sort, dir]);
+
+  const queryString = useMemo(() => {
+    const sp = new URLSearchParams();
+    if (debouncedSearch) sp.set("q", debouncedSearch);
+    sp.set("archived", archived);
+    for (const [key, value] of Object.entries(filters)) if (value) sp.set(key, value);
+    sp.set("sort", sort);
+    sp.set("dir", dir);
+    sp.set("page", String(page));
+    sp.set("pageSize", String(pageSize));
+    return sp.toString();
+  }, [debouncedSearch, archived, filters, sort, dir, page]);
+
+  const { data, mutate, isLoading } = useSWR<{
+    employees: any[];
+    total: number;
+    facets: Facets;
+  }>(`/api/hr/employees?${queryString}`, fetcher, { keepPreviousData: true });
+
+  const employees = data?.employees || [];
+  const total = data?.total || 0;
+  const facets = data?.facets || {};
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const activeFilterCount = Object.values(filters).filter(Boolean).length + (debouncedSearch ? 1 : 0);
+
+  function toggleSort(column: string) {
+    if (sort === column) {
+      setDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSort(column);
+      setDir("asc");
+    }
+  }
+
+  function setFilter(key: string, value: string) {
+    setFilters((f) => ({ ...f, [key]: value }));
+  }
+
+  function clearFilters() {
+    setFilters({});
+    setSearch("");
+    setDebouncedSearch("");
+  }
+
+  const pageIds = employees.map((e) => e.id as number);
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+
+  function toggleSelectAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  function toggleSelect(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function runBulk(action: string, value?: string) {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    setBulkBusy(true);
+    const r = await fetch("/api/hr/employees/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, value, ids }),
+    });
+    setBulkBusy(false);
+    if (r.ok) {
+      const d = await r.json();
+      toast.success(`${d.affected} of ${d.requested} employees updated`);
+      setSelected(new Set());
+      setBulkStatus("");
+      mutate();
+    } else {
+      const d = await r.json().catch(() => ({}));
+      toast.error(d.error || "Bulk action failed");
+    }
+  }
+
   async function confirmDelete() {
     if (!deleteEmployee) return;
     setDeleting(true);
@@ -318,11 +598,19 @@ export function EmployeesClient() {
       toast.error(d.error || "Failed to delete employee");
     }
   }
-  const employees = (data?.employees || []).filter((e) =>
-    `${e.employee_id} ${e.employee_name} ${e.department} ${e.designation} ${e.official_email}`
-      .toLowerCase()
-      .includes(search.toLowerCase()),
-  );
+
+  async function archiveOne(employee: any) {
+    const endpoint = employee.archived_at ? "reactivate" : "archive";
+    const r = await fetch(`/api/hr/employees/${employee.id}/${endpoint}`, { method: "POST" });
+    if (r.ok) {
+      toast.success(employee.archived_at ? "Employee reactivated" : "Employee archived");
+      mutate();
+    } else {
+      const d = await r.json().catch(() => ({}));
+      toast.error(d.error || "Action failed");
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6 md:p-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -334,6 +622,7 @@ export function EmployeesClient() {
           <p className="mt-1 text-sm text-muted-foreground">Complete employee master records and workforce details.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ImportHistoryDialog />
           <ExcelExportButton
             rows={employees}
             filename="employees"
@@ -365,40 +654,157 @@ export function EmployeesClient() {
           <EmployeeDialog onSaved={() => mutate()} />
         </div>
       </div>
-      <div className="flex items-center gap-3">
-        <div className="relative max-w-sm flex-1">
+
+      {/* Search + scope */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[220px] flex-1">
           <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
           <Input
             className="pl-9"
-            placeholder="Search employees..."
+            placeholder="Search name, ID, email, mobile, department…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <Badge variant="secondary">{employees.length} employees</Badge>
+        <Select value={archived} onValueChange={(v) => setArchived(v as typeof archived)}>
+          <SelectTrigger size="sm" className="w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="archived">Archived</SelectItem>
+            <SelectItem value="all">All records</SelectItem>
+          </SelectContent>
+        </Select>
+        <Badge variant="secondary">{total} employees</Badge>
       </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Filter className="size-4 text-muted-foreground" />
+        <FacetSelect
+          label="Status"
+          value={filters.status || ""}
+          options={facets.employment_status || []}
+          onChange={(v) => setFilter("status", v)}
+        />
+        <FacetSelect
+          label="Department"
+          value={filters.department || ""}
+          options={facets.department || []}
+          onChange={(v) => setFilter("department", v)}
+        />
+        <FacetSelect
+          label="Designation"
+          value={filters.designation || ""}
+          options={facets.designation || []}
+          onChange={(v) => setFilter("designation", v)}
+        />
+        <FacetSelect
+          label="Type"
+          value={filters.employment_type || ""}
+          options={facets.employment_type || []}
+          onChange={(v) => setFilter("employment_type", v)}
+        />
+        <FacetSelect
+          label="Work mode"
+          value={filters.work_mode || ""}
+          options={facets.work_mode || []}
+          onChange={(v) => setFilter("work_mode", v)}
+        />
+        {activeFilterCount > 0 && (
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            <X className="size-4" /> Clear
+          </Button>
+        )}
+      </div>
+
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/50 px-4 py-3">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <Select
+            value={bulkStatus || ALL}
+            onValueChange={(v) => {
+              if (v === ALL) return;
+              setBulkStatus(v);
+              runBulk("set_status", v);
+            }}
+          >
+            <SelectTrigger size="sm" className="w-[160px]" disabled={bulkBusy}>
+              <SelectValue placeholder="Set status…" />
+            </SelectTrigger>
+            <SelectContent>
+              {(facets.employment_status?.length
+                ? facets.employment_status
+                : ["Active", "On Leave", "Suspended", "Resigned", "Terminated"]
+              ).map((status) => (
+                <SelectItem key={status} value={status}>
+                  {status}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="sm" disabled={bulkBusy} onClick={() => runBulk("archive")}>
+            <Archive className="size-4" /> Archive
+          </Button>
+          <Button variant="outline" size="sm" disabled={bulkBusy} onClick={() => runBulk("reactivate")}>
+            <ArchiveRestore className="size-4" /> Reactivate
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            <X className="size-4" /> Clear selection
+          </Button>
+          {bulkBusy && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+        </div>
+      )}
+
+      {/* Table */}
       <div className="overflow-x-auto rounded-md border bg-card">
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full min-w-[960px] text-sm">
           <thead>
             <tr className="border-b text-left text-muted-foreground">
-              {["Employee", "Contact", "Department", "Employment", "Work", "Status"].map((x) => (
-                <th key={x} className="px-4 py-3 font-medium">
-                  {x}
-                </th>
-              ))}
+              <th className="w-10 px-4 py-3">
+                <Checkbox
+                  checked={allOnPageSelected}
+                  onCheckedChange={toggleSelectAll}
+                  aria-label="Select all on page"
+                />
+              </th>
+              <SortHeader label="Employee" column="name" sort={sort} dir={dir} onSort={toggleSort} />
+              <th className="px-4 py-3 font-medium">Contact</th>
+              <SortHeader label="Department" column="department" sort={sort} dir={dir} onSort={toggleSort} />
+              <SortHeader label="Joined" column="joining_date" sort={sort} dir={dir} onSort={toggleSort} />
+              <th className="px-4 py-3 font-medium">Work</th>
+              <SortHeader
+                label="Status"
+                column="employment_status"
+                sort={sort}
+                dir={dir}
+                onSort={toggleSort}
+              />
               <th className="px-4 py-3 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
             {employees.map((e) => (
-              <tr key={e.id} className="border-b last:border-0">
+              <tr key={e.id} className="border-b last:border-0" data-state={selected.has(e.id) ? "selected" : undefined}>
                 <td className="px-4 py-4">
-                  <Link
-                    href={`/modules/hr/employees/${e.id}`}
-                    className="font-medium text-primary hover:underline"
-                  >
-                    {e.employee_name}
-                  </Link>
+                  <Checkbox
+                    checked={selected.has(e.id)}
+                    onCheckedChange={() => toggleSelect(e.id)}
+                    aria-label={`Select ${e.employee_name}`}
+                  />
+                </td>
+                <td className="px-4 py-4">
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/modules/hr/employees/${e.id}`}
+                      className="font-medium text-primary hover:underline"
+                    >
+                      {e.employee_name}
+                    </Link>
+                    {e.archived_at && <Badge variant="outline">Archived</Badge>}
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     {e.employee_id} · {e.designation || "No designation"}
                   </div>
@@ -412,8 +818,8 @@ export function EmployeesClient() {
                   <div className="text-xs text-muted-foreground">Manager: {e.reporting_manager || "—"}</div>
                 </td>
                 <td className="px-4 py-4">
-                  {e.employment_type || "—"}
-                  <div className="text-xs text-muted-foreground">Joined: {e.joining_date || "—"}</div>
+                  {e.joining_date || "—"}
+                  <div className="text-xs text-muted-foreground">{e.employment_type || "—"}</div>
                 </td>
                 <td className="px-4 py-4">
                   {e.work_mode || "—"}
@@ -432,45 +838,90 @@ export function EmployeesClient() {
                     >
                       <ExternalLink className="size-4" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Manage permissions for ${e.employee_name}`}
-                      render={<Link href={`/modules/hr/employees/${e.id}?tab=permissions`} />}
-                    >
-                      <ShieldCheck className="size-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Edit ${e.employee_name}`}
-                      onClick={() => setEditEmployee(e)}
-                    >
-                      <Pencil className="size-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Delete ${e.employee_name}`}
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => setDeleteEmployee(e)}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button variant="ghost" size="icon" aria-label={`More actions for ${e.employee_name}`}>
+                            <MoreHorizontal className="size-4" />
+                          </Button>
+                        }
+                      />
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>{e.employee_name}</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => setEditEmployee(e)}>
+                          <Pencil className="size-4" /> Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          render={<Link href={`/modules/hr/employees/${e.id}?tab=permissions`} />}
+                        >
+                          <ShieldCheck className="size-4" /> Permissions
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => archiveOne(e)}>
+                          {e.archived_at ? (
+                            <>
+                              <ArchiveRestore className="size-4" /> Reactivate
+                            </>
+                          ) : (
+                            <>
+                              <Archive className="size-4" /> Archive
+                            </>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => setDeleteEmployee(e)}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="size-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </td>
               </tr>
             ))}
             {employees.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
-                  No employees found.
+                <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
+                  {isLoading ? "Loading employees…" : "No employees found."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {total === 0
+            ? "No results"
+            : `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}`}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            <ChevronLeft className="size-4" /> Prev
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Next <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      </div>
+
       {editEmployee && (
         <EmployeeDialog
           employee={editEmployee}
@@ -489,7 +940,7 @@ export function EmployeesClient() {
             <AlertDialogTitle>Delete employee?</AlertDialogTitle>
             <AlertDialogDescription>
               This will permanently remove {deleteEmployee?.employee_name} ({deleteEmployee?.employee_id}) and their
-              master record. This action cannot be undone.
+              master record. This action cannot be undone. Consider archiving instead to keep the record.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

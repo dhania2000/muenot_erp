@@ -209,6 +209,31 @@ async function publishFacebook(account: SocialAccountRow, post: { content: strin
 
 /* ------------------------------- Instagram ------------------------------ */
 
+/**
+ * Polls an Instagram media container until it finishes processing. Instagram
+ * downloads and processes the image asynchronously, so publishing right after
+ * creating the container fails with code 9007 ("Media is not ready"). We check
+ * status_code every couple of seconds and only return once it is FINISHED.
+ */
+async function waitForContainerReady(creationId: string, token: string) {
+  const maxAttempts = 15 // ~30s total
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const res = await fetch(
+      `https://graph.instagram.com/${GRAPH_VERSION}/${creationId}?fields=status_code,status&access_token=${encodeURIComponent(token)}`,
+    )
+    const json = await res.json().catch(() => ({}))
+    const status = json.status_code as string | undefined
+
+    if (status === "FINISHED") return
+    if (status === "ERROR" || status === "EXPIRED") {
+      throw new Error(`Instagram media processing failed: ${JSON.stringify(json)}`)
+    }
+    // IN_PROGRESS (or unknown) — wait and retry
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  throw new Error("Instagram media is still processing after 30s. Please try publishing again in a moment.")
+}
+
 async function publishInstagram(account: SocialAccountRow, post: { content: string; image?: string | null }) {
   // Instagram API with Instagram Login publishes through graph.instagram.com,
   // NOT the Facebook Graph. The id is the Instagram user id resolved at connect.
@@ -230,7 +255,14 @@ async function publishInstagram(account: SocialAccountRow, post: { content: stri
   const createJson = await createRes.json().catch(() => ({}))
   if (!createRes.ok) throw new Error(`Instagram container failed: ${JSON.stringify(createJson)}`)
 
-  // 2. publish the container
+  const creationId = createJson.id as string
+
+  // 2. wait for Instagram to finish processing the container before publishing.
+  // Publishing too early returns code 9007 ("Media is not ready"), so poll the
+  // container's status_code until it reports FINISHED (or fails / times out).
+  await waitForContainerReady(creationId, token)
+
+  // 3. publish the container
   const publishRes = await fetch(`https://graph.instagram.com/${GRAPH_VERSION}/${igId}/media_publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

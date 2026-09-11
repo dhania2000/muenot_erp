@@ -19,6 +19,7 @@ import { nextRecordId } from "@/lib/record-ids"
 export type LeaveType = {
   id: number
   leave_type_id: string
+  leave_code: string | null
   leave_type: string
   annual_quota: number
   carry_forward: number
@@ -260,6 +261,39 @@ export async function ensureLeaveSchema() {
   await addColumn("hr_leave_types", "allow_negative", "TINYINT(1) NOT NULL DEFAULT 0")
   await addColumn("hr_leave_types", "low_balance_threshold", "DECIMAL(8,2) NOT NULL DEFAULT 0")
 
+  // --- Short unique leave code (CL/SL/EL...) + effective-dated policy window ---
+  await addColumn("hr_leave_types", "leave_code", "VARCHAR(20) DEFAULT NULL")
+  await addColumn("hr_leave_types", "effective_from", "DATE DEFAULT NULL")
+  await addColumn("hr_leave_types", "effective_until", "DATE DEFAULT NULL")
+  // Enforce code uniqueness at the database level (nullable codes are allowed to repeat NULLs).
+  try {
+    const idx = await query<any[]>(
+      `SELECT 1 FROM information_schema.statistics
+       WHERE table_schema = DATABASE() AND table_name = 'hr_leave_types' AND index_name = 'uq_hr_leave_code' LIMIT 1`,
+    )
+    if (!idx.length) await query("ALTER TABLE hr_leave_types ADD UNIQUE KEY uq_hr_leave_code (leave_code)")
+  } catch (error) {
+    console.log("[v0] leave.code index skipped", (error as Error).message)
+  }
+
+  // Policy-change audit trail (no shared audit framework exists in this ERP).
+  await query(
+    `CREATE TABLE IF NOT EXISTS hr_leave_type_audit (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      leave_type_id VARCHAR(40) NOT NULL,
+      action VARCHAR(40) NOT NULL,
+      field VARCHAR(60) DEFAULT NULL,
+      old_value VARCHAR(500) DEFAULT NULL,
+      new_value VARCHAR(500) DEFAULT NULL,
+      reason VARCHAR(500) DEFAULT NULL,
+      actor_id BIGINT DEFAULT NULL,
+      actor_name VARCHAR(150) DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_leave_type_audit_type (leave_type_id),
+      INDEX idx_leave_type_audit_time (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+
   // --- Leave balance ledger columns: carry-forward + expiry/lapse ---
   await addColumn("hr_leave_balances", "carry_forward", "DECIMAL(8,2) NOT NULL DEFAULT 0")
   await addColumn("hr_leave_balances", "expired", "DECIMAL(8,2) NOT NULL DEFAULT 0")
@@ -322,12 +356,13 @@ export async function ensureLeaveSchema() {
 // Leave types + resolver
 // ---------------------------------------------------------------------------
 
-const TYPE_SELECT = `SELECT id, leave_type_id, leave_type, annual_quota, carry_forward, max_consecutive_days,
+const TYPE_SELECT = `SELECT id, leave_type_id, leave_code, leave_type, annual_quota, carry_forward, max_consecutive_days,
   requires_document, paid, status, description,
   allow_half_day, min_days_per_request, max_days_per_request, advance_notice_days,
   allow_backdated, backdated_limit_days, applicable_gender, applicable_employment_type,
   count_weekends, count_holidays, max_requests_per_year,
-  accrual_method, prorate_on_join, allow_negative, low_balance_threshold
+  accrual_method, prorate_on_join, allow_negative, low_balance_threshold,
+  effective_from, effective_until
   FROM hr_leave_types`
 
 export async function listLeaveTypes(activeOnly = false): Promise<LeaveType[]> {
@@ -346,6 +381,146 @@ export async function resolveLeaveType(identifier: string | number | null | unde
     [raw, raw],
   )
   return rows[0] ?? null
+}
+
+/** Look up a single type by its business id (LT-0001) only. */
+export async function getLeaveTypeByBusinessId(leaveTypeId: string): Promise<LeaveType | null> {
+  await ensureLeaveSchema()
+  const rows = await query<LeaveType[]>(`${TYPE_SELECT} WHERE leave_type_id = ? LIMIT 1`, [leaveTypeId])
+  return rows[0] ?? null
+}
+
+export type LeaveTypeAuditEntry = {
+  action: string
+  field?: string | null
+  oldValue?: string | number | null
+  newValue?: string | number | null
+  reason?: string | null
+}
+
+/** Append policy-change rows to the leave-type audit trail. Never throws. */
+export async function recordLeaveTypeAudit(
+  leaveTypeId: string,
+  entries: LeaveTypeAuditEntry[],
+  actor?: { id?: number | null; name?: string | null },
+) {
+  if (!entries.length) return
+  try {
+    await ensureLeaveSchema()
+    for (const e of entries) {
+      await query(
+        `INSERT INTO hr_leave_type_audit
+          (leave_type_id, action, field, old_value, new_value, reason, actor_id, actor_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          leaveTypeId,
+          e.action,
+          e.field ?? null,
+          e.oldValue === null || e.oldValue === undefined ? null : String(e.oldValue).slice(0, 500),
+          e.newValue === null || e.newValue === undefined ? null : String(e.newValue).slice(0, 500),
+          e.reason ?? null,
+          actor?.id ?? null,
+          actor?.name ?? null,
+        ],
+      )
+    }
+  } catch (error) {
+    console.log("[v0] leave.audit skipped", (error as Error).message)
+  }
+}
+
+export async function listLeaveTypeAudit(leaveTypeId: string, limit = 50) {
+  await ensureLeaveSchema()
+  return query<any[]>(
+    `SELECT action, field, old_value, new_value, reason, actor_name, created_at
+     FROM hr_leave_type_audit WHERE leave_type_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+    [leaveTypeId, limit],
+  )
+}
+
+export type LeaveTypeUsage = {
+  eligibleEmployees: number
+  employeesUsing: number
+  requestsThisYear: number
+  approvedRequests: number
+  pendingRequests: number
+  daysTaken: number
+  daysPending: number
+  totalAllocated: number
+  totalAvailable: number
+}
+
+/**
+ * Aggregate real usage for a leave type in a given year, joined on the numeric
+ * primary key (balances/requests store the numeric id in leave_type_id).
+ */
+export async function getLeaveTypeUsage(type: LeaveType, year: number): Promise<LeaveTypeUsage> {
+  await ensureLeaveSchema()
+  const numericId = String(type.id)
+  const codeId = type.leave_type_id
+
+  const [balAgg] = await query<any[]>(
+    `SELECT
+        COUNT(*) AS rows_count,
+        SUM(CASE WHEN used > 0 THEN 1 ELSE 0 END) AS using_count,
+        COALESCE(SUM(opening + accrued + carry_forward + adjusted), 0) AS allocated,
+        COALESCE(SUM(available), 0) AS available
+     FROM hr_leave_balances
+     WHERE \`year\` = ? AND (leave_type_id = ? OR leave_type_id = ?)`,
+    [year, numericId, codeId],
+  )
+
+  const [reqAgg] = await query<any[]>(
+    `SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'Approved' THEN 1 ELSE 0 END) AS approved,
+        SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) AS pending,
+        COALESCE(SUM(CASE WHEN status = 'Approved' THEN days ELSE 0 END), 0) AS days_taken,
+        COALESCE(SUM(CASE WHEN status = 'Pending' THEN days ELSE 0 END), 0) AS days_pending
+     FROM hr_leave_requests
+     WHERE YEAR(from_date) = ? AND (leave_type_id = ? OR leave_type_id = ?)`,
+    [year, numericId, codeId],
+  )
+
+  const [eligible] = await query<any[]>(
+    `SELECT COUNT(*) AS c FROM employees
+     WHERE (status IS NULL OR status = 'Active')
+       ${type.applicable_gender ? "AND (gender = ? OR gender IS NULL)" : ""}
+       ${type.applicable_employment_type ? "AND (employment_type = ? OR employment_type IS NULL)" : ""}`,
+    [
+      ...(type.applicable_gender ? [type.applicable_gender] : []),
+      ...(type.applicable_employment_type ? [type.applicable_employment_type] : []),
+    ],
+  ).catch(() => [{ c: 0 }])
+
+  return {
+    eligibleEmployees: Number(eligible?.c) || 0,
+    employeesUsing: Number(balAgg?.using_count) || 0,
+    requestsThisYear: Number(reqAgg?.total) || 0,
+    approvedRequests: Number(reqAgg?.approved) || 0,
+    pendingRequests: Number(reqAgg?.pending) || 0,
+    daysTaken: Number(reqAgg?.days_taken) || 0,
+    daysPending: Number(reqAgg?.days_pending) || 0,
+    totalAllocated: Number(balAgg?.allocated) || 0,
+    totalAvailable: Number(balAgg?.available) || 0,
+  }
+}
+
+/** True when the type is referenced by any balance or request row. */
+export async function leaveTypeInUse(type: LeaveType): Promise<boolean> {
+  await ensureLeaveSchema()
+  const numericId = String(type.id)
+  const codeId = type.leave_type_id
+  const [b] = await query<any[]>(
+    `SELECT 1 AS x FROM hr_leave_requests WHERE leave_type_id = ? OR leave_type_id = ? LIMIT 1`,
+    [numericId, codeId],
+  )
+  if (b) return true
+  const [c] = await query<any[]>(
+    `SELECT 1 AS x FROM hr_leave_balances WHERE (leave_type_id = ? OR leave_type_id = ?) AND (used > 0 OR pending > 0) LIMIT 1`,
+    [numericId, codeId],
+  )
+  return Boolean(c)
 }
 
 // ---------------------------------------------------------------------------

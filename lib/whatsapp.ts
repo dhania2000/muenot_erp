@@ -183,6 +183,49 @@ export async function deleteWhatsAppIntegration(id: number) {
   await query("DELETE FROM `marketing_whatsapp_integration` WHERE id = ?", [id])
 }
 
+export type RegisterResult = {
+  ok: boolean
+  error?: string
+}
+
+/**
+ * Registers the connected phone number with the WhatsApp Cloud API. Meta
+ * requires this one-time call before a number can send or receive messages via
+ * Cloud API — until it succeeds every send fails with `(#133010) Account not
+ * registered`. The `pin` is the number's 6-digit two-step verification PIN; on
+ * a brand-new number this call also sets that PIN.
+ */
+export async function registerWhatsAppNumber(input: {
+  integration: WhatsAppIntegrationRow
+  pin: string
+}): Promise<RegisterResult> {
+  const token = decryptToken(input.integration.access_token)
+  if (!token) return { ok: false, error: "Stored access token could not be read." }
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(input.integration.phone_number_id)}/register`
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ messaging_product: "whatsapp", pin: input.pin }),
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      success?: boolean
+      error?: { message?: string }
+    }
+    if (!res.ok || data.error) {
+      return { ok: false, error: data.error?.message || `Graph API returned ${res.status}` }
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
 export type SendResult = {
   ok: boolean
   messageId?: string
@@ -221,10 +264,10 @@ export async function sendWhatsAppText(input: {
     })
     const data = (await res.json().catch(() => ({}))) as {
       messages?: { id: string }[]
-      error?: { message?: string }
+      error?: { message?: string; code?: number }
     }
     if (!res.ok || data.error) {
-      return { ok: false, error: data.error?.message || `Graph API returned ${res.status}` }
+      return { ok: false, error: describeSendError(data.error, res.status) }
     }
     return { ok: true, messageId: data.messages?.[0]?.id }
   } catch (err) {
@@ -268,13 +311,29 @@ export async function sendWhatsAppTemplate(input: {
     })
     const data = (await res.json().catch(() => ({}))) as {
       messages?: { id: string }[]
-      error?: { message?: string }
+      error?: { message?: string; code?: number }
     }
     if (!res.ok || data.error) {
-      return { ok: false, error: data.error?.message || `Graph API returned ${res.status}` }
+      return { ok: false, error: describeSendError(data.error, res.status) }
     }
     return { ok: true, messageId: data.messages?.[0]?.id }
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   }
+}
+
+/**
+ * Turns a Graph API send error into a human-friendly message, adding a hint for
+ * the common `(#133010) Account not registered` case that points the user at
+ * the one-time registration step.
+ */
+function describeSendError(
+  error: { message?: string; code?: number } | undefined,
+  status: number,
+): string {
+  const base = error?.message || `Graph API returned ${status}`
+  if (error?.code === 133010) {
+    return `${base}. This number hasn't been registered with the WhatsApp Cloud API yet — use "Register number" and enter its 6-digit PIN, then try again.`
+  }
+  return base
 }

@@ -15,6 +15,7 @@ import {
   Phone,
   BadgeCheck,
   Gauge,
+  KeyRound,
 } from "lucide-react"
 
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
@@ -234,11 +235,19 @@ function ConnectedView({
           <Separator />
           <div className="flex flex-wrap items-center gap-3">
             <SendTestDialog integration={integration} />
+            <RegisterNumberDialog />
             <Button variant="outline" onClick={disconnect} disabled={disconnecting}>
               {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
               Disconnect
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Seeing{" "}
+            <span className="font-mono">(#133010) Account not registered</span> when sending? This
+            number hasn&apos;t been registered with the WhatsApp Cloud API yet. Click{" "}
+            <span className="font-medium">Register number</span> and enter its 6-digit PIN to enable
+            sending.
+          </p>
         </CardContent>
       </Card>
     </div>
@@ -385,6 +394,89 @@ function Field({
       </Label>
       <Input id={id} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Register number dialog — one-time Cloud API registration            */
+/* ------------------------------------------------------------------ */
+
+function RegisterNumberDialog() {
+  const [open, setOpen] = React.useState(false)
+  const [registering, setRegistering] = React.useState(false)
+  const [pin, setPin] = React.useState("")
+
+  async function register() {
+    const clean = pin.trim().replace(/[^\d]/g, "")
+    if (clean.length !== 6) {
+      toast.error("Enter the 6-digit PIN for this number.")
+      return
+    }
+    setRegistering(true)
+    try {
+      const res = await fetch("/api/marketing/whatsapp/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: clean }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error || "Failed to register number")
+      toast.success("Number registered with the WhatsApp Cloud API")
+      setPin("")
+      setOpen(false)
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setRegistering(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <Button variant="outline">
+            <KeyRound className="size-4" />
+            Register number
+          </Button>
+        }
+      />
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Register number with Cloud API</DialogTitle>
+          <DialogDescription>
+            Meta requires a one-time registration before this number can send messages. Enter its
+            6-digit two-step verification PIN. For a brand-new number, this sets the PIN.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-1">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="wa-pin" className="text-xs text-muted-foreground">
+              6-digit PIN
+            </Label>
+            <Input
+              id="wa-pin"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="e.g. 123456"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/[^\d]/g, "").slice(0, 6))}
+              className="font-mono tracking-widest"
+            />
+            <p className="text-xs text-muted-foreground">
+              This is the WhatsApp two-step verification PIN, not your Meta password.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline">Cancel</Button>} />
+          <Button onClick={register} disabled={registering}>
+            {registering ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+            Register
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

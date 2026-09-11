@@ -37,6 +37,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { fetcher } from "@/lib/fetcher"
+import { WhatsAppInbox } from "@/components/marketing/whatsapp-inbox"
+import { WhatsAppWebhookSetup } from "@/components/marketing/whatsapp-webhook-setup"
 
 /* ------------------------------------------------------------------ */
 /* Types (mirror the API shapes)                                       */
@@ -250,6 +252,19 @@ function ConnectedView({
           </p>
         </CardContent>
       </Card>
+
+      <WhatsAppWebhookSetup />
+
+      <div className="flex flex-col gap-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold tracking-tight">Inbox</h2>
+          <p className="text-sm text-muted-foreground text-pretty">
+            Reply to customers within the 24-hour service window, send approved templates to re-open a
+            conversation, and link chats to CRM leads.
+          </p>
+        </div>
+        <WhatsAppInbox />
+      </div>
     </div>
   )
 }
@@ -445,8 +460,9 @@ function RegisterNumberDialog() {
         <DialogHeader>
           <DialogTitle>Register number with Cloud API</DialogTitle>
           <DialogDescription>
-            Meta requires a one-time registration before this number can send messages. Enter its
-            6-digit two-step verification PIN. For a brand-new number, this sets the PIN.
+              Meta requires a one-time registration before this number can send or receive messages
+              through the Cloud API. Enter the number&apos;s 6-digit two-step verification PIN. If two-step
+              verification is already enabled, use that same PIN; if it isn&apos;t, this sets a new one.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-1">
@@ -464,7 +480,8 @@ function RegisterNumberDialog() {
               className="font-mono tracking-widest"
             />
             <p className="text-xs text-muted-foreground">
-              This is the WhatsApp two-step verification PIN, not your Meta password.
+                This is the number&apos;s WhatsApp two-step verification PIN — not your Meta account
+                password. We never store it.
             </p>
           </div>
         </div>

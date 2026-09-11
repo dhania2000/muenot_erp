@@ -1,5 +1,7 @@
-import { MarketingWhatsAppClient } from "@/components/marketing/marketing-whatsapp-client"
+import { redirect } from "next/navigation"
 
-export default function WhatsAppCampaignsPage() {
-  return <MarketingWhatsAppClient />
+// WhatsApp is now its own top-level module. Keep this old campaigns URL working
+// by redirecting anyone who lands here to the new location.
+export default function WhatsAppCampaignsRedirect() {
+  redirect("/modules/whatsapp")
 }

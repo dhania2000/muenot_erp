@@ -15,7 +15,7 @@ import {
   Phone,
   BadgeCheck,
   Gauge,
-  KeyRound,
+  Smartphone,
 } from "lucide-react"
 
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
@@ -39,6 +39,7 @@ import {
 import { fetcher } from "@/lib/fetcher"
 import { WhatsAppInbox } from "@/components/marketing/whatsapp-inbox"
 import { WhatsAppWebhookSetup } from "@/components/marketing/whatsapp-webhook-setup"
+import { WhatsAppEmbeddedSignup } from "@/components/marketing/whatsapp-embedded-signup"
 
 /* ------------------------------------------------------------------ */
 /* Types (mirror the API shapes)                                       */
@@ -52,6 +53,8 @@ type Integration = {
   verifiedName: string | null
   businessName: string | null
   qualityRating: string | null
+  platformType: string | null
+  coexistence: boolean
   connectedAt: string
 }
 
@@ -61,9 +64,9 @@ type StatusResponse = {
 }
 
 const PREREQUISITES: string[] = [
-  "You need a WhatsApp Business Account (WABA) and a dedicated phone number registered on it to use the WhatsApp Business API.",
-  "You need a Meta (Facebook) developer app with the WhatsApp product added, linked to your business email.",
-  "You need a permanent System User access token with the whatsapp_business_messaging and whatsapp_business_management permissions.",
+  "Keep using the WhatsApp Business App on the number you want to connect — coexistence onboarding preserves that number, its chats and its app; it never replaces or deregisters it.",
+  "Have the phone with the WhatsApp Business App handy: you will scan a QR code from within the app (Settings → Linked devices) to finish connecting.",
+  "Sign in with the Meta (Facebook) account that manages, or can create, the WhatsApp Business Account for this number when the guided popup asks.",
 ]
 
 export function MarketingWhatsAppClient() {
@@ -85,7 +88,7 @@ export function MarketingWhatsAppClient() {
           connected ? (
             <SendTestDialog integration={integration!} />
           ) : (
-            <IntegrateDialog onConnected={() => mutate()} />
+            <ConnectActions onConnected={() => mutate()} />
           )
         }
       />

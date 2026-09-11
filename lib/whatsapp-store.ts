@@ -392,6 +392,66 @@ export async function recordOutboundMessage(input: OutboundMessageInput): Promis
   return result.insertId
 }
 
+export type EchoMessageInput = {
+  conversationId: number
+  wamid: string
+  messageType: string
+  body: string | null
+  mediaId?: string | null
+  mediaMimeType?: string | null
+  mediaFilename?: string | null
+  senderPhone: string | null
+  recipientPhone: string
+  metaTimestamp: Date
+}
+
+/**
+ * Records a coexistence echo: a message the business owner sent to a customer
+ * from the WhatsApp Business App (Meta mirrors it on `smb_message_echoes`).
+ *
+ * It is stored as an OUTBOUND message so it lines up with replies sent from the
+ * ERP. Insertion is idempotent on `wamid` (INSERT IGNORE), so Meta's retries —
+ * and any overlap with a message we sent ourselves via the API — never create
+ * duplicates. Unlike an inbound message it does NOT bump the unread counter.
+ * Returns false when the echo was already stored.
+ */
+export async function recordEchoMessage(input: EchoMessageInput): Promise<boolean> {
+  await ensureWhatsAppMessagingTables()
+  const ts = input.metaTimestamp
+  const tsSql = ts.toISOString().slice(0, 19).replace("T", " ")
+  const rank = STATUS_RANK.sent
+
+  const result = await query<{ affectedRows: number }>(
+    `INSERT IGNORE INTO \`marketing_whatsapp_messages\`
+      (conversation_id, wamid, direction, message_type, message_body, media_id, media_mime_type,
+       media_filename, sender_phone, recipient_phone, status, status_rank, meta_timestamp, sent_at)
+     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?)`,
+    [
+      input.conversationId,
+      input.wamid,
+      input.messageType,
+      input.body,
+      input.mediaId ?? null,
+      input.mediaMimeType ?? null,
+      input.mediaFilename ?? null,
+      input.senderPhone,
+      input.recipientPhone,
+      rank,
+      tsSql,
+      tsSql,
+    ],
+  )
+  if (!result.affectedRows) return false // duplicate wamid
+
+  await query(
+    `UPDATE \`marketing_whatsapp_conversations\`
+       SET last_message_at = ?, last_message_preview = ?, status = 'open'
+     WHERE id = ?`,
+    [tsSql, preview(input.messageType, input.body), input.conversationId],
+  )
+  return true
+}
+
 /**
  * Applies a status webhook to an outbound message, honouring status ranking so
  * out-of-order events never move a message backwards.

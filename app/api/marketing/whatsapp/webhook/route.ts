@@ -8,6 +8,7 @@ import {
   findOrCreateContact,
   findOrCreateConversation,
   recordInboundMessage,
+  recordEchoMessage,
   updateMessageStatusByWamid,
   logWebhookEvent,
   normalizePhone,
@@ -54,6 +55,8 @@ export async function GET(request: Request) {
 
 type MetaMessage = {
   from?: string
+  /** Present on coexistence echoes: the customer the business messaged. */
+  to?: string
   id?: string
   timestamp?: string
   type?: string
@@ -88,6 +91,8 @@ type MetaValue = {
   contacts?: { profile?: { name?: string }; wa_id?: string }[]
   messages?: MetaMessage[]
   statuses?: MetaStatus[]
+  /** Coexistence echoes of messages sent from the WhatsApp Business App. */
+  message_echoes?: MetaMessage[]
 }
 
 type MetaWebhookBody = {
@@ -195,7 +200,10 @@ async function processWebhook(body: MetaWebhookBody) {
   for (const entry of body.entry ?? []) {
     const wabaId = entry.id ?? null
     for (const change of entry.changes ?? []) {
-      if (change.field !== "messages") continue
+      // `messages` carries inbound messages + outbound status updates.
+      // `smb_message_echoes` carries echoes of messages the business owner sent
+      // from the WhatsApp Business App (coexistence). Anything else is ignored.
+      if (change.field !== "messages" && change.field !== "smb_message_echoes") continue
       const value = change.value
       if (!value) continue
 
@@ -204,11 +212,64 @@ async function processWebhook(body: MetaWebhookBody) {
       // Confirm the event targets the number we actually have connected.
       if (integration && phoneNumberId && phoneNumberId !== integration.phone_number_id) {
         await logWebhookEvent({
-          eventType: "messages.foreign",
+          eventType: `${change.field}.foreign`,
           phoneNumberId,
           dedupKey: `foreign:${phoneNumberId}:${Date.now()}`,
           processingStatus: "skipped",
         })
+        continue
+      }
+
+      /* ----- coexistence echoes (WhatsApp Business App → customer) ----- */
+      if (change.field === "smb_message_echoes") {
+        const businessPhone = value.metadata?.display_phone_number
+          ? normalizePhone(value.metadata.display_phone_number)
+          : integration?.display_phone_number
+            ? normalizePhone(integration.display_phone_number)
+            : null
+        for (const m of value.message_echoes ?? []) {
+          // Echoes are outbound: `to` is the customer we need to thread on.
+          if (!m.id || !m.to) continue
+          const dedupKey = `echo:${m.id}`
+          try {
+            const customerPhone = normalizePhone(m.to)
+            const contact = await findOrCreateContact({ phone: customerPhone })
+            const conversation = await findOrCreateConversation({
+              contactId: contact.id,
+              phoneNumberId: phoneNumberId ?? integration?.phone_number_id ?? "",
+              wabaId,
+            })
+            const parsed = extractInbound(m)
+            const created = await recordEchoMessage({
+              conversationId: conversation.id,
+              wamid: m.id,
+              messageType: parsed.type,
+              body: parsed.body,
+              mediaId: parsed.mediaId,
+              mediaMimeType: parsed.mediaMime,
+              mediaFilename: parsed.mediaFilename,
+              senderPhone: businessPhone,
+              recipientPhone: customerPhone,
+              metaTimestamp: tsToDate(m.timestamp),
+            })
+            await logWebhookEvent({
+              eventType: `echo.${parsed.type}`,
+              wamid: m.id,
+              phoneNumberId,
+              dedupKey,
+              processingStatus: created ? "processed" : "skipped",
+            })
+          } catch (err) {
+            await logWebhookEvent({
+              eventType: "echo.error",
+              wamid: m.id,
+              phoneNumberId,
+              dedupKey,
+              processingStatus: "error",
+              error: (err as Error).message,
+            })
+          }
+        }
         continue
       }
 

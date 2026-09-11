@@ -2,12 +2,72 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession, type SessionPayload } from "@/lib/auth"
 import { getSetting } from "@/lib/settings/server"
+import {
+  ensureAttendanceSchema,
+  getEmployeeById,
+  resolveShiftForEmployee,
+  resolveDayContext,
+  computeAttendanceMetrics,
+  clockInEligibility,
+  type AttendanceMetrics,
+  type DayContext,
+} from "@/lib/hr-attendance"
 
 const DEFAULT_TIME_ZONE = "Asia/Kolkata"
 
 /** Configured company timezone, falling back to IST. */
 async function getTimeZone(): Promise<string> {
   return (await getSetting("app.timezone")) || DEFAULT_TIME_ZONE
+}
+
+/**
+ * Whether the attendance calculation columns (flags/day_type/etc.) are present.
+ * ensureAttendanceSchema() adds them lazily; we detect once so enrichment is
+ * skipped gracefully on databases where the ALTER could not be applied.
+ */
+let calcColumnsReady: boolean | null = null
+async function hasCalcColumns(): Promise<boolean> {
+  if (calcColumnsReady !== null) return calcColumnsReady
+  try {
+    await ensureAttendanceSchema()
+    const rows = await query<{ Field: string }[]>("SHOW COLUMNS FROM hr_attendance LIKE 'flags'")
+    calcColumnsReady = rows.length > 0
+  } catch {
+    calcColumnsReady = false
+  }
+  return calcColumnsReady
+}
+
+/** Resolve shift + day context (leave/holiday/weekly-off) for enrichment. */
+async function loadDayContext(employeeId: number, workDate: string) {
+  const employee = await getEmployeeById(employeeId)
+  const shift = employee ? await resolveShiftForEmployee(employee, workDate) : null
+  const dayContext = await resolveDayContext(employeeId, workDate, shift)
+  return { employee, shift, dayContext }
+}
+
+/** SET fragments + params applying computed metrics to the calc columns. */
+function enrichmentSets(metrics: AttendanceMetrics, dayContext: DayContext): { sets: string[]; params: unknown[] } {
+  return {
+    sets: [
+      "status = ?",
+      "late_minutes = ?",
+      "early_leaving_minutes = ?",
+      "overtime_hours = ?",
+      "flags = ?",
+      "day_type = ?",
+      "leave_request_id = COALESCE(?, leave_request_id)",
+    ],
+    params: [
+      metrics.status,
+      metrics.lateMinutes,
+      metrics.earlyLeavingMinutes,
+      metrics.overtimeHours,
+      metrics.flags.join(","),
+      dayContext.dayType,
+      dayContext.leaveRequestId,
+    ],
+  }
 }
 
 type EmployeeRow = { id: number; employee_name: string }
@@ -269,11 +329,27 @@ export async function POST(request: Request) {
     const now = nowDateTime(timeZone)
     const withLocation = await hasLocationColumns()
 
+    const workDate = today(timeZone)
+    const withCalc = await hasCalcColumns()
+
     // First punch of the day → create the row and open a session (clock in).
     if (!record) {
-      const attendanceId = `ATT-${employee.id}-${today(timeZone).replace(/-/g, "")}`
+      // Enforce lifecycle + full-day leave rules before opening a session.
+      const { employee: full, shift, dayContext } = await loadDayContext(employee.id, workDate)
+      if (full) {
+        const eligibility = clockInEligibility(full, workDate)
+        if (!eligibility.allowed) {
+          return NextResponse.json({ error: eligibility.reason || "You cannot clock in today." }, { status: 400 })
+        }
+      }
+      if (dayContext.onLeave && !dayContext.halfDayLeave) {
+        return NextResponse.json({ error: "You are on approved leave today and cannot clock in." }, { status: 400 })
+      }
+      const metrics = computeAttendanceMetrics({ shift, clockIn: now, clockOut: null, dayContext, sessionOpen: true })
+
+      const attendanceId = `ATT-${employee.id}-${workDate.replace(/-/g, "")}`
       const cols = ["attendance_id", "employee_id", "employee_name", "work_date", "clock_in", "status", "source"]
-      const vals: unknown[] = [attendanceId, employee.id, employee.employee_name, today(timeZone), now, "Present", "Portal"]
+      const vals: unknown[] = [attendanceId, employee.id, employee.employee_name, workDate, now, metrics.status, "Portal"]
       if (withSession) {
         cols.splice(5, 0, "active_since")
         vals.splice(5, 0, now)
@@ -282,11 +358,15 @@ export async function POST(request: Request) {
         cols.push("location", "latitude", "longitude")
         vals.push(location, latitude, longitude)
       }
+      if (withCalc) {
+        cols.push("late_minutes", "flags", "day_type", "leave_request_id")
+        vals.push(metrics.lateMinutes, metrics.flags.join(","), dayContext.dayType, dayContext.leaveRequestId)
+      }
       await query(
         `INSERT INTO hr_attendance (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
         vals,
       )
-      return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null })
+      return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null, status: metrics.status })
     }
 
     // Currently in an open session → clock out, accumulate worked hours, and
@@ -304,6 +384,20 @@ export async function POST(request: Request) {
       if (withLocation) {
         sets.push("location = COALESCE(?, location)", "latitude = COALESCE(?, latitude)", "longitude = COALESCE(?, longitude)")
         params.push(location, latitude, longitude)
+      }
+      if (withCalc) {
+        const { shift, dayContext } = await loadDayContext(employee.id, workDate)
+        const metrics = computeAttendanceMetrics({
+          shift,
+          clockIn: firstIn,
+          clockOut: now,
+          dayContext,
+          workedHoursOverride: worked,
+          sessionOpen: false,
+        })
+        const enrich = enrichmentSets(metrics, dayContext)
+        sets.push(...enrich.sets)
+        params.push(...enrich.params)
       }
       params.push(record.id)
       await query(`UPDATE hr_attendance SET ${sets.join(", ")} WHERE id = ?`, params)
@@ -325,6 +419,12 @@ export async function POST(request: Request) {
     if (withLocation) {
       sets.push("location = COALESCE(?, location)", "latitude = COALESCE(?, latitude)", "longitude = COALESCE(?, longitude)")
       params.push(location, latitude, longitude)
+    }
+    if (withCalc) {
+      const { shift, dayContext } = await loadDayContext(employee.id, workDate)
+      const metrics = computeAttendanceMetrics({ shift, clockIn: firstIn, clockOut: null, dayContext, sessionOpen: true })
+      sets.push("status = ?", "late_minutes = ?", "flags = ?", "day_type = ?")
+      params.push(metrics.status, metrics.lateMinutes, metrics.flags.join(","), dayContext.dayType)
     }
     params.push(record.id)
     await query(`UPDATE hr_attendance SET ${sets.join(", ")} WHERE id = ?`, params)

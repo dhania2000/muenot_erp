@@ -1,4 +1,5 @@
 import "server-only"
+import { createHmac, timingSafeEqual } from "node:crypto"
 import { query } from "@/lib/db"
 import { encryptToken, decryptToken } from "@/lib/token-crypto"
 
@@ -530,6 +531,88 @@ export async function getWhatsAppTemplates(
     return { ok: true, templates }
   } catch (err) {
     return { ok: false, templates: [], error: (err as Error).message }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Webhook security helpers                                            */
+/* ------------------------------------------------------------------ */
+
+/** The token Meta echoes back during webhook verification (GET handshake). */
+export function getWebhookVerifyToken(): string | null {
+  return process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN?.trim() || null
+}
+
+/**
+ * The Meta app secret used to sign webhook POST bodies. We accept a dedicated
+ * WHATSAPP_APP_SECRET first, then fall back to a shared META_APP_SECRET /
+ * FACEBOOK_APP_SECRET if the deployment already configured one.
+ */
+export function getAppSecret(): string | null {
+  return (
+    process.env.WHATSAPP_APP_SECRET?.trim() ||
+    process.env.META_APP_SECRET?.trim() ||
+    process.env.FACEBOOK_APP_SECRET?.trim() ||
+    null
+  )
+}
+
+/**
+ * Verifies Meta's `X-Hub-Signature-256` header against the raw request body
+ * using HMAC-SHA256 keyed by the app secret. Returns false (never throws) when
+ * the secret is missing or the signature does not match. The comparison is
+ * constant-time to avoid leaking timing information.
+ *
+ * Never logs the signature, the body or the secret.
+ */
+export function verifyWebhookSignature(rawBody: string, signatureHeader: string | null): boolean {
+  const secret = getAppSecret()
+  if (!secret) return false
+  if (!signatureHeader || !signatureHeader.startsWith("sha256=")) return false
+
+  const expected = createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")
+  const provided = signatureHeader.slice("sha256=".length)
+
+  // Both must be equal-length hex strings for timingSafeEqual to work.
+  const expectedBuf = Buffer.from(expected, "hex")
+  const providedBuf = Buffer.from(provided, "hex")
+  if (expectedBuf.length !== providedBuf.length || expectedBuf.length === 0) return false
+
+  try {
+    return timingSafeEqual(expectedBuf, providedBuf)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Subscribes the connected app to the WABA's webhook fields. Meta requires an
+ * explicit subscription — a successful GET verification alone does NOT start
+ * message delivery. Safe to call repeatedly (idempotent on Meta's side).
+ */
+export async function subscribeWabaWebhook(
+  integration: WhatsAppIntegrationRow,
+): Promise<{ ok: boolean; error?: string }> {
+  const token = decryptToken(integration.access_token)
+  if (!token) return { ok: false, error: "Stored access token could not be read." }
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(integration.waba_id)}/subscribed_apps`
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      success?: boolean
+      error?: { message?: string; code?: number }
+    }
+    if (!res.ok || (data.success === false && data.error)) {
+      return { ok: false, error: parseGraphError(data.error, res.status).message }
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
   }
 }
 

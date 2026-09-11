@@ -24,6 +24,10 @@ export type EmployeeEventType =
   | "document_restored"
   | "document_deleted"
   | "document_downloaded"
+  // Leave balance lifecycle — surfaced in the balance detail Audit section.
+  | "leave_balance_adjusted"
+  | "leave_balance_initialized"
+  | "leave_balance_reconciled"
 
 export type EmployeeFieldChange = { field: string; label: string; from: unknown; to: unknown }
 

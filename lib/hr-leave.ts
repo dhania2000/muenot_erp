@@ -1,4 +1,5 @@
 import { pool, query } from "@/lib/db"
+import { logEmployeeEvent } from "@/lib/hr-employee-events"
 
 /**
  * HR Leave engine.
@@ -37,6 +38,11 @@ export type LeaveType = {
   count_weekends: number
   count_holidays: number
   max_requests_per_year: number
+  // Balance/entitlement policy columns (added idempotently).
+  accrual_method: string
+  prorate_on_join: number
+  allow_negative: number
+  low_balance_threshold: number
 }
 
 export type DayBreakdown = {
@@ -109,6 +115,30 @@ async function dropForeignKeys(table: string, referencedTable: string) {
   }
 }
 
+/**
+ * Redefine the STORED generated `available` column so it also nets out
+ * carry-forward and expiry. Idempotent: only alters when the current
+ * expression doesn't already reference carry_forward.
+ */
+async function extendAvailableExpression() {
+  try {
+    const rows = await query<{ GENERATION_EXPRESSION: string }[]>(
+      `SELECT GENERATION_EXPRESSION FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = 'hr_leave_balances' AND column_name = 'available' LIMIT 1`,
+    )
+    const expr = rows[0]?.GENERATION_EXPRESSION || ""
+    if (expr && !/carry_forward/i.test(expr)) {
+      await query(
+        `ALTER TABLE hr_leave_balances
+         MODIFY COLUMN available DECIMAL(8,2)
+         AS (opening + accrued + carry_forward + adjusted - used - pending - expired) STORED`,
+      )
+    }
+  } catch (error) {
+    console.log("[v0] leave.extendAvailableExpression skipped", (error as Error).message)
+  }
+}
+
 export async function ensureLeaveSchema() {
   if (schemaReady) return
 
@@ -129,6 +159,36 @@ export async function ensureLeaveSchema() {
   await addColumn("hr_leave_types", "count_weekends", "TINYINT(1) NOT NULL DEFAULT 0")
   await addColumn("hr_leave_types", "count_holidays", "TINYINT(1) NOT NULL DEFAULT 0")
   await addColumn("hr_leave_types", "max_requests_per_year", "INT NOT NULL DEFAULT 0")
+
+  // --- Leave type entitlement/balance policy columns ---
+  await addColumn("hr_leave_types", "accrual_method", "VARCHAR(20) NOT NULL DEFAULT 'Annual'")
+  await addColumn("hr_leave_types", "prorate_on_join", "TINYINT(1) NOT NULL DEFAULT 1")
+  await addColumn("hr_leave_types", "allow_negative", "TINYINT(1) NOT NULL DEFAULT 0")
+  await addColumn("hr_leave_types", "low_balance_threshold", "DECIMAL(8,2) NOT NULL DEFAULT 0")
+
+  // --- Leave balance ledger columns: carry-forward + expiry/lapse ---
+  await addColumn("hr_leave_balances", "carry_forward", "DECIMAL(8,2) NOT NULL DEFAULT 0")
+  await addColumn("hr_leave_balances", "expired", "DECIMAL(8,2) NOT NULL DEFAULT 0")
+  await extendAvailableExpression()
+
+  // Adjustment transactions (one row per manual +/- balance change).
+  await query(
+    `CREATE TABLE IF NOT EXISTS hr_leave_adjustments (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      adjustment_id VARCHAR(40) NOT NULL,
+      employee_id INT UNSIGNED NOT NULL,
+      leave_type_id BIGINT UNSIGNED NOT NULL,
+      year SMALLINT UNSIGNED NOT NULL,
+      days DECIMAL(8,2) NOT NULL,
+      reason VARCHAR(500) NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'Applied',
+      actor_id BIGINT DEFAULT NULL,
+      actor_name VARCHAR(150) DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_leave_adjustment_id (adjustment_id),
+      INDEX idx_leave_adj_scope (employee_id, leave_type_id, year)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
 
   // --- Leave request enrichment columns ---
   await addColumn("hr_leave_requests", "breakdown", "LONGTEXT DEFAULT NULL")
@@ -169,7 +229,8 @@ const TYPE_SELECT = `SELECT id, leave_type_id, leave_type, annual_quota, carry_f
   requires_document, paid, status, description,
   allow_half_day, min_days_per_request, max_days_per_request, advance_notice_days,
   allow_backdated, backdated_limit_days, applicable_gender, applicable_employment_type,
-  count_weekends, count_holidays, max_requests_per_year
+  count_weekends, count_holidays, max_requests_per_year,
+  accrual_method, prorate_on_join, allow_negative, low_balance_threshold
   FROM hr_leave_types`
 
 export async function listLeaveTypes(activeOnly = false): Promise<LeaveType[]> {
@@ -205,10 +266,12 @@ export type EmployeeLite = {
   employment_type: string | null
   official_email: string | null
   personal_email: string | null
+  joining_date: string | null
+  employment_status: string | null
 }
 
 const EMP_SELECT = `SELECT id, employee_id, employee_name, department, designation, reporting_manager,
-  gender, employment_type, official_email, personal_email FROM hr_employees`
+  gender, employment_type, official_email, personal_email, joining_date, employment_status FROM hr_employees`
 
 export async function getEmployeeById(id: number | string): Promise<EmployeeLite | null> {
   const rows = await query<EmployeeLite[]>(`${EMP_SELECT} WHERE id = ? LIMIT 1`, [id])
@@ -333,6 +396,8 @@ export type BalanceRow = {
   used: number
   pending: number
   adjusted: number
+  carry_forward: number
+  expired: number
   available: number
 }
 
@@ -380,6 +445,8 @@ export async function getBalanceSnapshot(employeeId: number, leaveType: LeaveTyp
     used: 0,
     pending: 0,
     adjusted: 0,
+    carry_forward: 0,
+    expired: 0,
     available: opening,
   } as BalanceRow
 }
@@ -997,5 +1064,507 @@ function safeParse(value: any): DayBreakdown[] {
     return Array.isArray(parsed) ? parsed : []
   } catch {
     return []
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Balance management: applicability, proration, adjustments, initialization,
+// accrual, reconciliation, and detail. These are the source-of-truth services
+// behind the Leave Balances module — the UI never edits `available` directly.
+// ---------------------------------------------------------------------------
+
+const INACTIVE_EMPLOYMENT = new Set(["exited", "terminated", "resigned", "inactive", "left"])
+
+/** True when a leave type's gender / employment-type policy applies to the employee. */
+export function isTypeApplicable(type: LeaveType, emp: EmployeeLite): boolean {
+  const genderPolicy = (type.applicable_gender || "").trim().toLowerCase()
+  if (genderPolicy && genderPolicy !== "any" && emp.gender) {
+    if (emp.gender.trim().toLowerCase() !== genderPolicy) return false
+  }
+  const empTypePolicy = (type.applicable_employment_type || "").trim()
+  if (empTypePolicy && emp.employment_type) {
+    const allowed = empTypePolicy.split(",").map((v) => v.trim().toLowerCase()).filter(Boolean)
+    if (allowed.length && !allowed.includes(emp.employment_type.trim().toLowerCase())) return false
+  }
+  return true
+}
+
+/** Opening entitlement for a year, prorated by joining month when policy allows. */
+export function proratedOpening(type: LeaveType, emp: EmployeeLite, year: number): number {
+  const quota = Number(type.annual_quota) || 0
+  if (quota <= 0) return 0
+  if (!type.prorate_on_join || !emp.joining_date) return quota
+  const join = toDateOnly(String(emp.joining_date).slice(0, 10))
+  const joinYear = join.getFullYear()
+  if (joinYear < year) return quota
+  if (joinYear > year) return 0
+  // Joined during the target year — credit the remaining whole months (inclusive).
+  const monthsRemaining = 12 - join.getMonth()
+  return Math.round((quota * monthsRemaining) / 12 * 100) / 100
+}
+
+/** Active, non-exited employees eligible for balance initialization. */
+export async function listActiveEmployees(): Promise<EmployeeLite[]> {
+  await ensureLeaveSchema()
+  const rows = await query<EmployeeLite[]>(`${EMP_SELECT} WHERE archived_at IS NULL ORDER BY employee_name ASC`)
+  return rows.filter((e) => !INACTIVE_EMPLOYMENT.has(String(e.employment_status || "active").trim().toLowerCase()))
+}
+
+async function quotaColumns() {
+  return tableColumns("hr_leave_quota_history")
+}
+
+/**
+ * Create a single Employee × Leave Type × Year balance if it doesn't exist.
+ * Seeds opening (prorated), carry-forward from the prior year (capped by the
+ * type's max carry-forward), and lapses the remainder — all ledgered.
+ */
+async function seedBalanceForType(
+  conn: any,
+  cols: Set<string>,
+  type: LeaveType,
+  emp: EmployeeLite,
+  year: number,
+  actor: Actor,
+): Promise<"created" | "skipped"> {
+  const [existing] = await conn.query(
+    `SELECT balance_id FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ? LIMIT 1`,
+    [emp.id, type.id, year],
+  )
+  if (existing.length) return "skipped"
+
+  // Carry-forward from the previous year's available (capped by policy).
+  const [prev] = await conn.query(
+    `SELECT available FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ? LIMIT 1`,
+    [emp.id, type.id, year - 1],
+  )
+  const prevAvail = prev.length ? Number(prev[0].available) || 0 : 0
+  const maxCarry = Number(type.carry_forward) || 0
+  const carry = maxCarry > 0 && prevAvail > 0 ? Math.min(prevAvail, maxCarry) : 0
+  const lapse = prevAvail > carry ? Math.round((prevAvail - carry) * 100) / 100 : 0
+  const opening = proratedOpening(type, emp, year)
+
+  await conn.query(
+    `INSERT INTO hr_leave_balances
+      (employee_id, leave_type_id, \`year\`, opening, accrued, carry_forward, used, pending, adjusted, expired)
+     VALUES (?, ?, ?, ?, 0, ?, 0, 0, 0, 0)`,
+    [emp.id, type.id, year, opening, carry],
+  )
+  await writeQuotaHistory(conn, cols, {
+    employee_id: emp.id, leave_type_id: type.id, year,
+    event_type: "opening", days: opening, reference: `OPEN-${year}`,
+    reason: `Opening balance for ${year}${opening !== (Number(type.annual_quota) || 0) ? " (prorated)" : ""}`,
+    created_by: actor.userId,
+  })
+  if (carry > 0) {
+    await writeQuotaHistory(conn, cols, {
+      employee_id: emp.id, leave_type_id: type.id, year,
+      event_type: "carry_forward", days: carry, reference: `CF-${year}`,
+      reason: `Carried forward from ${year - 1}`, created_by: actor.userId,
+    })
+  }
+  if (lapse > 0) {
+    // Record the lapse against the previous year so history stays traceable.
+    await conn.query(
+      `UPDATE hr_leave_balances SET expired = expired + ? WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?`,
+      [lapse, emp.id, type.id, year - 1],
+    )
+    await writeQuotaHistory(conn, cols, {
+      employee_id: emp.id, leave_type_id: type.id, year: year - 1,
+      event_type: "expiry", days: -lapse, reference: `EXP-${year - 1}`,
+      reason: `Lapsed on ${year} rollover (max carry-forward ${maxCarry})`, created_by: actor.userId,
+    })
+  }
+  return "created"
+}
+
+export type InitSummary = { employees: number; created: number; skipped: number; carried: number; lapsed: number }
+
+/** Initialize balances for one employee across all applicable active leave types. */
+export async function initializeEmployeeBalances(employeeId: number, year: number, actor: Actor): Promise<InitSummary> {
+  await ensureLeaveSchema()
+  const emp = await getEmployeeById(employeeId)
+  if (!emp) return { employees: 0, created: 0, skipped: 0, carried: 0, lapsed: 0 }
+  const types = await listLeaveTypes(true)
+  const cols = await quotaColumns()
+  const summary: InitSummary = { employees: 1, created: 0, skipped: 0, carried: 0, lapsed: 0 }
+  const conn = await pool.getConnection()
+  try {
+    for (const type of types) {
+      if (!isTypeApplicable(type, emp)) continue
+      await conn.beginTransaction()
+      try {
+        const result = await seedBalanceForType(conn, cols, type, emp, year, actor)
+        await conn.commit()
+        if (result === "created") summary.created++
+        else summary.skipped++
+      } catch (error) {
+        await conn.rollback()
+        console.log("[v0] leave.initializeEmployeeBalances failed", type.leave_type, (error as Error).message)
+      }
+    }
+  } finally {
+    conn.release()
+  }
+  if (summary.created > 0) {
+    await logEmployeeEvent({
+      employeeId: emp.id, employeeRef: emp.employee_id, employeeName: emp.employee_name,
+      type: "leave_balance_initialized",
+      summary: `Initialized ${summary.created} leave balance(s) for ${year}`,
+      actorId: actor.userId, actorName: actor.name,
+    })
+  }
+  return summary
+}
+
+/** Bulk-initialize a leave year for every eligible employee. Idempotent. */
+export async function initializeYear(year: number, actor: Actor): Promise<InitSummary> {
+  await ensureLeaveSchema()
+  const employees = await listActiveEmployees()
+  const types = await listLeaveTypes(true)
+  const cols = await quotaColumns()
+  const summary: InitSummary = { employees: 0, created: 0, skipped: 0, carried: 0, lapsed: 0 }
+  const conn = await pool.getConnection()
+  try {
+    for (const emp of employees) {
+      let touched = false
+      for (const type of types) {
+        if (!isTypeApplicable(type, emp)) continue
+        await conn.beginTransaction()
+        try {
+          const before = summary.created
+          const result = await seedBalanceForType(conn, cols, type, emp, year, actor)
+          await conn.commit()
+          if (result === "created") {
+            summary.created++
+            touched = true
+            void before
+          } else {
+            summary.skipped++
+          }
+        } catch (error) {
+          await conn.rollback()
+          console.log("[v0] leave.initializeYear failed", emp.employee_id, type.leave_type, (error as Error).message)
+        }
+      }
+      if (touched) summary.employees++
+    }
+  } finally {
+    conn.release()
+  }
+  return summary
+}
+
+/** How many periods of the year have elapsed for a given accrual cadence. */
+function elapsedPeriods(method: string, year: number): { period: number; label: string; fraction: number }[] {
+  const now = new Date()
+  const isPast = year < now.getFullYear()
+  const isFuture = year > now.getFullYear()
+  const cadence = method.trim().toLowerCase()
+  if (cadence === "monthly") {
+    const upto = isPast ? 12 : isFuture ? 0 : now.getMonth() + 1
+    return Array.from({ length: upto }, (_, i) => ({ period: i + 1, label: `M${String(i + 1).padStart(2, "0")}`, fraction: 1 / 12 }))
+  }
+  if (cadence === "quarterly") {
+    const currentQ = Math.floor(now.getMonth() / 3) + 1
+    const upto = isPast ? 4 : isFuture ? 0 : currentQ
+    return Array.from({ length: upto }, (_, i) => ({ period: i + 1, label: `Q${i + 1}`, fraction: 1 / 4 }))
+  }
+  return []
+}
+
+export type AccrualSummary = { credited: number; entries: number; skipped: number }
+
+/**
+ * Credit periodic accrual for all Monthly/Quarterly leave types, catching up
+ * every elapsed period. Idempotent via a unique quota-history reference per
+ * employee + type + year + period, so re-running never double-credits.
+ */
+export async function runAccrual(year: number, actor: Actor): Promise<AccrualSummary> {
+  await ensureLeaveSchema()
+  const types = (await listLeaveTypes(true)).filter(
+    (t) => (t.accrual_method || "Annual").trim().toLowerCase() !== "annual" && Number(t.annual_quota) > 0,
+  )
+  const cols = await quotaColumns()
+  const summary: AccrualSummary = { credited: 0, entries: 0, skipped: 0 }
+  if (!types.length) return summary
+
+  const conn = await pool.getConnection()
+  try {
+    for (const type of types) {
+      const periods = elapsedPeriods(type.accrual_method, year)
+      if (!periods.length) continue
+      const quota = Number(type.annual_quota) || 0
+      // Only accrue for employees who already hold a balance row for the year.
+      const [balances] = await conn.query(
+        `SELECT employee_id FROM hr_leave_balances WHERE leave_type_id = ? AND \`year\` = ?`,
+        [type.id, year],
+      )
+      for (const bal of balances as any[]) {
+        for (const p of periods) {
+          const reference = `ACC-${year}-${type.leave_type_id}-${p.label}`
+          await conn.beginTransaction()
+          try {
+            const [seen] = await conn.query(
+              `SELECT 1 FROM hr_leave_quota_history WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ? AND reference = ? LIMIT 1`,
+              [bal.employee_id, type.id, year, reference],
+            )
+            if ((seen as any[]).length) {
+              await conn.rollback()
+              summary.skipped++
+              continue
+            }
+            const amount = Math.round(quota * p.fraction * 100) / 100
+            await conn.query(
+              `UPDATE hr_leave_balances SET accrued = accrued + ? WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?`,
+              [amount, bal.employee_id, type.id, year],
+            )
+            await writeQuotaHistory(conn, cols, {
+              employee_id: Number(bal.employee_id), leave_type_id: type.id, year,
+              event_type: "accrual", days: amount, reference,
+              reason: `${type.accrual_method} accrual ${p.label} ${year}`, created_by: actor.userId,
+            })
+            await conn.commit()
+            summary.credited += amount
+            summary.entries++
+          } catch (error) {
+            await conn.rollback()
+            console.log("[v0] leave.runAccrual failed", type.leave_type, (error as Error).message)
+          }
+        }
+      }
+    }
+  } finally {
+    conn.release()
+  }
+  return summary
+}
+
+/**
+ * Manual balance adjustment as a first-class transaction. Never edits
+ * `available` directly: writes `adjusted`, a quota-history ledger row, an
+ * adjustment record, and an audit event — all inside one DB transaction.
+ */
+export async function applyAdjustment(
+  input: { employeeId: number; leaveTypeId: string | number; year: number; days: number; reason: string },
+  actor: Actor,
+  adjustmentId: string,
+): Promise<{ ok: true; adjustmentId: string } | { ok: false; error: string }> {
+  await ensureLeaveSchema()
+  const employee = await getEmployeeById(input.employeeId)
+  if (!employee) return { ok: false, error: "Employee record not found." }
+  const type = await resolveLeaveType(input.leaveTypeId)
+  if (!type) return { ok: false, error: "Select a valid leave type." }
+
+  const days = Math.round(Number(input.days) * 100) / 100
+  if (!Number.isFinite(days) || days === 0) return { ok: false, error: "Adjustment must be a non-zero number of days." }
+  const reason = String(input.reason || "").trim()
+  if (!reason) return { ok: false, error: "A reason is required for every adjustment." }
+  const year = Number(input.year)
+  if (!year) return { ok: false, error: "A valid year is required." }
+
+  const cols = await quotaColumns()
+  const conn = await pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    await getOrCreateBalance(conn, employee.id, type, year)
+
+    // Respect the type's negative-balance policy for decreases.
+    if (days < 0 && !type.allow_negative) {
+      const [rows] = await conn.query(
+        `SELECT available FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?`,
+        [employee.id, type.id, year],
+      )
+      const available = Number(rows[0]?.available) || 0
+      if (available + days < 0) {
+        await conn.rollback()
+        return { ok: false, error: `${type.leave_type} cannot go negative — only ${available} day(s) available.` }
+      }
+    }
+
+    await conn.query(
+      `UPDATE hr_leave_balances SET adjusted = adjusted + ? WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?`,
+      [days, employee.id, type.id, year],
+    )
+    await writeQuotaHistory(conn, cols, {
+      employee_id: employee.id, leave_type_id: type.id, year,
+      event_type: "adjustment", days, reference: adjustmentId, reason, created_by: actor.userId,
+    })
+    await conn.query(
+      `INSERT INTO hr_leave_adjustments (adjustment_id, employee_id, leave_type_id, year, days, reason, status, actor_id, actor_name)
+       VALUES (?, ?, ?, ?, ?, ?, 'Applied', ?, ?)`,
+      [adjustmentId, employee.id, type.id, year, days, reason, actor.userId, actor.name],
+    )
+    await conn.commit()
+  } catch (error) {
+    await conn.rollback()
+    throw error
+  } finally {
+    conn.release()
+  }
+
+  await logEmployeeEvent({
+    employeeId: employee.id, employeeRef: employee.employee_id, employeeName: employee.employee_name,
+    type: "leave_balance_adjusted",
+    summary: `${days > 0 ? "+" : ""}${days} ${type.leave_type} (${year}) — ${reason}`,
+    actorId: actor.userId, actorName: actor.name,
+  })
+  await notifyByEmail(
+    employee.official_email || employee.personal_email,
+    `Leave balance adjusted — ${type.leave_type}`,
+    emailShell(
+      "Leave balance adjustment",
+      `<p>Your <strong>${type.leave_type}</strong> balance for ${year} was adjusted by
+        <strong>${days > 0 ? "+" : ""}${days}</strong> day(s).</p>
+       <p>Reason: ${reason}</p>
+       <p>Reference: ${adjustmentId}</p>`,
+    ),
+  )
+  return { ok: true, adjustmentId }
+}
+
+export type Reconciliation = {
+  ok: boolean
+  ledger: number
+  storedExcludingPending: number
+  available: number
+  pending: number
+  discrepancy: number
+}
+
+/**
+ * Verify stored balance against the quota-history ledger. The ledger captures
+ * every credit/debit except the pending reservation, so we compare it to the
+ * stored balance net of pending. Never mutates — read-only audit.
+ */
+export async function reconcileBalance(employeeId: number, leaveTypeId: number, year: number): Promise<Reconciliation> {
+  await ensureLeaveSchema()
+  const [ledgerRow] = await query<{ total: number }[]>(
+    `SELECT COALESCE(SUM(days), 0) AS total FROM hr_leave_quota_history
+     WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?`,
+    [employeeId, leaveTypeId, year],
+  )
+  const ledger = Math.round((Number(ledgerRow?.total) || 0) * 100) / 100
+
+  const [bal] = await query<any[]>(
+    `SELECT opening, accrued, carry_forward, adjusted, used, pending, expired, available
+     FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ? LIMIT 1`,
+    [employeeId, leaveTypeId, year],
+  )
+  const b = bal || { opening: 0, accrued: 0, carry_forward: 0, adjusted: 0, used: 0, pending: 0, expired: 0, available: 0 }
+  const storedExcludingPending =
+    Math.round(
+      (Number(b.opening) + Number(b.accrued) + Number(b.carry_forward) + Number(b.adjusted) - Number(b.used) - Number(b.expired)) * 100,
+    ) / 100
+  const discrepancy = Math.round((storedExcludingPending - ledger) * 100) / 100
+  return {
+    ok: Math.abs(discrepancy) < 0.001,
+    ledger,
+    storedExcludingPending,
+    available: Number(b.available) || 0,
+    pending: Number(b.pending) || 0,
+    discrepancy,
+  }
+}
+
+export type BalanceStatus = "Healthy" | "Low Balance" | "Zero Balance" | "Negative"
+
+/** Derive a health indicator using the type's configurable low-balance threshold. */
+export function balanceStatus(available: number, type: Pick<LeaveType, "low_balance_threshold" | "annual_quota">): BalanceStatus {
+  if (available < 0) return "Negative"
+  if (available === 0) return "Zero Balance"
+  const threshold = Number(type.low_balance_threshold) || 0
+  const effective = threshold > 0 ? threshold : Math.max(1, Math.round((Number(type.annual_quota) || 0) * 0.2))
+  if (available <= effective) return "Low Balance"
+  return "Healthy"
+}
+
+/**
+ * Full breakdown for one balance: the row, its quota-history ledger, the leave
+ * requests contributing to used/pending, adjustment records, and the audit
+ * trail. Everything traces back to a source — nothing is fabricated.
+ */
+export async function getBalanceDetail(employeeId: number, leaveTypeId: string | number, year: number) {
+  await ensureLeaveSchema()
+  const employee = await getEmployeeById(employeeId)
+  const type = await resolveLeaveType(leaveTypeId)
+  if (!employee || !type) return null
+
+  const snapshot = await getBalanceSnapshot(employee.id, type, year)
+
+  const history = await query<any[]>(
+    `SELECT h.*, u.name AS created_by_name FROM hr_leave_quota_history h
+     LEFT JOIN users u ON u.id = h.created_by
+     WHERE h.employee_id = ? AND h.leave_type_id = ? AND h.\`year\` = ?
+     ORDER BY h.created_at ASC, h.event_id ASC`,
+    [employee.id, type.id, year],
+  )
+
+  const requests = await query<any[]>(
+    `SELECT request_id, from_date, to_date, days, paid_days, lop_days, status, reason, requested_at
+     FROM hr_leave_requests
+     WHERE employee_id = ? AND (leave_type_id = ? OR leave_type_id = ?) AND YEAR(from_date) = ?
+     ORDER BY from_date DESC`,
+    [employee.id, type.leave_type_id, String(type.id), year],
+  )
+
+  const adjustments = await query<any[]>(
+    `SELECT adjustment_id, days, reason, status, actor_name, created_at
+     FROM hr_leave_adjustments WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?
+     ORDER BY created_at DESC`,
+    [employee.id, type.id, year],
+  )
+
+  let audit: any[] = []
+  try {
+    audit = await query<any[]>(
+      `SELECT event_type, summary, actor_name, created_at FROM hr_employee_events
+       WHERE employee_id = ? AND event_type LIKE 'leave_balance_%'
+       ORDER BY created_at DESC LIMIT 50`,
+      [employee.id],
+    )
+  } catch {
+    /* audit table optional */
+  }
+
+  const reconciliation = await reconcileBalance(employee.id, type.id, year)
+
+  return {
+    employee: {
+      id: employee.id,
+      employee_id: employee.employee_id,
+      employee_name: employee.employee_name,
+      department: employee.department,
+      designation: employee.designation,
+      reporting_manager: employee.reporting_manager,
+      employment_status: employee.employment_status,
+    },
+    leaveType: {
+      id: type.id,
+      leave_type_id: type.leave_type_id,
+      leave_type: type.leave_type,
+      annual_quota: Number(type.annual_quota),
+      carry_forward: Number(type.carry_forward),
+      paid: type.paid,
+      accrual_method: type.accrual_method,
+      allow_negative: type.allow_negative,
+    },
+    year,
+    balance: {
+      opening: Number(snapshot.opening),
+      accrued: Number(snapshot.accrued),
+      carry_forward: Number(snapshot.carry_forward),
+      adjusted: Number(snapshot.adjusted),
+      used: Number(snapshot.used),
+      pending: Number(snapshot.pending),
+      expired: Number(snapshot.expired),
+      available: Number(snapshot.available),
+    },
+    status: balanceStatus(Number(snapshot.available), type),
+    history,
+    requests,
+    adjustments,
+    audit,
+    reconciliation,
   }
 }

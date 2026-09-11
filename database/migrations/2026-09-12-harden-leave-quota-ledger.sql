@@ -5,6 +5,24 @@
 -- backfilled, and the LQE sequence is seeded past the highest event id). This
 -- file documents the resulting shape for reference and fresh installs.
 
+-- Ensure the base ledger table exists before altering it, so this file can run
+-- cleanly on a fresh install or a database that never applied the original
+-- 2026-09-01-add-hr-leave-quota-history migration.
+CREATE TABLE IF NOT EXISTS hr_leave_quota_history (
+  event_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  employee_id BIGINT UNSIGNED NOT NULL,
+  leave_type_id BIGINT UNSIGNED NOT NULL,
+  year SMALLINT UNSIGNED NOT NULL,
+  event_type VARCHAR(40) NOT NULL,
+  days DECIMAL(8,2) NOT NULL,
+  reference VARCHAR(190) DEFAULT NULL,
+  reason TEXT,
+  created_by BIGINT UNSIGNED DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_hr_quota_employee_year (employee_id, year),
+  INDEX idx_hr_quota_type_year (leave_type_id, year)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Stable, human-readable, server-generated event id (e.g. LQE-000123).
 ALTER TABLE hr_leave_quota_history ADD COLUMN quota_event_id VARCHAR(40) DEFAULT NULL;
 -- Source channel: System / Leave Request / Adjustment / Accrual / Carry Forward / Expiry / Import.

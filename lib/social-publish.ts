@@ -39,6 +39,25 @@ function isHttpUrl(value: string | null | undefined): value is string {
   return Boolean(value && /^https?:\/\//.test(value))
 }
 
+/**
+ * Resolves a post image into raw bytes for platforms that upload binaries
+ * (LinkedIn, Facebook). The image may arrive either as an in-browser data URL
+ * or as a public https URL (our own /api/marketing/social/media/[id]); the
+ * latter is fetched here so both forms keep working.
+ */
+async function resolveImageBytes(image: string | null | undefined): Promise<DecodedImage> {
+  const dataUrl = decodeDataUrl(image)
+  if (dataUrl) return dataUrl
+  if (isHttpUrl(image)) {
+    const res = await fetch(image)
+    if (!res.ok) throw new Error(`Could not fetch image (${res.status})`)
+    const contentType = res.headers.get("content-type") || "image/jpeg"
+    const buffer = Buffer.from(await res.arrayBuffer())
+    return { contentType, buffer }
+  }
+  return null
+}
+
 export async function publishToAccount(
   account: SocialAccountRow,
   post: { content: string; image?: string | null },
@@ -77,7 +96,7 @@ async function publishLinkedIn(account: SocialAccountRow, post: { content: strin
     "X-Restli-Protocol-Version": "2.0.0",
   }
 
-  const img = decodeDataUrl(post.image)
+  const img = await resolveImageBytes(post.image)
   let media: any[] = []
   let shareMediaCategory = "NONE"
 
@@ -160,7 +179,7 @@ async function publishX(account: SocialAccountRow, post: { content: string; imag
 async function publishFacebook(account: SocialAccountRow, post: { content: string; image?: string | null }) {
   const pageId = account.page_id || account.external_id!
   const token = account.access_token!
-  const img = decodeDataUrl(post.image)
+  const img = await resolveImageBytes(post.image)
 
   if (img) {
     const form = new FormData()

@@ -18,6 +18,13 @@
 -- The runtime helper ensureWhatsAppMessagingTables() in lib/whatsapp-store.ts
 -- self-heals these same columns/tables, so a deployment that has not run this
 -- SQL yet still works. This file is the canonical, reviewable definition.
+--
+-- IDEMPOTENT: every statement below uses IF NOT EXISTS / IF EXISTS guards and
+-- is split into its own ALTER, so this file can be re-imported safely even if
+-- the runtime self-heal (or a previous partial import) already added some of
+-- these columns, keys, or constraints. This avoids the phpMyAdmin
+-- "#1060 - Duplicate column name" abort on re-run. Requires MariaDB 10.x
+-- (which Hostinger uses); the IF NOT EXISTS clauses are MariaDB extensions.
 -- =============================================================
 
 SET NAMES utf8mb4;
@@ -26,17 +33,30 @@ SET NAMES utf8mb4;
 -- Conversations: assignment + priority + pending status
 -- -------------------------------------------------------------
 ALTER TABLE `marketing_whatsapp_conversations`
-  ADD COLUMN `assigned_agent_id` INT UNSIGNED DEFAULT NULL AFTER `waba_id`,
-  ADD COLUMN `assigned_team` VARCHAR(64) DEFAULT NULL AFTER `assigned_agent_id`,
-  ADD COLUMN `priority` ENUM('low','normal','high','urgent') NOT NULL DEFAULT 'normal' AFTER `assigned_team`;
+  ADD COLUMN IF NOT EXISTS `assigned_agent_id` INT UNSIGNED DEFAULT NULL AFTER `waba_id`;
+
+ALTER TABLE `marketing_whatsapp_conversations`
+  ADD COLUMN IF NOT EXISTS `assigned_team` VARCHAR(64) DEFAULT NULL AFTER `assigned_agent_id`;
+
+ALTER TABLE `marketing_whatsapp_conversations`
+  ADD COLUMN IF NOT EXISTS `priority` ENUM('low','normal','high','urgent') NOT NULL DEFAULT 'normal' AFTER `assigned_team`;
 
 ALTER TABLE `marketing_whatsapp_conversations`
   MODIFY COLUMN `status` ENUM('open','pending','closed') NOT NULL DEFAULT 'open';
 
 ALTER TABLE `marketing_whatsapp_conversations`
-  ADD KEY `idx_wa_convo_agent` (`assigned_agent_id`),
-  ADD KEY `idx_wa_convo_team` (`assigned_team`),
-  ADD KEY `idx_wa_convo_priority` (`priority`);
+  ADD KEY IF NOT EXISTS `idx_wa_convo_agent` (`assigned_agent_id`);
+
+ALTER TABLE `marketing_whatsapp_conversations`
+  ADD KEY IF NOT EXISTS `idx_wa_convo_team` (`assigned_team`);
+
+ALTER TABLE `marketing_whatsapp_conversations`
+  ADD KEY IF NOT EXISTS `idx_wa_convo_priority` (`priority`);
+
+-- Re-create the FK defensively: drop it if a previous run/self-heal added it,
+-- then add it back so the definition stays canonical.
+ALTER TABLE `marketing_whatsapp_conversations`
+  DROP FOREIGN KEY IF EXISTS `fk_wa_convo_agent`;
 
 ALTER TABLE `marketing_whatsapp_conversations`
   ADD CONSTRAINT `fk_wa_convo_agent` FOREIGN KEY (`assigned_agent_id`)
@@ -46,8 +66,10 @@ ALTER TABLE `marketing_whatsapp_conversations`
 -- Contacts: agent-facing notes + tags
 -- -------------------------------------------------------------
 ALTER TABLE `marketing_whatsapp_contacts`
-  ADD COLUMN `notes` TEXT DEFAULT NULL AFTER `lead_id`,
-  ADD COLUMN `tags` VARCHAR(500) DEFAULT NULL AFTER `notes`;
+  ADD COLUMN IF NOT EXISTS `notes` TEXT DEFAULT NULL AFTER `lead_id`;
+
+ALTER TABLE `marketing_whatsapp_contacts`
+  ADD COLUMN IF NOT EXISTS `tags` VARCHAR(500) DEFAULT NULL AFTER `notes`;
 
 -- -------------------------------------------------------------
 -- Table: marketing_whatsapp_assignments

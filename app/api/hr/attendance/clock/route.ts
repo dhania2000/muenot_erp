@@ -325,6 +325,21 @@ export async function POST(request: Request) {
     const location =
       typeof body.location === "string" && body.location.trim() ? body.location.trim().slice(0, 255) : null
 
+    // Location is mandatory: refuse to record any punch without valid coordinates.
+    if (
+      latitude === null ||
+      longitude === null ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      return NextResponse.json(
+        { error: "Location is required to clock in or out. Please enable location access and try again." },
+        { status: 400 },
+      )
+    }
+
     const record = await todaysRecord(employee.id, withSession, timeZone)
     const now = nowDateTime(timeZone)
     const withLocation = await hasLocationColumns()

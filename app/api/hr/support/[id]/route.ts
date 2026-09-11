@@ -16,6 +16,8 @@ import {
   resolutionSlaState,
   notifyTicketEmail,
   getEmployeeEmail,
+  getUserEmail,
+  getRelatedRecords,
   PRIORITIES,
   type Priority,
 } from "@/lib/hr-support"
@@ -59,6 +61,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   )
   const events = await query<any[]>("SELECT * FROM hr_support_events WHERE ticket_id = ? ORDER BY created_at ASC", [ticket.id])
   const attachments = await query<any[]>("SELECT * FROM hr_support_attachments WHERE ticket_id = ? ORDER BY created_at ASC", [ticket.id])
+  const related = await getRelatedRecords(ticket)
 
   const now = await nowZoned()
   return NextResponse.json({
@@ -66,6 +69,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     messages,
     events,
     attachments,
+    related,
     canManage: manage,
   })
 }
@@ -101,6 +105,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     await query("UPDATE hr_support_tickets SET assigned_to = ?, assigned_to_name = ?, updated_at = ? WHERE id = ?", [assigneeId, name, now, ticket.id])
     await logSupportEvent({ ticketId: ticket.id, actorId: session.userId, actorName: session.name, type: "assigned", detail: name ? `Assigned to ${name}` : "Unassigned" })
+    // Notify the newly assigned agent (Section 39).
+    if (assigneeId && assigneeId !== ticket.assigned_to) {
+      const assigneeEmail = await getUserEmail(assigneeId)
+      await notifyTicketEmail({
+        to: assigneeEmail,
+        subject: `[${ticket.ticket_id}] A support ticket was assigned to you`,
+        html: `<p>Hi ${name || "there"},</p><p>Ticket <strong>${ticket.ticket_id}</strong> ("${ticket.subject}") from ${ticket.employee_name || "an employee"} has been assigned to you (${ticket.priority} priority).</p><p>Open the HR Support portal to work on it.</p>`,
+      })
+    }
     return NextResponse.json({ ok: true })
   }
 

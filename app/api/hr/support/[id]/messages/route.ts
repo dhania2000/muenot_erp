@@ -11,6 +11,7 @@ import {
   nowZoned,
   notifyTicketEmail,
   getEmployeeEmail,
+  getUserEmail,
 } from "@/lib/hr-support"
 
 // POST /api/hr/support/[id]/messages — add a reply or (agents) an internal note.
@@ -75,14 +76,23 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     detail: isInternal ? "Internal note added" : `${session.name} replied`,
   })
 
-  // Notify the counterparty on public replies.
+  // Notify the counterparty on public replies (Section 39).
   if (!isInternal) {
     if (manage) {
+      // Agent replied → notify the employee.
       const email = await getEmployeeEmail(ticket.employee_id)
       await notifyTicketEmail({
         to: email,
         subject: `[${ticket.ticket_id}] New reply from HR`,
         html: `<p>Hi ${ticket.employee_name || "there"},</p><p>HR replied to your ticket <strong>${ticket.ticket_id}</strong>:</p><blockquote>${text}</blockquote><p>Open the HR Support portal to respond.</p>`,
+      })
+    } else if (ticket.assigned_to) {
+      // Employee replied → notify the assigned agent.
+      const email = await getUserEmail(ticket.assigned_to)
+      await notifyTicketEmail({
+        to: email,
+        subject: `[${ticket.ticket_id}] New reply from ${ticket.employee_name || "the employee"}`,
+        html: `<p>Hi ${ticket.assigned_to_name || "there"},</p><p>${ticket.employee_name || "The employee"} replied to ticket <strong>${ticket.ticket_id}</strong>:</p><blockquote>${text}</blockquote><p>Open the HR Support portal to respond.</p>`,
       })
     }
   }

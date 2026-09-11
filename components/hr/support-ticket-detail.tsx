@@ -47,6 +47,7 @@ export function SupportTicketDetail({
   const messages = data?.messages || []
   const events = data?.events || []
   const attachments = data?.attachments || []
+  const related = data?.related || []
 
   const refresh = () => { mutate(); onChanged() }
 
@@ -270,6 +271,43 @@ export function SupportTicketDetail({
                   <Detail label="Resolved" value={fmt(ticket.resolved_at)} />
                   {ticket.resolution ? <Detail label="Resolution" value={ticket.resolution} /> : null}
                 </div>
+
+                {/* Related ERP records (Section 18) */}
+                {related.length > 0 ? (
+                  <div className="space-y-2">
+                    <Separator />
+                    <Label className="text-xs text-muted-foreground">Related records</Label>
+                    <div className="space-y-2">
+                      {related.map((r: any, i: number) => (
+                        <div key={i} className="rounded-lg border p-2.5 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-foreground">{r.kind}</span>
+                            {r.status ? <Badge variant="outline" className="text-[10px]">{r.status}</Badge> : null}
+                          </div>
+                          <p className="mt-0.5 text-muted-foreground">
+                            <span className="font-mono">{r.reference}</span>
+                            {r.label && r.label !== r.kind ? ` · ${r.label}` : ""}
+                            {r.sublabel ? ` · ${r.sublabel}` : ""}
+                          </p>
+                          {r.href ? (
+                            <a href={r.href} className="mt-1 inline-block text-primary underline">Open source record</a>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Contextual cross-module action — attendance tickets can spin
+                    up a regularisation with the employee already in context. */}
+                {canManage && /attendance|regularis/i.test(String(ticket.support_category || "")) && !ticket.related_regularisation_id ? (
+                  <a
+                    href="/modules/hr/attendance-regularisation"
+                    className="inline-flex w-full items-center justify-center rounded-md border px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                  >
+                    Create attendance regularisation
+                  </a>
+                ) : null}
 
                 {/* Employee actions on resolved tickets */}
                 {!canManage && (ticket.status === "Resolved" || ticket.status === "Closed") ? (

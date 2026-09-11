@@ -29,16 +29,29 @@ export async function GET() {
     : null
 
   // Recent linkable records for the caller's own employee id (best-effort — any
-  // table that isn't present just yields an empty list).
+  // table that isn't present just yields an empty list). Column names are kept
+  // in sync with the actual HR module schemas so linking never silently breaks.
   let recentRegularisations: any[] = []
   let recentLeaves: any[] = []
+  let recentAttendance: any[] = []
+  let recentDocuments: any[] = []
   if (employee) {
     recentRegularisations = await safeQuery(
-      "SELECT id, request_id, work_date, status, correction_type FROM hr_attendance_regularisation WHERE employee_id = ? ORDER BY created_at DESC LIMIT 5",
+      "SELECT id, request_id, work_date, status FROM hr_attendance_regularisation WHERE employee_id = ? ORDER BY id DESC LIMIT 8",
       [employee.id],
     )
     recentLeaves = await safeQuery(
-      "SELECT id, leave_id, leave_type, from_date, to_date, status FROM hr_leave_requests WHERE employee_id = ? ORDER BY created_at DESC LIMIT 5",
+      `SELECT lr.id, lr.request_id, lt.leave_type AS leave_type_name, lr.from_date, lr.to_date, lr.status
+       FROM hr_leave_requests lr LEFT JOIN hr_leave_types lt ON lt.leave_type_id = lr.leave_type_id
+       WHERE lr.employee_id = ? ORDER BY lr.id DESC LIMIT 8`,
+      [employee.id],
+    )
+    recentAttendance = await safeQuery(
+      "SELECT id, attendance_id, work_date, status, working_hours FROM hr_attendance WHERE employee_id = ? ORDER BY work_date DESC LIMIT 8",
+      [employee.id],
+    )
+    recentDocuments = await safeQuery(
+      "SELECT id, document_ref, document_type, status FROM hr_employee_documents WHERE employee_id = ? AND (is_current = 1 OR is_current IS NULL) ORDER BY id DESC LIMIT 8",
       [employee.id],
     )
   }
@@ -57,6 +70,8 @@ export async function GET() {
     categories,
     recentRegularisations,
     recentLeaves,
+    recentAttendance,
+    recentDocuments,
     employees,
   })
 }

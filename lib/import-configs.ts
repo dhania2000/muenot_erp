@@ -260,14 +260,17 @@ Object.assign(IMPORT_CONFIGS, {
   "hr-leave-quota-history": {
     table: "hr_leave_quota_history",
     createdBy: "created_by",
+    // Imported rows are stamped so they are clearly distinguishable from
+    // system-generated ledger events. quota_event_id is assigned by the engine.
+    defaults: { source: "Import" },
     columns: [
       { key: "employee_id", label: "Employee ID", type: "number", required: true, sample: "101" },
       { key: "leave_type_id", label: "Leave Type ID", type: "number", required: true, sample: "1" },
       { key: "year", label: "Year", type: "number", required: true, sample: "2025" },
-      { key: "event_type", label: "Event Type", required: true, sample: "Credit" },
+      { key: "event_type", label: "Event Type", required: true, sample: "adjustment" },
       { key: "days", label: "Days", type: "number", required: true, sample: "2" },
-      { key: "reference", label: "Reference", sample: "" },
-      { key: "reason", label: "Reason", required: true, sample: "Annual credit" },
+      { key: "reference", label: "Reference", sample: "LADJ-2026-000001" },
+      { key: "reason", label: "Reason", required: true, sample: "Historical adjustment" },
     ],
   },
   "hr-offboarding": {

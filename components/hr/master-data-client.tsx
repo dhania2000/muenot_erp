@@ -34,12 +34,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Award, Download, Mail, Plus, Pencil, Ban, ArrowUpDown, Search } from "lucide-react"
+import { Award, Download, Mail, Plus, Pencil, Ban, ArrowUpDown, Search, Eye, PlayCircle } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
 import { DocumentTypesManager } from "@/components/hr/document-types-manager"
 import { LookupSelect } from "@/components/hr/master-data/lookup-select"
 import { MASTER_META, formatCell, type FieldDef, type MasterMeta } from "@/components/hr/master-data/field-config"
+import { MasterSummaryPanel } from "@/components/hr/master-data/summary-panel"
 
 const TAB_ORDER = [
   "departments",
@@ -109,6 +110,37 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
     else {
       setSortKey(key)
       setSortDir("asc")
+    }
+  }
+
+  // ---- detail view ----
+  const [detailRow, setDetailRow] = useState<any | null>(null)
+
+  // ---- apply due promotions job ----
+  const [applying, setApplying] = useState(false)
+  const [applyMsg, setApplyMsg] = useState<string | null>(null)
+  async function applyDuePromotions() {
+    setApplying(true)
+    setApplyMsg(null)
+    try {
+      const res = await fetch("/api/hr/master-data/promotions/apply", { method: "POST" })
+      const json = await res.json()
+      if (!res.ok) {
+        setApplyMsg(json.error || "Could not apply promotions.")
+      } else {
+        const applied = json.applied?.length ?? 0
+        const skipped = json.skipped?.length ?? 0
+        setApplyMsg(
+          applied === 0 && skipped === 0
+            ? "No promotions were due to take effect."
+            : `Applied ${applied} promotion${applied === 1 ? "" : "s"}${skipped ? `, skipped ${skipped}` : ""}.`,
+        )
+        mutate()
+      }
+    } catch {
+      setApplyMsg("Could not apply promotions.")
+    } finally {
+      setApplying(false)
     }
   }
 
@@ -259,6 +291,15 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
         </p>
       </div>
 
+      <MasterSummaryPanel
+        onJump={(k) => {
+          setKind(k as Kind)
+          setSearch("")
+          setStatusFilter("all")
+          setSortKey("")
+        }}
+      />
+
       <div className="flex flex-wrap gap-2">
         {TAB_ORDER.map((key) => (
           <Button
@@ -293,7 +334,7 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
                 />
               </div>
               {meta.hasStatus && (
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
                   <SelectTrigger className="h-9 w-36">
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
@@ -309,6 +350,12 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
               )}
             </div>
             <div className="flex items-center gap-2">
+              {kind === "promotions" && (
+                <Button size="sm" variant="outline" onClick={applyDuePromotions} disabled={applying}>
+                  <PlayCircle className="mr-1 size-4" />
+                  {applying ? "Applying…" : "Apply due promotions"}
+                </Button>
+              )}
               {IMPORT_KIND[kind] && <ImportButton moduleKey={IMPORT_KIND[kind]!} onImported={mutate} />}
               <ExcelExportButton
                 rows={visibleRows}
@@ -321,6 +368,12 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
               </Button>
             </div>
           </div>
+
+          {applyMsg && kind === "promotions" && (
+            <p className="text-sm text-muted-foreground" role="status">
+              {applyMsg}
+            </p>
+          )}
 
           {showCert && (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -369,6 +422,12 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
                       <td className="whitespace-nowrap p-3" key={f.name}>
                         {f.name === "status" ? (
                           <Badge variant={statusVariant(row.status)}>{row.status || "—"}</Badge>
+                        ) : f.name === "expiry_status" ? (
+                          row.expiry_status ? (
+                            <Badge variant={expiryVariant(row.expiry_status)}>{row.expiry_status}</Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )
                         ) : (
                           formatCell(f, row[f.name])
                         )}
@@ -393,6 +452,10 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
                             </Button>
                           </>
                         )}
+                        <Button size="icon" variant="ghost" className="size-8" onClick={() => setDetailRow(row)}>
+                          <Eye className="size-3.5" />
+                          <span className="sr-only">View details</span>
+                        </Button>
                         <Button size="icon" variant="ghost" className="size-8" onClick={() => openEdit(row)}>
                           <Pencil className="size-3.5" />
                           <span className="sr-only">Edit</span>
@@ -452,6 +515,57 @@ export function MasterDataClient({ initialKind = "departments" }: { initialKind?
             <Button onClick={save} disabled={saving}>
               {saving ? "Saving…" : editing ? "Save changes" : `Create ${meta?.singular}`}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Detail view */}
+      <Dialog open={!!detailRow} onOpenChange={(o) => !o && setDetailRow(null)}>
+        <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{meta?.singular} details</DialogTitle>
+            <DialogDescription>Read-only view of the full record.</DialogDescription>
+          </DialogHeader>
+          {detailRow && meta && (
+            <dl className="grid gap-x-6 gap-y-3 py-2 sm:grid-cols-2">
+              {meta.fields.map((f) => {
+                const raw = detailRow[f.name]
+                return (
+                  <div key={f.name} className="space-y-0.5">
+                    <dt className="text-xs font-medium text-muted-foreground">{f.label}</dt>
+                    <dd className="text-sm">
+                      {f.name === "status" ? (
+                        <Badge variant={statusVariant(detailRow.status)}>{detailRow.status || "—"}</Badge>
+                      ) : f.name === "expiry_status" ? (
+                        raw ? (
+                          <Badge variant={expiryVariant(raw)}>{raw}</Badge>
+                        ) : (
+                          "—"
+                        )
+                      ) : (
+                        formatCell(f, raw) || "—"
+                      )}
+                    </dd>
+                  </div>
+                )
+              })}
+            </dl>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDetailRow(null)}>
+              Close
+            </Button>
+            {detailRow && (
+              <Button
+                onClick={() => {
+                  const r = detailRow
+                  setDetailRow(null)
+                  openEdit(r)
+                }}
+              >
+                Edit
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -527,8 +641,21 @@ function statusVariant(status?: string): "default" | "secondary" | "destructive"
     case "Inactive":
     case "Rejected":
       return "destructive"
-    case "Pending":
+  case "Pending":
+  return "secondary"
+  default:
+  return "outline"
+  }
+  }
+
+function expiryVariant(status?: string): "default" | "secondary" | "destructive" | "outline" {
+  switch (status) {
+    case "Expired":
+      return "destructive"
+    case "Expiring soon":
       return "secondary"
+    case "Valid":
+      return "default"
     default:
       return "outline"
   }

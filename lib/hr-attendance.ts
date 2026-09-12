@@ -1,5 +1,6 @@
 import { query } from "@/lib/db"
 import { getSetting } from "@/lib/settings/server"
+import { resolveStepForDate, type CycleType, type PatternStep } from "@/lib/rotation-ui"
 
 // ---------------------------------------------------------------------------
 // HR Attendance — shared calculation & integration layer.
@@ -216,49 +217,76 @@ export async function getEmployeeById(id: number): Promise<EmployeeRecord | null
 }
 
 /**
- * Deterministic rotation resolver. From the employee's active rotation
- * membership, count days since the membership start_date, take that modulo the
- * rotation's total cycle length (sum of sequence durations), then walk the
- * ordered sequences to find the shift covering that offset. Returns the Shift
- * Master db id, or null when the employee is not on an active rotation or it
- * cannot be resolved. Self-contained (only reads rotation tables) so the
- * central resolver has no cross-module import cycle.
+ * Deterministic rotation resolver. Finds the employee's active rotation
+ * membership whose window covers `onDate`, in an Active rotation that is within
+ * its own effective window, and only when the employee is still eligible
+ * (not archived / offboarded / past exit date). It then selects the pattern
+ * VERSION effective on the date and delegates the cycle maths to the single
+ * pure engine in lib/rotation-ui.ts (Days/Weeks on day granularity, Months on
+ * calendar-month granularity), anchored at the membership start_date. Returns
+ * the Shift Master db id, null for a weekly-off step, or null when nothing
+ * resolves. Self-contained (only reads rotation tables) so the central resolver
+ * has no cross-module import cycle.
  */
 export async function resolveRotationShiftId(employeeId: number, onDate: string): Promise<number | null> {
   try {
+    // 1. Active membership in an active, in-window rotation for an eligible employee.
     const memberRows = await query<any[]>(
-      `SELECT re.start_date, r.id AS rotation_pk
+      `SELECT re.start_date, re.rotation_id AS rotation_pk, r.cycle_type AS header_cycle_type
        FROM hr_shift_rotation_employees re
        JOIN hr_shift_rotations r ON r.id = re.rotation_id
-       WHERE re.employee_id = ? AND re.status = 'Active' AND r.status = 'Active'
+       JOIN hr_employees e ON e.id = re.employee_id
+       WHERE re.employee_id = ? AND re.status = 'Active'
+         AND re.start_date <= ?
+         AND (re.end_date IS NULL OR re.end_date >= ?)
+         AND r.status = 'Active'
+         AND (r.effective_from IS NULL OR r.effective_from <= ?)
+         AND (r.effective_until IS NULL OR r.effective_until >= ?)
+         AND e.archived_at IS NULL
+         AND (e.exit_date IS NULL OR e.exit_date >= ?)
        ORDER BY re.start_date DESC LIMIT 1`,
-      [employeeId],
+      [employeeId, onDate, onDate, onDate, onDate, onDate],
     )
     const member = memberRows[0]
     if (!member) return null
 
-    const sequences = await query<any[]>(
-      `SELECT shift_id, duration_days FROM hr_shift_rotation_sequences
-       WHERE rotation_id = ? ORDER BY sequence_no ASC`,
-      [member.rotation_pk],
+    // 2. Pattern version effective on the date (falls back to the earliest).
+    let cycleType: CycleType = (member.header_cycle_type as CycleType) || "Weeks"
+    let sequences = await query<any[]>(
+      `SELECT s.shift_id, s.unit_span, s.duration_days, s.is_weekly_off, v.cycle_type AS version_cycle_type
+       FROM hr_shift_rotation_sequences s
+       JOIN hr_shift_rotation_versions v ON v.id = s.version_id
+       WHERE v.rotation_id = ? AND v.effective_from <= ?
+         AND v.version_no = (
+           SELECT version_no FROM hr_shift_rotation_versions
+           WHERE rotation_id = ? AND effective_from <= ?
+           ORDER BY effective_from DESC, version_no DESC LIMIT 1)
+       ORDER BY s.sequence_no ASC`,
+      [member.rotation_pk, onDate, member.rotation_pk, onDate],
     )
+    if (sequences.length) {
+      cycleType = (sequences[0].version_cycle_type as CycleType) || cycleType
+    } else {
+      // Legacy fallback: sequences stored directly on the rotation (pre-version),
+      // resolved on day granularity to preserve historical behaviour.
+      sequences = await query<any[]>(
+        `SELECT shift_id, duration_days, duration_days AS unit_span, 0 AS is_weekly_off
+         FROM hr_shift_rotation_sequences WHERE rotation_id = ? AND version_id IS NULL ORDER BY sequence_no ASC`,
+        [member.rotation_pk],
+      )
+      cycleType = "Days"
+    }
     if (!sequences.length) return null
 
-    const totalDays = sequences.reduce((sum, s) => sum + Math.max(1, Number(s.duration_days || 1)), 0)
-    if (totalDays <= 0) return null
-
-    const start = new Date(`${String(member.start_date).slice(0, 10)}T00:00:00`)
-    const target = new Date(`${onDate}T00:00:00`)
-    const daysSince = Math.floor((target.getTime() - start.getTime()) / 86400000)
-    if (daysSince < 0) return null
-
-    let offset = daysSince % totalDays
-    for (const seq of sequences) {
-      const dur = Math.max(1, Number(seq.duration_days || 1))
-      if (offset < dur) return Number(seq.shift_id)
-      offset -= dur
-    }
-    return null
+    const steps: PatternStep[] = sequences.map((s) => ({
+      shift_id: Number(s.shift_id),
+      unit_span: Math.max(1, Number(s.unit_span || s.duration_days || 1)),
+      is_weekly_off: Boolean(Number(s.is_weekly_off)),
+    }))
+    const anchor = String(member.start_date).slice(0, 10)
+    const resolved = resolveStepForDate(anchor, cycleType, steps, onDate)
+    if (!resolved || resolved.step.is_weekly_off) return null
+    return resolved.step.shift_id || null
   } catch {
     return null
   }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import { resolveCompanyId } from "@/lib/sales/company-master"
 
 export async function GET() {
   const session = await requireFeature("sales.view_contracts")
@@ -29,15 +30,18 @@ export async function POST(request: Request) {
   )
   const contractCode = `CT-${String(next).padStart(3, "0")}`
 
+  const companyId = await resolveCompanyId({ company_id: body.company_id, company_name: body.company_name })
+
   const result = await query<any>(
     `INSERT INTO sales_contracts
-     (contract_code, contract_date, company_name, start_date, end_date, value, contract_type,
+     (contract_code, contract_date, company_name, company_id, start_date, end_date, value, contract_type,
       status, signed_by_client, signed_by_company, notes, added_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       contractCode,
       new Date().toISOString().slice(0, 10),
       body.company_name,
+      companyId,
       body.start_date || null,
       body.end_date || null,
       body.value,

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
+import { resolveCompanyId } from "@/lib/sales/company-master"
 
 async function resolveLeadId(body: any): Promise<number | null> {
   if (body.lead_id) return Number(body.lead_id)
@@ -40,15 +41,18 @@ export async function POST(request: Request) {
   )
   const quoteCode = `MQ-${String(next).padStart(3, "0")}`
 
+  const companyId = await resolveCompanyId({ company_id: body.company_id, company_name: body.company_name })
+
   const result = await query<any>(
     `INSERT INTO sales_quotations
-     (quote_code, quote_date, company_name, contact_person, opportunity_name, total_amount,
+     (quote_code, quote_date, company_name, company_id, contact_person, opportunity_name, total_amount,
       valid_until, status, added_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       quoteCode,
       new Date().toISOString().slice(0, 10),
       body.company_name,
+      companyId,
       body.contact_person || null,
       body.opportunity_name || null,
       body.total_amount,

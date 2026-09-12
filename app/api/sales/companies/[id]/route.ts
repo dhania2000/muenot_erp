@@ -1,21 +1,23 @@
 import { NextResponse } from "next/server"
-import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import {
+  getCompany360,
+  updateCompany,
+  archiveCompany,
+  restoreCompany,
+  mergeCompanies,
+  CompanyNotFoundError,
+} from "@/lib/sales/company-master"
 
-const ALLOWED = [
-  "company_name",
-  "industry",
-  "website",
-  "linkedin_url",
-  "company_email",
-  "country",
-  "assigned_to",
-  "company_type",
-  "status",
-  "priority",
-  "founded_year",
-  "employee_count",
-]
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireFeature("sales.view_companies")
+  if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const { id } = await params
+  const data = await getCompany360(Number(id))
+  if (!data) return NextResponse.json({ error: "Company not found" }, { status: 404 })
+  return NextResponse.json(data)
+}
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireFeature("sales.manage_companies")
@@ -24,18 +26,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const { id } = await params
   const body = await request.json()
 
-  const fields: string[] = []
-  const values: any[] = []
-  for (const key of ALLOWED) {
-    if (key in body) {
-      fields.push(`${key} = ?`)
-      values.push(body[key] === "" ? null : body[key])
+  try {
+    if (body.action === "restore") {
+      await restoreCompany(Number(id), session.userId)
+    } else if (body.action === "merge") {
+      if (!body.target_id) return NextResponse.json({ error: "target_id is required" }, { status: 400 })
+      await mergeCompanies(Number(id), Number(body.target_id), session.userId)
+    } else {
+      await updateCompany(Number(id), body, session.userId)
     }
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    if (error instanceof CompanyNotFoundError) {
+      return NextResponse.json({ error: error.message }, { status: 404 })
+    }
+    console.error("[company-update] failed", error)
+    return NextResponse.json({ error: "Unable to update company." }, { status: 500 })
   }
-  if (fields.length === 0) return NextResponse.json({ error: "No fields to update" }, { status: 400 })
-
-  await query(`UPDATE sales_companies SET ${fields.join(", ")} WHERE id = ?`, [...values, id])
-  return NextResponse.json({ success: true })
 }
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -43,6 +50,15 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const { id } = await params
-  await query("DELETE FROM sales_companies WHERE id = ?", [id])
-  return NextResponse.json({ success: true })
+  try {
+    // Soft archive rather than a destructive delete so linked history is kept.
+    await archiveCompany(Number(id), session.userId)
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    if (error instanceof CompanyNotFoundError) {
+      return NextResponse.json({ error: error.message }, { status: 404 })
+    }
+    console.error("[company-delete] failed", error)
+    return NextResponse.json({ error: "Unable to archive company." }, { status: 500 })
+  }
 }

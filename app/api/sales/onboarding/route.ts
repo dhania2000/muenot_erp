@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import { resolveCompanyId } from "@/lib/sales/company-master"
 
 export async function GET() {
   const session = await requireFeature("sales.manage_onboarding")
@@ -29,15 +30,18 @@ export async function POST(request: Request) {
   )
   const onboardingCode = `OB-${String(next).padStart(3, "0")}`
 
+  const companyId = await resolveCompanyId({ company_id: body.company_id, company_name: body.company_name })
+
   const result = await query<any>(
     `INSERT INTO sales_onboarding
-     (onboarding_code, onboarding_date, company_name, contract_code, start_date,
+     (onboarding_code, onboarding_date, company_name, company_id, contract_code, start_date,
       kickoff_meeting_date, current_stage, status, onboarding_by, added_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       onboardingCode,
       new Date().toISOString().slice(0, 10),
       body.company_name,
+      companyId,
       body.contract_code || null,
       body.start_date || null,
       body.kickoff_meeting_date || null,

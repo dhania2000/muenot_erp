@@ -160,13 +160,22 @@ export function toPublicIntegration(row: WhatsAppIntegrationRow): WhatsAppIntegr
 
 /**
  * Builds an integration row from the server environment when an administrator
- * has provisioned the coexistence number via env vars instead of the UI.
+ * has provisioned the number via env vars instead of the UI.
  *
- * This is the admin-only backend configuration path (see section 19/20 of the
- * spec): the WhatsApp Business App number stays live and we NEVER call
- * `/register`. The access token is read from the env only on the server and is
- * treated as plaintext by decryptToken (it has no `enc:v1:` marker), so no key
- * is needed. Returns null unless the three core identifiers are all present.
+ * This is the admin-only backend configuration path: the WhatsApp Business App
+ * number stays live and we NEVER call `/register`. The access token is read
+ * from the env only on the server and is treated as plaintext by decryptToken
+ * (it has no `enc:v1:` marker), so no key is needed. Returns null unless the
+ * three core identifiers are all present.
+ *
+ * IMPORTANT: we deliberately leave `platform_type` and `is_on_biz_app` as
+ * `null` here. The mere presence of env vars proves nothing about whether Meta
+ * has actually completed WhatsApp Business App coexistence onboarding for this
+ * number. Coexistence is only ever asserted from a LIVE Meta probe
+ * (verifyWhatsAppCredentials → is_on_biz_app) or from data validated during
+ * Embedded Signup and persisted to the DB. This prevents the UI from showing a
+ * false green "Coexistence" state (see the #133010 "Account not registered"
+ * case, where env vars exist but Cloud API messaging is not registered).
  */
 export function getEnvIntegration(): WhatsAppIntegrationRow | null {
   const wabaId = process.env.WHATSAPP_WABA_ID?.trim()
@@ -186,9 +195,9 @@ export function getEnvIntegration(): WhatsAppIntegrationRow | null {
     verified_name: businessName,
     business_name: businessName,
     quality_rating: null,
-    // Signals coexistence so the UI shows the "also on the Business App" badge.
-    platform_type: "SMB_COEXISTENCE",
-    is_on_biz_app: 1,
+    // Unknown until Meta confirms it live — NEVER hardcode a coexistence claim.
+    platform_type: null,
+    is_on_biz_app: null,
     access_token: accessToken,
     connected_by_user_id: null,
     connected_at: now,
@@ -217,6 +226,13 @@ export type PhoneNumberProfile = {
   platformType: string | null
   /** True when the number is also active in the WhatsApp Business App (coexistence). */
   isOnBizApp: boolean | null
+  /**
+   * The phone number node's registration status on the Cloud API
+   * (e.g. CONNECTED | PENDING | MIGRATED | BANNED). CONNECTED is the signal
+   * that Cloud API messaging is actually registered/usable — the antidote to a
+   * silent (#133010) "Account not registered" failure at send time.
+   */
+  status: string | null
 }
 
 type RawPhoneProfile = {
@@ -225,6 +241,7 @@ type RawPhoneProfile = {
   quality_rating?: string
   platform_type?: string
   is_on_biz_app?: boolean
+  status?: string
   error?: { message?: string; type?: string; code?: number; error_subcode?: number }
 }
 
@@ -268,11 +285,12 @@ export async function verifyWhatsAppCredentials(input: {
     data = await requestPhoneProfile(
       input.phoneNumberId,
       input.accessToken,
-      "display_phone_number,verified_name,quality_rating,platform_type,is_on_biz_app",
+      "display_phone_number,verified_name,quality_rating,platform_type,is_on_biz_app,status",
     )
   } catch {
-    // Retry with the base fields (covers numbers/versions without coexistence fields
-    // and re-surfaces a genuine auth error from the second attempt).
+    // Retry with the base fields (covers numbers/versions without the extra
+    // coexistence/status fields and re-surfaces a genuine auth error from the
+    // second attempt).
     data = await requestPhoneProfile(
       input.phoneNumberId,
       input.accessToken,
@@ -286,6 +304,7 @@ export async function verifyWhatsAppCredentials(input: {
     qualityRating: data.quality_rating ?? null,
     platformType: data.platform_type ?? null,
     isOnBizApp: typeof data.is_on_biz_app === "boolean" ? data.is_on_biz_app : null,
+    status: data.status ?? null,
   }
 }
 

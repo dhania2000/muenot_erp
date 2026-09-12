@@ -641,6 +641,9 @@ function buildFromHeader(department: Department | undefined, configuredFrom: str
 
 export async function sendEmail(opts: {
   to: string
+  /** Optional carbon-copy / blind-copy recipients (comma-separated or arrays). */
+  cc?: string | string[]
+  bcc?: string | string[]
   from?: string
   subject: string
   html: string
@@ -679,6 +682,8 @@ export async function sendEmail(opts: {
   const mailOptions = {
     from,
     to: opts.to,
+    cc: opts.cc && (Array.isArray(opts.cc) ? opts.cc.length : opts.cc) ? opts.cc : undefined,
+    bcc: opts.bcc && (Array.isArray(opts.bcc) ? opts.bcc.length : opts.bcc) ? opts.bcc : undefined,
     subject: opts.subject,
     html: opts.html,
     messageId: opts.messageId,

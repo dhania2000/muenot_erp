@@ -1,6 +1,6 @@
 import { query } from "@/lib/db"
 import { getSetting } from "@/lib/settings/server"
-import { resolveStepForDate, type CycleType, type PatternStep } from "@/lib/rotation-ui"
+import { resolveStepForDate, buildPreview, addDays, type CycleType, type PatternStep } from "@/lib/rotation-ui"
 
 // ---------------------------------------------------------------------------
 // HR Attendance — shared calculation & integration layer.
@@ -228,63 +228,77 @@ export async function getEmployeeById(id: number): Promise<EmployeeRecord | null
  * resolves. Self-contained (only reads rotation tables) so the central resolver
  * has no cross-module import cycle.
  */
+export type EmployeeRotationPattern = { anchor: string; cycleType: CycleType; steps: PatternStep[] }
+
+/**
+ * Load the employee's active rotation pattern as-of `onDate`: the membership
+ * anchor (start_date) plus the step list from the pattern VERSION effective on
+ * that date (legacy versionless rotations fall back to day granularity). Shared
+ * by resolveRotationShiftId (single-date) and getUpcomingShiftChange (forward
+ * scan) so cycle loading lives in exactly one place.
+ */
+async function loadEmployeeRotationPattern(employeeId: number, onDate: string): Promise<EmployeeRotationPattern | null> {
+  // 1. Active membership in an active, in-window rotation for an eligible employee.
+  const memberRows = await query<any[]>(
+    `SELECT re.start_date, re.rotation_id AS rotation_pk, r.cycle_type AS header_cycle_type
+     FROM hr_shift_rotation_employees re
+     JOIN hr_shift_rotations r ON r.id = re.rotation_id
+     JOIN hr_employees e ON e.id = re.employee_id
+     WHERE re.employee_id = ? AND re.status = 'Active'
+       AND re.start_date <= ?
+       AND (re.end_date IS NULL OR re.end_date >= ?)
+       AND r.status = 'Active'
+       AND (r.effective_from IS NULL OR r.effective_from <= ?)
+       AND (r.effective_until IS NULL OR r.effective_until >= ?)
+       AND e.archived_at IS NULL
+       AND (e.exit_date IS NULL OR e.exit_date >= ?)
+     ORDER BY re.start_date DESC LIMIT 1`,
+    [employeeId, onDate, onDate, onDate, onDate, onDate],
+  )
+  const member = memberRows[0]
+  if (!member) return null
+
+  // 2. Pattern version effective on the date (falls back to the earliest).
+  let cycleType: CycleType = (member.header_cycle_type as CycleType) || "Weeks"
+  let sequences = await query<any[]>(
+    `SELECT s.shift_id, s.unit_span, s.duration_days, s.is_weekly_off, v.cycle_type AS version_cycle_type
+     FROM hr_shift_rotation_sequences s
+     JOIN hr_shift_rotation_versions v ON v.id = s.version_id
+     WHERE v.rotation_id = ? AND v.effective_from <= ?
+       AND v.version_no = (
+         SELECT version_no FROM hr_shift_rotation_versions
+         WHERE rotation_id = ? AND effective_from <= ?
+         ORDER BY effective_from DESC, version_no DESC LIMIT 1)
+     ORDER BY s.sequence_no ASC`,
+    [member.rotation_pk, onDate, member.rotation_pk, onDate],
+  )
+  if (sequences.length) {
+    cycleType = (sequences[0].version_cycle_type as CycleType) || cycleType
+  } else {
+    // Legacy fallback: sequences stored directly on the rotation (pre-version),
+    // resolved on day granularity to preserve historical behaviour.
+    sequences = await query<any[]>(
+      `SELECT shift_id, duration_days, duration_days AS unit_span, 0 AS is_weekly_off
+       FROM hr_shift_rotation_sequences WHERE rotation_id = ? AND version_id IS NULL ORDER BY sequence_no ASC`,
+      [member.rotation_pk],
+    )
+    cycleType = "Days"
+  }
+  if (!sequences.length) return null
+
+  const steps: PatternStep[] = sequences.map((s) => ({
+    shift_id: Number(s.shift_id),
+    unit_span: Math.max(1, Number(s.unit_span || s.duration_days || 1)),
+    is_weekly_off: Boolean(Number(s.is_weekly_off)),
+  }))
+  return { anchor: String(member.start_date).slice(0, 10), cycleType, steps }
+}
+
 export async function resolveRotationShiftId(employeeId: number, onDate: string): Promise<number | null> {
   try {
-    // 1. Active membership in an active, in-window rotation for an eligible employee.
-    const memberRows = await query<any[]>(
-      `SELECT re.start_date, re.rotation_id AS rotation_pk, r.cycle_type AS header_cycle_type
-       FROM hr_shift_rotation_employees re
-       JOIN hr_shift_rotations r ON r.id = re.rotation_id
-       JOIN hr_employees e ON e.id = re.employee_id
-       WHERE re.employee_id = ? AND re.status = 'Active'
-         AND re.start_date <= ?
-         AND (re.end_date IS NULL OR re.end_date >= ?)
-         AND r.status = 'Active'
-         AND (r.effective_from IS NULL OR r.effective_from <= ?)
-         AND (r.effective_until IS NULL OR r.effective_until >= ?)
-         AND e.archived_at IS NULL
-         AND (e.exit_date IS NULL OR e.exit_date >= ?)
-       ORDER BY re.start_date DESC LIMIT 1`,
-      [employeeId, onDate, onDate, onDate, onDate, onDate],
-    )
-    const member = memberRows[0]
-    if (!member) return null
-
-    // 2. Pattern version effective on the date (falls back to the earliest).
-    let cycleType: CycleType = (member.header_cycle_type as CycleType) || "Weeks"
-    let sequences = await query<any[]>(
-      `SELECT s.shift_id, s.unit_span, s.duration_days, s.is_weekly_off, v.cycle_type AS version_cycle_type
-       FROM hr_shift_rotation_sequences s
-       JOIN hr_shift_rotation_versions v ON v.id = s.version_id
-       WHERE v.rotation_id = ? AND v.effective_from <= ?
-         AND v.version_no = (
-           SELECT version_no FROM hr_shift_rotation_versions
-           WHERE rotation_id = ? AND effective_from <= ?
-           ORDER BY effective_from DESC, version_no DESC LIMIT 1)
-       ORDER BY s.sequence_no ASC`,
-      [member.rotation_pk, onDate, member.rotation_pk, onDate],
-    )
-    if (sequences.length) {
-      cycleType = (sequences[0].version_cycle_type as CycleType) || cycleType
-    } else {
-      // Legacy fallback: sequences stored directly on the rotation (pre-version),
-      // resolved on day granularity to preserve historical behaviour.
-      sequences = await query<any[]>(
-        `SELECT shift_id, duration_days, duration_days AS unit_span, 0 AS is_weekly_off
-         FROM hr_shift_rotation_sequences WHERE rotation_id = ? AND version_id IS NULL ORDER BY sequence_no ASC`,
-        [member.rotation_pk],
-      )
-      cycleType = "Days"
-    }
-    if (!sequences.length) return null
-
-    const steps: PatternStep[] = sequences.map((s) => ({
-      shift_id: Number(s.shift_id),
-      unit_span: Math.max(1, Number(s.unit_span || s.duration_days || 1)),
-      is_weekly_off: Boolean(Number(s.is_weekly_off)),
-    }))
-    const anchor = String(member.start_date).slice(0, 10)
-    const resolved = resolveStepForDate(anchor, cycleType, steps, onDate)
+    const pattern = await loadEmployeeRotationPattern(employeeId, onDate)
+    if (!pattern) return null
+    const resolved = resolveStepForDate(pattern.anchor, pattern.cycleType, pattern.steps, onDate)
     if (!resolved || resolved.step.is_weekly_off) return null
     return resolved.step.shift_id || null
   } catch {
@@ -353,6 +367,143 @@ export async function resolveShiftForEmployee(
   }
 
   return null
+}
+
+export type UpcomingShiftChange = {
+  date: string
+  shift_id: number | null
+  shift_name: string | null
+  start_time: string | null
+  end_time: string | null
+  is_overnight: boolean
+  source: "assignment" | "rotation" | "default" | "off"
+  assignment_id: string | null
+}
+
+/**
+ * The next date within `horizonDays` on which the employee's APPLICABLE shift
+ * changes, computed through the one central resolver (§52/§65). It unifies three
+ * kinds of upcoming change into a single truthful answer:
+ *   • an explicit assignment that starts (or ends) in the window,
+ *   • a rotation step boundary, and
+ *   • a rotation pattern version change.
+ * Resolve-on-read: it only reads the same masters attendance reads and never
+ * materializes rows, so the profile can never disagree with what attendance
+ * will later derive. Candidate boundary dates are gathered cheaply, then the
+ * resolver confirms the first one that actually changes the shift, respecting
+ * assignment > rotation > default precedence.
+ */
+export async function getUpcomingShiftChange(
+  employee: Pick<EmployeeRecord, "id" | "shift">,
+  fromDate: string,
+  horizonDays = 120,
+): Promise<UpcomingShiftChange | null> {
+  try {
+    const current = await resolveShiftForEmployee(employee, fromDate)
+    const currentId = current?.id ?? null
+    const horizonEnd = addDays(fromDate, horizonDays)
+    const candidates = new Set<string>()
+
+    // Explicit assignment boundaries (starts and day-after-ends).
+    try {
+      const rows = await query<any[]>(
+        `SELECT effective_from, effective_to FROM hr_shift_assignments
+         WHERE employee_id = ? AND status = 'Active'
+           AND (effective_from > ? OR (effective_to IS NOT NULL AND effective_to >= ?))`,
+        [employee.id, fromDate, fromDate],
+      )
+      for (const r of rows) {
+        const ef = String(r.effective_from).slice(0, 10)
+        if (ef > fromDate && ef <= horizonEnd) candidates.add(ef)
+        if (r.effective_to) {
+          const dayAfter = addDays(String(r.effective_to).slice(0, 10), 1)
+          if (dayAfter > fromDate && dayAfter <= horizonEnd) candidates.add(dayAfter)
+        }
+      }
+    } catch {
+      // hr_shift_assignments may be absent on older databases — ignore.
+    }
+
+    // Rotation step boundaries (raw pattern change points within the horizon).
+    try {
+      const pattern = await loadEmployeeRotationPattern(employee.id, fromDate)
+      if (pattern) {
+        const preview = buildPreview(pattern.anchor, pattern.cycleType, pattern.steps, fromDate, horizonDays)
+        let prevId = preview[0]?.step?.shift_id ?? null
+        let prevOff = preview[0]?.step?.is_weekly_off ?? false
+        for (let i = 1; i < preview.length; i++) {
+          const step = preview[i].step
+          const sid = step?.shift_id ?? null
+          const off = step?.is_weekly_off ?? false
+          if (sid !== prevId || off !== prevOff) {
+            candidates.add(preview[i].date)
+            prevId = sid
+            prevOff = off
+          }
+        }
+      }
+    } catch {
+      // Rotation resolution is best-effort.
+    }
+
+    // Rotation pattern version-change boundaries.
+    try {
+      const vrows = await query<any[]>(
+        `SELECT v.effective_from FROM hr_shift_rotation_versions v
+         JOIN hr_shift_rotation_employees re ON re.rotation_id = v.rotation_id
+         WHERE re.employee_id = ? AND re.status = 'Active'
+           AND v.effective_from > ? AND v.effective_from <= ?`,
+        [employee.id, fromDate, horizonEnd],
+      )
+      for (const v of vrows) candidates.add(String(v.effective_from).slice(0, 10))
+    } catch {
+      // Version table may be absent — ignore.
+    }
+
+    const sorted = Array.from(candidates)
+      .filter((d) => d > fromDate && d <= horizonEnd)
+      .sort()
+
+    for (const date of sorted) {
+      const resolved = await resolveShiftForEmployee(employee, date)
+      const rid = resolved?.id ?? null
+      if (rid === currentId) continue
+
+      // Classify which layer produced the new shift (assignment beats rotation).
+      let source: UpcomingShiftChange["source"]
+      let assignmentId: string | null = null
+      const asg = await query<any[]>(
+        `SELECT assignment_id FROM hr_shift_assignments
+         WHERE employee_id = ? AND status = 'Active' AND effective_from <= ?
+           AND (effective_to IS NULL OR effective_to >= ?)
+         ORDER BY effective_from DESC LIMIT 1`,
+        [employee.id, date, date],
+      ).catch(() => [])
+      if (asg[0]) {
+        source = "assignment"
+        assignmentId = asg[0].assignment_id
+      } else if (rid === null) {
+        source = "off"
+      } else {
+        const rotId = await resolveRotationShiftId(employee.id, date).catch(() => null)
+        source = rotId === rid ? "rotation" : "default"
+      }
+
+      return {
+        date,
+        shift_id: rid,
+        shift_name: resolved?.shift_name ?? (rid === null ? "Weekly Off / No shift" : null),
+        start_time: resolved?.start_time ?? null,
+        end_time: resolved?.end_time ?? null,
+        is_overnight: Boolean(resolved?.is_overnight),
+        source,
+        assignment_id: assignmentId,
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 function normalizeShift(row: any): ShiftConfig {

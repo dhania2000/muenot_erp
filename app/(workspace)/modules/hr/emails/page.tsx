@@ -1,2 +1,5 @@
-import { HrEmailCenter } from "@/components/hr/email-center-client"
-export default function HrEmailsPage() { return <HrEmailCenter mode="emails" /> }
+import { HrEmailHub } from "@/components/hr/hr-email-hub"
+
+export default function HrEmailsPage() {
+  return <HrEmailHub />
+}

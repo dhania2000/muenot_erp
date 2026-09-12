@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
@@ -30,7 +31,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Mail, MoreHorizontal, Phone, Plus, Search } from "lucide-react"
+import { LayoutGrid, List, Mail, MoreHorizontal, Phone, Plus, Search } from "lucide-react"
+import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { LeadDialog } from "@/components/sales/lead-dialog"
 import { ComposeEmailDialog } from "@/components/sales/compose-email-dialog"
@@ -178,9 +180,22 @@ function effectiveLeadStatus(lead: LeadRow): LeadStatus {
   return "Open"
 }
 
+// Pipeline columns shown in the Kanban board (open pipeline only).
+const KANBAN_STAGES = [
+  "New",
+  "Qualified",
+  "Follow Up 1",
+  "Follow Up 2",
+  "In Discussion",
+  "Proposal Sent",
+  "Ready",
+] as const
+
 export function LeadsClient({ canManage, canCall = false }: { canManage: boolean; canCall?: boolean }) {
+  const router = useRouter()
   const { data, isLoading, mutate } = useSWR<{ leads: LeadRow[] }>("/api/sales/leads", fetcher)
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all")
+  const [view, setView] = useState<"table" | "kanban">("table")
   const [search, setSearch] = useState("")
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<LeadRow | null>(null)
@@ -283,6 +298,26 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
               className="w-56 pl-8"
             />
           </div>
+          <div className="flex items-center rounded-md border border-border p-0.5">
+            <Button
+              size="icon-sm"
+              variant={view === "table" ? "secondary" : "ghost"}
+              aria-label="Table view"
+              aria-pressed={view === "table"}
+              onClick={() => setView("table")}
+            >
+              <List className="size-4" />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant={view === "kanban" ? "secondary" : "ghost"}
+              aria-label="Kanban view"
+              aria-pressed={view === "kanban"}
+              onClick={() => setView("kanban")}
+            >
+              <LayoutGrid className="size-4" />
+            </Button>
+          </div>
           <ExcelExportButton
             rows={filtered}
             filename="leads"
@@ -340,6 +375,13 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
         />
       )}
 
+      {view === "kanban" ? (
+        <KanbanBoard
+          leads={filtered}
+          isLoading={isLoading}
+          onOpen={(id) => router.push(`/modules/sales/leads/${id}`)}
+        />
+      ) : (
       <div className="rounded-md border border-border bg-card">
         <Table>
           <TableHeader>
@@ -376,9 +418,14 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
               </TableRow>
             )}
             {filtered.map((lead) => (
-              <TableRow key={lead.id} data-state={selected.has(lead.id) ? "selected" : undefined}>
+              <TableRow
+                key={lead.id}
+                data-state={selected.has(lead.id) ? "selected" : undefined}
+                className="cursor-pointer"
+                onClick={() => router.push(`/modules/sales/leads/${lead.id}`)}
+              >
                 {canManage && (
-                  <TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       aria-label={`Select lead ${lead.company_name || lead.lead_code}`}
                       checked={selected.has(lead.id)}
@@ -487,7 +534,7 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
                 </TableCell>
                 <TableCell className="text-muted-foreground">{lead.assigned_to_name || "Unassigned"}</TableCell>
                 {canManage && (
-                  <TableCell className="text-right">
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Actions" />}>
                         <MoreHorizontal className="size-4" />
@@ -516,6 +563,7 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
           </TableBody>
         </Table>
       </div>
+      )}
 
       <ComposeEmailDialog
         open={emailOpen}
@@ -546,6 +594,76 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
       />
 
       {del.dialog}
+    </div>
+  )
+}
+
+function KanbanBoard({
+  leads,
+  isLoading,
+  onOpen,
+}: {
+  leads: LeadRow[]
+  isLoading: boolean
+  onOpen: (id: number) => void
+}) {
+  const columns = useMemo(() => {
+    const map = new Map<string, LeadRow[]>()
+    for (const stage of KANBAN_STAGES) map.set(stage, [])
+    const other: LeadRow[] = []
+    for (const lead of leads) {
+      const bucket = map.get(lead.status)
+      if (bucket) bucket.push(lead)
+      else other.push(lead)
+    }
+    const result = KANBAN_STAGES.map((stage) => ({ stage, rows: map.get(stage) ?? [] }))
+    if (other.length) result.push({ stage: "Other", rows: other } as { stage: string; rows: LeadRow[] })
+    return result
+  }, [leads])
+
+  if (isLoading) {
+    return <div className="py-10 text-center text-sm text-muted-foreground">Loading leads...</div>
+  }
+
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-2">
+      {columns.map(({ stage, rows }) => (
+        <div key={stage} className="flex w-64 shrink-0 flex-col gap-2">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-sm font-medium">{stage}</span>
+            <Badge variant="outline">{rows.length}</Badge>
+          </div>
+          <div className="flex min-h-24 flex-col gap-2 rounded-md bg-muted/40 p-2">
+            {rows.length === 0 && (
+              <p className="py-6 text-center text-xs text-muted-foreground">No leads</p>
+            )}
+            {rows.map((lead) => (
+              <Card
+                key={lead.id}
+                className="cursor-pointer gap-2 p-3 transition-colors hover:border-primary/50"
+                onClick={() => onOpen(lead.id)}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium leading-tight text-pretty">
+                    {lead.company_name || lead.contact_person || lead.lead_code}
+                  </span>
+                  <Badge variant={LEAD_STATUS_VARIANT[effectiveLeadStatus(lead)] || "outline"}>
+                    {effectiveLeadStatus(lead)}
+                  </Badge>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {lead.contact_person || "—"}
+                  {lead.designation ? ` · ${lead.designation}` : ""}
+                </span>
+                <div className="flex items-center gap-2 pt-1">
+                  <Progress value={lead.lead_health_score} className="h-1.5 flex-1" />
+                  <span className="text-xs text-muted-foreground">{lead.lead_health_score}%</span>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

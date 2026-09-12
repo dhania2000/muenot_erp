@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
+import { userHasFeature } from "@/lib/permissions"
 import { renderLetterTemplate, validateTemplate, missingRequiredValues } from "@/lib/hr-letters-render"
 import { buildLetterContext, getTemplateForGeneration } from "@/lib/hr-letters-generate"
 import { eventByKey, type LetterSource } from "@/lib/hr-letters-shared"
@@ -12,6 +13,9 @@ import { eventByKey, type LetterSource } from "@/lib/hr-letters-shared"
 export async function POST(request: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!(await userHasFeature(session.userId, session.role, "hr.view_letters"))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
 
   const body = await request.json().catch(() => ({}))
 

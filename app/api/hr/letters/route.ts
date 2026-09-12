@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
   const letters = await query<any[]>(
-    `SELECT l.id, l.letter_number, l.employee_id, l.template_id, l.template_version,
+    `SELECT l.id, l.letter_number, l.reference_no, l.employee_id, l.template_id, l.template_version,
             l.letter_type, l.category, l.audience, l.subject, l.issue_date, l.status,
             l.source, l.source_ref, l.event_key, l.recipient_name, l.document_id, l.email_id,
             l.supersedes_id, l.superseded_by, l.created_at, l.issued_at, l.delivered_at,

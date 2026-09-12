@@ -12,6 +12,7 @@ import {
   type Actor,
   type LeaveAction,
 } from "@/lib/hr-leave"
+import { emitHrEmailEvent } from "@/lib/hr-email-automation"
 
 async function resolvePrivilege(session: { userId: number; role: "admin" | "employee" }) {
   if (session.role === "admin") return true
@@ -101,6 +102,35 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const result = await transitionLeave(leave.request_id, action, actor, body.remarks ?? null)
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
+
+    // Automated notification on a terminal transition (spec §27/§28).
+    const eventKey =
+      result.status === "HR Approved"
+        ? "leave_approved"
+        : result.status === "HR Rejected" || result.status === "Manager Rejected"
+          ? "leave_rejected"
+          : result.status === "Cancelled"
+            ? "leave_cancelled"
+            : null
+    if (eventKey) {
+      const leaveType = await resolveLeaveType(leave.leave_type_id)
+      await emitHrEmailEvent(eventKey, {
+        employeeId: Number(leave.employee_id),
+        sourceRecordId: leave.request_id,
+        actorId: session.userId,
+        vars: {
+          request_id: leave.request_id,
+          leave_type: leaveType?.leave_type ?? "",
+          from_date: String(leave.from_date).slice(0, 10),
+          to_date: String(leave.to_date).slice(0, 10),
+          days: leave.days,
+          reason: leave.reason,
+          status: result.status,
+          remarks: body.remarks ?? "",
+        },
+      })
+    }
+
     return NextResponse.json({ ok: true, status: result.status })
   } catch (error) {
     console.log("[v0] leave transition failed", (error as Error).message)

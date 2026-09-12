@@ -794,3 +794,187 @@ function rangesOverlap(aFrom: string, aTo: string | null, bFrom: string, bTo: st
   const bEnd = bTo ?? "9999-12-31"
   return aFrom <= bEnd && bFrom <= aEnd
 }
+
+// ---------------------------------------------------------------------------
+// Membership directory (the authoritative "Shift Rotation Employees" surface).
+// These power the dedicated screen + API. They only READ; every write still
+// funnels through addMembers/endMembership/setMembershipStatus above so
+// validation, conflict detection, auto-IDs and audit are never bypassed.
+// ---------------------------------------------------------------------------
+
+export type MembershipRow = {
+  record_id: string
+  employee_pk: number
+  employee_code: string | null
+  employee_name: string | null
+  department: string | null
+  designation: string | null
+  employment_status: string | null
+  exit_date: string | null
+  rotation_pk: number
+  rotation_code: string
+  rotation_name: string
+  rotation_status: string
+  cycle_type: string
+  start_date: string
+  end_date: string | null
+  status: string
+  added_by_name: string | null
+  created_at: string
+}
+
+const MEMBERSHIP_SELECT = `
+  SELECT re.record_id, re.employee_id AS employee_pk, e.employee_id AS employee_code, e.employee_name,
+         e.department, e.designation, e.employment_status, e.exit_date,
+         re.rotation_id AS rotation_pk, r.rotation_id AS rotation_code, r.rotation_name, r.status AS rotation_status,
+         r.cycle_type, re.start_date, re.end_date, re.status, re.added_by_name, re.created_at
+  FROM hr_shift_rotation_employees re
+  JOIN hr_shift_rotations r ON r.id = re.rotation_id
+  LEFT JOIN hr_employees e ON e.id = re.employee_id`
+
+/**
+ * List memberships with directory filters and server-side "quick views".
+ * `view`: current | upcoming | historical (window-based, computed against
+ * today) — anything else returns everything matching the other filters.
+ */
+export async function listMemberships(opts: {
+  q?: string
+  rotation?: string
+  department?: string
+  status?: string
+  view?: string
+  employeeId?: number
+}): Promise<MembershipRow[]> {
+  await ensureShiftRotationSchema()
+  const today = todayStr()
+  const where: string[] = []
+  const args: any[] = []
+  if (opts.q) {
+    const like = `%${opts.q}%`
+    where.push("(re.record_id LIKE ? OR e.employee_name LIKE ? OR e.employee_id LIKE ? OR r.rotation_id LIKE ? OR r.rotation_name LIKE ?)")
+    args.push(like, like, like, like, like)
+  }
+  if (opts.rotation && opts.rotation !== "all") { where.push("r.rotation_id = ?"); args.push(opts.rotation) }
+  if (opts.department && opts.department !== "all") { where.push("e.department = ?"); args.push(opts.department) }
+  if (opts.status && opts.status !== "all") { where.push("re.status = ?"); args.push(opts.status) }
+  if (typeof opts.employeeId === "number") { where.push("re.employee_id = ?"); args.push(opts.employeeId) }
+  if (opts.view === "current") {
+    where.push("re.status = 'Active' AND re.start_date <= ? AND (re.end_date IS NULL OR re.end_date >= ?)")
+    args.push(today, today)
+  } else if (opts.view === "upcoming") {
+    where.push("re.status = 'Active' AND re.start_date > ?"); args.push(today)
+  } else if (opts.view === "historical") {
+    where.push("(re.status = 'Inactive' OR (re.end_date IS NOT NULL AND re.end_date < ?))"); args.push(today)
+  } else if (opts.view === "overdue") {
+    where.push("re.status = 'Active' AND ((re.end_date IS NOT NULL AND re.end_date < ?) OR r.status <> 'Active')")
+    args.push(today)
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
+  return query<MembershipRow[]>(
+    `${MEMBERSHIP_SELECT} ${whereSql}
+     ORDER BY (re.status = 'Active') DESC, re.start_date DESC, re.id DESC
+     LIMIT 500`,
+    args,
+  )
+}
+
+export async function getMembership(recordId: string): Promise<MembershipRow | null> {
+  await ensureShiftRotationSchema()
+  const rows = await query<MembershipRow[]>(`${MEMBERSHIP_SELECT} WHERE re.record_id = ? LIMIT 1`, [recordId])
+  return rows[0] ?? null
+}
+
+export type MembershipSummary = {
+  current: number
+  upcoming: number
+  historical: number
+  overdue: number
+  withoutRotation: number
+}
+
+export async function membershipSummary(): Promise<MembershipSummary> {
+  await ensureShiftRotationSchema()
+  const today = todayStr()
+  const rows = await query<any[]>(
+    `SELECT
+       SUM(re.status = 'Active' AND re.start_date <= ? AND (re.end_date IS NULL OR re.end_date >= ?)) AS current,
+       SUM(re.status = 'Active' AND re.start_date > ?) AS upcoming,
+       SUM(re.status = 'Inactive' OR (re.end_date IS NOT NULL AND re.end_date < ?)) AS historical,
+       SUM(re.status = 'Active' AND ((re.end_date IS NOT NULL AND re.end_date < ?) OR r.status <> 'Active')) AS overdue
+     FROM hr_shift_rotation_employees re
+     JOIN hr_shift_rotations r ON r.id = re.rotation_id`,
+    [today, today, today, today, today],
+  )
+  const without = await employeesWithoutRotation()
+  return {
+    current: Number(rows[0]?.current || 0),
+    upcoming: Number(rows[0]?.upcoming || 0),
+    historical: Number(rows[0]?.historical || 0),
+    overdue: Number(rows[0]?.overdue || 0),
+    withoutRotation: without.length,
+  }
+}
+
+export type UncoveredEmployee = {
+  employee_pk: number
+  employee_code: string | null
+  employee_name: string | null
+  department: string | null
+  designation: string | null
+  employment_status: string | null
+}
+
+/**
+ * Eligible, active employees who have NO active rotation membership covering
+ * today AND no active explicit shift assignment — i.e. they fall through to the
+ * default company shift only. Surfaced so HR can spot who still needs a
+ * rotation. Degrades gracefully if the assignments table is absent.
+ */
+export async function employeesWithoutRotation(): Promise<UncoveredEmployee[]> {
+  await ensureShiftRotationSchema()
+  const today = todayStr()
+  const noRotation = `NOT EXISTS (
+      SELECT 1 FROM hr_shift_rotation_employees re
+      WHERE re.employee_id = e.id AND re.status = 'Active'
+        AND re.start_date <= ? AND (re.end_date IS NULL OR re.end_date >= ?))`
+  const eligible = `e.archived_at IS NULL
+      AND (e.employment_status IS NULL OR LOWER(TRIM(e.employment_status)) NOT IN
+        ('terminated','resigned','exited','inactive','left','archived','offboarded','ex-employee'))
+      AND (e.exit_date IS NULL OR e.exit_date >= ?)`
+  try {
+    return await query<UncoveredEmployee[]>(
+      `SELECT e.id AS employee_pk, e.employee_id AS employee_code, e.employee_name, e.department, e.designation, e.employment_status
+       FROM hr_employees e
+       WHERE ${eligible} AND ${noRotation}
+         AND NOT EXISTS (
+           SELECT 1 FROM hr_shift_assignments a
+           WHERE a.employee_id = e.id AND a.status = 'Active'
+             AND a.effective_from <= ? AND (a.effective_to IS NULL OR a.effective_to >= ?))
+       ORDER BY e.employee_name LIMIT 500`,
+      [today, today, today, today, today],
+    )
+  } catch {
+    // Assignments table not present in this deployment — rotation-only fallback.
+    return query<UncoveredEmployee[]>(
+      `SELECT e.id AS employee_pk, e.employee_id AS employee_code, e.employee_name, e.department, e.designation, e.employment_status
+       FROM hr_employees e
+       WHERE ${eligible} AND ${noRotation}
+       ORDER BY e.employee_name LIMIT 500`,
+      [today, today, today],
+    )
+  }
+}
+
+/** Membership audit trail, filtered from the rotation's event log. */
+export async function getMembershipEvents(rotationCode: string, recordId: string): Promise<any[]> {
+  const events = await getRotationEvents(rotationCode)
+  return events.filter((e) => {
+    if (["members_added", "member_ended", "member_status"].includes(e.event_type)) {
+      const changes = e.changes && typeof e.changes === "object" ? e.changes : {}
+      // members_added is rotation-wide; keep it. Targeted events keep only their record.
+      if (e.event_type === "members_added") return true
+      return !changes.recordId || changes.recordId === recordId || String(e.summary || "").includes(recordId)
+    }
+    return false
+  })
+}

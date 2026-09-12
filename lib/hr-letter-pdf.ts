@@ -11,6 +11,9 @@ import { jsPDF } from "jspdf"
 
 export type LetterPdfInput = {
   letterNumber: string
+  /** Formal human-facing reference (e.g. MUENOT/HR/2026/000051). Shown on the
+   *  "Ref:" line when present; falls back to letterNumber otherwise. */
+  referenceNo?: string | null
   subject: string
   body: string
   issueDate: string | Date | null | undefined
@@ -84,7 +87,7 @@ export function buildLetterPdf(input: LetterPdfInput): jsPDF {
   doc.setFont("helvetica", "normal")
   doc.setFontSize(10)
   setColor(MUTED)
-  doc.text(`Ref: ${input.letterNumber || "—"}`, margin, y)
+  doc.text(`Ref: ${input.referenceNo || input.letterNumber || "—"}`, margin, y)
   const dateStr = `Date: ${fmtDate(input.issueDate) || fmtDate(new Date())}`
   doc.text(dateStr, pageW - margin - doc.getTextWidth(dateStr), y)
   y += 22

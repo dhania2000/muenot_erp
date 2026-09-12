@@ -1,4 +1,5 @@
 import { query } from "@/lib/db"
+import { ensureLetterEventsSchema } from "@/lib/hr-letters-audit"
 
 // ---------------------------------------------------------------------------
 // HR Letters — server-only schema self-heal + company settings.
@@ -142,12 +143,19 @@ async function doEnsure() {
     "`variables_snapshot` JSON NULL",
     "`issued_at` DATETIME NULL",
     "`delivered_at` DATETIME NULL",
+    // Formal, human-facing reference (e.g. MUENOT/HR/2026/000051) kept separate
+    // from the immutable internal LTR- id, plus the cancellation audit fields.
+    "`reference_no` VARCHAR(60) NULL",
+    "`cancel_reason` VARCHAR(500) NULL",
+    "`cancelled_by` BIGINT UNSIGNED NULL",
+    "`cancelled_at` DATETIME NULL",
   ])
   await addIndexes("hr_letters", [
     "KEY idx_hr_letters_status (status)",
     "KEY idx_hr_letters_source (source, source_ref)",
     "KEY idx_hr_letters_template_ver (template_id, template_version)",
     "UNIQUE KEY uq_hr_letters_dedupe (dedupe_key)",
+    "UNIQUE KEY uq_hr_letters_reference (reference_no)",
   ])
 
   // --- Template version history -------------------------------------------
@@ -195,6 +203,9 @@ async function doEnsure() {
     `INSERT IGNORE INTO features (module_id,name,slug,description,sort_order)
      SELECT id,'HR Letters','hr.view_letters','Issue letters to employees',33 FROM modules WHERE slug='hr'`,
   )
+
+  // Audit trail lives in its own module so it self-heals alongside the registry.
+  await ensureLetterEventsSchema()
 }
 
 /** Read company settings as a flat key/value map for letter merging. */

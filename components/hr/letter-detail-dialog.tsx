@@ -34,6 +34,14 @@ type Version = {
   superseded_by: number | null
 }
 
+type LetterAuditEvent = {
+  id: number
+  event_type: string
+  summary: string
+  actor_name: string | null
+  created_at: string | null
+}
+
 type DetailResponse = {
   letter: GeneratedLetter & {
     template_name?: string | null
@@ -42,8 +50,11 @@ type DetailResponse = {
     delivered_at?: string | null
     event_key?: string
     recipient_name?: string | null
+    reference_no?: string | null
+    cancel_reason?: string | null
   }
   versions: Version[]
+  events?: LetterAuditEvent[]
 }
 
 function fmt(value?: string | null) {
@@ -194,7 +205,8 @@ export function LetterDetailDialog({
                 <LetterStatusBadge status={letter.status} />
               </div>
               <DialogDescription className="font-mono text-xs">
-                {letter.letter_number}
+                {letter.reference_no || letter.letter_number}
+                <span className="text-muted-foreground/70"> · {letter.letter_number}</span>
                 {letter.template_version ? ` · v${letter.template_version}` : ""}
               </DialogDescription>
             </DialogHeader>

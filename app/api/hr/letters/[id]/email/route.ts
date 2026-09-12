@@ -8,8 +8,10 @@ import {
   sendEmail,
   withTrackingPixel,
 } from "@/lib/email"
+import { userHasFeature } from "@/lib/permissions"
 import { getCompanySettings } from "@/lib/hr-letters-db"
-import { getLetter, letterCompanyFromSettings } from "@/lib/hr-letters-generate"
+import { fileLetterToDocuments, getLetter, letterCompanyFromSettings, letterSignatoryFromSettings } from "@/lib/hr-letters-generate"
+import { logLetterEvent } from "@/lib/hr-letters-audit"
 import { letterPdfBuffer } from "@/lib/hr-letter-pdf"
 import { letterTextToHtml } from "@/lib/hr-letters-render"
 
@@ -21,6 +23,9 @@ export const runtime = "nodejs"
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!(await userHasFeature(session.userId, session.role, "hr.view_letters"))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
 
   if (!isEmailConfigured("hr")) {
     return NextResponse.json({ error: "HR email transport is not configured" }, { status: 400 })
@@ -53,6 +58,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const pdf = letterPdfBuffer({
     letterNumber: letter.letter_number,
+    referenceNo: letter.reference_no || null,
     subject: letter.subject,
     body: letter.body,
     issueDate: letter.issue_date,
@@ -62,6 +68,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .filter(Boolean)
         .join(" · ") || null,
     company,
+    signatory: letterSignatoryFromSettings(settings),
   })
 
   const baseUrl = resolveBaseUrl(request)
@@ -107,6 +114,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
        WHERE id = ?`,
       [inserted ? Number((inserted as any).insertId) : null, letter.id],
     )
+
+    await logLetterEvent({
+      letterId: letter.id,
+      letterNumber: letter.letter_number,
+      type: "emailed",
+      summary: `Emailed to ${to}`,
+      detail: { to, subject, message_id: result.messageId || null },
+      actorId: session.userId,
+      actorName: session.name ?? null,
+    })
+
+    // Emailed letters are delivered records — persist the PDF to the vault.
+    await fileLetterToDocuments(letter.id, session.userId)
+
     return NextResponse.json({ ok: true, to })
   } catch (error: any) {
     await query(

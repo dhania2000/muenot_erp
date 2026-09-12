@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
+import { userHasFeature } from "@/lib/permissions"
 import { regenerateLetter } from "@/lib/hr-letters-generate"
 
 // POST /api/hr/letters/:id/regenerate
@@ -8,6 +9,9 @@ import { regenerateLetter } from "@/lib/hr-letters-generate"
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!(await userHasFeature(session.userId, session.role, "hr.view_letters"))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
   const { id } = await params
   const result = await regenerateLetter(Number(id), session.userId)
   if (!result.ok) {

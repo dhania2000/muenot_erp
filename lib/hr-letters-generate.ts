@@ -4,6 +4,8 @@ import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { ensureLetterTables, getCompanySettings } from "@/lib/hr-letters-db"
 import { renderLetterTemplate } from "@/lib/hr-letters-render"
+import { logLetterEvent } from "@/lib/hr-letters-audit"
+import { letterPdfBuffer } from "@/lib/hr-letter-pdf"
 import {
   eventByKey,
   type GeneratedLetter,
@@ -92,6 +94,49 @@ export function letterCompanyFromSettings(settings: Record<string, string>) {
     phone: pick(settings, "company.phone", "company_phone", "phone"),
     website: pick(settings, "company.website", "company_website", "website"),
   }
+}
+
+/**
+ * Resolve the authorised signatory for the letter's signature block from
+ * company settings. Returns undefined when nothing is configured so the PDF
+ * falls back to the generic "For {company}" block.
+ */
+export function letterSignatoryFromSettings(
+  settings: Record<string, string>,
+): { name?: string; designation?: string; label?: string } | undefined {
+  const name = pick(settings, "letter.signatory_name", "signatory.name", "hr.signatory_name")
+  const designation = pick(
+    settings,
+    "letter.signatory_designation",
+    "signatory.designation",
+    "hr.signatory_designation",
+  )
+  if (!name && !designation) return undefined
+  return { name: name || undefined, designation: designation || undefined }
+}
+
+/** Prefix used to build the formal, human-facing reference number. */
+function referencePrefix(settings: Record<string, string>): string {
+  return (
+    pick(settings, "letter.reference_prefix", "company.short_name", "company.code") ||
+    "MUENOT"
+  )
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 16) || "MUENOT"
+}
+
+/**
+ * Build a formal reference number like `MUENOT/HR/2026/000051`. The numeric
+ * tail comes from a per-year atomic sequence in record_id_sequences so numbers
+ * never collide or repeat, independent of the internal LTR- id.
+ */
+async function nextReferenceNo(settings: Record<string, string>, issueDate: string): Promise<string> {
+  const year = (issueDate || new Date().toISOString().slice(0, 10)).slice(0, 4)
+  const prefix = referencePrefix(settings)
+  const seq = await nextRecordId(`${prefix}HRREF${year}`, { digits: 6, allowCustom: true })
+  const num = seq.split("-").pop() || "000001"
+  return `${prefix}/HR/${year}/${num}`
 }
 
 async function employeeVars(employeeId: number): Promise<{ vars: Record<string, string>; row: any | null }> {
@@ -325,6 +370,8 @@ export async function generateLetter(input: GenerateLetterInput): Promise<Genera
   const issueDate = (input.issueDate || new Date().toISOString().slice(0, 10)).slice(0, 10)
 
   const letterNumber = await nextRecordId("LTR")
+  const settings = await getCompanySettings()
+  const referenceNo = await nextReferenceNo(settings, issueDate)
 
   const context = await buildLetterContext({
     source,
@@ -372,12 +419,13 @@ export async function generateLetter(input: GenerateLetterInput): Promise<Genera
 
   const result = await query<any>(
     `INSERT INTO hr_letters
-      (letter_number, employee_id, template_id, template_version, letter_type, category, audience,
+      (letter_number, reference_no, employee_id, template_id, template_version, letter_type, category, audience,
        subject, body, issue_date, status, source, source_ref, event_key, recipient_name,
        supersedes_id, dedupe_key, variables_snapshot, created_by, issued_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ${status === "Issued" || status === "Delivered" ? "NOW()" : "NULL"})`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ${status === "Issued" || status === "Delivered" ? "NOW()" : "NULL"})`,
     [
       letterNumber,
+      referenceNo,
       input.employeeId ?? null,
       input.templateId ?? null,
       template?.version ?? null,
@@ -418,7 +466,116 @@ export async function generateLetter(input: GenerateLetterInput): Promise<Genera
 
   const letter = await getLetter(newId)
   if (!letter) return { ok: false, error: "Failed to load created letter", code: 500 }
+
+  // Audit: record creation (and the supersede link, if any).
+  await logLetterEvent({
+    letterId: newId,
+    letterNumber,
+    type: input.supersedesId ? "regenerated" : "generated",
+    summary: input.supersedesId
+      ? `Regenerated as ${letterNumber} (ref ${referenceNo})`
+      : `Generated ${letterType} ${letterNumber} (ref ${referenceNo})`,
+    detail: {
+      reference_no: referenceNo,
+      template_id: input.templateId ?? null,
+      template_version: template?.version ?? null,
+      source,
+      source_ref: input.sourceRef ?? null,
+      status,
+      supersedes_id: input.supersedesId ?? null,
+    },
+    actorId: input.actorId ?? null,
+  })
+
   return { ok: true, letter }
+}
+
+/**
+ * File a finished letter's PDF into the employee document vault
+ * (hr_employee_documents) and link it back on the letter via document_id.
+ * Idempotent: does nothing if the letter is already filed, has no employee, or
+ * is a draft/cancelled letter. Best effort — never throws to the caller.
+ */
+export async function fileLetterToDocuments(
+  letterId: number,
+  actorId?: number | null,
+): Promise<{ filed: boolean; documentId?: number }> {
+  try {
+    const rows = await query<any[]>("SELECT * FROM hr_letters WHERE id = ? LIMIT 1", [letterId])
+    const l = rows[0]
+    if (!l) return { filed: false }
+    if (l.document_id) return { filed: true, documentId: Number(l.document_id) }
+    if (!l.employee_id) return { filed: false }
+    if (l.status === "Draft" || l.status === "Cancelled") return { filed: false }
+
+    const settings = await getCompanySettings()
+    const empRows = await query<any[]>(
+      "SELECT employee_name, employee_id AS employee_code, designation, department FROM hr_employees WHERE id = ? LIMIT 1",
+      [l.employee_id],
+    )
+    const emp = empRows[0] || {}
+    const recipientMeta =
+      [emp.employee_code, [emp.designation, emp.department].filter(Boolean).join(", ")]
+        .filter(Boolean)
+        .join(" · ") || null
+
+    const pdf = letterPdfBuffer({
+      letterNumber: l.reference_no || l.letter_number,
+      subject: l.subject,
+      body: l.body,
+      issueDate: l.issue_date,
+      recipientName: l.recipient_name || emp.employee_name || null,
+      recipientMeta,
+      company: letterCompanyFromSettings(settings),
+      signatory: letterSignatoryFromSettings(settings),
+      referenceNo: l.reference_no || null,
+    })
+
+    const documentRef = await nextRecordId("DOC")
+    const safeName = String(l.recipient_name || emp.employee_name || "letter").replace(/[^a-z0-9]+/gi, "-")
+    const fileName = `${l.letter_number}-${safeName}.pdf`
+
+    const inserted = await query<any>(
+      `INSERT INTO hr_employee_documents
+        (employee_id, document_ref, document_type, document_number, issue_date, expiry_date,
+         version, is_current, supersedes_id, file_name, file_path, file_mime, file_data,
+         uploaded_by, status, remarks)
+       VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)`,
+      [
+        l.employee_id,
+        documentRef,
+        l.letter_type || "Letter",
+        l.reference_no || l.letter_number,
+        l.issue_date,
+        null,
+        1,
+        null,
+        fileName,
+        null,
+        "application/pdf",
+        pdf,
+        actorId ?? null,
+        "Verified",
+        `Auto-filed from letter ${l.letter_number}`,
+      ],
+    )
+    const documentId = Number((inserted as any).insertId)
+    await query("UPDATE hr_letters SET document_id = ? WHERE id = ?", [documentId, letterId])
+
+    await logLetterEvent({
+      letterId,
+      letterNumber: l.letter_number,
+      type: "filed_to_documents",
+      summary: `Filed to employee documents (${documentRef})`,
+      detail: { document_id: documentId, document_ref: documentRef, file_name: fileName },
+      actorId: actorId ?? null,
+    })
+
+    return { filed: true, documentId }
+  } catch (error) {
+    console.error("[v0] fileLetterToDocuments failed:", (error as Error).message)
+    return { filed: false }
+  }
 }
 
 /** Load a single letter with employee display fields joined. */

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
+import { userHasFeature } from "@/lib/permissions"
 import { getCompanySettings } from "@/lib/hr-letters-db"
-import { getLetter, letterCompanyFromSettings } from "@/lib/hr-letters-generate"
+import { getLetter, letterCompanyFromSettings, letterSignatoryFromSettings } from "@/lib/hr-letters-generate"
 import { letterPdfBuffer } from "@/lib/hr-letter-pdf"
 
 export const runtime = "nodejs"
@@ -11,6 +12,9 @@ export const runtime = "nodejs"
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!(await userHasFeature(session.userId, session.role, "hr.view_letters"))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
 
   const { id } = await params
   const letter = await getLetter(Number(id))
@@ -26,12 +30,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const pdf = letterPdfBuffer({
     letterNumber: letter.letter_number,
+    referenceNo: letter.reference_no || null,
     subject: letter.subject,
     body: letter.body,
     issueDate: letter.issue_date,
     recipientName: letter.recipient_name || letter.employee_name || null,
     recipientMeta: recipientMeta || null,
     company: letterCompanyFromSettings(settings),
+    signatory: letterSignatoryFromSettings(settings),
   })
 
   const safeName = (letter.recipient_name || letter.employee_name || "letter").replace(/[^a-z0-9]+/gi, "-")

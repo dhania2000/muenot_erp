@@ -58,12 +58,39 @@ async function resolveMasterName(table: string, id: unknown): Promise<string> {
   }
 }
 
+/** Registered address assembled from the dotted company_settings keys. */
+function companyAddress(settings: Record<string, string>): string {
+  return [
+    settings["address.line"],
+    [settings["address.city"], settings["address.state"], settings["address.postal_code"]]
+      .filter(Boolean)
+      .join(" "),
+    settings["address.country"],
+  ]
+    .filter((part) => part && String(part).trim() !== "")
+    .join(", ")
+}
+
 function companyVars(settings: Record<string, string>): Record<string, string> {
+  // Company settings are stored under dotted keys (company.name, address.line …)
+  // — see lib/company-settings-config.ts. Legacy flat keys are kept as fallbacks.
   return {
-    company_name: pick(settings, "company_name", "org_name", "organization_name", "name", "legal_name"),
-    company_email: pick(settings, "company_email", "email", "contact_email", "support_email"),
-    company_phone: pick(settings, "company_phone", "phone", "contact_phone", "mobile"),
-    company_address: pick(settings, "company_address", "address", "registered_address", "office_address"),
+    company_name: pick(settings, "company.name", "company_name", "legal_name", "name"),
+    company_email: pick(settings, "company.email", "company_email", "email"),
+    company_phone: pick(settings, "company.phone", "company_phone", "phone"),
+    company_website: pick(settings, "company.website", "company_website", "website"),
+    company_address: companyAddress(settings) || pick(settings, "company_address", "address"),
+  }
+}
+
+/** Shape company settings into the letterhead block the PDF builder expects. */
+export function letterCompanyFromSettings(settings: Record<string, string>) {
+  return {
+    name: pick(settings, "company.name", "company_name", "legal_name", "name") || "Company",
+    address: companyAddress(settings),
+    email: pick(settings, "company.email", "company_email", "email"),
+    phone: pick(settings, "company.phone", "company_phone", "phone"),
+    website: pick(settings, "company.website", "company_website", "website"),
   }
 }
 

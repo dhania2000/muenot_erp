@@ -71,7 +71,7 @@ const HR_CHILDREN: FeatureChild[] = [
     label: "Shifts",
     children: [
       { label: "Shifts", href: "/modules/hr/shifts", feature: "hr.view_shifts" },
-      { label: "Shift Change Requests", href: "/modules/hr/shift-workflows?kind=requests", feature: "hr.view_shift_change_requests" },
+      { label: "Shift Change Requests", href: "/modules/hr/shift-change-requests", feature: "hr.view_shift_change_requests" },
       { label: "Shift Assignments", href: "/modules/hr/shift-workflows?kind=assignments", feature: "hr.view_shift_assignments" },
       { label: "Shift Rotations", href: "/modules/hr/shift-workflows?kind=rotations", feature: "hr.view_shift_rotations" },
       { label: "Rotation Sequences", href: "/modules/hr/shift-workflows?kind=sequences", feature: "hr.view_rotation_sequences" },

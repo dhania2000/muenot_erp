@@ -740,6 +740,41 @@ export async function subscribeWabaWebhook(
 }
 
 /**
+ * Reads the WABA's subscribed apps so the status panel can show whether THIS
+ * app is actually subscribed to receive webhooks (a successful GET handshake
+ * alone does not start delivery). Returns the raw list plus a convenience
+ * `subscribed` flag. Never throws — a failure returns ok:false with a message.
+ */
+export async function getWabaSubscriptionStatus(
+  integration: WhatsAppIntegrationRow,
+): Promise<{ ok: boolean; subscribed: boolean; appNames: string[]; error?: string }> {
+  const token = decryptToken(integration.access_token)
+  if (!token) return { ok: false, subscribed: false, appNames: [], error: "Stored access token could not be read." }
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(integration.waba_id)}/subscribed_apps`
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      data?: { whatsapp_business_api_data?: { name?: string; id?: string } }[]
+      error?: { message?: string; type?: string; code?: number; error_subcode?: number }
+    }
+    if (!res.ok || data.error) {
+      return { ok: false, subscribed: false, appNames: [], error: parseGraphError(data.error, res.status).message }
+    }
+    const apps = data.data ?? []
+    const appNames = apps
+      .map((a) => a.whatsapp_business_api_data?.name)
+      .filter((n): n is string => Boolean(n))
+    return { ok: true, subscribed: apps.length > 0, appNames }
+  } catch (err) {
+    return { ok: false, subscribed: false, appNames: [], error: (err as Error).message }
+  }
+}
+
+/**
  * Resolves a Meta media id to a short-lived download URL. The URL itself must
  * be fetched with the access token, so downloads stay server-side.
  */

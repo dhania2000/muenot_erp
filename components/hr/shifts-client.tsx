@@ -265,7 +265,7 @@ export function ShiftsClient() {
   const sortArrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "")
 
   return (
-    <main className="space-y-6">
+    <main className="space-y-6 px-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm text-muted-foreground">HR / Workforce</p>

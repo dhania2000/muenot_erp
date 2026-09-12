@@ -26,16 +26,7 @@ const TYPE_ICON: Record<AssetType, React.ComponentType<{ className?: string }>> 
   "Landing Page": LayoutTemplate,
 }
 
-const SEED: Asset[] = [
-  { id: "A-1", name: "Summer Launch Hero.png", type: "Image", size: "2.4 MB", updated: "Sep 08" },
-  { id: "A-2", name: "Brand Guidelines.pdf", type: "Document", size: "8.1 MB", updated: "Aug 30" },
-  { id: "A-3", name: "Product Demo.mp4", type: "Video", size: "48 MB", updated: "Sep 02" },
-  { id: "A-4", name: "Welcome Email", type: "Email Template", size: "12 KB", updated: "Sep 10" },
-  { id: "A-5", name: "Ebook Landing", type: "Landing Page", size: "34 KB", updated: "Sep 06" },
-  { id: "A-6", name: "Social Banner Set.png", type: "Image", size: "5.7 MB", updated: "Sep 01" },
-  { id: "A-7", name: "Case Study Template.pdf", type: "Document", size: "1.2 MB", updated: "Aug 28" },
-  { id: "A-8", name: "Newsletter Base", type: "Email Template", size: "18 KB", updated: "Sep 09" },
-]
+const SEED: Asset[] = []
 
 const FILTERS: (AssetType | "All")[] = ["All", "Image", "Document", "Video", "Email Template", "Landing Page"]
 
@@ -64,7 +55,7 @@ export function MarketingLibraryClient() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard label="Total Assets" value={SEED.length} icon={FileImage} />
         <StatCard label="Email Templates" value={SEED.filter((a) => a.type === "Email Template").length} icon={Mail} />
-        <StatCard label="Storage Used" value="72.6 MB" hint="of 5 GB" icon={Upload} />
+        <StatCard label="Storage Used" value="0 MB" hint="of 5 GB" icon={Upload} />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

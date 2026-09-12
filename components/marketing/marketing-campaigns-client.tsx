@@ -30,14 +30,7 @@ type Campaign = {
   roi: string
 }
 
-const SEED: Campaign[] = [
-  { id: "MC-201", name: "Summer Product Launch", channel: "Email", status: "Active", budget: 15000, spent: 8200, roi: "5.1x" },
-  { id: "MC-202", name: "Q3 Retargeting", channel: "Paid Ads", status: "Active", budget: 22000, spent: 14800, roi: "3.9x" },
-  { id: "MC-203", name: "Webinar Invite Series", channel: "Email", status: "Scheduled", budget: 6000, spent: 0, roi: "—" },
-  { id: "MC-204", name: "Brand Awareness", channel: "Social", status: "Active", budget: 18000, spent: 11200, roi: "2.6x" },
-  { id: "MC-205", name: "Spring Newsletter", channel: "Email", status: "Completed", budget: 4000, spent: 3850, roi: "6.2x" },
-  { id: "MC-206", name: "Holiday Preview", channel: "Paid Ads", status: "Draft", budget: 30000, spent: 0, roi: "—" },
-]
+const SEED: Campaign[] = []
 
 const STATUS_VARIANT: Record<Status, "default" | "secondary" | "outline"> = {
   Active: "default",
@@ -47,6 +40,14 @@ const STATUS_VARIANT: Record<Status, "default" | "secondary" | "outline"> = {
 }
 
 const money = (n: number) => `$${n.toLocaleString()}`
+
+function avgRoi(campaigns: Campaign[]) {
+  const nums = campaigns
+    .map((c) => Number.parseFloat(c.roi.replace("x", "")))
+    .filter((n) => !Number.isNaN(n))
+  if (nums.length === 0) return "—"
+  return `${(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(1)}x`
+}
 
 export function MarketingCampaignsClient() {
   const [campaigns, setCampaigns] = useState<Campaign[]>(SEED)
@@ -128,8 +129,8 @@ export function MarketingCampaignsClient() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Active Campaigns" value={active} icon={Megaphone} />
         <StatCard label="Total Budget" value={money(totalBudget)} icon={DollarSign} />
-        <StatCard label="Spent" value={money(totalSpent)} hint={`${Math.round((totalSpent / totalBudget) * 100)}% of budget`} icon={DollarSign} />
-        <StatCard label="Avg. ROI" value="4.4x" hint="Trailing 90 days" icon={TrendingUp} />
+        <StatCard label="Spent" value={money(totalSpent)} hint={totalBudget > 0 ? `${Math.round((totalSpent / totalBudget) * 100)}% of budget` : undefined} icon={DollarSign} />
+        <StatCard label="Avg. ROI" value={avgRoi(campaigns)} hint="Trailing 90 days" icon={TrendingUp} />
       </div>
 
       <Card>
@@ -146,6 +147,13 @@ export function MarketingCampaignsClient() {
               </tr>
             </thead>
             <tbody>
+              {campaigns.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                    No campaigns yet. Create your first campaign to get started.
+                  </td>
+                </tr>
+              )}
               {campaigns.map((c) => (
                 <tr key={c.id} className="border-b last:border-0">
                   <td className="py-3">

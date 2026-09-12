@@ -6,6 +6,7 @@ import {
   getAppSecret,
   subscribeWabaWebhook,
 } from "@/lib/whatsapp"
+import { getWebhookUrl } from "@/lib/whatsapp-config"
 
 /** Masks a secret so the UI can show it is configured without revealing it. */
 function mask(value: string | null): string | null {
@@ -18,16 +19,17 @@ function mask(value: string | null): string | null {
  * Returns everything the "Webhook Setup" panel needs. Secrets are only ever
  * returned masked — the real verify token and app secret stay server-side.
  */
-export async function GET(request: Request) {
+export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const origin = new URL(request.url).origin
   const verifyToken = getWebhookVerifyToken()
   const appSecret = getAppSecret()
 
   return NextResponse.json({
-    callbackUrl: `${origin}/api/marketing/whatsapp/webhook`,
+    // Always the centralized public production URL — never derived from the
+    // incoming request, which behind the Hostinger proxy resolves to 0.0.0.0:3000.
+    callbackUrl: getWebhookUrl(),
     verifyTokenConfigured: Boolean(verifyToken),
     verifyTokenMasked: mask(verifyToken),
     appSecretConfigured: Boolean(appSecret),

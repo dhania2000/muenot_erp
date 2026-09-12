@@ -12,6 +12,7 @@ import {
   type Actor,
   type RequestAction,
 } from "@/lib/hr-shift-change"
+import { emitHrEmailEvent } from "@/lib/hr-email-automation"
 
 async function resolvePrivilege(session: { userId: number; role: "admin" | "employee" }) {
   if (session.role === "admin") return true
@@ -146,6 +147,42 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       canOverride: override,
     })
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
+
+    // Fire the matching automated email (approve/reject only). Fully guarded.
+    const eventKey =
+      action === "approve" ? "shift_change_approved" : action === "reject" ? "shift_change_rejected" : null
+    if (eventKey) {
+      try {
+        const [detail] = await query<any[]>(
+          `SELECT r.request_id, r.employee_id, r.from_date, r.status, e.reporting_manager,
+                  cs.shift_name AS current_shift, rs.shift_name AS requested_shift
+           FROM hr_shift_change_requests r
+           LEFT JOIN hr_employees e ON e.id = r.employee_id
+           LEFT JOIN hr_shifts cs ON cs.id = r.current_shift_id
+           LEFT JOIN hr_shifts rs ON rs.id = r.requested_shift_id
+           WHERE r.request_id = ? LIMIT 1`,
+          [req.request_id],
+        )
+        if (detail) {
+          await emitHrEmailEvent(eventKey, {
+            employeeId: Number(detail.employee_id),
+            sourceRecordId: detail.request_id,
+            actorId: session.userId,
+            managerName: detail.reporting_manager,
+            vars: {
+              request_id: detail.request_id,
+              current_shift: detail.current_shift ?? "",
+              requested_shift: detail.requested_shift ?? "",
+              effective_date: String(detail.from_date).slice(0, 10),
+              status: result.status,
+            },
+          })
+        }
+      } catch (error) {
+        console.log("[v0] shift-change email emit failed", (error as Error).message)
+      }
+    }
+
     return NextResponse.json({ ok: true, status: result.status, appliedAssignmentId: result.appliedAssignmentId })
   } catch (error) {
     console.log("[v0] shift-change transition failed", (error as Error).message)

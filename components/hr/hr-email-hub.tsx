@@ -17,6 +17,8 @@ import { HR_EMAIL_CATEGORIES, HR_EMAIL_STATUSES } from "@/lib/hr-email-shared"
 import { HrEmailComposer } from "@/components/hr/hr-email-composer"
 import { HrEmailDetailDialog } from "@/components/hr/hr-email-detail-dialog"
 import { HrEmailStatusBadge } from "@/components/hr/hr-email-status-badge"
+import { HrEmailAnalytics } from "@/components/hr/hr-email-analytics"
+import { HrEmailAutomationSettings } from "@/components/hr/hr-email-automation-settings"
 
 type Summary = {
   total: number
@@ -105,6 +107,8 @@ export function HrEmailHub() {
         <TabsList>
           <TabsTrigger value="compose">Compose</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          <TabsTrigger value="automation">Automation</TabsTrigger>
         </TabsList>
 
         <TabsContent value="compose">
@@ -251,6 +255,14 @@ export function HrEmailHub() {
               </Button>
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="analytics">
+          <HrEmailAnalytics />
+        </TabsContent>
+
+        <TabsContent value="automation">
+          <HrEmailAutomationSettings />
         </TabsContent>
       </Tabs>
 

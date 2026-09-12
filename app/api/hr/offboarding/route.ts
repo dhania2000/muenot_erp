@@ -12,6 +12,7 @@ import {
   CLOSED_STATUSES,
   OFFBOARDING_STATUSES,
 } from "@/lib/hr-offboarding"
+import { emitHrEmailEvent } from "@/lib/hr-email-automation"
 
 // Columns a client may patch inline from the list (kept minimal; the rich
 // workflow actions live in the [id] route).
@@ -251,6 +252,19 @@ export async function POST(request: NextRequest) {
     details: { exit_type: body.exit_type, notice_date: noticeDate, expected_last_working_date: expectedLwd },
     actorId: session.userId,
     actorName: session.name,
+  })
+
+  // Notify the exiting employee that their offboarding has started (guarded).
+  await emitHrEmailEvent("offboarding_initiated", {
+    employeeId: employeePk,
+    sourceRecordId: offboardingId,
+    actorId: session.userId,
+    managerName: emp.reporting_manager ?? null,
+    vars: {
+      exit_type: body.exit_type ?? "",
+      last_working_date: String(requestedLwd || expectedLwd || "").slice(0, 10),
+      notice_date: String(noticeDate || "").slice(0, 10),
+    },
   })
 
   return NextResponse.json({ offboarding_id: offboardingId, id: caseId }, { status: 201 })

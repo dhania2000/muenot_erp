@@ -12,6 +12,7 @@ import {
   addDays,
   CLOSED_STATUSES,
 } from "@/lib/hr-offboarding"
+import { emitHrEmailEvent } from "@/lib/hr-email-automation"
 
 const EMPLOYEE_SELECT = `
   e.id AS emp_pk, e.employee_id AS employee_code, e.employee_name, e.department, e.designation,
@@ -460,6 +461,19 @@ async function completeCase(caseId: number, caseRow: any, body: any, session: an
     actorId: session.userId,
     actorName: session.name,
   })
+
+  // Send the farewell / exit-complete email (guarded).
+  await emitHrEmailEvent("offboarding_completed", {
+    employeeId: Number(caseRow.employee_id),
+    sourceRecordId: caseRow.offboarding_id,
+    actorId: session.userId,
+    managerName: caseRow.reporting_manager ?? null,
+    vars: {
+      exit_type: caseRow.exit_type ?? "",
+      last_working_date: String(finalLwd || "").slice(0, 10),
+    },
+  })
+
   return NextResponse.json({ ok: true })
 }
 

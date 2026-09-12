@@ -391,12 +391,12 @@ function StageHistoryList({ stageHistory }: { stageHistory: any[] }) {
         <div key={h.id} className="flex items-center justify-between gap-3 border-b border-border p-3 last:border-b-0">
           <div className="flex flex-col">
             <span className="text-sm font-medium">
-              {h.from_stage || "—"} → {h.to_stage}
+              {h.from_status || "—"} → {h.to_status}
             </span>
             {h.note && <span className="text-xs text-muted-foreground">{h.note}</span>}
           </div>
           <span className="shrink-0 text-xs text-muted-foreground">
-            {formatDateTime(h.created_at)}
+            {formatDateTime(h.changed_at)}
             {h.actor_name ? ` · ${h.actor_name}` : ""}
           </span>
         </div>

@@ -15,7 +15,7 @@ export async function GET() {
     ),
     query<any[]>(
       `SELECT status, COUNT(*) AS count FROM sales_leads
-       WHERE archived_at IS NULL AND lead_status = 'Open' OR lead_status = 'Follow Up'
+       WHERE archived_at IS NULL AND lead_status IN ('Open', 'Follow Up')
        GROUP BY status`,
     ),
     query<any[]>(

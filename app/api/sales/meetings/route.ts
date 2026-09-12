@@ -7,6 +7,17 @@ import {
   DEFAULT_TIME_ZONE,
 } from "@/lib/google-calendar"
 import { getGoogleAccount } from "@/lib/google-accounts"
+import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
+
+async function resolveMeetingLeadId(body: any): Promise<number | null> {
+  if (body.lead_id) return Number(body.lead_id)
+  if (!body.company_name) return null
+  const rows = await query<any[]>(
+    `SELECT id FROM sales_leads WHERE company_name = ? AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+    [body.company_name],
+  ).catch(() => [] as any[])
+  return rows[0]?.id ?? null
+}
 
 let columnsEnsured = false
 
@@ -184,6 +195,19 @@ export async function POST(request: Request) {
       session.userId,
     ],
   )
+
+  const leadId = await resolveMeetingLeadId(body)
+  if (leadId) {
+    await attachLeadEvent({
+      leadId,
+      type: "meeting",
+      title: `Meeting scheduled · ${body.meeting_type || "Discovery"}`,
+      body: [body.meeting_date, body.meeting_time].filter(Boolean).join(" ") || null,
+      refType: "meeting",
+      refId: result.insertId,
+      actorId: session.userId,
+    }).catch(() => {})
+  }
 
   return NextResponse.json({
     id: result.insertId,

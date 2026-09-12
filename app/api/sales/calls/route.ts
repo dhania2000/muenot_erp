@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { requireFeature } from "@/lib/api-auth"
 import { query } from "@/lib/db"
 import { getCallerId, toE164 } from "@/lib/twilio"
+import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
 
 export const dynamic = "force-dynamic"
 
@@ -59,6 +60,19 @@ export async function POST(request: Request) {
      VALUES (?, ?, ?, ?, ?, 'Outbound', ?, ?, ?, ?, ?)`,
     [leadId, toNumber, toName, getCallerId() || null, twilioCallSid, status, duration, disposition, notes, session.userId],
   )
+
+  if (leadId) {
+    await attachLeadEvent({
+      leadId,
+      type: "call",
+      title: `Call logged · ${disposition || status}`,
+      body: notes,
+      refType: "call",
+      refId: result.insertId,
+      actorId: session.userId,
+      touchContact: true,
+    }).catch(() => {})
+  }
 
   return NextResponse.json({ id: result.insertId }, { status: 201 })
 }

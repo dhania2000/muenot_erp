@@ -1,6 +1,17 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
+
+async function resolveLeadId(body: any): Promise<number | null> {
+  if (body.lead_id) return Number(body.lead_id)
+  if (!body.company_name) return null
+  const rows = await query<any[]>(
+    `SELECT id FROM sales_leads WHERE company_name = ? AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+    [body.company_name],
+  ).catch(() => [] as any[])
+  return rows[0]?.id ?? null
+}
 
 export async function GET() {
   const session = await requireFeature("sales.view_quotations")
@@ -46,6 +57,19 @@ export async function POST(request: Request) {
       session.userId,
     ],
   )
+
+  const leadId = await resolveLeadId(body)
+  if (leadId) {
+    await attachLeadEvent({
+      leadId,
+      type: "quotation",
+      title: `Quotation ${quoteCode} created`,
+      body: `Amount ${body.total_amount}${body.status ? ` · ${body.status}` : ""}`,
+      refType: "quotation",
+      refId: result.insertId,
+      actorId: session.userId,
+    }).catch(() => {})
+  }
 
   return NextResponse.json({ id: result.insertId, quote_code: quoteCode })
 }

@@ -236,6 +236,19 @@ export async function POST(request: Request) {
     ],
   )
 
+  if (lead_id && status !== "Failed") {
+    await attachLeadEvent({
+      leadId: Number(lead_id),
+      type: "email",
+      title: `Email sent · ${renderedSubject}`,
+      body: `To ${to_name || to_email}`,
+      refType: "email",
+      refId: result.insertId,
+      actorId: session.userId,
+      touchContact: true,
+    }).catch(() => {})
+  }
+
   if (status === "Failed") {
     return NextResponse.json({ error: errorMessage || "Failed to send email", id: result.insertId }, { status: 502 })
   }

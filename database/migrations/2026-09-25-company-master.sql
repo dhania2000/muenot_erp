@@ -16,39 +16,75 @@
 -- objects are also created/altered idempotently at runtime by
 -- ensureCompanyMasterSchema() in lib/sales/company-master.ts so existing
 -- databases self-heal without a manual migration step.
+--
+-- This script is SAFE TO RE-RUN. MySQL 8 has no reliable
+-- `ADD COLUMN IF NOT EXISTS`, so each column / key / enum change is
+-- applied through helper procedures that first check information_schema
+-- and skip anything that already exists (mirrors the runtime helpers
+-- addColumnIfMissing / addKeyIfMissing).
 -- =============================================================
 
--- --- sales_companies: new master columns ----------------------------
-ALTER TABLE `sales_companies`
-  ADD COLUMN `legal_name` VARCHAR(190) DEFAULT NULL AFTER `company_name`,
-  ADD COLUMN `domain` VARCHAR(150) DEFAULT NULL AFTER `website`,
-  ADD COLUMN `phone` VARCHAR(40) DEFAULT NULL AFTER `company_email`,
-  ADD COLUMN `alt_phone` VARCHAR(40) DEFAULT NULL AFTER `phone`,
-  ADD COLUMN `address_line` VARCHAR(255) DEFAULT NULL AFTER `alt_phone`,
-  ADD COLUMN `city` VARCHAR(120) DEFAULT NULL AFTER `address_line`,
-  ADD COLUMN `state` VARCHAR(120) DEFAULT NULL AFTER `city`,
-  ADD COLUMN `postal_code` VARCHAR(30) DEFAULT NULL AFTER `state`,
-  ADD COLUMN `segment` VARCHAR(80) DEFAULT NULL AFTER `company_type`,
-  ADD COLUMN `annual_revenue` DECIMAL(16,2) DEFAULT NULL AFTER `employee_count`,
-  ADD COLUMN `tags` VARCHAR(500) DEFAULT NULL AFTER `segment`,
-  ADD COLUMN `source` VARCHAR(120) DEFAULT NULL AFTER `tags`,
-  ADD COLUMN `description` TEXT DEFAULT NULL AFTER `source`,
-  ADD COLUMN `account_health` TINYINT UNSIGNED DEFAULT NULL AFTER `priority`,
-  ADD COLUMN `first_contact_date` DATE DEFAULT NULL AFTER `last_contact_date`,
-  ADD COLUMN `last_activity_at` DATETIME DEFAULT NULL AFTER `first_contact_date`,
-  ADD COLUMN `archived_at` DATETIME DEFAULT NULL AFTER `last_activity_at`,
-  ADD COLUMN `archived_by` INT UNSIGNED DEFAULT NULL AFTER `archived_at`,
-  ADD COLUMN `merged_into_id` INT UNSIGNED DEFAULT NULL AFTER `archived_by`,
-  ADD COLUMN `row_version` INT UNSIGNED NOT NULL DEFAULT 1 AFTER `merged_into_id`;
+DELIMITER $$
 
+-- Adds a column only when it is missing from the table.
+DROP PROCEDURE IF EXISTS `__cm_add_column` $$
+CREATE PROCEDURE `__cm_add_column`(IN p_table VARCHAR(64), IN p_column VARCHAR(64), IN p_ddl TEXT)
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = p_table AND column_name = p_column
+  ) THEN
+    SET @sql = CONCAT('ALTER TABLE `', p_table, '` ADD COLUMN ', p_ddl);
+    PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+  END IF;
+END $$
+
+-- Adds an index only when it is missing from the table.
+DROP PROCEDURE IF EXISTS `__cm_add_key` $$
+CREATE PROCEDURE `__cm_add_key`(IN p_table VARCHAR(64), IN p_key VARCHAR(64), IN p_ddl TEXT)
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.statistics
+    WHERE table_schema = DATABASE() AND table_name = p_table AND index_name = p_key
+  ) THEN
+    SET @sql = CONCAT('ALTER TABLE `', p_table, '` ADD ', p_ddl);
+    PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+  END IF;
+END $$
+
+DELIMITER ;
+
+-- --- sales_companies: new master columns ----------------------------
+CALL `__cm_add_column`('sales_companies', 'legal_name',         '`legal_name` VARCHAR(190) DEFAULT NULL AFTER `company_name`');
+CALL `__cm_add_column`('sales_companies', 'domain',             '`domain` VARCHAR(150) DEFAULT NULL AFTER `website`');
+CALL `__cm_add_column`('sales_companies', 'phone',              '`phone` VARCHAR(40) DEFAULT NULL AFTER `company_email`');
+CALL `__cm_add_column`('sales_companies', 'alt_phone',          '`alt_phone` VARCHAR(40) DEFAULT NULL AFTER `phone`');
+CALL `__cm_add_column`('sales_companies', 'address_line',       '`address_line` VARCHAR(255) DEFAULT NULL AFTER `alt_phone`');
+CALL `__cm_add_column`('sales_companies', 'city',               '`city` VARCHAR(120) DEFAULT NULL AFTER `address_line`');
+CALL `__cm_add_column`('sales_companies', 'state',              '`state` VARCHAR(120) DEFAULT NULL AFTER `city`');
+CALL `__cm_add_column`('sales_companies', 'postal_code',        '`postal_code` VARCHAR(30) DEFAULT NULL AFTER `state`');
+CALL `__cm_add_column`('sales_companies', 'segment',            '`segment` VARCHAR(80) DEFAULT NULL AFTER `company_type`');
+CALL `__cm_add_column`('sales_companies', 'annual_revenue',     '`annual_revenue` DECIMAL(16,2) DEFAULT NULL AFTER `employee_count`');
+CALL `__cm_add_column`('sales_companies', 'tags',               '`tags` VARCHAR(500) DEFAULT NULL AFTER `segment`');
+CALL `__cm_add_column`('sales_companies', 'source',             '`source` VARCHAR(120) DEFAULT NULL AFTER `tags`');
+CALL `__cm_add_column`('sales_companies', 'description',        '`description` TEXT DEFAULT NULL AFTER `source`');
+CALL `__cm_add_column`('sales_companies', 'account_health',     '`account_health` TINYINT UNSIGNED DEFAULT NULL AFTER `priority`');
+CALL `__cm_add_column`('sales_companies', 'first_contact_date', '`first_contact_date` DATE DEFAULT NULL AFTER `last_contact_date`');
+CALL `__cm_add_column`('sales_companies', 'last_activity_at',   '`last_activity_at` DATETIME DEFAULT NULL AFTER `first_contact_date`');
+CALL `__cm_add_column`('sales_companies', 'archived_at',        '`archived_at` DATETIME DEFAULT NULL AFTER `last_activity_at`');
+CALL `__cm_add_column`('sales_companies', 'archived_by',        '`archived_by` INT UNSIGNED DEFAULT NULL AFTER `archived_at`');
+CALL `__cm_add_column`('sales_companies', 'merged_into_id',     '`merged_into_id` INT UNSIGNED DEFAULT NULL AFTER `archived_by`');
+CALL `__cm_add_column`('sales_companies', 'row_version',        '`row_version` INT UNSIGNED NOT NULL DEFAULT 1 AFTER `merged_into_id`');
+
+-- Widen enums additively (existing values are preserved; MODIFY is naturally idempotent).
 ALTER TABLE `sales_companies`
   MODIFY `status` ENUM('New','Contacted','Qualified','Customer','Inactive','Lost') NOT NULL DEFAULT 'New',
   MODIFY `priority` ENUM('Low','Medium','High','Critical') DEFAULT NULL;
 
-ALTER TABLE `sales_companies` ADD KEY `idx_companies_priority` (`priority`);
-ALTER TABLE `sales_companies` ADD KEY `idx_companies_domain` (`domain`);
-ALTER TABLE `sales_companies` ADD KEY `idx_companies_archived` (`archived_at`);
-ALTER TABLE `sales_companies` ADD KEY `idx_companies_assigned` (`assigned_to`);
+CALL `__cm_add_key`('sales_companies', 'idx_companies_priority', 'KEY `idx_companies_priority` (`priority`)');
+CALL `__cm_add_key`('sales_companies', 'idx_companies_domain',   'KEY `idx_companies_domain` (`domain`)');
+CALL `__cm_add_key`('sales_companies', 'idx_companies_archived', 'KEY `idx_companies_archived` (`archived_at`)');
+CALL `__cm_add_key`('sales_companies', 'idx_companies_assigned', 'KEY `idx_companies_assigned` (`assigned_to`)');
 
 -- --- Relational contacts parented to a company ----------------------
 CREATE TABLE IF NOT EXISTS `sales_contacts` (
@@ -69,15 +105,15 @@ CREATE TABLE IF NOT EXISTS `sales_contacts` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --- company_id linkage on downstream Sales tables ------------------
-ALTER TABLE `sales_meetings`   ADD COLUMN `company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`;
-ALTER TABLE `sales_quotations` ADD COLUMN `company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`;
-ALTER TABLE `sales_contracts`  ADD COLUMN `company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`;
-ALTER TABLE `sales_onboarding` ADD COLUMN `company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`;
+CALL `__cm_add_column`('sales_meetings',   'company_id', '`company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`');
+CALL `__cm_add_column`('sales_quotations', 'company_id', '`company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`');
+CALL `__cm_add_column`('sales_contracts',  'company_id', '`company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`');
+CALL `__cm_add_column`('sales_onboarding', 'company_id', '`company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`');
 
-ALTER TABLE `sales_meetings`   ADD KEY `idx_sales_meetings_company_id` (`company_id`);
-ALTER TABLE `sales_quotations` ADD KEY `idx_sales_quotations_company_id` (`company_id`);
-ALTER TABLE `sales_contracts`  ADD KEY `idx_sales_contracts_company_id` (`company_id`);
-ALTER TABLE `sales_onboarding` ADD KEY `idx_sales_onboarding_company_id` (`company_id`);
+CALL `__cm_add_key`('sales_meetings',   'idx_sales_meetings_company_id',   'KEY `idx_sales_meetings_company_id` (`company_id`)');
+CALL `__cm_add_key`('sales_quotations', 'idx_sales_quotations_company_id', 'KEY `idx_sales_quotations_company_id` (`company_id`)');
+CALL `__cm_add_key`('sales_contracts',  'idx_sales_contracts_company_id',  'KEY `idx_sales_contracts_company_id` (`company_id`)');
+CALL `__cm_add_key`('sales_onboarding', 'idx_sales_onboarding_company_id', 'KEY `idx_sales_onboarding_company_id` (`company_id`)');
 
 -- --- Backfill company_id by unambiguous exact name match ------------
 -- Only assigns when the name resolves to exactly one company.
@@ -87,3 +123,7 @@ UPDATE `sales_leads` t
     ON c.company_name = t.company_name AND c.n = 1
   SET t.company_id = c.cid
   WHERE t.company_id IS NULL AND t.company_name IS NOT NULL AND t.company_name <> '';
+
+-- --- Clean up helper procedures -------------------------------------
+DROP PROCEDURE IF EXISTS `__cm_add_column`;
+DROP PROCEDURE IF EXISTS `__cm_add_key`;

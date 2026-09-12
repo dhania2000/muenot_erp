@@ -2,12 +2,8 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { getDocumentTypes, expiryStatus } from "@/lib/hr-documents"
-import {
-  ensureShiftAssignmentSchema,
-  getApplicableShift,
-  getUpcomingAssignment,
-  deriveState,
-} from "@/lib/hr-shift-assignments"
+import { ensureShiftAssignmentSchema, getApplicableShift, deriveState } from "@/lib/hr-shift-assignments"
+import { getUpcomingShiftChange } from "@/lib/hr-attendance"
 
 // Aggregates cross-module records for the 360° employee profile. Linkage
 // differs per table: documents/attendance are keyed by hr_employees.id, while
@@ -138,9 +134,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return null
     }
   })()
+  // Unified next shift change (§65): rotation step, version change or an
+  // explicit future assignment — whichever the central resolver reaches first.
   const upcomingAssignment = await (async () => {
     try {
-      return await getUpcomingAssignment(Number(id), today)
+      return await getUpcomingShiftChange({ id: Number(id), shift: emp.shift ?? null }, today)
     } catch {
       return null
     }

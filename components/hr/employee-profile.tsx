@@ -44,6 +44,19 @@ function assignmentStateVariant(state: string): "default" | "secondary" | "destr
   }
 }
 
+function upcomingSourceLabel(source: string): string {
+  switch (source) {
+    case "assignment":
+      return "Explicit assignment"
+    case "rotation":
+      return "Shift rotation"
+    case "off":
+      return "Weekly off / no shift"
+    default:
+      return "Default shift"
+  }
+}
+
 type LinkedUser = {
   id: number
   email: string
@@ -376,15 +389,16 @@ function RelatedTabs({ employeeId, active }: { employeeId: number; active: strin
             {upcoming ? (
               <dl className="grid gap-3 sm:grid-cols-2">
                 <Field label="Shift" value={upcoming.shift_name} />
-                <Field label="Effective from" value={fmtDate(upcoming.effective_from)} />
                 <Field
-                  label="Effective to"
-                  value={upcoming.effective_to ? fmtDate(upcoming.effective_to) : "Onward"}
+                  label="Timing"
+                  value={shiftTimeLabel(upcoming.start_time, upcoming.end_time, Boolean(upcoming.is_overnight))}
                 />
-                <Field label="Assignment" value={upcoming.assignment_id} />
+                <Field label="Effective from" value={fmtDate(upcoming.date)} />
+                <Field label="Driven by" value={upcomingSourceLabel(upcoming.source)} />
+                {upcoming.assignment_id ? <Field label="Assignment" value={upcoming.assignment_id} /> : null}
               </dl>
             ) : (
-              <p className="text-sm text-muted-foreground">No upcoming shift change scheduled.</p>
+              <p className="text-sm text-muted-foreground">No upcoming shift change in the next 120 days.</p>
             )}
           </div>
         </div>

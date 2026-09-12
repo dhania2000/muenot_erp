@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
+import { userHasFeature } from "@/lib/permissions"
 import { listTemplates } from "@/lib/hr-letters-templates"
 import { validateTemplate } from "@/lib/hr-letters-render"
 
@@ -9,6 +10,9 @@ import { validateTemplate } from "@/lib/hr-letters-render"
 export async function GET(_request: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!(await userHasFeature(session.userId, session.role, "hr.view_letters"))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
 
   const templates = await listTemplates()
   const checked = templates

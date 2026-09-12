@@ -94,7 +94,8 @@ export function LettersClient() {
             rows={letters}
             filename="letters"
             columns={[
-              { header: "Ref", value: (r: any) => r.letter_number },
+              { header: "Reference No", value: (r: any) => r.reference_no || "" },
+              { header: "Letter ID", value: (r: any) => r.letter_number },
               { header: "Recipient", value: (r: any) => r.recipient_name || r.employee_name },
               { header: "Employee Code", value: (r: any) => r.employee_code },
               { header: "Type", value: (r: any) => r.letter_type },
@@ -187,7 +188,12 @@ export function LettersClient() {
                 onClick={() => setSelected(l.id)}
                 className="cursor-pointer border-b transition-colors last:border-0 hover:bg-accent/50"
               >
-                <td className="px-4 py-3 font-mono text-xs">{l.letter_number}</td>
+                <td className="px-4 py-3 font-mono text-xs">
+                  <div>{l.reference_no || l.letter_number}</div>
+                  {l.reference_no && (
+                    <div className="text-[10px] text-muted-foreground/70">{l.letter_number}</div>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   <div className="font-medium">{l.recipient_name || l.employee_name || "—"}</div>
                   <div className="text-xs text-muted-foreground">

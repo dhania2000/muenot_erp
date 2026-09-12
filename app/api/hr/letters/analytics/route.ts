@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
+import { userHasFeature } from "@/lib/permissions"
 import { ensureLetterTables } from "@/lib/hr-letters-db"
 
 // Read-only aggregation for the Letters dashboard: lifecycle funnel, breakdowns
@@ -8,6 +9,9 @@ import { ensureLetterTables } from "@/lib/hr-letters-db"
 export async function GET(request: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!(await userHasFeature(session.userId, session.role, "hr.view_letters"))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
   await ensureLetterTables()
 
   const days = Math.min(365, Math.max(7, Number(request.nextUrl.searchParams.get("days")) || 180))

@@ -52,9 +52,23 @@ type DetailResponse = {
     recipient_name?: string | null
     reference_no?: string | null
     cancel_reason?: string | null
+    cancelled_at?: string | null
   }
   versions: Version[]
   events?: LetterAuditEvent[]
+}
+
+const EVENT_DOT: Record<string, string> = {
+  generated: "bg-emerald-500",
+  regenerated: "bg-sky-500",
+  status_changed: "bg-amber-500",
+  issued: "bg-blue-500",
+  delivered: "bg-emerald-500",
+  emailed: "bg-violet-500",
+  cancelled: "bg-red-500",
+  deleted: "bg-red-500",
+  filed_to_documents: "bg-teal-500",
+  pdf_downloaded: "bg-slate-400",
 }
 
 function fmt(value?: string | null) {
@@ -90,12 +104,15 @@ export function LetterDetailDialog({
   )
   const letter = data?.letter
   const versions = data?.versions || []
+  const events = data?.events || []
 
   const [busy, setBusy] = useState<string | null>(null)
   const [emailOpen, setEmailOpen] = useState(false)
   const [emailTo, setEmailTo] = useState("")
   const [emailMessage, setEmailMessage] = useState("")
   const [statusTo, setStatusTo] = useState<string>("")
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const [cancelReason, setCancelReason] = useState("")
 
   const active = !!letterId
   const cancelled = letter?.status === "Cancelled"
@@ -168,19 +185,44 @@ export function LetterDetailDialog({
     }
   }
 
-  async function cancelOrDelete() {
+  async function deleteDraft() {
     if (!letter) return
-    const draft = letter.status === "Draft"
-    if (!confirm(draft ? "Delete this draft letter permanently?" : "Cancel this letter? It stays in the archive for audit.")) return
+    if (!confirm("Delete this draft letter permanently?")) return
     setBusy("cancel")
     try {
       const res = await fetch(`/api/hr/letters/${letter.id}`, { method: "DELETE" })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || "Failed")
-      toast.success(draft ? "Draft deleted" : "Letter cancelled")
+      toast.success("Draft deleted")
       onChanged?.()
-      if (body.deleted) onClose()
-      else refresh()
+      onClose()
+    } catch (e: any) {
+      toast.error(e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function submitCancel() {
+    if (!letter) return
+    const reason = cancelReason.trim()
+    if (!reason) {
+      toast.error("A cancellation reason is required")
+      return
+    }
+    setBusy("cancel")
+    try {
+      const res = await fetch(`/api/hr/letters/${letter.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || "Failed to cancel")
+      toast.success("Letter cancelled")
+      setCancelOpen(false)
+      setCancelReason("")
+      refresh()
     } catch (e: any) {
       toast.error(e.message)
     } finally {
@@ -192,7 +234,7 @@ export function LetterDetailDialog({
 
   return (
     <Dialog open={active} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden p-0">
+      <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-4xl">
         {isLoading || !letter ? (
           <div className="flex h-64 items-center justify-center text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />
@@ -235,6 +277,19 @@ export function LetterDetailDialog({
 
               {/* Sidebar: metadata + actions */}
               <aside className="flex flex-col gap-5 border-t p-6 lg:border-l lg:border-t-0">
+                {cancelled && letter.cancel_reason && (
+                  <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                    <Ban className="mt-0.5 size-4 shrink-0 text-destructive" />
+                    <div className="grid gap-0.5">
+                      <span className="font-medium text-destructive">Cancelled</span>
+                      <span className="text-foreground">{letter.cancel_reason}</span>
+                      {letter.cancelled_at && (
+                        <span className="text-xs text-muted-foreground">{fmt(letter.cancelled_at)}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" variant="outline" onClick={() => window.open(pdfUrl, "_blank")}>
                     <Eye data-icon="inline-start" /> View PDF
@@ -286,6 +341,12 @@ export function LetterDetailDialog({
                 )}
 
                 <dl className="grid grid-cols-2 gap-4">
+                  <Meta label="Reference no">
+                    <span className="font-mono text-xs">{letter.reference_no || "—"}</span>
+                  </Meta>
+                  <Meta label="Letter ID">
+                    <span className="font-mono text-xs">{letter.letter_number}</span>
+                  </Meta>
                   <Meta label="Type">{letter.letter_type}</Meta>
                   <Meta label="Category">{letter.category || "General"}</Meta>
                   <Meta label="Event">{eventByKey(letter.event_key).label}</Meta>
@@ -350,6 +411,59 @@ export function LetterDetailDialog({
                   </div>
                 )}
 
+                {/* Audit history */}
+                {events.length > 0 && (
+                  <div className="grid gap-2">
+                    <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
+                      <History className="size-3.5" /> Audit history
+                    </div>
+                    <ul className="grid gap-3 border-l pl-4">
+                      {events.map((e) => (
+                        <li key={e.id} className="relative">
+                          <span
+                            className={`absolute -left-[21px] top-1 size-2.5 rounded-full ring-2 ring-background ${
+                              EVENT_DOT[e.event_type] || "bg-slate-400"
+                            }`}
+                          />
+                          <div className="text-sm text-foreground text-pretty">{e.summary}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {[e.actor_name, fmt(e.created_at)].filter(Boolean).join(" · ")}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Cancel panel (reason required) */}
+                {cancelOpen && !cancelled && !isDraft && (
+                  <div className="grid gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+                    <div className="grid gap-1.5">
+                      <Label className="text-xs">Cancellation reason</Label>
+                      <Textarea
+                        value={cancelReason}
+                        onChange={(e) => setCancelReason(e.target.value)}
+                        rows={3}
+                        placeholder="Why is this letter being cancelled? (recorded in the audit trail)"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={submitCancel}
+                        disabled={busy === "cancel" || !cancelReason.trim()}
+                      >
+                        {busy === "cancel" ? <Loader2 className="size-4 animate-spin" /> : <Ban data-icon="inline-start" />}
+                        Confirm cancel
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setCancelOpen(false)} disabled={busy === "cancel"}>
+                        Keep letter
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Danger zone */}
                 <div className="mt-auto flex flex-wrap gap-2 border-t pt-4">
                   <Button size="sm" variant="outline" onClick={regenerate} disabled={busy === "regen" || cancelled}>
@@ -360,7 +474,7 @@ export function LetterDetailDialog({
                     size="sm"
                     variant="outline"
                     className="text-destructive hover:text-destructive"
-                    onClick={cancelOrDelete}
+                    onClick={isDraft ? deleteDraft : () => setCancelOpen((v) => !v)}
                     disabled={busy === "cancel" || cancelled}
                   >
                     {busy === "cancel" ? (

@@ -428,6 +428,43 @@ export type SendResult = {
 }
 
 /**
+ * Downloads inbound media by its Meta media id. Graph media happens in two
+ * hops: first resolve the id to a short-lived signed URL, then fetch the bytes
+ * with the same bearer token. Returns the raw buffer plus content type so a
+ * route can stream it back to an authenticated agent.
+ */
+export async function fetchMediaBinary(
+  integration: WhatsAppIntegrationRow,
+  mediaId: string,
+): Promise<{ ok: true; data: ArrayBuffer; contentType: string } | { ok: false; error: string }> {
+  const token = decryptToken(integration.access_token)
+  if (!token) return { ok: false, error: "Stored access token could not be read." }
+
+  try {
+    const metaRes = await fetch(`${GRAPH_BASE}/${encodeURIComponent(mediaId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const meta = (await metaRes.json().catch(() => ({}))) as { url?: string; mime_type?: string; error?: unknown }
+    if (!metaRes.ok || !meta.url) return { ok: false, error: "Media not found or expired." }
+
+    const binRes = await fetch(meta.url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    if (!binRes.ok) return { ok: false, error: "Failed to download media bytes." }
+    const data = await binRes.arrayBuffer()
+    return {
+      ok: true,
+      data,
+      contentType: meta.mime_type || binRes.headers.get("content-type") || "application/octet-stream",
+    }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
+/**
  * Sends a free-form text message via the Cloud API. Note WhatsApp only allows
  * free-form text inside a 24-hour customer service window; outside of it Meta
  * requires an approved template (see sendWhatsAppTemplate).

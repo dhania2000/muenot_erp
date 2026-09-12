@@ -295,6 +295,66 @@ async function runAction(automation: Automation, ctx: InboundAutomationContext):
   }
 }
 
+/**
+ * Time-based runner for `no_reply` automations. Invoked by the scheduler.
+ *
+ * Finds open conversations where the customer's last message has gone
+ * unanswered for at least the rule's configured number of hours and fires the
+ * rule's action (typically a follow-up template or a manager notification).
+ *
+ * Dedupe is done with a bounded time window: a conversation only matches while
+ * its last customer message sits between `hours` and `hours + 6h` ago, so a
+ * rule fires at most once per conversation when the scheduler runs hourly.
+ */
+export async function runNoReplyAutomations(): Promise<number> {
+  await ensureAutomationTables()
+  const automations = (await listAutomations()).filter(
+    (a) => a.isActive && a.triggerType === "no_reply",
+  )
+  if (!automations.length) return 0
+
+  let fired = 0
+  for (const a of automations) {
+    const hours = Math.max(1, Number(a.triggerConfig.hours) || 2)
+    const candidates = await query<
+      { id: number; phone_number: string; last_body: string | null }[]
+    >(
+      `SELECT c.id, ct.phone_number,
+              c.last_message_preview AS last_body
+         FROM \`marketing_whatsapp_conversations\` c
+         JOIN \`marketing_whatsapp_contacts\` ct ON ct.id = c.contact_id
+        WHERE c.status <> 'closed'
+          AND c.last_customer_message_at IS NOT NULL
+          AND c.last_customer_message_at <= (NOW() - INTERVAL ? HOUR)
+          AND c.last_customer_message_at >= (NOW() - INTERVAL ? HOUR)
+          AND (c.last_message_at IS NULL OR c.last_message_at <= c.last_customer_message_at)`,
+      [hours, hours + 6],
+    )
+    for (const convo of candidates) {
+      try {
+        await runAction(a, {
+          conversationId: convo.id,
+          phone: convo.phone_number,
+          messageText: convo.last_body ?? "",
+          isNewContact: false,
+          isNewConversation: false,
+          isAssigned: false,
+        })
+        fired++
+      } catch (err) {
+        console.error(`[v0] no_reply automation ${a.id} failed:`, (err as Error).message)
+      }
+    }
+    if (candidates.length) {
+      await query(
+        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + ?, last_run_at = NOW() WHERE id = ?",
+        [candidates.length, a.id],
+      )
+    }
+  }
+  return fired
+}
+
 /** Fires every matching active automation for a fresh inbound message. */
 export async function runInboundAutomations(ctx: InboundAutomationContext): Promise<number> {
   await ensureAutomationTables()

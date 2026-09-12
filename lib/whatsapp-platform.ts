@@ -543,6 +543,52 @@ export async function listAgentProfiles(): Promise<AgentProfile[]> {
   })
 }
 
+export type WhatsAppCaps = {
+  isAgent: boolean
+  canViewAll: boolean
+  canViewDepartment: boolean
+  canSend: boolean
+  canAssign: boolean
+  canReassign: boolean
+  canClose: boolean
+  canSendTemplates: boolean
+  canCreateCampaigns: boolean
+  canViewAnalytics: boolean
+  canManageContacts: boolean
+  canManageAutomation: boolean
+  /** Admins can manage departments, agents and settings; agents cannot. */
+  canManagePlatform: boolean
+}
+
+/**
+ * Resolves the effective WhatsApp capabilities for a session. Admins get
+ * everything; employees fall back to their agent-settings row (with the same
+ * sensible defaults used across the platform).
+ */
+export async function resolveWhatsAppCaps(session: {
+  userId: number
+  role: "admin" | "employee"
+}): Promise<WhatsAppCaps> {
+  const isAdmin = session.role === "admin"
+  const s = isAdmin ? null : await getAgentSettings(session.userId)
+  const on = (v: number | undefined, dflt: number) => (isAdmin ? true : (v ?? dflt) === 1)
+  return {
+    isAgent: isAdmin || (s?.is_agent ?? 0) === 1,
+    canViewAll: on(s?.can_view_all, 0),
+    canViewDepartment: on(s?.can_view_department, 1),
+    canSend: on(s?.can_send, 1),
+    canAssign: on(s?.can_assign, 0),
+    canReassign: on(s?.can_reassign, 0),
+    canClose: on(s?.can_close, 1),
+    canSendTemplates: on(s?.can_send_templates, 1),
+    canCreateCampaigns: on(s?.can_create_campaigns, 0),
+    canViewAnalytics: on(s?.can_view_analytics, 0),
+    canManageContacts: on(s?.can_manage_contacts, 0),
+    canManageAutomation: on(s?.can_manage_automation, 0),
+    canManagePlatform: isAdmin,
+  }
+}
+
 export async function upsertAgentSettings(
   userId: number,
   patch: Record<string, boolean>,

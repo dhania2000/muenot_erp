@@ -320,6 +320,38 @@ export async function linkContactToLead(contactId: number, leadId: number | null
   await query("UPDATE `marketing_whatsapp_contacts` SET lead_id = ? WHERE id = ?", [leadId, contactId])
 }
 
+export type ContactListItem = {
+  id: number
+  phone: string
+  name: string | null
+  leadId: number | null
+  createdAt: string | null
+}
+
+/** Directory listing for the Contacts tab, with an optional name/phone search. */
+export async function listContacts(search = "", limit = 200): Promise<ContactListItem[]> {
+  await ensureWhatsAppMessagingTables()
+  const term = search.trim()
+  const where = term ? "WHERE phone_number LIKE ? OR profile_name LIKE ?" : ""
+  const params: (string | number)[] = term ? [`%${term}%`, `%${term}%`] : []
+  params.push(Math.min(Math.max(limit, 1), 500))
+  const rows = await query<
+    { id: number; phone_number: string; profile_name: string | null; lead_id: number | null; created_at: string | null }[]
+  >(
+    `SELECT id, phone_number, profile_name, lead_id, created_at
+       FROM \`marketing_whatsapp_contacts\` ${where}
+      ORDER BY created_at DESC LIMIT ?`,
+    params,
+  )
+  return rows.map((r) => ({
+    id: r.id,
+    phone: r.phone_number,
+    name: r.profile_name,
+    leadId: r.lead_id,
+    createdAt: r.created_at,
+  }))
+}
+
 /* ------------------------------------------------------------------ */
 /* Conversations                                                       */
 /* ------------------------------------------------------------------ */
@@ -821,6 +853,40 @@ export async function getUnreadInboundWamids(conversationId: number): Promise<st
     [conversationId],
   )
   return rows.map((r) => r.wamid)
+}
+
+/**
+ * Post-insert context flags the webhook needs to drive routing + automations:
+ *   - isNewConversation: this inbound is the only message in the conversation.
+ *   - isNewContact: the contact has only ever sent this one inbound message.
+ * Both are computed after the inbound row is recorded.
+ */
+export async function getInboundContext(input: {
+  conversationId: number
+  contactId: number
+}): Promise<{ isNewConversation: boolean; isNewContact: boolean; assignedAgentId: number | null }> {
+  const [convoMsgs, contactMsgs, convoRow] = await Promise.all([
+    query<{ c: number }[]>(
+      "SELECT COUNT(*) AS c FROM `marketing_whatsapp_messages` WHERE conversation_id = ?",
+      [input.conversationId],
+    ),
+    query<{ c: number }[]>(
+      `SELECT COUNT(*) AS c
+         FROM \`marketing_whatsapp_messages\` m
+         JOIN \`marketing_whatsapp_conversations\` c ON c.id = m.conversation_id
+        WHERE c.contact_id = ? AND m.direction = 'inbound'`,
+      [input.contactId],
+    ),
+    query<{ assigned_agent_id: number | null }[]>(
+      "SELECT assigned_agent_id FROM `marketing_whatsapp_conversations` WHERE id = ? LIMIT 1",
+      [input.conversationId],
+    ),
+  ])
+  return {
+    isNewConversation: (convoMsgs[0]?.c ?? 0) <= 1,
+    isNewContact: (contactMsgs[0]?.c ?? 0) <= 1,
+    assignedAgentId: convoRow[0]?.assigned_agent_id ?? null,
+  }
 }
 
 /* ------------------------------------------------------------------ */

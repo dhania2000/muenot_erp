@@ -191,17 +191,33 @@ Object.assign(IMPORT_CONFIGS, {
 Object.assign(IMPORT_CONFIGS, {
   "hr-shifts": {
     table: "hr_shifts",
-    createdBy: null,
-    // working_hours is a NOT NULL derived column in the manual form; seed it so
-    // imports never fail, admins can refine later by editing the shift.
+    createdBy: "created_by",
+    // Shift IDs are minted server-side (SHIFT-0001…) via the shared sequence, so
+    // they are never carried in the spreadsheet — matching the manual form.
+    idColumn: "shift_id",
+    id: { strategy: "sequence", prefix: "SHIFT" },
+    // working_hours is a NOT NULL derived column; seed it so imports never fail.
+    // Admins can refine timing later by editing the shift, which recomputes it.
     defaults: { working_hours: 0 },
     columns: [
-      { key: "shift_id", label: "Shift ID", required: true, sample: "SHIFT-A" },
+      { key: "shift_code", label: "Shift Code", aliases: ["code"], sample: "GEN" },
       { key: "shift_name", label: "Shift Name", required: true, sample: "General" },
       { key: "start_time", label: "Start Time", required: true, sample: "09:00" },
       { key: "end_time", label: "End Time", required: true, sample: "18:00" },
+      { key: "is_overnight", label: "Overnight", type: "number", default: 0, sample: "0" },
       { key: "break_minutes", label: "Break Minutes", type: "number", default: 0, sample: "60" },
+      { key: "grace_minutes", label: "Grace Minutes", type: "number", default: 10, sample: "10" },
+      { key: "late_enabled", label: "Late Tracking", type: "number", default: 1, sample: "1" },
+      { key: "early_checkout_enabled", label: "Early Checkout Rule", type: "number", default: 1, sample: "1" },
+      { key: "early_grace_minutes", label: "Early Grace Minutes", type: "number", default: 10, sample: "10" },
       { key: "overtime_enabled", label: "Overtime Enabled", type: "number", default: 0, sample: "0" },
+      { key: "overtime_eligible", label: "Overtime Eligible", type: "number", default: 1, sample: "1" },
+      { key: "overtime_threshold_minutes", label: "Overtime Threshold", type: "number", default: 0, sample: "0" },
+      { key: "overtime_rounding_minutes", label: "Overtime Rounding", type: "number", default: 0, sample: "0" },
+      { key: "working_days", label: "Working Days", aliases: ["workdays"], sample: "1,2,3,4,5" },
+      { key: "weekly_offs", label: "Weekly Offs", aliases: ["weeklyoff"], sample: "0,6" },
+      { key: "effective_from", label: "Effective From", type: "date", sample: "2025-01-01" },
+      { key: "effective_until", label: "Effective Until", type: "date", sample: "" },
       { key: "status", label: "Status", default: "Active", sample: "Active" },
       { key: "description", label: "Description", sample: "" },
     ],

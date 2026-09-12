@@ -196,6 +196,13 @@ export type ShiftConfig = {
   overtime_threshold_minutes: number
   is_overnight: boolean
   weekly_offs: number[]
+  // Newer Shift Master policy fields. Defaulted so shifts created by the older
+  // form (before these columns existed) keep the previous behaviour.
+  late_enabled: boolean
+  early_checkout_enabled: boolean
+  early_grace_minutes: number
+  overtime_eligible: boolean
+  overtime_rounding_minutes: number
 }
 
 export async function getEmployeeById(id: number): Promise<EmployeeRecord | null> {
@@ -271,6 +278,18 @@ function normalizeShift(row: any): ShiftConfig {
     // Treat as overnight when explicitly flagged or when end wraps past midnight.
     is_overnight: Boolean(row.is_overnight) || end < start,
     weekly_offs: weekly,
+    // New policy fields default to the previous hard-coded behaviour when the
+    // column is absent (older shifts): late & early tracking on, overtime
+    // eligible, early grace mirrors the arrival grace, no OT rounding.
+    late_enabled: row.late_enabled === undefined || row.late_enabled === null ? true : Boolean(Number(row.late_enabled)),
+    early_checkout_enabled:
+      row.early_checkout_enabled === undefined || row.early_checkout_enabled === null
+        ? true
+        : Boolean(Number(row.early_checkout_enabled)),
+    early_grace_minutes: Number(row.early_grace_minutes ?? row.grace_minutes ?? 10),
+    overtime_eligible:
+      row.overtime_eligible === undefined || row.overtime_eligible === null ? true : Boolean(Number(row.overtime_eligible)),
+    overtime_rounding_minutes: Number(row.overtime_rounding_minutes ?? 0),
   }
 }
 
@@ -416,7 +435,8 @@ export function computeAttendanceMetrics(opts: {
     if (shift.is_overnight && endMin <= startMin) endMin += 24 * 60
 
     const inMin = dateTimeToMinutes(clockIn)
-    if (inMin !== null) {
+    // Late tracking is a per-shift policy toggle now — respect it.
+    if (shift.late_enabled && inMin !== null) {
       const late = inMin - startMin - grace
       if (late > 0) {
         lateMinutes = late
@@ -428,16 +448,24 @@ export function computeAttendanceMetrics(opts: {
       let outMin = dateTimeToMinutes(clockOut) ?? 0
       // Overnight clock-out after midnight lands in the next calendar day.
       if (shift.is_overnight && outMin < startMin) outMin += 24 * 60
-      const early = endMin - outMin - grace
-      if (early > 0) {
-        earlyLeavingMinutes = early
-        flags.push("Early Out")
+      // Early-out uses its own grace window and can be disabled per shift.
+      if (shift.early_checkout_enabled) {
+        const early = endMin - outMin - shift.early_grace_minutes
+        if (early > 0) {
+          earlyLeavingMinutes = early
+          flags.push("Early Out")
+        }
       }
-      if (shift.overtime_enabled) {
+      // Overtime requires both the shift and this specific shift being eligible;
+      // the surplus past the threshold is rounded to the configured increment.
+      if (shift.overtime_enabled && shift.overtime_eligible) {
         const overtimeMin = outMin - endMin - shift.overtime_threshold_minutes
         if (overtimeMin > 0) {
-          overtimeHours = Number((overtimeMin / 60).toFixed(2))
-          flags.push("Overtime")
+          const rounded = roundOvertime(overtimeMin, shift.overtime_rounding_minutes)
+          if (rounded > 0) {
+            overtimeHours = Number((rounded / 60).toFixed(2))
+            flags.push("Overtime")
+          }
         }
       }
     }
@@ -472,6 +500,16 @@ function blank(status: string, flags: string[]): AttendanceMetrics {
 
 function dedupe(list: string[]): string[] {
   return Array.from(new Set(list))
+}
+
+/**
+ * Round overtime minutes down to the configured increment (0/15/30/60). We
+ * round *down* so an employee is only credited overtime for a full completed
+ * increment. Zero (or an unset increment) means no rounding.
+ */
+function roundOvertime(minutes: number, increment: number): number {
+  if (!increment || increment <= 0) return Math.max(0, Math.round(minutes))
+  return Math.floor(minutes / increment) * increment
 }
 
 /**

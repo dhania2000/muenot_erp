@@ -2,6 +2,12 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { getDocumentTypes, expiryStatus } from "@/lib/hr-documents"
+import {
+  ensureShiftAssignmentSchema,
+  getApplicableShift,
+  getUpcomingAssignment,
+  deriveState,
+} from "@/lib/hr-shift-assignments"
 
 // Aggregates cross-module records for the 360° employee profile. Linkage
 // differs per table: documents/attendance are keyed by hr_employees.id, while
@@ -116,6 +122,44 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       ))[0] || { shift_name: emp.shift }
     : null
 
+  // Authoritative shift-assignment view (§22): the currently applicable shift
+  // resolved through the central resolver, the next upcoming assignment, and
+  // the full preserved history. All read from Shift Assignments — never
+  // duplicated. Best-effort so a legacy database still renders the profile.
+  const today = new Date().toISOString().slice(0, 10)
+  await safe(async () => {
+    await ensureShiftAssignmentSchema()
+    return []
+  })
+  const currentShift = await (async () => {
+    try {
+      return await getApplicableShift({ id: Number(id), shift: emp.shift ?? null }, today)
+    } catch {
+      return null
+    }
+  })()
+  const upcomingAssignment = await (async () => {
+    try {
+      return await getUpcomingAssignment(Number(id), today)
+    } catch {
+      return null
+    }
+  })()
+  const assignmentHistoryRaw = await safe(() =>
+    query<any[]>(
+      `SELECT a.assignment_id, a.effective_from, a.effective_to, a.status, a.change_type,
+              a.source_type, a.assigned_by_name, a.notes,
+              s.shift_name, s.shift_code, s.start_time, s.end_time, s.is_overnight
+         FROM hr_shift_assignments a
+         LEFT JOIN hr_shifts s ON s.id = a.shift_id
+        WHERE a.employee_id = ?
+        ORDER BY a.effective_from DESC, a.id DESC LIMIT 100`,
+      [id],
+    ),
+  )
+  const assignmentHistory = assignmentHistoryRaw.map((r) => ({ ...r, derived_state: deriveState(r, today) }))
+  const shiftAssignment = { current: currentShift, upcoming: upcomingAssignment, history: assignmentHistory }
+
   return NextResponse.json({
     documents: docsWithExpiry,
     documentSummary,
@@ -126,6 +170,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     manager,
     directReports,
     shift,
+    shiftAssignment,
     reportingManagerName: emp.reporting_manager || null,
     counts: {
       documents: docsWithExpiry.length,

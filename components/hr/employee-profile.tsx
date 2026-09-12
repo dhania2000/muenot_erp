@@ -31,6 +31,18 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { PermissionMatrixEditor } from "@/components/hr/permission-matrix-editor"
+import { shiftTimeLabel } from "@/components/hr/shift-change-status"
+
+function assignmentStateVariant(state: string): "default" | "secondary" | "destructive" | "outline" {
+  switch (state) {
+    case "Active Now":
+      return "default"
+    case "Upcoming":
+      return "secondary"
+    default:
+      return "outline"
+  }
+}
 
 type LinkedUser = {
   id: number
@@ -321,22 +333,102 @@ function RelatedTabs({ employeeId, active }: { employeeId: number; active: strin
   }
 
   if (active === "shift") {
-    const shift = data.shift
+    const sa = data.shiftAssignment || {}
+    const current = sa.current
+    const upcoming = sa.upcoming
+    const history: any[] = sa.history || []
+    const fallbackShift = data.shift
     return (
-      <DataCard title="Shift Assignment" icon={Clock}>
-        {!shift ? (
-          <EmptyState icon={Clock} label="No shift assigned." />
-        ) : (
-          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Shift" value={shift.shift_name} />
-            <Field label="Start time" value={shift.start_time} />
-            <Field label="End time" value={shift.end_time} />
-            <Field label="Break (min)" value={shift.break_minutes} />
-            <Field label="Working hours" value={shift.working_hours} />
-            <Field label="Status" value={shift.status} />
-          </dl>
-        )}
-      </DataCard>
+      <div className="flex flex-col gap-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border bg-card p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <Clock className="size-4 text-primary" />
+              <h3 className="text-sm font-semibold">Current shift</h3>
+            </div>
+            {current ? (
+              <dl className="grid gap-3 sm:grid-cols-2">
+                <Field label="Shift" value={current.shift_name} />
+                <Field
+                  label="Timing"
+                  value={shiftTimeLabel(current.start_time, current.end_time, Boolean(current.is_overnight))}
+                />
+                <Field label="Break (min)" value={current.break_minutes} />
+                <Field label="Working hours" value={current.working_hours} />
+              </dl>
+            ) : fallbackShift ? (
+              <dl className="grid gap-3 sm:grid-cols-2">
+                <Field label="Shift" value={fallbackShift.shift_name} />
+                <Field label="Start time" value={fallbackShift.start_time} />
+                <Field label="End time" value={fallbackShift.end_time} />
+                <Field label="Status" value={fallbackShift.status} />
+              </dl>
+            ) : (
+              <p className="text-sm text-muted-foreground">No applicable shift on {new Date().toLocaleDateString()}.</p>
+            )}
+          </div>
+
+          <div className="rounded-lg border bg-card p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <CalendarClock className="size-4 text-primary" />
+              <h3 className="text-sm font-semibold">Upcoming shift</h3>
+            </div>
+            {upcoming ? (
+              <dl className="grid gap-3 sm:grid-cols-2">
+                <Field label="Shift" value={upcoming.shift_name} />
+                <Field label="Effective from" value={fmtDate(upcoming.effective_from)} />
+                <Field
+                  label="Effective to"
+                  value={upcoming.effective_to ? fmtDate(upcoming.effective_to) : "Onward"}
+                />
+                <Field label="Assignment" value={upcoming.assignment_id} />
+              </dl>
+            ) : (
+              <p className="text-sm text-muted-foreground">No upcoming shift change scheduled.</p>
+            )}
+          </div>
+        </div>
+
+        <DataCard title="Assignment History" icon={History}>
+          {history.length === 0 ? (
+            <EmptyState icon={History} label="No shift assignment history." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="py-2 pr-4 font-medium">Assignment</th>
+                    <th className="py-2 pr-4 font-medium">Shift</th>
+                    <th className="py-2 pr-4 font-medium">Effective from</th>
+                    <th className="py-2 pr-4 font-medium">Effective to</th>
+                    <th className="py-2 pr-4 font-medium">Type</th>
+                    <th className="py-2 font-medium">State</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((h) => (
+                    <tr key={h.assignment_id} className="border-b last:border-0">
+                      <td className="py-2 pr-4 font-mono text-xs">{h.assignment_id}</td>
+                      <td className="py-2 pr-4">
+                        <div className="font-medium">{h.shift_name || "—"}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {shiftTimeLabel(h.start_time, h.end_time, Boolean(h.is_overnight))}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-4">{fmtDate(h.effective_from)}</td>
+                      <td className="py-2 pr-4">{h.effective_to ? fmtDate(h.effective_to) : "Onward"}</td>
+                      <td className="py-2 pr-4">{h.change_type}</td>
+                      <td className="py-2">
+                        <Badge variant={assignmentStateVariant(h.derived_state)}>{h.derived_state}</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </DataCard>
+      </div>
     )
   }
 

@@ -33,8 +33,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { HR_EMAIL_CATEGORIES } from "@/lib/hr-email-shared"
-import { HR_TEMPLATE_STATUSES, type HrEmailTemplate } from "@/lib/hr-email-templates"
+import {
+  HR_EMAIL_CATEGORIES,
+  HR_TEMPLATE_STATUSES,
+  type HrEmailTemplate,
+} from "@/lib/hr-email-shared"
 import { HrEmailTemplateDialog } from "@/components/hr/hr-email-template-dialog"
 
 type ApiResponse = { templates: HrEmailTemplate[]; canManage: boolean }

@@ -1,122 +1,232 @@
 "use client"
-import { useState } from "react"
+
+import { useMemo, useState } from "react"
+import Link from "next/link"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
-import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { Mail, Plus, Eye, Printer, Trash2 } from "lucide-react"
-import { LETTER_TYPES } from "@/lib/hr-letters"
+import { LetterStatusBadge } from "@/components/hr/letter-status-badge"
+import { LetterDetailDialog } from "@/components/hr/letter-detail-dialog"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { Mail, FilePlus2, Search, FileText } from "lucide-react"
+import {
+  LETTER_STATUSES,
+  LETTER_TYPES,
+  LETTER_SOURCES,
+  eventByKey,
+  type GeneratedLetter,
+} from "@/lib/hr-letters-shared"
 
-type Letter = { id: number; letter_number: string; employee_name: string; employee_code: string; designation: string; department: string; letter_type: string; subject: string; body: string; issue_date: string; status: string }
-type Template = { id: number; name: string; letter_type: string; subject: string; body: string }
+type LetterRow = GeneratedLetter & {
+  template_name?: string | null
+  created_by_name?: string | null
+  event_key?: string
+}
 
-const today = () => new Date().toISOString().slice(0, 10)
-const emptyForm = { employee_id: "", template_id: "", letter_type: "Offer Letter", subject: "", body: "", issue_date: today(), status: "Draft" }
+type Analytics = {
+  funnel: {
+    total: number
+    drafts: number
+    generated: number
+    issued: number
+    delivered: number
+    cancelled: number
+    deliveryRate: number
+  }
+}
+
+function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border bg-card p-4">
+      <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="text-2xl font-semibold tabular-nums text-foreground">{value}</span>
+      {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+    </div>
+  )
+}
+
+const ALL = "__all__"
 
 export function LettersClient() {
-  const { data, mutate } = useSWR<{ letters: Letter[] }>("/api/hr/letters", fetcher)
-  const { data: employeeData } = useSWR<{ employees: any[] }>("/api/hr/employees", fetcher)
-  const { data: templateData } = useSWR<{ templates: Template[] }>("/api/hr/letter-templates", fetcher)
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState(emptyForm)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState("")
-  const [preview, setPreview] = useState<Letter | null>(null)
+  const [q, setQ] = useState("")
+  const [status, setStatus] = useState<string>(ALL)
+  const [letterType, setLetterType] = useState<string>(ALL)
+  const [source, setSource] = useState<string>(ALL)
+  const [selected, setSelected] = useState<number | null>(null)
 
-  function openNew() { setForm({ ...emptyForm, issue_date: today() }); setError(""); setOpen(true) }
-  function applyTemplate(value: string | null) {
-    const id = value || ""
-    const t = (templateData?.templates || []).find((x) => String(x.id) === id)
-    setForm((f) => ({ ...f, template_id: id, letter_type: t?.letter_type ?? f.letter_type, subject: t?.subject ?? f.subject, body: t?.body ?? f.body }))
-  }
-  async function save(e: React.FormEvent) {
-    e.preventDefault(); setError(""); setSaving(true)
-    const res = await fetch("/api/hr/letters", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) })
-    setSaving(false)
-    if (res.ok) { setOpen(false); mutate() } else { setError((await res.json().catch(() => ({}))).error || "Failed to save") }
-  }
-  async function remove(id: number) { if (!confirm("Delete this letter?")) return; await fetch(`/api/hr/letters?id=${id}`, { method: "DELETE" }); mutate() }
+  const listUrl = useMemo(() => {
+    const sp = new URLSearchParams()
+    if (q.trim()) sp.set("q", q.trim())
+    if (status !== ALL) sp.set("status", status)
+    if (letterType !== ALL) sp.set("letter_type", letterType)
+    if (source !== ALL) sp.set("source", source)
+    const s = sp.toString()
+    return `/api/hr/letters${s ? `?${s}` : ""}`
+  }, [q, status, letterType, source])
 
-  function printLetter(l: Letter) {
-    const w = window.open("", "_blank"); if (!w) return
-    w.document.write(`<html><head><title>${l.letter_number}</title><style>body{font-family:Georgia,serif;max-width:760px;margin:40px auto;padding:0 24px;color:#111;line-height:1.7}h2{font-size:18px}.meta{color:#555;font-size:13px;margin-bottom:24px}.body{white-space:pre-wrap}</style></head><body><h2>${l.subject}</h2><div class="meta">Ref: ${l.letter_number} &nbsp;•&nbsp; Date: ${l.issue_date}</div><div class="body">${l.body.replace(/</g, "&lt;")}</div></body></html>`)
-    w.document.close(); w.focus(); w.print()
+  const { data, mutate } = useSWR<{ letters: LetterRow[] }>(listUrl, fetcher)
+  const { data: analytics, mutate: mutateAnalytics } = useSWR<Analytics>("/api/hr/letters/analytics?days=365", fetcher)
+  const letters = data?.letters || []
+  const f = analytics?.funnel
+
+  function refresh() {
+    mutate()
+    mutateAnalytics()
   }
 
   return (
     <div className="flex flex-col gap-6 p-6 md:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-3"><Mail className="size-7 text-primary" /><h1 className="text-2xl font-semibold">Letters</h1></div>
-          <p className="mt-1 text-sm text-muted-foreground">Issue letters to employees. Placeholders merge with employee and company details at creation.</p>
+          <div className="flex items-center gap-3">
+            <Mail className="size-7 text-primary" />
+            <h1 className="text-2xl font-semibold">Letters</h1>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground text-pretty">
+            The archive of every letter issued to employees and candidates. Open a letter to view, export a PDF, email
+            it, or regenerate a fresh version.
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <ExcelExportButton rows={data?.letters || []} filename="letters" columns={[{ header: "Ref", value: (r: any) => r.letter_number },{ header: "Employee", value: (r: any) => r.employee_name },{ header: "Employee Code", value: (r: any) => r.employee_code },{ header: "Designation", value: (r: any) => r.designation },{ header: "Department", value: (r: any) => r.department },{ header: "Type", value: (r: any) => r.letter_type },{ header: "Subject", value: (r: any) => r.subject },{ header: "Issued", value: (r: any) => r.issue_date },{ header: "Status", value: (r: any) => r.status }]} />
-          <Button onClick={openNew}><Plus data-icon="inline-start" />Issue letter</Button>
+          <ExcelExportButton
+            rows={letters}
+            filename="letters"
+            columns={[
+              { header: "Ref", value: (r: any) => r.letter_number },
+              { header: "Recipient", value: (r: any) => r.recipient_name || r.employee_name },
+              { header: "Employee Code", value: (r: any) => r.employee_code },
+              { header: "Type", value: (r: any) => r.letter_type },
+              { header: "Category", value: (r: any) => r.category },
+              { header: "Source", value: (r: any) => r.source },
+              { header: "Subject", value: (r: any) => r.subject },
+              { header: "Issued", value: (r: any) => r.issue_date },
+              { header: "Status", value: (r: any) => r.status },
+            ]}
+          />
+          <Link href="/modules/hr/letters/generate" className={buttonVariants()}>
+            <FilePlus2 data-icon="inline-start" />
+            Generate letter
+          </Link>
         </div>
       </div>
 
+      {f && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+          <StatCard label="Total" value={f.total} hint="last 12 months" />
+          <StatCard label="Drafts" value={f.drafts} />
+          <StatCard label="Generated" value={f.generated} />
+          <StatCard label="Issued" value={f.issued} />
+          <StatCard label="Delivered" value={f.delivered} hint={`${f.deliveryRate}% delivery rate`} />
+          <StatCard label="Cancelled" value={f.cancelled} />
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ref, recipient, subject…" className="pl-9" />
+        </div>
+        <Select value={status} onValueChange={(v) => setStatus(v ?? ALL)}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>All statuses</SelectItem>
+            {LETTER_STATUSES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={letterType} onValueChange={(v) => setLetterType(v ?? ALL)}>
+          <SelectTrigger className="w-[170px]">
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>All types</SelectItem>
+            {LETTER_TYPES.map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={source} onValueChange={(v) => setSource(v ?? ALL)}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="Source" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>All sources</SelectItem>
+            {LETTER_SOURCES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       <div className="overflow-x-auto rounded-lg border bg-card">
-        <table className="w-full min-w-[900px] text-sm">
-          <thead><tr className="border-b text-left text-muted-foreground">{["Ref", "Employee", "Type", "Subject", "Issued", "Status", ""].map((x) => <th key={x} className="px-4 py-3 font-medium">{x}</th>)}</tr></thead>
+        <table className="w-full min-w-[880px] text-sm">
+          <thead>
+            <tr className="border-b text-left text-muted-foreground">
+              {["Ref", "Recipient", "Type", "Event", "Issued", "Status"].map((x) => (
+                <th key={x} className="px-4 py-3 font-medium">
+                  {x}
+                </th>
+              ))}
+            </tr>
+          </thead>
           <tbody>
-            {(data?.letters || []).map((l) => (
-              <tr key={l.id} className="border-b last:border-0">
+            {letters.map((l) => (
+              <tr
+                key={l.id}
+                onClick={() => setSelected(l.id)}
+                className="cursor-pointer border-b transition-colors last:border-0 hover:bg-accent/50"
+              >
                 <td className="px-4 py-3 font-mono text-xs">{l.letter_number}</td>
-                <td className="px-4 py-3"><div className="font-medium">{l.employee_name}</div><div className="text-xs text-muted-foreground">{l.employee_code}</div></td>
-                <td className="px-4 py-3">{l.letter_type}</td>
-                <td className="px-4 py-3 text-muted-foreground">{l.subject}</td>
-                <td className="px-4 py-3">{l.issue_date}</td>
-                <td className="px-4 py-3"><Badge variant={l.status === "Issued" ? "default" : "secondary"}>{l.status}</Badge></td>
-                <td className="px-4 py-3"><div className="flex justify-end gap-2"><Button variant="outline" size="sm" onClick={() => setPreview(l)}><Eye className="size-4" /></Button><Button variant="outline" size="sm" onClick={() => printLetter(l)}><Printer className="size-4" /></Button><Button variant="outline" size="sm" onClick={() => remove(l.id)}><Trash2 className="size-4" /></Button></div></td>
+                <td className="px-4 py-3">
+                  <div className="font-medium">{l.recipient_name || l.employee_name || "—"}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {[l.employee_code, l.department].filter(Boolean).join(" · ")}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <div>{l.letter_type}</div>
+                  <div className="text-xs text-muted-foreground">{l.category}</div>
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">{eventByKey(l.event_key).label}</td>
+                <td className="px-4 py-3 whitespace-nowrap">{l.issue_date}</td>
+                <td className="px-4 py-3">
+                  <LetterStatusBadge status={l.status} />
+                </td>
               </tr>
             ))}
-            {data && data.letters.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">No letters issued yet.</td></tr>}
+            {data && letters.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-12 text-center">
+                  <FileText className="mx-auto mb-3 size-8 text-muted-foreground/60" />
+                  <p className="text-sm text-muted-foreground">
+                    {q || status !== ALL || letterType !== ALL || source !== ALL
+                      ? "No letters match these filters."
+                      : "No letters yet. Generate your first letter to get started."}
+                  </p>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* Issue letter dialog */}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Issue letter</DialogTitle></DialogHeader>
-          <form onSubmit={save} className="grid gap-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="grid gap-2"><Label>Employee</Label><Select value={form.employee_id} onValueChange={(v) => setForm({ ...form, employee_id: v || "" })}><SelectTrigger><SelectValue placeholder="Select employee" /></SelectTrigger><SelectContent>{(employeeData?.employees || []).map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.employee_id} · {e.employee_name}</SelectItem>)}</SelectContent></Select></div>
-              <div className="grid gap-2"><Label>From template (optional)</Label><Select value={form.template_id} onValueChange={applyTemplate}><SelectTrigger><SelectValue placeholder="Start blank" /></SelectTrigger><SelectContent>{(templateData?.templates || []).map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}</SelectContent></Select></div>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="grid gap-2"><Label>Letter type</Label><Select value={form.letter_type} onValueChange={(v) => setForm({ ...form, letter_type: v || "Offer Letter" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{LETTER_TYPES.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div>
-              <div className="grid gap-2"><Label>Issue date</Label><Input type="date" value={form.issue_date} onChange={(e) => setForm({ ...form, issue_date: e.target.value })} /></div>
-            </div>
-            <div className="grid gap-2"><Label>Subject</Label><Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} required /></div>
-            <div className="grid gap-2"><Label>Body</Label><Textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} rows={9} placeholder="Dear {{employee_name}}, …" required /><p className="text-xs text-muted-foreground">Placeholders like {"{{employee_name}}"} are replaced with real values when the letter is created.</p></div>
-            <div className="grid gap-2 md:w-1/2"><Label>Status</Label><Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v || "Draft" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Draft">Draft</SelectItem><SelectItem value="Issued">Issued</SelectItem></SelectContent></Select></div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !form.employee_id}>{saving ? "Creating…" : "Create letter"}</Button></DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Preview dialog */}
-      <Dialog open={!!preview} onOpenChange={(v) => !v && setPreview(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>{preview?.subject}</DialogTitle></DialogHeader>
-          {preview && (
-            <div className="grid gap-4">
-              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground"><span>Ref: <span className="font-mono">{preview.letter_number}</span></span><span>Employee: {preview.employee_name}</span><span>Date: {preview.issue_date}</span></div>
-              <div className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-5 font-serif text-sm leading-relaxed">{preview.body}</div>
-              <DialogFooter><Button variant="outline" onClick={() => setPreview(null)}>Close</Button><Button onClick={() => printLetter(preview)}><Printer data-icon="inline-start" />Print</Button></DialogFooter>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <LetterDetailDialog
+        letterId={selected}
+        onClose={() => setSelected(null)}
+        onChanged={refresh}
+        onSelectLetter={(id) => setSelected(id)}
+      />
     </div>
   )
 }

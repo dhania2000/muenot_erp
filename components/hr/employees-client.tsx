@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { fetcher } from "@/lib/fetcher";
 import { Button } from "@/components/ui/button";
@@ -219,6 +219,36 @@ function EmployeeDialog({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [photoError, setPhotoError] = useState("");
+  const [ifscLoading, setIfscLoading] = useState(false);
+  const [ifscError, setIfscError] = useState("");
+  // Track the last IFSC we resolved so we don't refetch the same value repeatedly.
+  const lastIfscLookup = useRef("");
+  async function lookupIfsc(rawCode: string) {
+    const code = rawCode.trim().toUpperCase();
+    setIfscError("");
+    // Valid IFSC codes are exactly 11 alphanumeric characters with a 0 in the 5th position.
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(code)) return;
+    if (code === lastIfscLookup.current) return;
+    lastIfscLookup.current = code;
+    setIfscLoading(true);
+    try {
+      const r = await fetch(`https://ifsc.razorpay.com/${code}`);
+      if (!r.ok) {
+        setIfscError("No bank found for this IFSC code");
+        return;
+      }
+      const d = await r.json();
+      setForm((f) => ({
+        ...f,
+        bank_name: d.BANK ? String(d.BANK) : f.bank_name || "",
+        bank_branch: d.BRANCH ? String(d.BRANCH) : f.bank_branch || "",
+      }));
+    } catch {
+      setIfscError("Could not look up IFSC code");
+    } finally {
+      setIfscLoading(false);
+    }
+  }
   // Re-seed the form whenever a different employee is opened for editing.
   if (isEdit && employee && employee.id !== seededId) {
     setSeededId(employee.id);
@@ -311,21 +341,50 @@ function EmployeeDialog({
               </div>
             </div>
           </div>
-          {fields.map(([key, label]) => (
-            <div key={key} className="grid gap-2">
-              <Label htmlFor={key}>
-                {label}
-                {key === "employee_name" ? " *" : ""}
-              </Label>
-              <Input
-                id={key}
-                type={key.includes("date") || key === "dob" ? "date" : "text"}
-                required={key === "employee_name"}
-                value={form[key] || ""}
-                onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-              />
-            </div>
-          ))}
+          {fields.map(([key, label]) => {
+            if (key === "bank_ifsc_code") {
+              return (
+                <div key={key} className="grid gap-2">
+                  <Label htmlFor={key}>{label}</Label>
+                  <Input
+                    id={key}
+                    type="text"
+                    value={form[key] || ""}
+                    onChange={(e) => {
+                      const code = e.target.value.toUpperCase();
+                      setForm((f) => ({ ...f, [key]: code }));
+                      lookupIfsc(code);
+                    }}
+                    onBlur={(e) => lookupIfsc(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {ifscLoading ? (
+                      "Looking up bank details…"
+                    ) : ifscError ? (
+                      <span className="text-destructive">{ifscError}</span>
+                    ) : (
+                      "Bank name and branch auto-fill from the IFSC code"
+                    )}
+                  </p>
+                </div>
+              );
+            }
+            return (
+              <div key={key} className="grid gap-2">
+                <Label htmlFor={key}>
+                  {label}
+                  {key === "employee_name" ? " *" : ""}
+                </Label>
+                <Input
+                  id={key}
+                  type={key.includes("date") || key === "dob" ? "date" : "text"}
+                  required={key === "employee_name"}
+                  value={form[key] || ""}
+                  onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+                />
+              </div>
+            );
+          })}
           <Button type="submit" disabled={saving || uploading} className="sm:col-span-2">
             {saving ? "Saving…" : "Save employee"}
           </Button>

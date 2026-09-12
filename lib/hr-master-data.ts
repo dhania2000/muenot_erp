@@ -550,3 +550,302 @@ export async function writeMasterAudit(entry: {
     ],
   )
 }
+
+// ---------------------------------------------------------------------------
+// Expiry status (Passport / Visa) — derived, never stored, so it can never
+// drift from the real dates. Reuses one threshold everywhere (spec §11, §44).
+// ---------------------------------------------------------------------------
+
+export const EXPIRY_SOON_DAYS = 60
+
+export type ExpiryStatus = "Valid" | "Expiring Soon" | "Expired" | null
+
+/** Classify a single expiry date relative to today. Null when there is no date. */
+export function computeExpiryStatus(date: any, soonDays = EXPIRY_SOON_DAYS): ExpiryStatus {
+  if (isBlank(date)) return null
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  d.setHours(0, 0, 0, 0)
+  const days = Math.floor((d.getTime() - today.getTime()) / 86_400_000)
+  if (days < 0) return "Expired"
+  if (days <= soonDays) return "Expiring Soon"
+  return "Valid"
+}
+
+/** Merge passport + visa statuses into the "worst" single status for a row. */
+function worstStatus(a: ExpiryStatus, b: ExpiryStatus): ExpiryStatus {
+  const rank: Record<string, number> = { Expired: 3, "Expiring Soon": 2, Valid: 1 }
+  const cand = [a, b].filter(Boolean) as Exclude<ExpiryStatus, null>[]
+  if (!cand.length) return null
+  return cand.sort((x, y) => rank[y] - rank[x])[0]
+}
+
+/** Annotate passport/visa rows with derived expiry status fields for the UI. */
+export function annotatePassportVisa(rows: any[]): any[] {
+  return rows.map((r) => {
+    const passport_status = computeExpiryStatus(r.passport_expiry_date)
+    const visa_status = computeExpiryStatus(r.visa_expiry_date)
+    return { ...r, passport_status, visa_status, expiry_status: worstStatus(passport_status, visa_status) }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Promotion conflict detection (spec §8) — an employee may not have two open
+// or same-day organizational changes at once.
+// ---------------------------------------------------------------------------
+
+export async function checkPromotionConflict(
+  employeeId: any,
+  effectiveDate: any,
+  excludeId: string | number | null,
+): Promise<string | null> {
+  if (isBlank(employeeId)) return null
+  const rows = await query<{ promotion_id: number; effective_date: any; status: string; effected_at: any }[]>(
+    `SELECT promotion_id, effective_date, status, effected_at
+       FROM hr_promotions
+      WHERE employee_id = ? AND promotion_id <> ? AND status IN ('Pending','Approved') AND effected_at IS NULL`,
+    [Number(employeeId) || 0, Number(excludeId) || 0],
+  )
+  if (!rows.length) return null
+  const eff = effectiveDate ? String(effectiveDate).slice(0, 10) : null
+  for (const r of rows) {
+    const rEff = r.effective_date ? String(new Date(r.effective_date).toISOString()).slice(0, 10) : null
+    if (eff && rEff && eff === rEff) {
+      return `This employee already has a ${r.status.toLowerCase()} promotion effective on the same date.`
+    }
+  }
+  const pending = rows.find((r) => r.status === "Pending")
+  if (pending) return "This employee already has a pending promotion awaiting approval."
+  const approved = rows.find((r) => r.status === "Approved")
+  if (approved) return "This employee already has an approved promotion that has not taken effect yet."
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Effective-date employee update job (spec §7, §39, §76).
+//
+// Applies every Approved promotion whose effective date has arrived and which
+// has not yet been effected, updating the employee master (department /
+// designation / grade resolved from the master IDs) transaction-safely. The
+// promotion history keeps its own old/new snapshot untouched.
+// ---------------------------------------------------------------------------
+
+export type PromotionApplyResult = {
+  applied: { promotion_id: number; employee_id: number; changes: string[] }[]
+  skipped: { promotion_id: number; reason: string }[]
+}
+
+export async function applyDuePromotions(session: SessionPayload): Promise<PromotionApplyResult> {
+  const due = await query<any[]>(
+    `SELECT * FROM hr_promotions
+      WHERE status = 'Approved' AND effected_at IS NULL AND effective_date <= CURDATE()
+      ORDER BY effective_date ASC, promotion_id ASC`,
+  )
+  const result: PromotionApplyResult = { applied: [], skipped: [] }
+
+  for (const p of due) {
+    const connection = await pool.getConnection()
+    try {
+      await connection.beginTransaction()
+      const [empRows]: any = await connection.query("SELECT * FROM hr_employees WHERE id = ? LIMIT 1 FOR UPDATE", [
+        p.employee_id,
+      ])
+      if (!empRows.length) {
+        await connection.rollback()
+        result.skipped.push({ promotion_id: p.promotion_id, reason: "Employee not found" })
+        continue
+      }
+      const emp = empRows[0]
+      const set: Record<string, any> = {}
+      const changes: string[] = []
+
+      if (p.new_department_id) {
+        const [d]: any = await connection.query(
+          "SELECT department_name FROM hr_departments WHERE department_id = ? LIMIT 1",
+          [p.new_department_id],
+        )
+        const name = d[0]?.department_name
+        if (name && name !== emp.department) {
+          set.department = name
+          changes.push(`department → ${name}`)
+        }
+      }
+      if (p.new_designation_id) {
+        const [d]: any = await connection.query(
+          "SELECT designation_name FROM hr_designations WHERE designation_id = ? LIMIT 1",
+          [p.new_designation_id],
+        )
+        const name = d[0]?.designation_name
+        if (name && name !== emp.designation) {
+          set.designation = name
+          changes.push(`designation → ${name}`)
+        }
+      }
+      if (p.new_grade && p.new_grade !== emp.employee_grade) {
+        set.employee_grade = p.new_grade
+        changes.push(`grade → ${p.new_grade}`)
+      }
+
+      const fields = Object.keys(set)
+      if (fields.length) {
+        await connection.query(
+          `UPDATE hr_employees SET ${fields.map((f) => `${f}=?`).join(",")} WHERE id = ?`,
+          [...fields.map((f) => set[f]), p.employee_id],
+        )
+      }
+      await connection.query("UPDATE hr_promotions SET effected_at = NOW() WHERE promotion_id = ?", [p.promotion_id])
+      await connection.commit()
+
+      result.applied.push({ promotion_id: p.promotion_id, employee_id: p.employee_id, changes })
+      // Audit is written outside the txn so a logging failure never rolls back
+      // an already-applied employee change.
+      await writeMasterAudit({
+        module: "promotions",
+        recordId: p.promotion_id,
+        action: "effected",
+        session,
+        newValue: { employee_id: p.employee_id, changes },
+        remarks: changes.length ? changes.join(", ") : "No employee field changes required.",
+      })
+    } catch (e) {
+      await connection.rollback()
+      result.skipped.push({ promotion_id: p.promotion_id, reason: (e as Error).message })
+    } finally {
+      connection.release()
+    }
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
+// HR Master Data summary + data-quality (spec §33, §34, §69). All real data;
+// every group is isolated so one failing query cannot blank the whole panel.
+// ---------------------------------------------------------------------------
+
+async function safeCount(sql: string, params: any[] = []): Promise<number> {
+  try {
+    const r = await query<{ c: number }[]>(sql, params)
+    return Number(r[0]?.c || 0)
+  } catch {
+    return 0
+  }
+}
+
+export type DataQualityIssue = { key: string; label: string; count: number; kind?: MasterKind }
+
+export async function getMasterSummary() {
+  const [
+    deptTotal,
+    deptActive,
+    desgTotal,
+    desgActive,
+    docTotal,
+    docRequired,
+    promPending,
+    promApproved,
+    promUpcoming,
+    promDue,
+    awardsThisYear,
+    apprThisMonth,
+    holUpcoming,
+    holThisYear,
+  ] = await Promise.all([
+    safeCount("SELECT COUNT(*) c FROM hr_departments"),
+    safeCount("SELECT COUNT(*) c FROM hr_departments WHERE status = 'Active'"),
+    safeCount("SELECT COUNT(*) c FROM hr_designations"),
+    safeCount("SELECT COUNT(*) c FROM hr_designations WHERE status = 'Active'"),
+    safeCount("SELECT COUNT(*) c FROM hr_document_types"),
+    safeCount("SELECT COUNT(*) c FROM hr_document_types WHERE is_required = 1"),
+    safeCount("SELECT COUNT(*) c FROM hr_promotions WHERE status = 'Pending'"),
+    safeCount("SELECT COUNT(*) c FROM hr_promotions WHERE status = 'Approved'"),
+    safeCount("SELECT COUNT(*) c FROM hr_promotions WHERE status = 'Approved' AND effected_at IS NULL AND effective_date > CURDATE()"),
+    safeCount("SELECT COUNT(*) c FROM hr_promotions WHERE status = 'Approved' AND effected_at IS NULL AND effective_date <= CURDATE()"),
+    safeCount("SELECT COUNT(*) c FROM hr_awards WHERE YEAR(award_date) = YEAR(CURDATE())"),
+    safeCount("SELECT COUNT(*) c FROM hr_appreciations WHERE MONTH(appreciation_date) = MONTH(CURDATE()) AND YEAR(appreciation_date) = YEAR(CURDATE())"),
+    safeCount("SELECT COUNT(*) c FROM hr_holidays WHERE holiday_date >= CURDATE() AND status = 'Active'"),
+    safeCount("SELECT COUNT(*) c FROM hr_holidays WHERE YEAR(holiday_date) = YEAR(CURDATE())"),
+  ])
+
+  const soon = `DATE_ADD(CURDATE(), INTERVAL ${EXPIRY_SOON_DAYS} DAY)`
+  const [pExpired, pSoon, vExpired, vSoon] = await Promise.all([
+    safeCount("SELECT COUNT(*) c FROM hr_passport_visa WHERE passport_expiry_date < CURDATE()"),
+    safeCount(`SELECT COUNT(*) c FROM hr_passport_visa WHERE passport_expiry_date >= CURDATE() AND passport_expiry_date <= ${soon}`),
+    safeCount("SELECT COUNT(*) c FROM hr_passport_visa WHERE visa_expiry_date < CURDATE()"),
+    safeCount(`SELECT COUNT(*) c FROM hr_passport_visa WHERE visa_expiry_date >= CURDATE() AND visa_expiry_date <= ${soon}`),
+  ])
+
+  // Data-quality issues (actionable, never auto-corrected — spec §34).
+  const issues: DataQualityIssue[] = []
+  const add = async (key: string, label: string, sql: string, kind?: MasterKind) => {
+    const c = await safeCount(sql)
+    if (c > 0) issues.push({ key, label, count: c, kind })
+  }
+  await add(
+    "emp_no_dept",
+    "Active employees without a department",
+    "SELECT COUNT(*) c FROM hr_employees WHERE employment_status = 'Active' AND (department IS NULL OR department = '')",
+  )
+  await add(
+    "emp_no_desg",
+    "Active employees without a designation",
+    "SELECT COUNT(*) c FROM hr_employees WHERE employment_status = 'Active' AND (designation IS NULL OR designation = '')",
+  )
+  await add(
+    "emp_inactive_dept",
+    "Employees assigned to an inactive department",
+    "SELECT COUNT(*) c FROM hr_employees e JOIN hr_departments d ON d.department_name = e.department WHERE d.status <> 'Active'",
+    "departments",
+  )
+  await add(
+    "emp_inactive_desg",
+    "Employees assigned to an inactive designation",
+    "SELECT COUNT(*) c FROM hr_employees e JOIN hr_designations d ON d.designation_name = e.designation WHERE d.status <> 'Active'",
+    "designations",
+  )
+  await add(
+    "passport_expired",
+    "Records with an expired passport",
+    "SELECT COUNT(*) c FROM hr_passport_visa WHERE passport_expiry_date < CURDATE()",
+    "passport-visa",
+  )
+  await add(
+    "visa_expired",
+    "Records with an expired visa",
+    "SELECT COUNT(*) c FROM hr_passport_visa WHERE visa_expiry_date < CURDATE()",
+    "passport-visa",
+  )
+  await add(
+    "prom_due",
+    "Approved promotions ready to take effect",
+    "SELECT COUNT(*) c FROM hr_promotions WHERE status = 'Approved' AND effected_at IS NULL AND effective_date <= CURDATE()",
+    "promotions",
+  )
+  await add(
+    "holiday_dupes",
+    "Duplicate holidays (same date, name & scope)",
+    `SELECT COUNT(*) c FROM (
+       SELECT holiday_date, holiday_name, COALESCE(applicable_department_id,'') d
+       FROM hr_holidays GROUP BY holiday_date, holiday_name, d HAVING COUNT(*) > 1
+     ) x`,
+    "holidays",
+  )
+
+  return {
+    departments: { total: deptTotal, active: deptActive, inactive: deptTotal - deptActive },
+    designations: { total: desgTotal, active: desgActive, inactive: desgTotal - desgActive },
+    documentTypes: { total: docTotal, required: docRequired },
+    promotions: { pending: promPending, approved: promApproved, upcoming: promUpcoming, due: promDue },
+    awards: { thisYear: awardsThisYear },
+    appreciations: { thisMonth: apprThisMonth },
+    passportVisa: {
+      passportExpired: pExpired,
+      passportExpiring: pSoon,
+      visaExpired: vExpired,
+      visaExpiring: vSoon,
+    },
+    holidays: { upcoming: holUpcoming, thisYear: holThisYear },
+    dataQuality: issues,
+  }
+}

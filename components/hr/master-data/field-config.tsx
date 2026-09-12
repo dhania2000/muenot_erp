@@ -176,11 +176,15 @@ export const MASTER_META: Record<string, MasterMeta> = {
       { name: "visa_issue_date", label: "Visa Issue", type: "date", column: false },
       { name: "visa_expiry_date", label: "Visa Expiry", type: "date" },
       { name: "country", label: "Country", type: "text" },
+      { name: "expiry_status", label: "Expiry", type: "text", displayOnly: true },
       { name: "remarks", label: "Remarks", type: "textarea", column: false, wide: true },
       { name: "status", label: "Status", type: "select", options: STATUS },
     ],
   },
 }
+
+/** Derived expiry-status field names (server-computed, never persisted). */
+export const EXPIRY_FIELDS = new Set(["expiry_status", "passport_status", "visa_status"])
 
 export function formatCell(field: FieldDef, value: any): string {
   if (value === null || value === undefined || value === "") return "—"

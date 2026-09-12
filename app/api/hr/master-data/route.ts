@@ -13,6 +13,8 @@ import {
   wouldCreateCycle,
   getDependencies,
   writeMasterAudit,
+  checkPromotionConflict,
+  annotatePassportVisa,
 } from "@/lib/hr-master-data"
 
 // ---------------------------------------------------------------------------
@@ -80,6 +82,8 @@ export async function GET(req: NextRequest) {
 
   // Sensitive fields are masked unless the user is allowed to see them.
   if (!(await canViewSensitive(session))) rows = maskSensitive(kind, rows)
+  // Passport/Visa rows carry derived (never stored) expiry status for the UI.
+  if (kind === "passport-visa") rows = annotatePassportVisa(rows)
   return NextResponse.json({ rows })
 }
 
@@ -125,6 +129,12 @@ export async function POST(req: NextRequest) {
   // Business-duplicate guards.
   const dupError = await checkDuplicate(kind, data, null)
   if (dupError) return NextResponse.json({ error: dupError }, { status: 409 })
+
+  // Promotion conflict: no two open/same-day org changes per employee.
+  if (kind === "promotions") {
+    const conflict = await checkPromotionConflict(data.employee_id, data.effective_date, null)
+    if (conflict) return NextResponse.json({ error: conflict }, { status: 409 })
+  }
 
   // Set server-controlled giver identity (awards/appreciations).
   if (cfg.giverField) data[cfg.giverField] = session.name
@@ -189,6 +199,13 @@ export async function PATCH(req: NextRequest) {
 
   const dupError = await checkDuplicate(kind, { ...existing, ...data }, String(body.id))
   if (dupError) return NextResponse.json({ error: dupError }, { status: 409 })
+
+  // Promotion conflict re-check when the effective date changes (or it is being
+  // (re)opened to Pending/Approved) — never against itself.
+  if (kind === "promotions" && data.effective_date !== undefined) {
+    const conflict = await checkPromotionConflict(existing.employee_id, data.effective_date, String(body.id))
+    if (conflict) return NextResponse.json({ error: conflict }, { status: 409 })
+  }
 
   // Promotion approval: stamp approver identity + timestamp server-side.
   if (kind === "promotions" && data.status === "Approved" && existing.status !== "Approved") {

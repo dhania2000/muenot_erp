@@ -144,6 +144,38 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
       status: qualityStatus(profile.qualityRating),
       detail: profile.qualityRating ? `Meta reports "${profile.qualityRating}".` : "Not reported by Meta.",
     })
+
+    // Cloud API messaging registration — the real antidote to a silent
+    // (#133010) "Account not registered" at send time. Meta only reports
+    // `status: "CONNECTED"` once the number is actually registered/usable on
+    // the Cloud API. Anything else (or an unreported status) means messaging
+    // is not confirmed and the coexistence onboarding likely needs to run.
+    const status = (profile.status || "").toUpperCase()
+    checks.push({
+      id: "registration",
+      label: "Cloud API messaging",
+      status: status === "CONNECTED" ? "ok" : status ? "error" : "warn",
+      detail:
+        status === "CONNECTED"
+          ? "Number is registered on the Cloud API and can send/receive messages."
+          : status
+            ? `Meta reports status "${status}" — Cloud API messaging is not registered. Run "Connect WhatsApp Business App" to complete coexistence onboarding.`
+            : "Meta did not report a registration status. If sending fails with (#133010), run \u201CConnect WhatsApp Business App\u201D to complete coexistence onboarding.",
+    })
+
+    // WhatsApp Business App coexistence — asserted ONLY from Meta's live
+    // `is_on_biz_app` signal, never inferred from env vars.
+    checks.push({
+      id: "coexistence",
+      label: "Business App coexistence",
+      status: profile.isOnBizApp === true ? "ok" : profile.isOnBizApp === false ? "warn" : "unknown",
+      detail:
+        profile.isOnBizApp === true
+          ? "Meta confirms this number also runs in the WhatsApp Business App (coexistence active)."
+          : profile.isOnBizApp === false
+            ? "Meta reports this number is not running in the WhatsApp Business App. Coexistence onboarding is incomplete."
+            : "Meta did not report a coexistence state for this number yet.",
+    })
   } catch (err) {
     checks.push({
       id: "api",
@@ -195,7 +227,17 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
 
   const hasError = checks.some((c) => c.status === "error")
   const hasWarn = checks.some((c) => c.status === "warn")
-  const overall: ConnectionHealth["overall"] = !phoneOk || !tokenReadable ? "down" : hasError ? "down" : hasWarn ? "degraded" : "healthy"
+  // A number whose token is readable and whose profile Meta will return is
+  // "connected", but it is only "healthy" once every functional check passes.
+  // When it is reachable but a functional check fails (e.g. Cloud API messaging
+  // not registered, or webhook not subscribed) we report "degraded" — truthful,
+  // and never a false green — while still keeping the workspace usable so the
+  // admin can run coexistence onboarding.
+  const overall: ConnectionHealth["overall"] = !phoneOk || !tokenReadable
+    ? "down"
+    : hasError || hasWarn
+      ? "degraded"
+      : "healthy"
 
   return {
     connected: phoneOk && tokenReadable,

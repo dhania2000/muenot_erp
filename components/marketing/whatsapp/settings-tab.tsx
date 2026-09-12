@@ -3,7 +3,7 @@
 import * as React from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
-import { MessageCircle, ShieldCheck, Unlink, Loader2, Send } from "lucide-react"
+import { MessageCircle, ShieldCheck, ShieldAlert, Unlink, Loader2, Send } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,9 +22,23 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import { cn } from "@/lib/utils"
 import { fetcher } from "@/lib/fetcher"
 import { WhatsAppWebhookSetup } from "@/components/marketing/whatsapp-webhook-setup"
+import { WhatsAppEmbeddedSignup } from "@/components/marketing/whatsapp-embedded-signup"
 import { TabState, formatDateTime } from "./shared"
+import type { ConnectionHealth, StatusResponse } from "./types"
 
 type Integration = {
   id: number
@@ -39,22 +53,54 @@ type Integration = {
 
 type IntegrationResponse = { connected: boolean; integration: Integration | null }
 
-/** Admin settings: account details, webhook + WABA subscription, disconnect. */
+/**
+ * Derives a TRUTHFUL coexistence badge from the live Meta health probe — never
+ * a hardcoded green pill. `health.phone.coexistence` mirrors Meta's
+ * `is_on_biz_app`, and the `registration` check reflects whether Cloud API
+ * messaging is actually usable (the #133010 antidote).
+ */
+function coexistenceBadge(health: ConnectionHealth | null) {
+  const registration = health?.checks.find((c) => c.id === "registration")
+  const registered = registration?.status === "ok"
+  const onBizApp = health?.phone?.coexistence
+
+  if (onBizApp === true && registered) {
+    return { label: "Coexistence active", icon: ShieldCheck, className: "border-transparent bg-[#25D366] text-white" }
+  }
+  if (onBizApp === false || registration?.status === "error") {
+    return { label: "Coexistence onboarding incomplete", icon: ShieldAlert, className: "border-transparent bg-amber-500 text-white" }
+  }
+  return { label: "Setup required", icon: ShieldAlert, className: "border-transparent bg-muted-foreground text-white" }
+}
+
+/** Admin settings: account details, coexistence onboarding, webhook, disconnect. */
 export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; onChanged: () => void }) {
   const { data, isLoading, mutate } = useSWR<IntegrationResponse>("/api/marketing/whatsapp/integration", fetcher)
+  // Live health drives the truthful coexistence/registration state. Shares the
+  // SWR cache key with the workspace shell, so this is a free read.
+  const { data: status, mutate: mutateStatus } = useSWR<StatusResponse>(
+    "/api/marketing/whatsapp/status",
+    fetcher,
+  )
   const [disconnecting, setDisconnecting] = React.useState(false)
 
   const isAdmin = role === "admin"
   const integration = data?.integration ?? null
+  const health = status?.health ?? null
+
+  function refreshAll() {
+    mutate()
+    mutateStatus()
+    onChanged()
+  }
 
   async function disconnect() {
     setDisconnecting(true)
     try {
       const res = await fetch("/api/marketing/whatsapp/integration", { method: "DELETE" })
       if (!res.ok) throw new Error("Failed to disconnect")
-      toast.success("WhatsApp account disconnected")
-      mutate()
-      onChanged()
+      toast.success("WhatsApp account disconnected from the ERP")
+      refreshAll()
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -67,6 +113,11 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
 
   const number = integration.displayPhoneNumber || "—"
   const name = integration.verifiedName || integration.businessName || "WhatsApp Business"
+  const badge = coexistenceBadge(health)
+  const BadgeIcon = badge.icon
+  const registration = health?.checks.find((c) => c.id === "registration")
+  const subscription = health?.checks.find((c) => c.id === "subscription")
+  const needsOnboarding = badge.label !== "Coexistence active"
 
   return (
     <div className="flex flex-col gap-6">
@@ -81,9 +132,9 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
               <CardDescription>{number}</CardDescription>
             </div>
           </div>
-          <Badge className="gap-1 border-transparent bg-[#25D366] text-white">
-            <ShieldCheck className="size-3" />
-            Coexistence
+          <Badge className={cn("gap-1", badge.className)}>
+            <BadgeIcon className="size-3" />
+            {badge.label}
           </Badge>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -95,26 +146,88 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
             <Detail label="Quality rating" value={integration.qualityRating ?? "Unknown"} />
             {integration.businessName ? <Detail label="Business" value={integration.businessName} /> : null}
             <Detail label="Connected" value={formatDateTime(integration.connectedAt)} />
+            <Detail
+              label="Cloud API messaging"
+              value={
+                registration?.status === "ok"
+                  ? "Registered"
+                  : registration?.status === "error"
+                    ? "Not registered"
+                    : "Unconfirmed"
+              }
+            />
+            <Detail
+              label="Webhook subscription"
+              value={subscription?.status === "ok" ? "Subscribed" : subscription?.status === "warn" ? "Not subscribed" : "Unknown"}
+            />
           </dl>
+
+          {needsOnboarding ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+              <p className="font-medium text-amber-700 dark:text-amber-400">
+                {registration?.status === "error"
+                  ? "This number is not registered on the WhatsApp Cloud API yet."
+                  : "WhatsApp Business App coexistence is not confirmed yet."}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground text-pretty">
+                Run Meta&apos;s coexistence onboarding (QR scan from the WhatsApp Business App) to enable Cloud API
+                messaging. Your existing number, chats and the Business App stay intact — there is no PIN or
+                registration step, and nothing is deregistered.
+              </p>
+            </div>
+          ) : null}
+
           <Separator />
           <div className="flex flex-wrap items-center gap-3">
-            <SendTestDialog />
             {isAdmin ? (
-              <Button variant="outline" onClick={disconnect} disabled={disconnecting}>
-                {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
-                Disconnect
-              </Button>
+              <WhatsAppEmbeddedSignup
+                onConnected={refreshAll}
+                label={needsOnboarding ? "Connect WhatsApp Business App" : "Re-run coexistence onboarding"}
+                variant={needsOnboarding ? "default" : "outline"}
+              />
             ) : null}
+            <SendTestDialog />
+            {isAdmin ? <DisconnectButton disconnecting={disconnecting} onConfirm={disconnect} /> : null}
           </div>
           <p className="text-xs text-muted-foreground text-pretty">
-            This number runs in WhatsApp Coexistence: it stays fully usable in the WhatsApp Business App while the ERP
-            handles the same conversations through the Cloud API. The access token is stored encrypted and never shown.
+            Coexistence keeps this number fully usable in the WhatsApp Business App while the ERP handles the same
+            conversations through the Cloud API. The access token is stored encrypted and never shown. Disconnecting
+            only removes the ERP integration — it never deregisters the number or touches your Meta / WhatsApp Business
+            App setup.
           </p>
         </CardContent>
       </Card>
 
       <WhatsAppWebhookSetup />
     </div>
+  )
+}
+
+/** Disconnect with an explicit confirmation — this is a destructive ERP action. */
+function DisconnectButton({ disconnecting, onConfirm }: { disconnecting: boolean; onConfirm: () => void }) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" disabled={disconnecting}>
+          {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
+          Disconnect
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Disconnect WhatsApp from the ERP?</AlertDialogTitle>
+          <AlertDialogDescription className="text-pretty">
+            This removes the WhatsApp integration from the ERP only. It does NOT deregister the phone number, does not
+            remove it from the WhatsApp Business App, and does not touch your Meta WhatsApp Business Account. You can
+            reconnect any time with &ldquo;Connect WhatsApp Business App&rdquo;.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>Disconnect</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

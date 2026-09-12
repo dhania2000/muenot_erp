@@ -1,15 +1,22 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import { createCompany, ensureCompanyMasterSchema, DuplicateCompanyError } from "@/lib/sales/company-master"
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await requireFeature("sales.view_companies")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
+  await ensureCompanyMasterSchema()
+  const includeArchived = new URL(request.url).searchParams.get("archived") === "1"
+
   const companies = await query(
-    `SELECT c.*, u.name AS assigned_to_name
+    `SELECT c.*, u.name AS assigned_to_name,
+            (SELECT COUNT(*) FROM sales_leads l
+              WHERE l.archived_at IS NULL AND (l.company_id = c.id OR (l.company_id IS NULL AND l.company_name = c.company_name))) AS lead_count
      FROM sales_companies c
      LEFT JOIN users u ON u.id = c.assigned_to
+     WHERE ${includeArchived ? "1=1" : "c.archived_at IS NULL"}
      ORDER BY c.created_at DESC`,
   )
   return NextResponse.json({ companies })
@@ -24,34 +31,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Company name is required" }, { status: 400 })
   }
 
-  const [{ next }] = await query<{ next: number }[]>(
-    "SELECT COALESCE(MAX(CAST(SUBSTRING(company_code, 6) AS UNSIGNED)), 0) + 1 AS next FROM sales_companies",
-  )
-  const companyCode = `MCLD-${String(next).padStart(3, "0")}`
-
-  const result = await query<any>(
-    `INSERT INTO sales_companies
-     (company_code, company_date, company_name, industry, website, linkedin_url, company_email,
-      country, assigned_to, company_type, status, priority, founded_year, employee_count, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      companyCode,
-      new Date().toISOString().slice(0, 10),
-      body.company_name,
-      body.industry || null,
-      body.website || null,
-      body.linkedin_url || null,
-      body.company_email || null,
-      body.country || null,
-      body.assigned_to || null,
-      body.company_type || null,
-      body.status || "New",
-      body.priority || null,
-      body.founded_year || null,
-      body.employee_count || null,
-      session.userId,
-    ],
-  )
-
-  return NextResponse.json({ id: result.insertId, company_code: companyCode })
+  try {
+    const created = await createCompany(body, session.userId, { allowDuplicate: body.allow_duplicate === true })
+    return NextResponse.json(created)
+  } catch (error) {
+    if (error instanceof DuplicateCompanyError) {
+      return NextResponse.json({ error: error.message, duplicates: error.duplicates }, { status: 409 })
+    }
+    console.error("[company-save] insert failed", error)
+    return NextResponse.json({ error: "Unable to save company." }, { status: 500 })
+  }
 }

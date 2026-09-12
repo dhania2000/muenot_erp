@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { createLead, ensureLeadLifecycleSchema } from "@/lib/sales/lead-lifecycle"
+import { resolveCompanyId } from "@/lib/sales/company-master"
 
 export async function GET() {
   const session = await requireFeature("sales.view_leads")
@@ -29,6 +30,9 @@ export async function POST(request: Request) {
   }
 
   try {
+    if (!body.company_id) {
+      body.company_id = await resolveCompanyId({ company_name })
+    }
     const created = await createLead(body, session.userId)
     return NextResponse.json(created)
   } catch (error) {

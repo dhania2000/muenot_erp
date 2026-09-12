@@ -8,6 +8,7 @@ import {
 } from "@/lib/google-calendar"
 import { getGoogleAccount } from "@/lib/google-accounts"
 import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
+import { resolveCompanyId } from "@/lib/sales/company-master"
 
 async function resolveMeetingLeadId(body: any): Promise<number | null> {
   if (body.lead_id) return Number(body.lead_id)
@@ -173,16 +174,19 @@ export async function POST(request: Request) {
   )
   const meetingCode = `MM-${String(next).padStart(3, "0")}`
 
+  const companyId = await resolveCompanyId({ company_id: body.company_id, company_name: body.company_name })
+
   const result = await query<any>(
     `INSERT INTO sales_meetings
-     (meeting_code, meeting_date, meeting_time, company_name, contact_person, meeting_type,
+     (meeting_code, meeting_date, meeting_time, company_name, company_id, contact_person, meeting_type,
       agenda, outcome_notes, next_steps, meet_link, google_event_id, attendees, duration_minutes, added_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       meetingCode,
       body.meeting_date,
       body.meeting_time || null,
       body.company_name,
+      companyId,
       body.contact_person || null,
       body.meeting_type || "Discovery",
       body.agenda || null,

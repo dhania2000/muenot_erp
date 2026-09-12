@@ -271,7 +271,7 @@ async function runAction(automation: Automation, ctx: InboundAutomationContext):
       break
     }
     case "assign_department": {
-      const deptId = automation.departmentId ?? Number(cfg.departmentId) || null
+      const deptId = (automation.departmentId ?? Number(cfg.departmentId)) || null
       if (deptId) await setConversationDepartment(ctx.conversationId, deptId)
       break
     }

@@ -16,6 +16,7 @@ import {
   PRIORITIES,
   type Priority,
 } from "@/lib/hr-support"
+import { emitHrEmailEvent } from "@/lib/hr-email-automation"
 
 // ---------------------------------------------------------------------------
 // GET  /api/hr/support   — paginated, filtered, visibility-scoped ticket list
@@ -230,6 +231,23 @@ export async function POST(request: NextRequest) {
       isInternal: false,
       attachmentPath: attachment_path || null,
       attachmentName: attachment_name || null,
+    })
+  }
+
+  // Confirm receipt to the employee (guarded; skipped for tickets without a
+  // linked employee record since there's no reliable recipient).
+  if (newId && employee?.id) {
+    await emitHrEmailEvent("support_ticket_created", {
+      employeeId: Number(employee.id),
+      sourceRecordId: ticketId,
+      actorId: session.userId,
+      managerName: employee?.reporting_manager ?? null,
+      vars: {
+        ticket_id: ticketId,
+        subject,
+        priority,
+        status: "Open",
+      },
     })
   }
 

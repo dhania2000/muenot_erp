@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireFeature } from "@/lib/api-auth"
+import { userHasFeature } from "@/lib/permissions"
 import {
   HR_EMAIL_EVENTS,
   listAutomationConfigs,
@@ -11,8 +12,11 @@ import {
 export async function GET() {
   const session = await requireFeature("hr.view_emails")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  const events = await listAutomationConfigs()
-  return NextResponse.json({ events })
+  const [events, canManage] = await Promise.all([
+    listAutomationConfigs(),
+    userHasFeature(session.userId, session.role, "hr.manage_email_automation"),
+  ])
+  return NextResponse.json({ events, canManage })
 }
 
 /** Enable/disable an event, map it to a template, or toggle manager auto-CC. */

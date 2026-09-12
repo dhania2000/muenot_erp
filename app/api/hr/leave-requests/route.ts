@@ -9,6 +9,7 @@ import {
   createLeaveRequest,
   type Actor,
 } from "@/lib/hr-leave"
+import { emitHrEmailEvent } from "@/lib/hr-email-automation"
 
 /** True when the session may see and act on every employee's leave. */
 async function resolvePrivilege(session: { userId: number; role: "admin" | "employee" }) {
@@ -212,6 +213,38 @@ export async function POST(request: Request) {
         { status: 422 },
       )
     }
+    // Acknowledge the submission with an automated email (guarded).
+    try {
+      const [row] = await query<any[]>(
+        `SELECT r.request_id, r.employee_id, r.days, r.from_date, r.to_date, r.reason, r.status,
+                e.reporting_manager, lt.leave_type
+         FROM hr_leave_requests r
+         LEFT JOIN hr_employees e ON e.id = r.employee_id
+         LEFT JOIN hr_leave_types lt ON lt.leave_type_id = r.leave_type_id OR CAST(lt.id AS CHAR) = r.leave_type_id
+         WHERE r.request_id = ? LIMIT 1`,
+        [result.requestId],
+      )
+      if (row) {
+        await emitHrEmailEvent("leave_submitted", {
+          employeeId: Number(row.employee_id),
+          sourceRecordId: row.request_id,
+          actorId: session.userId,
+          managerName: row.reporting_manager,
+          vars: {
+            request_id: row.request_id,
+            leave_type: row.leave_type ?? "",
+            from_date: String(row.from_date).slice(0, 10),
+            to_date: String(row.to_date).slice(0, 10),
+            days: row.days,
+            reason: row.reason,
+            status: row.status,
+          },
+        })
+      }
+    } catch (error) {
+      console.log("[v0] leave submit email emit failed", (error as Error).message)
+    }
+
     return NextResponse.json({ request_id: result.requestId, validation: result.validation }, { status: 201 })
   } catch (error) {
     console.log("[v0] leave create failed", (error as Error).message)

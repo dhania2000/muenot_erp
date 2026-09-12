@@ -9,6 +9,7 @@ import {
   type Actor,
   type CreateInput,
 } from "@/lib/hr-shift-change"
+import { emitHrEmailEvent } from "@/lib/hr-email-automation"
 
 /** True when the session may see and act on every employee's requests. */
 async function resolvePrivilege(session: { userId: number; role: "admin" | "employee" }) {
@@ -221,6 +222,37 @@ export async function POST(request: Request) {
         { status: 422 },
       )
     }
+    // Acknowledge the submission with an automated email (guarded).
+    try {
+      const [row] = await query<any[]>(
+        `SELECT r.request_id, r.employee_id, r.from_date, r.status, e.reporting_manager,
+                cs.shift_name AS current_shift, rs.shift_name AS requested_shift
+         FROM hr_shift_change_requests r
+         LEFT JOIN hr_employees e ON e.id = r.employee_id
+         LEFT JOIN hr_shifts cs ON cs.id = r.current_shift_id
+         LEFT JOIN hr_shifts rs ON rs.id = r.requested_shift_id
+         WHERE r.request_id = ? LIMIT 1`,
+        [result.requestId],
+      )
+      if (row) {
+        await emitHrEmailEvent("shift_change_submitted", {
+          employeeId: Number(row.employee_id),
+          sourceRecordId: row.request_id,
+          actorId: session.userId,
+          managerName: row.reporting_manager,
+          vars: {
+            request_id: row.request_id,
+            current_shift: row.current_shift ?? "",
+            requested_shift: row.requested_shift ?? "",
+            effective_date: String(row.from_date).slice(0, 10),
+            status: row.status,
+          },
+        })
+      }
+    } catch (error) {
+      console.log("[v0] shift-change submit email emit failed", (error as Error).message)
+    }
+
     return NextResponse.json({ request_id: result.requestId, validation: result.validation }, { status: 201 })
   } catch (error) {
     console.log("[v0] shift-change create failed", (error as Error).message)

@@ -1,44 +1,24 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import {
+  getLead,
+  updateLead,
+  recordAudit,
+  ensureLeadLifecycleSchema,
+  LeadConflictError,
+  LeadNotFoundError,
+} from "@/lib/sales/lead-lifecycle"
 
-const STATUS_ENUM_VALUES =
-  "'New','Qualified','Follow Up 1','Follow Up 2','Follow Up 3','Follow Up 4','Follow Up 5','Follow Up 6','Follow Up 7','In Discussion','Proposal Sent','Ready','Won','Lost'"
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireFeature("sales.view_leads")
+  if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-// Older databases were created with a `status` ENUM that only allowed up to
-// "Follow Up 2". In non-strict MySQL, saving "Follow Up 3"..."Follow Up 7"
-// is silently truncated to an empty string (no error thrown), so the value
-// comes back blank. We widen the ENUM once per server process before the
-// first status update so all follow-up stages persist correctly.
-let statusEnumEnsured = false
-async function ensureStatusEnum() {
-  if (statusEnumEnsured) return
-  try {
-    await query(
-      `ALTER TABLE sales_leads MODIFY \`status\` ENUM(${STATUS_ENUM_VALUES}) NOT NULL DEFAULT 'New'`,
-    )
-    statusEnumEnsured = true
-  } catch {
-    // Ignore: table may not exist yet or ALTER may be unsupported; the
-    // per-request error self-heal below still covers strict-mode databases.
-  }
-}
-
-const HEALTH_SCORE: Record<string, number> = {
-  New: 5,
-  Qualified: 25,
-  "Follow Up 1": 20,
-  "Follow Up 2": 35,
-  "Follow Up 3": 40,
-  "Follow Up 4": 45,
-  "Follow Up 5": 50,
-  "Follow Up 6": 55,
-  "Follow Up 7": 60,
-  "In Discussion": 50,
-  "Proposal Sent": 70,
-  Ready: 85,
-  Won: 100,
-  Lost: 0,
+  await ensureLeadLifecycleSchema()
+  const { id } = await params
+  const lead = await getLead(Number(id))
+  if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 })
+  return NextResponse.json({ lead })
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -47,89 +27,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const { id } = await params
   const body = await request.json()
-
-  // Make sure the status ENUM can hold every follow-up stage before we try
-  // to write one, otherwise non-strict MySQL silently blanks the value.
-  if ("status" in body) await ensureStatusEnum()
-
-  const fields: string[] = []
-  const values: any[] = []
-
-  const allowed = [
-    "contact_person",
-    "contact_number",
-    "email",
-    "designation",
-    "source_url",
-    "lead_source",
-    "company_name",
-    "industry",
-    "website",
-    "company_email",
-    "country",
-    "assigned_to",
-    "status",
-    "lead_status",
-    "follow_up_date",
-    "remarks",
-  ]
-
-  for (const key of allowed) {
-    if (key in body) {
-      fields.push(`${key} = ?`)
-      values.push(body[key] === "" ? null : body[key])
-    }
-  }
-
-  if (body.status && body.status in HEALTH_SCORE) {
-    fields.push("lead_health_score = ?")
-    values.push(HEALTH_SCORE[body.status])
-    fields.push("last_contact_date = NOW()")
-  }
-
-  if (fields.length === 0) {
-    return NextResponse.json({ error: "No fields to update" }, { status: 400 })
-  }
-
-  const sql = `UPDATE sales_leads SET ${fields.join(", ")} WHERE id = ?`
-  const sqlValues = [...values, id]
+  const { expected_version, note, ...patch } = body
 
   try {
-    await query(sql, sqlValues)
-  } catch (error: any) {
-    // Self-heal: older databases created before the `lead_status` migration
-    // was run don't have the column yet, which throws ER_BAD_FIELD_ERROR
-    // ("Unknown column 'lead_status'"). Add it on the fly and retry once
-    // instead of failing the request.
-    const missingColumn = error?.code === "ER_BAD_FIELD_ERROR" && "lead_status" in body
-    const invalidStatusEnum =
-      (error?.code === "WARN_DATA_TRUNCATED" || error?.code === "ER_TRUNCATED_WRONG_VALUE_FOR_FIELD") &&
-      "status" in body
-
-    if (!missingColumn && !invalidStatusEnum) throw error
-
-    if (missingColumn) {
-      await query(
-        "ALTER TABLE sales_leads ADD COLUMN lead_status ENUM('Open','Won','Lost','Follow Up') NOT NULL DEFAULT 'Open' AFTER status",
-      ).catch(() => {})
-      await query("ALTER TABLE sales_leads ADD KEY idx_leads_lead_status (lead_status)").catch(() => {})
-      await query("UPDATE sales_leads SET lead_status = 'Won' WHERE status = 'Won'").catch(() => {})
-      await query("UPDATE sales_leads SET lead_status = 'Lost' WHERE status = 'Lost'").catch(() => {})
-      await query(
-        "UPDATE sales_leads SET lead_status = 'Follow Up' WHERE status IN ('Follow Up 1', 'Follow Up 2')",
-      ).catch(() => {})
+    const lead = await updateLead(Number(id), patch, session.userId, {
+      expectedVersion: expected_version,
+      note,
+    })
+    return NextResponse.json({ success: true, lead })
+  } catch (error) {
+    if (error instanceof LeadConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 })
     }
-
-    if (invalidStatusEnum) {
-      await query(
-        "ALTER TABLE sales_leads MODIFY `status` ENUM('New','Qualified','Follow Up 1','Follow Up 2','Follow Up 3','Follow Up 4','Follow Up 5','Follow Up 6','Follow Up 7','In Discussion','Proposal Sent','Ready','Won','Lost') NOT NULL DEFAULT 'New'",
-      ).catch(() => {})
+    if (error instanceof LeadNotFoundError) {
+      return NextResponse.json({ error: error.message }, { status: 404 })
     }
-
-    await query(sql, sqlValues)
+    console.error("[lead-update] failed", error)
+    return NextResponse.json({ error: "Unable to update lead" }, { status: 500 })
   }
-
-  return NextResponse.json({ success: true })
 }
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -138,5 +53,6 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
 
   const { id } = await params
   await query("DELETE FROM sales_leads WHERE id = ?", [id])
+  await recordAudit(null, { entityType: "lead", entityId: id, action: "delete", summary: "Lead deleted", actorId: session.userId })
   return NextResponse.json({ success: true })
 }

@@ -228,7 +228,17 @@ export async function getEmployeeById(id: number): Promise<EmployeeRecord | null
  * resolves. Self-contained (only reads rotation tables) so the central resolver
  * has no cross-module import cycle.
  */
-export type EmployeeRotationPattern = { anchor: string; cycleType: CycleType; steps: PatternStep[] }
+export type EmployeeRotationPattern = {
+  anchor: string
+  cycleType: CycleType
+  steps: PatternStep[]
+  rotationPk: number
+  rotationCode: string | null
+  rotationName: string | null
+  recordId: string | null
+  memberStart: string
+  memberEnd: string | null
+}
 
 /**
  * Load the employee's active rotation pattern as-of `onDate`: the membership
@@ -240,7 +250,8 @@ export type EmployeeRotationPattern = { anchor: string; cycleType: CycleType; st
 async function loadEmployeeRotationPattern(employeeId: number, onDate: string): Promise<EmployeeRotationPattern | null> {
   // 1. Active membership in an active, in-window rotation for an eligible employee.
   const memberRows = await query<any[]>(
-    `SELECT re.start_date, re.rotation_id AS rotation_pk, r.cycle_type AS header_cycle_type
+    `SELECT re.record_id, re.start_date, re.end_date, re.rotation_id AS rotation_pk,
+            r.cycle_type AS header_cycle_type, r.rotation_id AS rotation_code, r.rotation_name
      FROM hr_shift_rotation_employees re
      JOIN hr_shift_rotations r ON r.id = re.rotation_id
      JOIN hr_employees e ON e.id = re.employee_id
@@ -291,7 +302,17 @@ async function loadEmployeeRotationPattern(employeeId: number, onDate: string): 
     unit_span: Math.max(1, Number(s.unit_span || s.duration_days || 1)),
     is_weekly_off: Boolean(Number(s.is_weekly_off)),
   }))
-  return { anchor: String(member.start_date).slice(0, 10), cycleType, steps }
+  return {
+    anchor: String(member.start_date).slice(0, 10),
+    cycleType,
+    steps,
+    rotationPk: Number(member.rotation_pk),
+    rotationCode: member.rotation_code ?? null,
+    rotationName: member.rotation_name ?? null,
+    recordId: member.record_id ?? null,
+    memberStart: String(member.start_date).slice(0, 10),
+    memberEnd: member.end_date ? String(member.end_date).slice(0, 10) : null,
+  }
 }
 
 export async function resolveRotationShiftId(employeeId: number, onDate: string): Promise<number | null> {
@@ -301,6 +322,167 @@ export async function resolveRotationShiftId(employeeId: number, onDate: string)
     const resolved = resolveStepForDate(pattern.anchor, pattern.cycleType, pattern.steps, onDate)
     if (!resolved || resolved.step.is_weekly_off) return null
     return resolved.step.shift_id || null
+  } catch {
+    return null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Named rotation lookups (§ "one central resolver"). These are thin, read-only
+// wrappers over loadEmployeeRotationPattern + the pure cycle engine so every
+// caller — Attendance, Employee Profile, the Shift Rotation Employees screen —
+// derives an employee's rotation/sequence/shift the SAME way. They never
+// materialize or write anything (resolve-on-read), so they are idempotent and
+// re-running them can never create duplicate assignments.
+// ---------------------------------------------------------------------------
+
+export type EmployeeRotationRef = {
+  recordId: string | null
+  rotationCode: string | null
+  rotationName: string | null
+  memberStart: string
+  memberEnd: string | null
+  cycleType: CycleType
+  anchor: string
+  totalSteps: number
+}
+
+/** The rotation an employee belongs to on `onDate`, or null when none applies. */
+export async function getRotationForEmployee(employeeId: number, onDate: string): Promise<EmployeeRotationRef | null> {
+  try {
+    const p = await loadEmployeeRotationPattern(employeeId, onDate)
+    if (!p) return null
+    return {
+      recordId: p.recordId,
+      rotationCode: p.rotationCode,
+      rotationName: p.rotationName,
+      memberStart: p.memberStart,
+      memberEnd: p.memberEnd,
+      cycleType: p.cycleType,
+      anchor: p.anchor,
+      totalSteps: p.steps.length,
+    }
+  } catch {
+    return null
+  }
+}
+
+export type ResolvedSequence = {
+  sequenceNo: number
+  index: number
+  isWeeklyOff: boolean
+  shiftId: number | null
+  shiftName: string | null
+  label: string | null
+}
+
+/** Which sequence/step of the cycle covers `onDate` (1-based), or null. */
+export async function getRotationSequenceForEmployee(employeeId: number, onDate: string): Promise<ResolvedSequence | null> {
+  try {
+    const p = await loadEmployeeRotationPattern(employeeId, onDate)
+    if (!p) return null
+    const resolved = resolveStepForDate(p.anchor, p.cycleType, p.steps, onDate)
+    if (!resolved) return null
+    return {
+      sequenceNo: resolved.index + 1,
+      index: resolved.index,
+      isWeeklyOff: Boolean(resolved.step.is_weekly_off),
+      shiftId: resolved.step.is_weekly_off ? null : resolved.step.shift_id || null,
+      shiftName: resolved.step.shift_name ?? null,
+      label: resolved.step.label ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The rotation-derived shift for `onDate` (ignores explicit assignments — use
+ * resolveShiftForEmployee for the full precedence chain). Returns null on a
+ * weekly-off/no-shift day or when no rotation applies.
+ */
+export async function getRotationShiftForEmployee(employeeId: number, onDate: string): Promise<ShiftConfig | null> {
+  try {
+    const rid = await resolveRotationShiftId(employeeId, onDate)
+    if (rid === null) return null
+    const rows = await query<any[]>(`SELECT * FROM hr_shifts WHERE id = ? LIMIT 1`, [rid])
+    return rows[0] ? normalizeShift(rows[0]) : null
+  } catch {
+    return null
+  }
+}
+
+export type EmployeeRotationState = {
+  rotation: EmployeeRotationRef
+  current: ResolvedSequence | null
+  currentShift: ShiftConfig | null
+  next: (ResolvedSequence & { effectiveFrom: string }) | null
+}
+
+/**
+ * A complete, display-ready snapshot of an employee's rotation as-of `onDate`:
+ * the rotation, the current sequence + resolved shift, and the next sequence
+ * change (scanned forward up to `horizonDays`). Powers the Shift Rotation
+ * Employees detail view without duplicating any cycle logic.
+ */
+export async function getEmployeeRotationState(
+  employeeId: number,
+  onDate: string,
+  horizonDays = 180,
+): Promise<EmployeeRotationState | null> {
+  try {
+    const p = await loadEmployeeRotationPattern(employeeId, onDate)
+    if (!p) return null
+    const rotation: EmployeeRotationRef = {
+      recordId: p.recordId,
+      rotationCode: p.rotationCode,
+      rotationName: p.rotationName,
+      memberStart: p.memberStart,
+      memberEnd: p.memberEnd,
+      cycleType: p.cycleType,
+      anchor: p.anchor,
+      totalSteps: p.steps.length,
+    }
+    const cur = resolveStepForDate(p.anchor, p.cycleType, p.steps, onDate)
+    const current: ResolvedSequence | null = cur
+      ? {
+          sequenceNo: cur.index + 1,
+          index: cur.index,
+          isWeeklyOff: Boolean(cur.step.is_weekly_off),
+          shiftId: cur.step.is_weekly_off ? null : cur.step.shift_id || null,
+          shiftName: cur.step.shift_name ?? null,
+          label: cur.step.label ?? null,
+        }
+      : null
+
+    let currentShift: ShiftConfig | null = null
+    if (current && !current.isWeeklyOff && current.shiftId) {
+      const rows = await query<any[]>(`SELECT * FROM hr_shifts WHERE id = ? LIMIT 1`, [current.shiftId])
+      currentShift = rows[0] ? normalizeShift(rows[0]) : null
+    }
+
+    // Forward scan for the next step boundary, honoring the membership end.
+    let next: (ResolvedSequence & { effectiveFrom: string }) | null = null
+    const horizonEnd = p.memberEnd && p.memberEnd < addDays(onDate, horizonDays) ? p.memberEnd : addDays(onDate, horizonDays)
+    const preview = buildPreview(p.anchor, p.cycleType, p.steps, onDate, horizonDays + 1)
+    for (const day of preview) {
+      if (day.date <= onDate) continue
+      if (day.date > horizonEnd) break
+      if (day.index !== (cur?.index ?? -1) && day.step) {
+        next = {
+          sequenceNo: day.index + 1,
+          index: day.index,
+          isWeeklyOff: Boolean(day.step.is_weekly_off),
+          shiftId: day.step.is_weekly_off ? null : day.step.shift_id || null,
+          shiftName: day.step.shift_name ?? null,
+          label: day.step.label ?? null,
+          effectiveFrom: day.date,
+        }
+        break
+      }
+    }
+
+    return { rotation, current, currentShift, next }
   } catch {
     return null
   }

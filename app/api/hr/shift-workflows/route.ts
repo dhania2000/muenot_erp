@@ -4,6 +4,24 @@ import { query } from "@/lib/db"
 
 const tables = { requests: "hr_shift_change_requests", assignments: "hr_shift_assignments", rotations: "hr_shift_rotations", sequences: "hr_shift_rotation_sequences", employees: "hr_shift_rotation_employees" } as const
 const allowed = new Set(Object.keys(tables))
+// Rotation-owned kinds are managed exclusively through validated services
+// (auto-IDs, eligibility, conflict detection, versioning, audit). Generic
+// column-level writes here would let a client set record_id/current_sequence/
+// status and bypass all of that (§ no raw CRUD), so writes are refused and
+// callers are pointed at the dedicated, authorized endpoints.
+const rotationManaged: Record<string, string> = {
+  rotations: "/api/hr/shift-rotations",
+  sequences: "/api/hr/shift-rotations/[id]/versions",
+  employees: "/api/hr/rotation-employees",
+}
+function guardManagedWrite(kind: string) {
+  const endpoint = rotationManaged[kind]
+  if (!endpoint) return null
+  return NextResponse.json(
+    { error: `Direct writes to "${kind}" are not allowed. Use ${endpoint}.` },
+    { status: 405 },
+  )
+}
 export async function GET(req: Request) {
   const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const kind = new URL(req.url).searchParams.get("kind") || "requests"; if (!allowed.has(kind)) return NextResponse.json({ error: "Invalid kind" }, { status: 400 })

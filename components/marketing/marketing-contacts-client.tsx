@@ -27,14 +27,7 @@ type Contact = {
   status: "Subscribed" | "Unsubscribed" | "Lead"
 }
 
-const SEED: Contact[] = [
-  { id: "C-1024", name: "Aarav Mehta", email: "aarav@novacorp.io", company: "NovaCorp", segment: "Enterprise", status: "Subscribed" },
-  { id: "C-1025", name: "Priya Sharma", email: "priya@brightlabs.com", company: "BrightLabs", segment: "SMB", status: "Lead" },
-  { id: "C-1026", name: "Rohan Gupta", email: "rohan@finedge.co", company: "FinEdge", segment: "Enterprise", status: "Subscribed" },
-  { id: "C-1027", name: "Sara Khan", email: "sara@pixelwave.design", company: "PixelWave", segment: "Agency", status: "Subscribed" },
-  { id: "C-1028", name: "Vikram Rao", email: "vikram@shopnest.in", company: "ShopNest", segment: "SMB", status: "Unsubscribed" },
-  { id: "C-1029", name: "Neha Verma", email: "neha@cloudspire.io", company: "CloudSpire", segment: "Enterprise", status: "Lead" },
-]
+const SEED: Contact[] = []
 
 const STATUS_VARIANT: Record<Contact["status"], "default" | "secondary" | "outline"> = {
   Subscribed: "default",
@@ -124,7 +117,7 @@ export function MarketingContactsClient() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard label="Total Contacts" value={contacts.length.toLocaleString()} icon={Users} />
         <StatCard label="Subscribed" value={subscribed} icon={UserCheck} />
-        <StatCard label="Deliverability" value="98.2%" hint="Healthy list" icon={Mail} />
+        <StatCard label="Deliverability" value="—" icon={Mail} />
       </div>
 
       <Card>

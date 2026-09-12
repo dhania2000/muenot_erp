@@ -50,17 +50,7 @@ const STATUS_META: Record<Status, { label: string; icon: React.ComponentType<{ c
   Sending: { label: "Sending", icon: Send, className: "text-primary" },
 }
 
-const SEED: EmailCampaign[] = [
-  {
-    id: "EML-101",
-    name: "Test",
-    createdAt: "Sep 11, 2026 at 1:12 PM",
-    folder: "General",
-    status: "Draft",
-    opened: null,
-    clicked: null,
-  },
-]
+const SEED: EmailCampaign[] = []
 
 const FOLDERS = ["All Folders", "General", "Newsletters", "Promotions", "Automated"]
 

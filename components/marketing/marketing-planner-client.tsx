@@ -24,15 +24,7 @@ type Item = { id: string; title: string; channel: string; due: string; column: C
 
 const COLUMNS: Column[] = ["Backlog", "Planned", "In Progress", "Published"]
 
-const SEED: Item[] = [
-  { id: "T-1", title: "September newsletter", channel: "Email", due: "Sep 18", column: "Planned" },
-  { id: "T-2", title: "Product launch teaser", channel: "Social", due: "Sep 14", column: "In Progress" },
-  { id: "T-3", title: "Customer story blog", channel: "Blog", due: "Sep 22", column: "Backlog" },
-  { id: "T-4", title: "Webinar promo ads", channel: "Paid Ads", due: "Sep 12", column: "In Progress" },
-  { id: "T-5", title: "Q3 recap post", channel: "Social", due: "Sep 05", column: "Published" },
-  { id: "T-6", title: "Feature announcement", channel: "Email", due: "Sep 09", column: "Published" },
-  { id: "T-7", title: "Case study video", channel: "Blog", due: "Sep 28", column: "Backlog" },
-]
+const SEED: Item[] = []
 
 const CHANNEL_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
   Email: "default",

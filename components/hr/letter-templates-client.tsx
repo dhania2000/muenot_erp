@@ -347,7 +347,7 @@ function TemplateEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
+      <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>{template ? `Edit ${template.template_uid}` : "New letter template"}</DialogTitle>
           <DialogDescription>
@@ -578,7 +578,7 @@ function VersionsDialog({ template, onClose }: { template: LetterTemplate; onClo
   const { data } = useSWR<{ versions: any[] }>(`/api/hr/letter-templates/${template.id}/versions`, fetcher)
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-2xl">
+        <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Version history — {template.name}</DialogTitle>
           <DialogDescription>Every content change and status move is snapshotted here.</DialogDescription>

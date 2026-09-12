@@ -234,7 +234,7 @@ export function LetterDetailDialog({
 
   return (
     <Dialog open={active} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden p-0">
+      <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] overflow-hidden p-0 sm:max-w-4xl">
         {isLoading || !letter ? (
           <div className="flex h-64 items-center justify-center text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />

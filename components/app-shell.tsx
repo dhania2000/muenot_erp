@@ -403,7 +403,7 @@ export function AppShell({
   }
 
   return (
-    <div className="flex h-svh overflow-hidden">
+    <div className="flex h-dvh overflow-hidden">
       <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex items-center px-5 py-5">
           <div className="flex items-center px-1 py-1">

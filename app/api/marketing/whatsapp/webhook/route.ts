@@ -11,9 +11,13 @@ import {
   recordEchoMessage,
   updateMessageStatusByWamid,
   logWebhookEvent,
+  getInboundContext,
   normalizePhone,
   type MessageStatus,
 } from "@/lib/whatsapp-store"
+import { routeConversation } from "@/lib/whatsapp-routing"
+import { runInboundAutomations } from "@/lib/whatsapp-automations"
+import { applyCampaignStatusByWamid, markCampaignReplied } from "@/lib/whatsapp-campaigns"
 
 /**
  * WhatsApp Cloud API webhook.
@@ -318,6 +322,34 @@ async function processWebhook(body: MetaWebhookBody) {
             dedupKey,
             processingStatus: created ? "processed" : "skipped",
           })
+
+          // Only run routing/automations for genuinely new (non-duplicate)
+          // inbound messages. All of it is best-effort: a failure here must
+          // never turn a delivered customer message into a webhook error.
+          if (created) {
+            const messageText = parsed.body ?? ""
+            // A customer reply closes the loop on any campaign they were sent.
+            markCampaignReplied(fromPhone).catch((err) =>
+              console.error("[v0] campaign reply tracking failed:", (err as Error).message),
+            )
+            try {
+              const ctx = await getInboundContext({
+                conversationId: conversation.id,
+                contactId: contact.id,
+              })
+              await routeConversation({ conversationId: conversation.id, messageText })
+              await runInboundAutomations({
+                conversationId: conversation.id,
+                phone: fromPhone,
+                messageText,
+                isNewContact: ctx.isNewContact,
+                isNewConversation: ctx.isNewConversation,
+                isAssigned: ctx.assignedAgentId != null,
+              })
+            } catch (err) {
+              console.error("[v0] inbound routing/automation failed:", (err as Error).message)
+            }
+          }
         } catch (err) {
           await logWebhookEvent({
             eventType: "message.error",
@@ -345,6 +377,13 @@ async function processWebhook(body: MetaWebhookBody) {
             errorCode: firstError?.code != null ? String(firstError.code) : null,
             errorMessage: firstError?.message || firstError?.title || null,
           })
+          // Mirror delivery progress onto any campaign recipient row that
+          // shares this wamid so campaign analytics stay accurate.
+          if (status === "delivered" || status === "read" || status === "failed") {
+            applyCampaignStatusByWamid(s.id, status).catch((err) =>
+              console.error("[v0] campaign status tracking failed:", (err as Error).message),
+            )
+          }
           await logWebhookEvent({
             eventType: `status.${status}`,
             wamid: s.id,

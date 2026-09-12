@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import { getRotationSummary } from "@/lib/hr-shift-rotations"
 
 // Any individual metric group is wrapped so a single missing column / table
 // can never blank out the entire dashboard.
@@ -146,6 +147,13 @@ export async function GET() {
     [] as any[],
   )
 
+  // Shift-rotation KPIs reuse the same summary helper the rotations screen and
+  // the central shift resolver rely on — no duplicate dashboard calculation.
+  const rotations = await safe(
+    () => getRotationSummary(),
+    { running: 0, scheduled: 0, ended: 0, total: 0, assigned: 0 },
+  )
+
   return NextResponse.json({
     kpis: {
       totalEmployees: num(headcount.total),
@@ -162,7 +170,12 @@ export async function GET() {
       totalLeaves: num(leave.total),
       openTickets: num(tickets.open),
       slaBreached: num(tickets.sla_breached),
+      activeRotations: rotations.running,
+      scheduledRotations: rotations.scheduled,
+      employeesOnRotation: rotations.assigned,
+      totalRotations: rotations.total,
     },
+    rotations,
     byDepartment: (byDepartment as any[]).map((r) => ({ department: r.department, count: num(r.count) })),
     byType: (byType as any[]).map((r) => ({ type: r.type, count: num(r.count) })),
     leaveByStatus: (leaveByStatus as any[]).map((r) => ({ status: r.status, count: num(r.count) })),

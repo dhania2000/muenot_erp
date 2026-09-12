@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
@@ -18,10 +19,16 @@ import { RotationDetailDialog } from "./rotation-detail-dialog"
 
 type View = "all" | "running" | "scheduled" | "ended" | "conflicts"
 
+const VALID_VIEWS: View[] = ["all", "running", "scheduled", "ended", "conflicts"]
+
 export function ShiftRotationsClient() {
+  const searchParams = useSearchParams()
+  const initialView = searchParams.get("view") as View | null
   const [q, setQ] = useState("")
   const [cycleType, setCycleType] = useState("all")
-  const [view, setView] = useState<View>("all")
+  const [view, setView] = useState<View>(
+    initialView && VALID_VIEWS.includes(initialView) ? initialView : "all",
+  )
   const [createOpen, setCreateOpen] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
   const importRef = useRef<HTMLInputElement>(null)

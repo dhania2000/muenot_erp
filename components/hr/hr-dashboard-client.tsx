@@ -20,7 +20,11 @@ import {
   FileClock,
   LifeBuoy,
   UserPlus,
+  RefreshCw,
+  CalendarClock,
+  Users2,
 } from "lucide-react"
+import Link from "next/link"
 
 const CHART_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"]
 
@@ -74,6 +78,30 @@ export function HrDashboardClient() {
 
   const typePie = byType.map((t: any) => ({ name: t.type, value: t.count }))
 
+  const rotationTiles = [
+    {
+      label: "Active Rotations",
+      value: kpis.activeRotations ?? 0,
+      sub: `${kpis.totalRotations ?? 0} configured`,
+      icon: RefreshCw,
+      href: "/modules/hr/shift-rotations?view=running",
+    },
+    {
+      label: "Scheduled Rotations",
+      value: kpis.scheduledRotations ?? 0,
+      sub: "start in the future",
+      icon: CalendarClock,
+      href: "/modules/hr/shift-rotations?view=scheduled",
+    },
+    {
+      label: "Employees on Rotation",
+      value: kpis.employeesOnRotation ?? 0,
+      sub: "resolved via rotation today",
+      icon: Users2,
+      href: "/modules/hr/shift-rotations",
+    },
+  ]
+
   return (
     <div className="flex flex-col gap-6 p-6 md:p-8">
       <div className="flex items-center gap-3">
@@ -99,6 +127,31 @@ export function HrDashboardClient() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-muted-foreground">Shift Rotations</h2>
+          <Link href="/modules/hr/shift-rotations" className="text-xs font-medium text-primary hover:underline">
+            View all rotations
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {rotationTiles.map((t) => (
+            <Link key={t.label} href={t.href} className="group">
+              <Card className="transition-colors group-hover:border-primary/50">
+                <CardContent className="flex flex-col gap-2 pt-6">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-muted-foreground">{t.label}</span>
+                    <t.icon className="size-4 text-muted-foreground" />
+                  </div>
+                  <span className="text-2xl font-semibold tracking-tight">{t.value}</span>
+                  <span className="text-xs text-muted-foreground">{t.sub}</span>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

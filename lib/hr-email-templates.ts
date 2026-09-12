@@ -1,5 +1,22 @@
 import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
+import {
+  HR_TEMPLATE_STATUSES,
+  HR_TEMPLATE_AUDIENCES,
+  type HrTemplateStatus,
+  type HrTemplateAudience,
+  type HrEmailTemplate,
+} from "@/lib/hr-email-shared"
+
+// Re-export the client-safe constants/types so existing server-side importers
+// of this module keep working unchanged.
+export {
+  HR_TEMPLATE_STATUSES,
+  HR_TEMPLATE_AUDIENCES,
+  type HrTemplateStatus,
+  type HrTemplateAudience,
+  type HrEmailTemplate,
+}
 
 /**
  * HR Email Template Management service.
@@ -11,38 +28,6 @@ import { nextRecordId } from "@/lib/record-ids"
  * references a template flows through the existing send pipeline unchanged;
  * this module only governs the template definitions those sends read from.
  */
-
-export const HR_TEMPLATE_STATUSES = ["Draft", "Active", "Inactive", "Archived"] as const
-export type HrTemplateStatus = (typeof HR_TEMPLATE_STATUSES)[number]
-
-export const HR_TEMPLATE_AUDIENCES = ["Employee", "Manager", "HR", "Candidate", "Custom"] as const
-export type HrTemplateAudience = (typeof HR_TEMPLATE_AUDIENCES)[number]
-
-export type HrEmailTemplate = {
-  id: number
-  template_uid: string | null
-  template_key: string | null
-  name: string
-  description: string | null
-  category: string
-  audience: string
-  event_key: string | null
-  subject: string
-  body: string
-  body_text: string | null
-  status: HrTemplateStatus
-  version: number
-  usage_count: number
-  last_used_at: string | null
-  attachment_pathname: string | null
-  attachment_name: string | null
-  attachment_type: string | null
-  attachment_size: number | null
-  created_by: number | null
-  updated_by: number | null
-  created_at: string | null
-  updated_at: string | null
-}
 
 // ---------------------------------------------------------------------------
 // Self-healing schema (mirrors the migration) so the module works even before

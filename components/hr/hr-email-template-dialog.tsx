@@ -26,12 +26,12 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
-import { HR_EMAIL_CATEGORIES } from "@/lib/hr-email-shared"
 import {
+  HR_EMAIL_CATEGORIES,
   HR_TEMPLATE_AUDIENCES,
   HR_TEMPLATE_STATUSES,
   type HrEmailTemplate,
-} from "@/lib/hr-email-templates"
+} from "@/lib/hr-email-shared"
 
 const COMMON_VARIABLES = [
   "employee_name",

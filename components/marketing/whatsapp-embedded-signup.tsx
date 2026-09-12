@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { Loader2, MessageCircle } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { resolveEmbeddedSignupOrigin } from "@/lib/whatsapp-oauth"
 
 /* ------------------------------------------------------------------ */
 /* Meta JS SDK types (only what we use)                                */
@@ -178,6 +179,19 @@ export function WhatsAppEmbeddedSignup({
       toast.error("The Meta SDK is still loading — try again in a moment.")
       return
     }
+
+    // Sanitized diagnostic — the JS SDK controls the OAuth redirect_uri, which
+    // Meta validates against the page origin. `redirectUri` here is the exact
+    // origin the SDK will present; it is the value that must be whitelisted in
+    // the Meta dashboard. Never log tokens, secrets, or the auth code.
+    const origin = resolveEmbeddedSignupOrigin()
+    console.log("[v0] Embedded Signup starting", {
+      appId: APP_ID,
+      configId: CONFIG_ID,
+      origin,
+      redirectUri: origin,
+    })
+
     sessionInfo.current = {}
     window.FB.login(
       (response) => {

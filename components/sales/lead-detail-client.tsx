@@ -35,6 +35,7 @@ import { LeadDialog } from "@/components/sales/lead-dialog"
 import type { LeadRow } from "@/components/sales/leads-client"
 import {
   ArrowLeft,
+  ArrowUpRight,
   Building2,
   CalendarClock,
   CheckCircle2,
@@ -350,6 +351,22 @@ function InfoRow({ icon: Icon, label, value }: { icon: typeof User; label: strin
   )
 }
 
+function backlinkFor(refType: string | null, refId: string | null): string | null {
+  if (!refType || !refId) return null
+  switch (refType) {
+    case "meeting":
+      return `/modules/sales/meetings/${refId}`
+    case "quotation":
+      return `/modules/sales/quotations/${refId}`
+    case "email":
+      return `/modules/sales/emails/${refId}`
+    case "call":
+      return `/modules/sales/calls/${refId}`
+    default:
+      return null
+  }
+}
+
 function TimelineList({ timeline }: { timeline: any[] }) {
   if (timeline.length === 0) {
     return <p className="py-8 text-center text-sm text-muted-foreground">No activity recorded yet.</p>
@@ -358,6 +375,7 @@ function TimelineList({ timeline }: { timeline: any[] }) {
     <ol className="flex flex-col">
       {timeline.map((event, i) => {
         const Icon = ACTIVITY_ICON[event.activity_type] || StickyNote
+        const backlink = backlinkFor(event.ref_type, event.ref_id)
         return (
           <li key={event.id} className="flex gap-3">
             <div className="flex flex-col items-center">
@@ -367,7 +385,14 @@ function TimelineList({ timeline }: { timeline: any[] }) {
               {i < timeline.length - 1 && <span className="w-px flex-1 bg-border" />}
             </div>
             <div className="flex flex-col gap-0.5 pb-6">
-              <span className="text-sm font-medium">{event.title || event.activity_type}</span>
+              {backlink ? (
+                <Link href={backlink} className="flex items-center gap-1 text-sm font-medium hover:underline">
+                  {event.title || event.activity_type}
+                  <ArrowUpRight className="size-3.5 text-muted-foreground" />
+                </Link>
+              ) : (
+                <span className="text-sm font-medium">{event.title || event.activity_type}</span>
+              )}
               {event.body && <span className="text-sm text-muted-foreground">{event.body}</span>}
               <span className="text-xs text-muted-foreground">
                 {formatDateTime(event.occurred_at || event.created_at)}

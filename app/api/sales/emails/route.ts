@@ -18,6 +18,7 @@ import {
   withTrackingPixel,
   hydrateDepartmentSMTP,
 } from "@/lib/email"
+import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
 
 export async function GET() {
   const session = await requireFeature("sales.send_emails")

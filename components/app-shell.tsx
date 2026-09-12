@@ -47,6 +47,117 @@ export type NavItem = {
   openInNewTab?: boolean
 }
 
+type SalesNotification = {
+  id: number
+  title: string
+  body: string | null
+  link: string | null
+  is_read: number
+  created_at: string
+}
+
+function timeAgo(value: string) {
+  const then = new Date(value.replace(" ", "T")).getTime()
+  if (Number.isNaN(then)) return ""
+  const diff = Math.max(0, Date.now() - then)
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return "just now"
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
+
+function NotificationsBell() {
+  const router = useRouter()
+  const { data, mutate } = useSWR<{ notifications: SalesNotification[]; unread: number }>(
+    "/api/sales/notifications",
+    (url: string) => fetch(url).then((r) => (r.ok ? r.json() : { notifications: [], unread: 0 })),
+    { refreshInterval: 60000 },
+  )
+  const notifications = data?.notifications ?? []
+  const unread = data?.unread ?? 0
+
+  async function markAll() {
+    await fetch("/api/sales/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" })
+    mutate()
+  }
+
+  async function open(n: SalesNotification) {
+    if (!n.is_read) {
+      await fetch("/api/sales/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: n.id }),
+      })
+      mutate()
+    }
+    if (n.link) router.push(n.link)
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
+            className="relative text-muted-foreground hover:bg-primary/10 hover:text-primary"
+          />
+        }
+      >
+        <Bell className="size-5" />
+        {unread > 0 && (
+          <span className="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[10px] font-semibold leading-none text-destructive-foreground">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <div className="flex items-center justify-between px-2 py-1.5">
+          <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
+          {unread > 0 && (
+            <button
+              type="button"
+              onClick={markAll}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Mark all read
+            </button>
+          )}
+        </div>
+        <DropdownMenuSeparator />
+        {notifications.length === 0 ? (
+          <p className="px-2 py-6 text-center text-sm text-muted-foreground">You&apos;re all caught up</p>
+        ) : (
+          <div className="max-h-80 overflow-y-auto">
+            {notifications.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => open(n)}
+                className={cn(
+                  "flex w-full flex-col gap-0.5 border-b border-border/60 px-3 py-2 text-left last:border-0 hover:bg-muted/60",
+                  !n.is_read && "bg-primary/5",
+                )}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium leading-snug text-foreground">{n.title}</span>
+                  {!n.is_read && <span className="mt-1 size-2 shrink-0 rounded-full bg-primary" />}
+                </div>
+                {n.body && <span className="text-xs text-muted-foreground line-clamp-2">{n.body}</span>}
+                <span className="text-[11px] text-muted-foreground">{timeAgo(n.created_at)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function initials(name: string) {
   return name
     .split(" ")
@@ -511,16 +622,7 @@ export function AppShell({
             <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Notifications" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" />}>
-                <Bell className="size-5" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">You&apos;re all caught up</p>
-              </DropdownMenuContent>
-            </DropdownMenu>
+<NotificationsBell />
             <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/admin/settings")} aria-label="Settings"><Settings className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={handleLogout} aria-label="Sign out"><LogOut className="size-4" /></Button>
           </div>

@@ -216,16 +216,72 @@ export async function getEmployeeById(id: number): Promise<EmployeeRecord | null
 }
 
 /**
- * Resolve the shift that applies to an employee on a given date. Priority:
- *   1. An active row in hr_shift_assignments covering the date.
- *   2. The free-text `shift` column on the employee, matched to hr_shifts.
+ * Deterministic rotation resolver. From the employee's active rotation
+ * membership, count days since the membership start_date, take that modulo the
+ * rotation's total cycle length (sum of sequence durations), then walk the
+ * ordered sequences to find the shift covering that offset. Returns the Shift
+ * Master db id, or null when the employee is not on an active rotation or it
+ * cannot be resolved. Self-contained (only reads rotation tables) so the
+ * central resolver has no cross-module import cycle.
+ */
+export async function resolveRotationShiftId(employeeId: number, onDate: string): Promise<number | null> {
+  try {
+    const memberRows = await query<any[]>(
+      `SELECT re.start_date, r.id AS rotation_pk
+       FROM hr_shift_rotation_employees re
+       JOIN hr_shift_rotations r ON r.id = re.rotation_id
+       WHERE re.employee_id = ? AND re.status = 'Active' AND r.status = 'Active'
+       ORDER BY re.start_date DESC LIMIT 1`,
+      [employeeId],
+    )
+    const member = memberRows[0]
+    if (!member) return null
+
+    const sequences = await query<any[]>(
+      `SELECT shift_id, duration_days FROM hr_shift_rotation_sequences
+       WHERE rotation_id = ? ORDER BY sequence_no ASC`,
+      [member.rotation_pk],
+    )
+    if (!sequences.length) return null
+
+    const totalDays = sequences.reduce((sum, s) => sum + Math.max(1, Number(s.duration_days || 1)), 0)
+    if (totalDays <= 0) return null
+
+    const start = new Date(`${String(member.start_date).slice(0, 10)}T00:00:00`)
+    const target = new Date(`${onDate}T00:00:00`)
+    const daysSince = Math.floor((target.getTime() - start.getTime()) / 86400000)
+    if (daysSince < 0) return null
+
+    let offset = daysSince % totalDays
+    for (const seq of sequences) {
+      const dur = Math.max(1, Number(seq.duration_days || 1))
+      if (offset < dur) return Number(seq.shift_id)
+      offset -= dur
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * THE central "applicable shift" engine. Deterministic precedence (documented
+ * in lib/hr-shift-assignments.ts and consumed by Attendance, Employee Profile,
+ * Shift Assignments and Shift Change Requests — never duplicated):
+ *   1. Active explicit assignment in hr_shift_assignments covering the date
+ *      (latest effective_from wins). This includes assignments materialized
+ *      from approved shift change requests, so an approved request always beats
+ *      a rotation.
+ *   2. Rotation-derived shift (active rotation membership).
+ *   3. The free-text `shift` column on the employee, matched to hr_shifts
+ *      (the company/default shift).
  * Returns null when nothing is configured so callers can flag "no shift".
  */
 export async function resolveShiftForEmployee(
   employee: Pick<EmployeeRecord, "id" | "shift">,
   workDate: string,
 ): Promise<ShiftConfig | null> {
-  // 1. Explicit assignment (shift-workflows module).
+  // 1. Explicit assignment (Shift Assignments module — the authoritative layer).
   try {
     const assigned = await query<any[]>(
       `SELECT s.* FROM hr_shift_assignments a
@@ -241,7 +297,21 @@ export async function resolveShiftForEmployee(
     // Shift-assignments table may not exist on older databases — fall through.
   }
 
-  // 2. Free-text shift on the employee master.
+  // 2. Rotation-derived shift (active rotation membership).
+  try {
+    const rotationShiftId = await resolveRotationShiftId(employee.id, workDate)
+    if (rotationShiftId) {
+      const rotationShift = await query<any[]>(
+        `SELECT * FROM hr_shifts WHERE id = ? AND (status = 'Active' OR status IS NULL) LIMIT 1`,
+        [rotationShiftId],
+      )
+      if (rotationShift[0]) return normalizeShift(rotationShift[0])
+    }
+  } catch {
+    // Rotation resolution is best-effort — fall through to the default shift.
+  }
+
+  // 3. Free-text shift on the employee master.
   if (employee.shift && employee.shift.trim()) {
     try {
       const matched = await query<any[]>(

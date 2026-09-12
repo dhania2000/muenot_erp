@@ -109,6 +109,12 @@ export function WhatsAppEmbeddedSignup({
   // we stash the selected WABA + phone number id here until the code returns.
   const sessionInfo = React.useRef<{ wabaId?: string; phoneNumberId?: string }>({})
 
+  // Meta emits an ERROR/CANCEL session-info message when onboarding can't
+  // proceed (e.g. the "can't onboard customers at the moment" barrier). The
+  // FB.login callback never fires in that case, so we track it here to release
+  // the button and surface a clear message instead of an endless spinner.
+  const terminated = React.useRef(false)
+
   React.useEffect(() => {
     function onMessage(event: MessageEvent) {
       if (
@@ -120,14 +126,53 @@ export function WhatsAppEmbeddedSignup({
       let payload: {
         type?: string
         event?: string
-        data?: { waba_id?: string; phone_number_id?: string }
+        data?: {
+          waba_id?: string
+          phone_number_id?: string
+          current_step?: string
+          error_message?: string
+        }
       }
       try {
         payload = typeof event.data === "string" ? JSON.parse(event.data) : event.data
       } catch {
         return
       }
-      if (payload?.type === "WA_EMBEDDED_SIGNUP") {
+      if (payload?.type !== "WA_EMBEDDED_SIGNUP") return
+
+      if (payload.event === "FINISH") {
+        sessionInfo.current = {
+          wabaId: payload.data?.waba_id,
+          phoneNumberId: payload.data?.phone_number_id,
+        }
+        return
+      }
+
+      if (payload.event === "CANCEL") {
+        // User backed out, or Meta stopped the flow at a given step.
+        terminated.current = true
+        setSubmitting(false)
+        const step = payload.data?.current_step
+        toast.message(
+          step
+            ? `WhatsApp onboarding stopped at "${step}" before finishing.`
+            : "WhatsApp onboarding was cancelled.",
+        )
+        return
+      }
+
+      if (payload.event === "ERROR") {
+        terminated.current = true
+        setSubmitting(false)
+        toast.error(
+          payload.data?.error_message ||
+            "Meta couldn't complete WhatsApp onboarding. This usually means the Meta app isn't approved for customer onboarding yet (business verification / Advanced Access / Live mode).",
+        )
+        return
+      }
+
+      // Any other WA_EMBEDDED_SIGNUP payload that still carries ids.
+      if (payload.data?.waba_id || payload.data?.phone_number_id) {
         sessionInfo.current = {
           wabaId: payload.data?.waba_id,
           phoneNumberId: payload.data?.phone_number_id,
@@ -193,14 +238,19 @@ export function WhatsAppEmbeddedSignup({
     })
 
     sessionInfo.current = {}
+    terminated.current = false
     window.FB.login(
       (response) => {
         const code = response?.authResponse?.code
         if (code) {
           void complete(code)
-        } else {
-          // User closed the popup or denied — nothing to save.
-          toast.message("WhatsApp onboarding was cancelled.")
+        } else if (!terminated.current) {
+          // The FB.login callback fired without a code and no ERROR/CANCEL
+          // session-info message arrived — the popup was closed or Meta blocked
+          // onboarding (e.g. the "can't onboard customers" barrier).
+          toast.message(
+            "WhatsApp onboarding didn't complete. If Meta showed a blocked screen, the app may not be approved for customer onboarding yet.",
+          )
         }
       },
       {

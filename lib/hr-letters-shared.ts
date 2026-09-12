@@ -223,6 +223,7 @@ export type LetterTemplateVersion = {
 export type GeneratedLetter = {
   id: number
   letter_number: string
+  reference_no?: string | null
   employee_id: number
   template_id: number | null
   template_version: number | null
@@ -242,6 +243,9 @@ export type GeneratedLetter = {
   supersedes_id: number | null
   superseded_by: number | null
   dedupe_key: string | null
+  cancel_reason?: string | null
+  cancelled_by?: number | null
+  cancelled_at?: string | null
   created_by: number | null
   created_at: string | null
   updated_at: string | null

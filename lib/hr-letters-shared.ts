@@ -235,6 +235,8 @@ export type GeneratedLetter = {
   status: LetterStatus
   source: string
   source_ref: string | null
+  event_key?: string
+  recipient_name?: string | null
   document_id: number | null
   email_id: number | null
   supersedes_id: number | null

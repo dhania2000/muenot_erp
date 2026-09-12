@@ -21,10 +21,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2Icon } from "lucide-react"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { AlertTriangleIcon, ArrowUpRightIcon, Loader2Icon } from "lucide-react"
+import Link from "next/link"
 import { fetcher } from "@/lib/fetcher"
 import type { CompanyRow } from "@/components/sales/companies-client"
+
+type DuplicateMatch = {
+  id: number
+  company_code: string
+  company_name: string
+  domain: string | null
+  company_email: string | null
+  reason: string
+}
 
 const STATUSES = ["New", "Contacted", "Qualified", "Inactive"]
 const PRIORITIES = ["Low", "Medium", "High"]
@@ -74,10 +85,14 @@ export function CompanyDialog({
   const [form, setForm] = useState<FormState>(EMPTY)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [duplicates, setDuplicates] = useState<DuplicateMatch[]>([])
+  const [duplicateBlock, setDuplicateBlock] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setError(null)
+    setDuplicates([])
+    setDuplicateBlock(false)
     if (company) {
       setForm({
         company_name: company.company_name || "",
@@ -102,9 +117,43 @@ export function CompanyDialog({
     setForm((prev) => ({ ...prev, [key]: value }))
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!form.company_name) {
+  // Live duplicate detection while the user types identifying fields.
+  useEffect(() => {
+    if (!open) return
+    const name = form.company_name.trim()
+    if (name.length < 2) {
+      setDuplicates([])
+      setDuplicateBlock(false)
+      return
+    }
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/sales/companies/check-duplicate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            company_name: name,
+            website: form.website,
+            company_email: form.company_email,
+            exclude_id: company?.id ?? null,
+          }),
+        })
+        const body = await res.json().catch(() => ({}))
+        setDuplicates(Array.isArray(body.duplicates) ? body.duplicates : [])
+      } catch {
+        /* ignore aborted / failed lookups */
+      }
+    }, 400)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [open, form.company_name, form.website, form.company_email, company?.id])
+
+  async function submit(allowDuplicate: boolean) {
+    if (!form.company_name.trim()) {
       setError("Company name is required")
       return
     }
@@ -116,6 +165,7 @@ export function CompanyDialog({
       assigned_to: form.assigned_to ? Number(form.assigned_to) : null,
       founded_year: form.founded_year ? Number(form.founded_year) : null,
       employee_count: form.employee_count ? Number(form.employee_count) : null,
+      allow_duplicate: allowDuplicate,
     }
 
     try {
@@ -125,6 +175,13 @@ export function CompanyDialog({
         body: JSON.stringify(payload),
       })
       const body = await res.json().catch(() => ({}))
+      if (res.status === 409 && Array.isArray(body.duplicates)) {
+        setDuplicates(body.duplicates)
+        setDuplicateBlock(true)
+        setError(null)
+        setLoading(false)
+        return
+      }
       if (!res.ok) {
         setError(body.error || "Unable to save company")
         setLoading(false)
@@ -136,6 +193,11 @@ export function CompanyDialog({
       setError("Something went wrong. Please try again.")
       setLoading(false)
     }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    submit(false)
   }
 
   return (
@@ -153,6 +215,47 @@ export function CompanyDialog({
             {error && (
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            {duplicates.length > 0 && (
+              <Alert variant={duplicateBlock ? "destructive" : "default"}>
+                <AlertTriangleIcon />
+                <AlertTitle>
+                  {duplicateBlock
+                    ? "This looks like a duplicate"
+                    : `${duplicates.length} similar ${duplicates.length === 1 ? "company" : "companies"} found`}
+                </AlertTitle>
+                <AlertDescription>
+                  <p>
+                    {duplicateBlock
+                      ? "Saving was blocked to avoid a duplicate. Review the matches, then choose Create anyway if this is a distinct account."
+                      : "Check whether this account already exists before adding it."}
+                  </p>
+                  <ul className="mt-1 flex w-full flex-col gap-1.5">
+                    {duplicates.map((d) => (
+                      <li key={d.id} className="flex items-center justify-between gap-2">
+                        <span className="flex flex-col">
+                          <Link
+                            href={`/modules/sales/companies/${d.id}`}
+                            target="_blank"
+                            className="inline-flex items-center gap-1 font-medium hover:underline"
+                          >
+                            {d.company_name}
+                            <ArrowUpRightIcon className="size-3" />
+                          </Link>
+                          <span className="text-xs opacity-80">
+                            {d.company_code}
+                            {d.domain ? ` · ${d.domain}` : ""}
+                          </span>
+                        </span>
+                        <Badge variant="outline" className="shrink-0 capitalize">
+                          {d.reason}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                </AlertDescription>
               </Alert>
             )}
 
@@ -299,10 +402,22 @@ export function CompanyDialog({
           </div>
 
           <DialogFooter>
-            <Button type="submit" disabled={loading}>
-              {loading && <Loader2Icon className="animate-spin" data-icon="inline-start" />}
-              {company ? "Save changes" : "Add company"}
-            </Button>
+            {duplicateBlock ? (
+              <>
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+                  Cancel
+                </Button>
+                <Button type="button" variant="destructive" onClick={() => submit(true)} disabled={loading}>
+                  {loading && <Loader2Icon className="animate-spin" data-icon="inline-start" />}
+                  Create anyway
+                </Button>
+              </>
+            ) : (
+              <Button type="submit" disabled={loading}>
+                {loading && <Loader2Icon className="animate-spin" data-icon="inline-start" />}
+                {company ? "Save changes" : "Add company"}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

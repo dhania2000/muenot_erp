@@ -1,12 +1,15 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -28,7 +31,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { ArrowUpRight, MoreHorizontal, Plus, Search } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CompanyDialog } from "@/components/sales/company-dialog"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
@@ -95,8 +98,22 @@ export type CompanyRow = {
   founded_year: number | null
   employee_count: number | null
   last_contact_date: string | null
+  lead_count: number | null
+  archived_at: string | null
   created_at: string
 }
+
+type SortKey = "recent" | "oldest" | "name_asc" | "name_desc" | "leads"
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "recent", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "name_asc", label: "Name A–Z" },
+  { value: "name_desc", label: "Name Z–A" },
+  { value: "leads", label: "Most leads" },
+]
+
+const ALL = "__all__"
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   New: "outline",
@@ -116,20 +133,79 @@ const STATUS_OPTIONS = ["New", "Contacted", "Qualified", "Inactive"] as const
 const PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const
 
 export function CompaniesClient({ canManage }: { canManage: boolean }) {
-  const { data, isLoading, mutate } = useSWR<{ companies: CompanyRow[] }>("/api/sales/companies", fetcher)
+  const router = useRouter()
   const [search, setSearch] = useState("")
+  const [statusFilter, setStatusFilter] = useState<string>(ALL)
+  const [priorityFilter, setPriorityFilter] = useState<string>(ALL)
+  const [typeFilter, setTypeFilter] = useState<string>(ALL)
+  const [ownerFilter, setOwnerFilter] = useState<string>(ALL)
+  const [sort, setSort] = useState<SortKey>("recent")
+  const [showArchived, setShowArchived] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<CompanyRow | null>(null)
 
+  const { data, isLoading, mutate } = useSWR<{ companies: CompanyRow[] }>(
+    `/api/sales/companies${showArchived ? "?archived=1" : ""}`,
+    fetcher,
+  )
+
   const companies = data?.companies ?? []
+
+  const typeOptions = useMemo(
+    () => Array.from(new Set(companies.map((c) => c.company_type).filter(Boolean) as string[])).sort(),
+    [companies],
+  )
+  const ownerOptions = useMemo(
+    () => Array.from(new Set(companies.map((c) => c.assigned_to_name).filter(Boolean) as string[])).sort(),
+    [companies],
+  )
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return companies
-    return companies.filter((c) =>
-      [c.company_name, c.industry, c.country, c.company_type].filter(Boolean).some((v) => v!.toLowerCase().includes(q)),
-    )
-  }, [companies, search])
+    let rows = companies.filter((c) => {
+      if (statusFilter !== ALL && c.status !== statusFilter) return false
+      if (priorityFilter !== ALL && (c.priority || "") !== priorityFilter) return false
+      if (typeFilter !== ALL && (c.company_type || "") !== typeFilter) return false
+      if (ownerFilter !== ALL) {
+        if (ownerFilter === "__unassigned__" ? c.assigned_to_name : c.assigned_to_name !== ownerFilter) return false
+      }
+      if (q) {
+        return [c.company_name, c.company_code, c.industry, c.country, c.company_type]
+          .filter(Boolean)
+          .some((v) => v!.toLowerCase().includes(q))
+      }
+      return true
+    })
+
+    rows = [...rows].sort((a, b) => {
+      switch (sort) {
+        case "oldest":
+          return a.created_at.localeCompare(b.created_at)
+        case "name_asc":
+          return a.company_name.localeCompare(b.company_name)
+        case "name_desc":
+          return b.company_name.localeCompare(a.company_name)
+        case "leads":
+          return (b.lead_count || 0) - (a.lead_count || 0)
+        default:
+          return b.created_at.localeCompare(a.created_at)
+      }
+    })
+    return rows
+  }, [companies, search, statusFilter, priorityFilter, typeFilter, ownerFilter, sort])
+
+  const activeFilterCount =
+    (statusFilter !== ALL ? 1 : 0) +
+    (priorityFilter !== ALL ? 1 : 0) +
+    (typeFilter !== ALL ? 1 : 0) +
+    (ownerFilter !== ALL ? 1 : 0)
+
+  function resetFilters() {
+    setStatusFilter(ALL)
+    setPriorityFilter(ALL)
+    setTypeFilter(ALL)
+    setOwnerFilter(ALL)
+  }
 
   async function updateField(company: CompanyRow, field: "status" | "priority", value: string) {
     const res = await fetch(`/api/sales/companies/${company.id}`, {
@@ -209,6 +285,68 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterSelect
+          label="Status"
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
+        />
+        <FilterSelect
+          label="Priority"
+          value={priorityFilter}
+          onChange={setPriorityFilter}
+          options={PRIORITY_OPTIONS.map((p) => ({ value: p, label: p }))}
+        />
+        {typeOptions.length > 0 && (
+          <FilterSelect
+            label="Type"
+            value={typeFilter}
+            onChange={setTypeFilter}
+            options={typeOptions.map((t) => ({ value: t, label: t }))}
+          />
+        )}
+        <FilterSelect
+          label="Owner"
+          value={ownerFilter}
+          onChange={setOwnerFilter}
+          options={[
+            { value: "__unassigned__", label: "Unassigned" },
+            ...ownerOptions.map((o) => ({ value: o, label: o })),
+          ]}
+        />
+
+        <div className="ml-auto flex items-center gap-2">
+          {activeFilterCount > 0 && (
+            <Button variant="ghost" size="sm" onClick={resetFilters}>
+              Clear filters
+            </Button>
+          )}
+          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+            <SelectTrigger size="sm" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        <div className="flex items-center gap-2 pl-1">
+          <Checkbox
+            id="show-archived"
+            checked={showArchived}
+            onCheckedChange={(checked) => setShowArchived(checked === true)}
+          />
+            <Label htmlFor="show-archived" className="text-sm text-muted-foreground">
+              Archived
+            </Label>
+          </div>
+        </div>
+      </div>
+
       {canManage && (
         <SelectionToolbar
           count={selected.size}
@@ -231,23 +369,24 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
               <TableHead>Industry</TableHead>
               <TableHead>Location</TableHead>
               <TableHead>Type</TableHead>
+              <TableHead className="text-center">Leads</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Priority</TableHead>
               <TableHead>Assigned</TableHead>
-              {canManage && <TableHead className="text-right">Actions</TableHead>}
+              <TableHead className="w-10 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={canManage ? 10 : 9} className="py-10 text-center text-sm text-muted-foreground">
                   Loading companies...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={canManage ? 10 : 9} className="py-10 text-center text-sm text-muted-foreground">
                   No companies found.
                 </TableCell>
               </TableRow>
@@ -265,13 +404,28 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
                 )}
                 <TableCell>
                   <div className="flex flex-col">
-                    <span className="font-medium">{company.company_name}</span>
-                    <span className="text-xs text-muted-foreground">{company.company_code}</span>
+                    <Link
+                      href={`/modules/sales/companies/${company.id}`}
+                      className="font-medium hover:underline"
+                    >
+                      {company.company_name}
+                    </Link>
+                    <span className="text-xs text-muted-foreground">
+                      {company.company_code}
+                      {company.archived_at ? " · Archived" : ""}
+                    </span>
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground">{company.industry || "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{company.country || "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{company.company_type || "—"}</TableCell>
+                <TableCell className="text-center">
+                  {company.lead_count ? (
+                    <Badge variant="outline">{company.lead_count}</Badge>
+                  ) : (
+                    <span className="text-muted-foreground">0</span>
+                  )}
+                </TableCell>
                 <TableCell>
                   {canManage ? (
                     <Select value={company.status ?? ""} onValueChange={(value) => updateField(company, "status", value as string)}>
@@ -318,31 +472,37 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
                   )}
                 </TableCell>
                 <TableCell className="text-muted-foreground">{company.assigned_to_name || "Unassigned"}</TableCell>
-                {canManage && (
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Actions" />}>
-                        <MoreHorizontal className="size-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setEditing(company)
-                            setDialogOpen(true)
-                          }}
-                        >
-                          Edit company
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={() => del.requestSingle(company.id, company.company_name)}
-                        >
-                          Delete company
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                )}
+                <TableCell className="text-right">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Actions" />}>
+                      <MoreHorizontal className="size-4" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => router.push(`/modules/sales/companies/${company.id}`)}>
+                        <ArrowUpRight data-icon="inline-start" />
+                        View 360
+                      </DropdownMenuItem>
+                      {canManage && (
+                        <>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setEditing(company)
+                              setDialogOpen(true)
+                            }}
+                          >
+                            Edit company
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => del.requestSingle(company.id, company.company_name)}
+                          >
+                            Delete company
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -362,5 +522,34 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
 
       {del.dialog}
     </div>
+  )
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  options: { value: string; label: string }[]
+}) {
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v ?? ALL)}>
+      <SelectTrigger size="sm" className="w-auto min-w-32">
+        <span className="text-muted-foreground">{label}:</span>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ALL}>All</SelectItem>
+        {options.map((o) => (
+          <SelectItem key={o.value} value={o.value}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

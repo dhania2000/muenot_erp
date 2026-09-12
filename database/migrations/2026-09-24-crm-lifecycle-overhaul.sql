@@ -16,34 +16,84 @@
 -- objects are also created/altered idempotently at runtime by
 -- ensureLeadLifecycleSchema() so existing databases self-heal without
 -- a manual migration step.
+--
+-- This script is SAFE TO RE-RUN. Column / index additions go through
+-- helper procedures that check information_schema first, so a database
+-- that already has some of these objects will skip them instead of
+-- failing with "#1060 Duplicate column name".
 -- =============================================================
 
--- --- sales_leads: new nullable lifecycle + qualification columns ----
-ALTER TABLE `sales_leads`
-  ADD COLUMN `company_id` INT UNSIGNED DEFAULT NULL AFTER `company_name`,
-  ADD COLUMN `priority` ENUM('Low','Medium','High','Urgent') DEFAULT NULL AFTER `lead_status`,
-  ADD COLUMN `estimated_value` DECIMAL(14,2) DEFAULT NULL AFTER `priority`,
-  ADD COLUMN `currency` VARCHAR(8) DEFAULT NULL AFTER `estimated_value`,
-  ADD COLUMN `probability` TINYINT UNSIGNED DEFAULT NULL AFTER `currency`,
-  ADD COLUMN `expected_close_date` DATE DEFAULT NULL AFTER `probability`,
-  ADD COLUMN `campaign` VARCHAR(150) DEFAULT NULL AFTER `expected_close_date`,
-  ADD COLUMN `tags` VARCHAR(500) DEFAULT NULL AFTER `campaign`,
-  ADD COLUMN `next_follow_up_at` DATETIME DEFAULT NULL AFTER `follow_up_date`,
-  ADD COLUMN `won_at` DATETIME DEFAULT NULL AFTER `tags`,
-  ADD COLUMN `won_value` DECIMAL(14,2) DEFAULT NULL AFTER `won_at`,
-  ADD COLUMN `won_by` INT UNSIGNED DEFAULT NULL AFTER `won_value`,
-  ADD COLUMN `won_notes` TEXT DEFAULT NULL AFTER `won_by`,
-  ADD COLUMN `lost_at` DATETIME DEFAULT NULL AFTER `won_notes`,
-  ADD COLUMN `lost_reason` VARCHAR(120) DEFAULT NULL AFTER `lost_at`,
-  ADD COLUMN `lost_notes` TEXT DEFAULT NULL AFTER `lost_reason`,
-  ADD COLUMN `lost_by` INT UNSIGNED DEFAULT NULL AFTER `lost_notes`,
-  ADD COLUMN `reopened_at` DATETIME DEFAULT NULL AFTER `lost_by`,
-  ADD COLUMN `archived_at` DATETIME DEFAULT NULL AFTER `reopened_at`,
-  ADD COLUMN `row_version` INT UNSIGNED NOT NULL DEFAULT 1 AFTER `archived_at`;
+-- --- Idempotent DDL helpers -----------------------------------------
+DROP PROCEDURE IF EXISTS `__cl_add_column`;
+DROP PROCEDURE IF EXISTS `__cl_add_key`;
 
-ALTER TABLE `sales_leads` ADD KEY `idx_leads_company_id` (`company_id`);
-ALTER TABLE `sales_leads` ADD KEY `idx_leads_next_follow_up` (`next_follow_up_at`);
-ALTER TABLE `sales_leads` ADD KEY `idx_leads_archived` (`archived_at`);
+DELIMITER $$
+
+CREATE PROCEDURE `__cl_add_column`(
+  IN p_table VARCHAR(64),
+  IN p_column VARCHAR(64),
+  IN p_definition TEXT
+)
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = p_table
+      AND COLUMN_NAME = p_column
+  ) THEN
+    SET @ddl = CONCAT('ALTER TABLE `', p_table, '` ADD COLUMN `', p_column, '` ', p_definition);
+    PREPARE stmt FROM @ddl;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+  END IF;
+END $$
+
+CREATE PROCEDURE `__cl_add_key`(
+  IN p_table VARCHAR(64),
+  IN p_key VARCHAR(64),
+  IN p_definition TEXT
+)
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = p_table
+      AND INDEX_NAME = p_key
+  ) THEN
+    SET @ddl = CONCAT('ALTER TABLE `', p_table, '` ADD KEY `', p_key, '` ', p_definition);
+    PREPARE stmt FROM @ddl;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+  END IF;
+END $$
+
+DELIMITER ;
+
+-- --- sales_leads: new nullable lifecycle + qualification columns ----
+CALL `__cl_add_column`('sales_leads', 'company_id', "INT UNSIGNED DEFAULT NULL AFTER `company_name`");
+CALL `__cl_add_column`('sales_leads', 'priority', "ENUM('Low','Medium','High','Urgent') DEFAULT NULL AFTER `lead_status`");
+CALL `__cl_add_column`('sales_leads', 'estimated_value', "DECIMAL(14,2) DEFAULT NULL AFTER `priority`");
+CALL `__cl_add_column`('sales_leads', 'currency', "VARCHAR(8) DEFAULT NULL AFTER `estimated_value`");
+CALL `__cl_add_column`('sales_leads', 'probability', "TINYINT UNSIGNED DEFAULT NULL AFTER `currency`");
+CALL `__cl_add_column`('sales_leads', 'expected_close_date', "DATE DEFAULT NULL AFTER `probability`");
+CALL `__cl_add_column`('sales_leads', 'campaign', "VARCHAR(150) DEFAULT NULL AFTER `expected_close_date`");
+CALL `__cl_add_column`('sales_leads', 'tags', "VARCHAR(500) DEFAULT NULL AFTER `campaign`");
+CALL `__cl_add_column`('sales_leads', 'next_follow_up_at', "DATETIME DEFAULT NULL AFTER `follow_up_date`");
+CALL `__cl_add_column`('sales_leads', 'won_at', "DATETIME DEFAULT NULL AFTER `tags`");
+CALL `__cl_add_column`('sales_leads', 'won_value', "DECIMAL(14,2) DEFAULT NULL AFTER `won_at`");
+CALL `__cl_add_column`('sales_leads', 'won_by', "INT UNSIGNED DEFAULT NULL AFTER `won_value`");
+CALL `__cl_add_column`('sales_leads', 'won_notes', "TEXT DEFAULT NULL AFTER `won_by`");
+CALL `__cl_add_column`('sales_leads', 'lost_at', "DATETIME DEFAULT NULL AFTER `won_notes`");
+CALL `__cl_add_column`('sales_leads', 'lost_reason', "VARCHAR(120) DEFAULT NULL AFTER `lost_at`");
+CALL `__cl_add_column`('sales_leads', 'lost_notes', "TEXT DEFAULT NULL AFTER `lost_reason`");
+CALL `__cl_add_column`('sales_leads', 'lost_by', "INT UNSIGNED DEFAULT NULL AFTER `lost_notes`");
+CALL `__cl_add_column`('sales_leads', 'reopened_at', "DATETIME DEFAULT NULL AFTER `lost_by`");
+CALL `__cl_add_column`('sales_leads', 'archived_at', "DATETIME DEFAULT NULL AFTER `reopened_at`");
+CALL `__cl_add_column`('sales_leads', 'row_version', "INT UNSIGNED NOT NULL DEFAULT 1 AFTER `archived_at`");
+
+CALL `__cl_add_key`('sales_leads', 'idx_leads_company_id', '(`company_id`)');
+CALL `__cl_add_key`('sales_leads', 'idx_leads_next_follow_up', '(`next_follow_up_at`)');
+CALL `__cl_add_key`('sales_leads', 'idx_leads_archived', '(`archived_at`)');
 
 -- --- Immutable stage / lifecycle history ----------------------------
 CREATE TABLE IF NOT EXISTS `sales_lead_stage_history` (
@@ -153,3 +203,7 @@ CREATE TABLE IF NOT EXISTS `sales_event_dedup` (
 INSERT INTO `features` (`module_id`, `name`, `slug`, `description`, `sort_order`)
 SELECT 2, 'View Follow-ups', 'sales.view_followups', 'View and manage the follow-up queue', 17
 WHERE NOT EXISTS (SELECT 1 FROM `features` WHERE `slug` = 'sales.view_followups');
+
+-- --- Clean up helper procedures -------------------------------------
+DROP PROCEDURE IF EXISTS `__cl_add_column`;
+DROP PROCEDURE IF EXISTS `__cl_add_key`;

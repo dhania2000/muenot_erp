@@ -519,6 +519,80 @@ export async function sendWhatsAppTemplate(input: {
   }
 }
 
+/**
+ * Sends an approved template with positional body variables and an optional
+ * media header. This is the campaign/broadcast path — it builds the Cloud API
+ * `components` array from the supplied values. `bodyParams` map to {{1}},
+ * {{2}}, … in order; `headerMedia` fills an IMAGE/DOCUMENT/VIDEO header.
+ */
+export async function sendWhatsAppTemplateWithComponents(input: {
+  integration: WhatsAppIntegrationRow
+  to: string
+  templateName: string
+  languageCode?: string
+  bodyParams?: string[]
+  headerMedia?: { kind: "image" | "document" | "video"; link?: string; id?: string } | null
+  headerText?: string[] | null
+}): Promise<SendResult> {
+  const token = decryptToken(input.integration.access_token)
+  if (!token) return { ok: false, error: "Stored access token could not be read." }
+
+  const components: Record<string, unknown>[] = []
+
+  if (input.headerMedia && (input.headerMedia.link || input.headerMedia.id)) {
+    const media: Record<string, unknown> = {}
+    if (input.headerMedia.id) media.id = input.headerMedia.id
+    if (input.headerMedia.link) media.link = input.headerMedia.link
+    components.push({
+      type: "header",
+      parameters: [{ type: input.headerMedia.kind, [input.headerMedia.kind]: media }],
+    })
+  } else if (input.headerText && input.headerText.length) {
+    components.push({
+      type: "header",
+      parameters: input.headerText.map((t) => ({ type: "text", text: t })),
+    })
+  }
+
+  if (input.bodyParams && input.bodyParams.length) {
+    components.push({
+      type: "body",
+      parameters: input.bodyParams.map((t) => ({ type: "text", text: t })),
+    })
+  }
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(input.integration.phone_number_id)}/messages`
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: input.to,
+        type: "template",
+        template: {
+          name: input.templateName,
+          language: { code: input.languageCode || "en_US" },
+          ...(components.length ? { components } : {}),
+        },
+      }),
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      messages?: { id: string }[]
+      error?: { message?: string; type?: string; code?: number; error_subcode?: number }
+    }
+    if (!res.ok || data.error) {
+      const err = parseGraphError(data.error, res.status)
+      return { ok: false, error: err.message, errorCode: err.code }
+    }
+    return { ok: true, messageId: data.messages?.[0]?.id }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Media, mark-as-read and template helpers                            */
 /* ------------------------------------------------------------------ */

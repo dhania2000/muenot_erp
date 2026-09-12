@@ -353,6 +353,10 @@ export async function createHrEmail(input: CreateHrEmailInput): Promise<CreateHr
   }
 
   const sent = await sendHrEmailRow(id)
+  if (sent.status === "Sent" && input.templateId) {
+    const { recordTemplateUsage } = await import("@/lib/hr-email-templates")
+    await recordTemplateUsage(input.templateId)
+  }
   return { ok: true, id, emailUid, status: sent.status }
 }
 

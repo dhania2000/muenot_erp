@@ -1,24 +1,36 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import { ensureLeadLifecycleSchema } from "@/lib/sales/lead-lifecycle"
 
 export async function GET() {
   const session = await requireFeature("sales.view_dashboard")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
+  await ensureLeadLifecycleSchema()
+
+  // Lifecycle-aware counts: Won/Lost/Open are tracked on `lead_status`, while
+  // overdue reminders live in the dedicated follow-ups table.
   const [totals] = await query<any[]>(
     `SELECT
        COUNT(*) AS total_leads,
-       SUM(status = 'Won') AS won_count,
-       SUM(status = 'Lost') AS lost_count,
-       SUM(status NOT IN ('Won','Lost')) AS open_count,
-       SUM(follow_up_date IS NOT NULL AND follow_up_date < NOW() AND status NOT IN ('Won','Lost')) AS overdue_count,
+       SUM(lead_status = 'Won') AS won_count,
+       SUM(lead_status = 'Lost') AS lost_count,
+       SUM(lead_status NOT IN ('Won','Lost')) AS open_count,
        ROUND(AVG(lead_health_score), 0) AS avg_health_score
-     FROM sales_leads`,
+     FROM sales_leads
+     WHERE archived_at IS NULL`,
   )
 
+  const [{ overdue_count }] = await query<{ overdue_count: number }[]>(
+    `SELECT COUNT(*) AS overdue_count FROM sales_lead_followups WHERE status = 'Open' AND due_at < NOW()`,
+  )
+  totals.overdue_count = Number(overdue_count || 0)
+
   const byStatus = await query(
-    `SELECT status, COUNT(*) AS count FROM sales_leads GROUP BY status ORDER BY count DESC`,
+    `SELECT status, COUNT(*) AS count FROM sales_leads
+     WHERE archived_at IS NULL AND lead_status NOT IN ('Won','Lost')
+     GROUP BY status ORDER BY count DESC`,
   )
   const bySource = await query(
     `SELECT COALESCE(lead_source, 'Unknown') AS source, COUNT(*) AS count

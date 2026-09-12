@@ -443,7 +443,7 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-col">
-                    <span>{lead.company_name || "���"}</span>
+                        <span>{lead.company_name || "—"}</span>
                     <span className="text-xs text-muted-foreground">{lead.industry || "—"}</span>
                   </div>
                 </TableCell>
@@ -616,8 +616,11 @@ function KanbanBoard({
       if (bucket) bucket.push(lead)
       else other.push(lead)
     }
-    const result = KANBAN_STAGES.map((stage) => ({ stage, rows: map.get(stage) ?? [] }))
-    if (other.length) result.push({ stage: "Other", rows: other } as { stage: string; rows: LeadRow[] })
+    const result: { stage: string; rows: LeadRow[] }[] = KANBAN_STAGES.map((stage) => ({
+      stage,
+      rows: map.get(stage) ?? [],
+    }))
+    if (other.length) result.push({ stage: "Other", rows: other })
     return result
   }, [leads])
 

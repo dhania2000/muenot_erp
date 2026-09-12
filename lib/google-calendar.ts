@@ -45,6 +45,20 @@ export type CreateMeetInput = {
   endDateTime: string
   timeZone?: string
   attendees: string[]
+  /** Popup reminder minutes-before; when set, overrides the calendar default. */
+  reminderMinutes?: number | null
+}
+
+/** Build the Calendar reminders block from a minutes-before value. */
+function buildReminders(reminderMinutes?: number | null) {
+  if (reminderMinutes == null) return { useDefault: true }
+  return {
+    useDefault: false,
+    overrides: [
+      { method: "popup", minutes: reminderMinutes },
+      { method: "email", minutes: reminderMinutes },
+    ],
+  }
 }
 
 export type CreateMeetResult = {
@@ -69,6 +83,7 @@ export async function createMeetEvent(input: CreateMeetInput): Promise<CreateMee
       start: { dateTime: input.startDateTime, timeZone },
       end: { dateTime: input.endDateTime, timeZone },
       attendees: input.attendees.map((email) => ({ email })),
+      reminders: buildReminders(input.reminderMinutes),
       conferenceData: {
         createRequest: {
           requestId,
@@ -238,6 +253,7 @@ export async function createMeetEventForUser(
       start: { dateTime: input.startDateTime, timeZone },
       end: { dateTime: input.endDateTime, timeZone },
       attendees: input.attendees.map((email) => ({ email })),
+      reminders: buildReminders(input.reminderMinutes),
       conferenceData: {
         createRequest: {
           requestId,
@@ -257,5 +273,105 @@ export async function createMeetEventForUser(
     eventId: data.id || null,
     meetLink,
     htmlLink: data.htmlLink || null,
+  }
+}
+
+/** Thrown when the referenced Google event no longer exists (404/410). */
+export class GoogleEventGoneError extends Error {
+  constructor(message = "The Google Calendar event no longer exists.") {
+    super(message)
+    this.name = "GoogleEventGoneError"
+  }
+}
+
+function isGoneError(err: any): boolean {
+  const code = err?.code ?? err?.response?.status
+  return code === 404 || code === 410
+}
+
+/**
+ * Patch an existing Calendar event in the organizer's calendar. Reuses the
+ * stored google_event_id so we NEVER create a duplicate event on edit. When
+ * attendees change, Google emails only the delta invitations.
+ */
+export async function updateMeetEventForUser(
+  refreshToken: string,
+  eventId: string,
+  input: Partial<CreateMeetInput> & { sendUpdates?: boolean },
+): Promise<CreateMeetResult> {
+  const auth = makeOAuthClient()
+  auth.setCredentials({ refresh_token: refreshToken })
+  const calendar = google.calendar({ version: "v3", auth })
+  const timeZone = input.timeZone || DEFAULT_TIME_ZONE
+
+  const requestBody: Record<string, unknown> = {}
+  if (input.summary !== undefined) requestBody.summary = input.summary
+  if (input.description !== undefined) requestBody.description = input.description
+  if (input.startDateTime) requestBody.start = { dateTime: input.startDateTime, timeZone }
+  if (input.endDateTime) requestBody.end = { dateTime: input.endDateTime, timeZone }
+  if (input.attendees) requestBody.attendees = input.attendees.map((email) => ({ email }))
+  if (input.reminderMinutes !== undefined) requestBody.reminders = buildReminders(input.reminderMinutes)
+
+  try {
+    const res = await calendar.events.patch({
+      calendarId: "primary",
+      eventId,
+      sendUpdates: input.sendUpdates === false ? "none" : "all",
+      requestBody,
+    })
+    const data = res.data
+    const meetLink =
+      data.hangoutLink ||
+      data.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video")?.uri ||
+      null
+    return { eventId: data.id || eventId, meetLink, htmlLink: data.htmlLink || null }
+  } catch (err) {
+    if (isGoneError(err)) throw new GoogleEventGoneError()
+    throw err
+  }
+}
+
+/** Cancel (delete) a Calendar event, notifying attendees. Safe if already gone. */
+export async function cancelMeetEventForUser(
+  refreshToken: string,
+  eventId: string,
+  opts: { sendUpdates?: boolean } = {},
+): Promise<void> {
+  const auth = makeOAuthClient()
+  auth.setCredentials({ refresh_token: refreshToken })
+  const calendar = google.calendar({ version: "v3", auth })
+  try {
+    await calendar.events.delete({
+      calendarId: "primary",
+      eventId,
+      sendUpdates: opts.sendUpdates === false ? "none" : "all",
+    })
+  } catch (err) {
+    // Already deleted externally — the desired end state is reached.
+    if (isGoneError(err)) return
+    throw err
+  }
+}
+
+/** Fetch a single event for reconciliation. Returns null when it no longer exists. */
+export async function getMeetEventForUser(
+  refreshToken: string,
+  eventId: string,
+): Promise<{ id: string; status: string | null; htmlLink: string | null; hangoutLink: string | null } | null> {
+  const auth = makeOAuthClient()
+  auth.setCredentials({ refresh_token: refreshToken })
+  const calendar = google.calendar({ version: "v3", auth })
+  try {
+    const res = await calendar.events.get({ calendarId: "primary", eventId })
+    const data = res.data
+    return {
+      id: data.id || eventId,
+      status: data.status || null,
+      htmlLink: data.htmlLink || null,
+      hangoutLink: data.hangoutLink || null,
+    }
+  } catch (err) {
+    if (isGoneError(err)) return null
+    throw err
   }
 }

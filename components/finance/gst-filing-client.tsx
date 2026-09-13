@@ -29,6 +29,7 @@ type Summary = {
   }
   rate_wise: { rate: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number }[]
   supply_split: { supply_type: string; taxable: number; tax: number }[]
+  excluded?: { in_period: number; draft: number; cancelled: number; proforma: number }
   filing: { filing_id: string; status: string; arn: string | null; filed_at: string | null } | null
 }
 
@@ -137,7 +138,8 @@ export function GstFilingClient() {
               {!s || s.rate_wise.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
-                    No taxable supplies in this period.
+                    <div>No taxable supplies in this period.</div>
+                    {s?.excluded ? <ExclusionHint excluded={s.excluded} /> : null}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -202,6 +204,31 @@ export function GstFilingClient() {
         </CardContent>
       </Card>
     </main>
+  )
+}
+
+function ExclusionHint({
+  excluded,
+}: {
+  excluded: { in_period: number; draft: number; cancelled: number; proforma: number }
+}) {
+  if (excluded.in_period === 0) {
+    return (
+      <div className="mt-2 text-xs">
+        No sales invoices are dated in this period. Check the invoice date matches the tax period above.
+      </div>
+    )
+  }
+  const parts: string[] = []
+  if (excluded.draft > 0) parts.push(`${excluded.draft} in Draft`)
+  if (excluded.cancelled > 0) parts.push(`${excluded.cancelled} Cancelled`)
+  if (excluded.proforma > 0) parts.push(`${excluded.proforma} Proforma`)
+  return (
+    <div className="mt-2 text-xs">
+      {excluded.in_period} invoice{excluded.in_period === 1 ? "" : "s"} dated in this period
+      {parts.length ? ` — ${parts.join(", ")}` : ""}. Only Issued / Sent / Posted tax invoices appear in GSTR-1, so
+      set the invoice status to Issued to include it.
+    </div>
   )
 }
 

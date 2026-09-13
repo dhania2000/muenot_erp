@@ -418,7 +418,8 @@ export async function getContractSignatures(id: number) {
 
 /**
  * Read-only relations for the 360° view: source quotation, invoices linked by
- * company, onboarding by contract_code, amendments/renewals, and the company
+ * company, onboarding by contract_id (with legacy contract_code fallback),
+ * amendments/renewals, and the company
  * (client) record.
  */
 export async function getContractRelations(contract: ContractRecord) {
@@ -441,8 +442,10 @@ export async function getContractRelations(contract: ContractRecord) {
         ).catch(() => []),
     query<any[]>(
       `SELECT id, onboarding_code, onboarding_date, current_stage, status
-       FROM sales_onboarding WHERE contract_code = ? ORDER BY created_at DESC`,
-      [contract.contract_code],
+       FROM sales_onboarding
+       WHERE contract_id = ? OR contract_code = ?
+       ORDER BY created_at DESC`,
+      [contract.id, contract.contract_code],
     ).catch(() => []),
     query<any[]>(
       `SELECT id, contract_code, relation, version_no, status, value, start_date, end_date

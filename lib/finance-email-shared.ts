@@ -16,6 +16,21 @@ export const FINANCE_EMAIL_CATEGORIES = [
 
 export type FinanceEmailCategory = (typeof FINANCE_EMAIL_CATEGORIES)[number]
 
+// Categories that require the extra "send confidential finance email" permission.
+export const SENSITIVE_FINANCE_EMAIL_CATEGORIES = new Set<string>(["Confidential", "Dunning"])
+
+// Full lifecycle for a sent/queued finance email (distinct from template statuses).
+export const FINANCE_EMAIL_STATUSES = [
+  "Draft",
+  "Scheduled",
+  "Queued",
+  "Sending",
+  "Sent",
+  "Failed",
+  "Cancelled",
+] as const
+export type FinanceEmailStatus = (typeof FINANCE_EMAIL_STATUSES)[number]
+
 export const FINANCE_TEMPLATE_STATUSES = ["Draft", "Active", "Inactive", "Archived"] as const
 export type FinanceTemplateStatus = (typeof FINANCE_TEMPLATE_STATUSES)[number]
 

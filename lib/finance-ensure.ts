@@ -47,16 +47,14 @@ export async function ensureFteInvoiceColumns() {
 let cvEnsured = false
 
 /**
- * Self-healing schema for the Vendors master. GSTIN verification snapshots the
- * taxpayer's registration details from the GST network onto the vendor record,
- * plus an authoritative verification status the server sets (it never trusts a
- * client-supplied status). The vendor form also adds a `tds_applicable` toggle.
- * None of these exist in the base migration, so add them before any
- * INSERT/UPDATE touches the table.
+ * Self-healing schema for the Customer / Vendor master. GSTIN verification
+ * snapshots the taxpayer's registration details from the GST network onto the
+ * party record, plus an authoritative verification status the server sets (it
+ * never trusts a client-supplied status). None of these exist in the base
+ * migration, so add them before any INSERT/UPDATE touches the table.
  */
 export async function ensureCustomerVendorGstColumns() {
   if (cvEnsured) return
-  await ensureColumn("customers_vendors", "tds_applicable", "TINYINT(1) NOT NULL DEFAULT 0")
   await ensureColumn("customers_vendors", "gst_trade_name", "VARCHAR(255) DEFAULT NULL")
   await ensureColumn("customers_vendors", "gst_status", "VARCHAR(40) DEFAULT NULL")
   await ensureColumn("customers_vendors", "gst_taxpayer_type", "VARCHAR(60) DEFAULT NULL")

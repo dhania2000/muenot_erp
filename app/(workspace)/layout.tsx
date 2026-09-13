@@ -96,7 +96,7 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Bank Transactions", href: "/modules/finance/bank-transactions", feature: "finance.view_bank_transactions" },
   { label: "Bank & Cash", href: "/modules/finance/bank-cash", feature: "finance.view_bank_cash" },
   { label: "Chart of Accounts", href: "/modules/finance/chart-of-accounts", feature: "finance.view_chart_of_accounts" },
-  { label: "Vendors", href: "/modules/finance/customers-vendors", feature: "finance.view_customers_vendors" },
+  { label: "Customer / Vendor", href: "/modules/finance/customers-vendors", feature: "finance.view_customers_vendors" },
   { label: "GST Filing", href: "/modules/finance/gst-filing", feature: "finance.gst_filing" },
   { label: "TDS Filing", href: "/modules/finance/tds-filing", feature: "finance.tds_filing" },
   { label: "Journal Entries", href: "/modules/finance/journal-entries", feature: "finance.journal_entries" },

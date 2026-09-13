@@ -25,7 +25,6 @@ import {
 } from "@/components/ui/select"
 import { Loader2Icon } from "lucide-react"
 import { inr } from "@/lib/finance-calc"
-import { GstinVerifyPanel } from "@/components/finance/gstin-verify-panel"
 import type { FieldDef, ModuleConfig } from "@/lib/finance-schema"
 
 type FormState = Record<string, string>
@@ -170,20 +169,8 @@ export function FinanceModuleDialog({
               </Alert>
             )}
 
-            {cfg.gstinVerify && (
-              <GstinVerifyPanel cfg={cfg} form={form} update={update} recordId={record?.id} />
-            )}
-
             {sections.map((section) => {
-              // Hidden fields (e.g. GST snapshot) and the GSTIN input on
-              // verify-enabled modules are handled by the panel, not here.
-              const fields = cfg.fields.filter(
-                (f) =>
-                  f.section === section &&
-                  !f.computed &&
-                  !f.hidden &&
-                  !(cfg.gstinVerify && f.key === "gstin"),
-              )
+              const fields = cfg.fields.filter((f) => f.section === section && !f.computed)
               if (!fields.length) return null
               return (
                 <FieldGroup key={section}>

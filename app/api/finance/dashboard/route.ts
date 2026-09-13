@@ -15,7 +15,7 @@ const MASTER_MODULE_LABELS: Record<string, string> = {
   "bank-transactions": "Bank Transactions",
   "bank-cash": "Bank & Cash",
   "chart-of-accounts": "Chart of Accounts",
-  "customers-vendors": "Vendors",
+  "customers-vendors": "Customer / Vendor",
 }
 
 export async function GET() {
@@ -76,7 +76,7 @@ export async function GET() {
   )) as any[]
   const masterRecordSummary = [
     { master: "Employees", records: Number(employeeRow?.count ?? 0), type: "Source" },
-    { master: "Vendors", records: moduleCounts["customers-vendors"] ?? 0, type: "Master" },
+    { master: "Customers / Vendors", records: moduleCounts["customers-vendors"] ?? 0, type: "Master" },
     { master: "Chart of Accounts", records: moduleCounts["chart-of-accounts"] ?? 0, type: "Accounts" },
     { master: "Bank / Cash Accounts", records: moduleCounts["bank-cash"] ?? 0, type: "Active" },
   ]

@@ -30,6 +30,23 @@ type Summary = {
   }
   rate_wise: { rate: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number }[]
   supply_split: { supply_type: string; taxable: number; tax: number }[]
+  invoices: {
+    invoice_id: string
+    invoice_date: string | null
+    invoice_type: string
+    client_name: string
+    client_gstin: string
+    project_name: string
+    place_of_supply: string
+    supply_type: string
+    status: string
+    taxable: number
+    cgst: number
+    sgst: number
+    igst: number
+    cess: number
+    total: number
+  }[]
   excluded?: { in_period: number; draft: number; cancelled: number; proforma: number }
   filing: { filing_id: string; status: string; arn: string | null; filed_at: string | null } | null
 }
@@ -89,6 +106,24 @@ export function GstFilingClient() {
       const wsSupply = XLSX.utils.aoa_to_sheet([supplyHeader, ...supplyRows])
       wsSupply["!cols"] = [{ wch: 24 }, { wch: 16 }, { wch: 16 }]
       XLSX.utils.book_append_sheet(wb, wsSupply, "Supply split")
+    }
+
+    if (s.invoices?.length) {
+      const invHeader = [
+        "Invoice #", "Date", "Type", "Client", "Client GSTIN", "Place of supply",
+        "Supply type", "Status", "Taxable", "CGST", "SGST", "IGST", "Cess", "Total",
+      ]
+      const invRows = s.invoices.map((r) => [
+        r.invoice_id, r.invoice_date ? r.invoice_date.slice(0, 10) : "", r.invoice_type,
+        r.client_name, r.client_gstin || "Unregistered", r.place_of_supply, r.supply_type,
+        r.status, r.taxable, r.cgst, r.sgst, r.igst, r.cess, r.total,
+      ])
+      const wsInv = XLSX.utils.aoa_to_sheet([invHeader, ...invRows])
+      wsInv["!cols"] = [
+        { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 24 }, { wch: 18 }, { wch: 18 },
+        { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 },
+      ]
+      XLSX.utils.book_append_sheet(wb, wsInv, "Invoices")
     }
 
     XLSX.writeFile(wb, `GSTR-1_${s.period}.xlsx`)
@@ -209,6 +244,76 @@ export function GstFilingClient() {
               )}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">Invoices in {period}</CardTitle>
+          <Badge variant="secondary">{s?.invoices?.length ?? 0} document{(s?.invoices?.length ?? 0) === 1 ? "" : "s"}</Badge>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Client GSTIN</TableHead>
+                  <TableHead>Place of supply</TableHead>
+                  <TableHead className="text-right">Taxable</TableHead>
+                  <TableHead className="text-right">CGST</TableHead>
+                  <TableHead className="text-right">SGST</TableHead>
+                  <TableHead className="text-right">IGST</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {!s || s.invoices.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
+                      <div>No invoices included for this period.</div>
+                      {s?.excluded ? <ExclusionHint excluded={s.excluded} /> : null}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  s.invoices.map((inv) => (
+                    <TableRow key={inv.invoice_id}>
+                      <TableCell>
+                        <div className="font-mono text-xs">{inv.invoice_id}</div>
+                        <div className="text-xs text-muted-foreground">{inv.invoice_type}</div>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">
+                        {inv.invoice_date ? inv.invoice_date.slice(0, 10) : "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">{inv.client_name}</div>
+                        {inv.project_name ? (
+                          <div className="text-xs text-muted-foreground">{inv.project_name}</div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>
+                        {inv.client_gstin ? (
+                          <span className="font-mono text-xs">{inv.client_gstin}</span>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">Unregistered</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {inv.place_of_supply || inv.supply_type}
+                      </TableCell>
+                      <TableCell className="text-right">{currency(inv.taxable)}</TableCell>
+                      <TableCell className="text-right">{currency(inv.cgst)}</TableCell>
+                      <TableCell className="text-right">{currency(inv.sgst)}</TableCell>
+                      <TableCell className="text-right">{currency(inv.igst)}</TableCell>
+                      <TableCell className="text-right font-medium">{currency(inv.total)}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 

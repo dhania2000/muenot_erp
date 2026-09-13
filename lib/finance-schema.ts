@@ -48,6 +48,20 @@ export type GstinVerifyConfig = {
   statusField: string
 }
 
+/**
+ * Optional IFSC lookup capability for a master module (the Vendor master's
+ * banking block). When present, the form resolves the bank name and branch from
+ * the entered IFSC via the lookup endpoint and fills the mapped fields.
+ */
+export type IfscLookupConfig = {
+  /** Column holding the IFSC (e.g. "ifsc"). */
+  column: string
+  /** Server route that resolves an IFSC to bank/branch details. */
+  lookupPath: string
+  /** Map of resolved keys -> module field keys to autofill. */
+  autofill: { bank?: string; branch?: string }
+}
+
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
 
 export type TableColumn = {
@@ -155,6 +169,8 @@ export type ModuleConfig = {
   detailPath?: string
   /** Optional GSTIN verification capability (Vendor master). */
   gstin?: GstinVerifyConfig
+  /** Optional IFSC → bank/branch autofill capability (Vendor master). */
+  ifsc?: IfscLookupConfig
   /**
    * Extra SELECT expressions appended to the list query (aliased on `x`), used
    * for derived columns that live in another table — e.g. the Vendor list's

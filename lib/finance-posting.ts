@@ -1,7 +1,13 @@
 import type { PoolConnection } from "mysql2/promise"
-import { pool } from "@/lib/db"
+import { pool, query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
-import { resolveAccount, isDebitNature, type AccountRole, type ResolvedAccount } from "@/lib/finance-accounts"
+import {
+  resolveAccount,
+  isDebitNature,
+  ensurePurchasePostingAccounts,
+  type AccountRole,
+  type ResolvedAccount,
+} from "@/lib/finance-accounts"
 
 // ---------------------------------------------------------------------------
 // Double-entry posting engine (server-only).
@@ -66,6 +72,41 @@ export function buildSalesInvoiceLines(inv: Record<string, any>): PostingLine[] 
   if (sgst > 0) lines.push({ role: "output_sgst", debit: 0, credit: sgst, gst: sgst })
   if (igst > 0) lines.push({ role: "output_igst", debit: 0, credit: igst, gst: igst })
   if (cess > 0) lines.push({ role: "output_cess", debit: 0, credit: cess })
+  return lines
+}
+
+/**
+ * Build the balanced posting lines for a purchase bill from its stored totals
+ * (Phase 33/34). The double entry recognises the input-tax credit as an asset
+ * and splits the credit side between the vendor payable and the TDS we withhold:
+ *
+ *   Dr Purchases / Expense    taxable_amount
+ *   Dr Input CGST/SGST/IGST   respective tax amounts   (only when > 0)
+ *   Dr Input Cess             other_tax_cess
+ *      Cr TDS Payable         tds_amount                (only when TDS applies)
+ *      Cr Accounts Payable    net_payable               (gross − TDS)
+ *
+ * Debit total (gross) always equals the credit total (tds + net_payable = gross),
+ * so the posting balances by construction.
+ */
+export function buildPurchaseBillLines(bill: Record<string, any>): PostingLine[] {
+  const taxable = round2(num(bill.taxable_amount))
+  const cgst = round2(num(bill.cgst_amount))
+  const sgst = round2(num(bill.sgst_amount))
+  const igst = round2(num(bill.igst_amount))
+  const cess = round2(num(bill.other_tax_cess))
+  const tds = round2(num(bill.tds_amount))
+  const gross = round2(num(bill.gross_bill_amount) || taxable + cgst + sgst + igst + cess)
+  const payable = round2(gross - tds)
+
+  const lines: PostingLine[] = []
+  if (taxable !== 0) lines.push({ role: "purchase", debit: taxable, credit: 0 })
+  if (cgst > 0) lines.push({ role: "input_cgst", debit: cgst, credit: 0, gst: cgst })
+  if (sgst > 0) lines.push({ role: "input_sgst", debit: sgst, credit: 0, gst: sgst })
+  if (igst > 0) lines.push({ role: "input_igst", debit: igst, credit: 0, gst: igst })
+  if (cess > 0) lines.push({ role: "input_cess", debit: cess, credit: 0, gst: cess })
+  if (tds > 0) lines.push({ role: "tds_payable", debit: 0, credit: tds, tds })
+  if (payable !== 0) lines.push({ role: "payable", debit: 0, credit: payable })
   return lines
 }
 
@@ -229,4 +270,159 @@ export async function postSalesInvoice(
     createdBy: opts.createdBy ?? null,
     reverse: opts.reverse,
   })
+}
+
+/** Post a purchase bill from its stored (server-authoritative) totals. */
+export async function postPurchaseBill(
+  bill: Record<string, any>,
+  opts: { createdBy?: number | null; reverse?: boolean } = {},
+): Promise<PostingResult> {
+  await ensurePurchasePostingAccounts()
+  const lines = buildPurchaseBillLines(bill)
+  return postLines(lines, {
+    entityType: "purchase_bill",
+    entityId: Number(bill.id),
+    entityRef: String(bill.bill_id || bill.id),
+    date: String(bill.bill_date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+    financialYear: bill.financial_year ?? null,
+    partyId: bill.vendor_id || null,
+    partyName: bill.vendor_name || bill.vendor_legal_name || null,
+    projectId: bill.project_id || null,
+    projectName: bill.project_name || null,
+    voucherType: "Purchase",
+    narration: opts.reverse
+      ? `Reversal of purchase bill ${bill.bill_id || bill.id}`
+      : `Purchase bill ${bill.bill_id || bill.id}${bill.vendor_name ? ` — ${bill.vendor_name}` : ""}`,
+    sourceModule: "Purchase Bill",
+    createdBy: opts.createdBy ?? null,
+    reverse: opts.reverse,
+  })
+}
+
+/** Bill statuses that must NOT hold an active accounting posting. */
+const UNPOSTABLE_STATUSES = new Set(["Cancelled", "Draft", "Void"])
+
+/**
+ * Idempotently keep a purchase bill's Journal + General Ledger posting in sync
+ * with its stored totals (Phases 35–37, 123, 144, 148). Keyed off the bill's
+ * `voucher_no` + a stored `posted_gross`:
+ *   - nothing to post (zero gross, or an unpostable status) → reverse any
+ *     existing voucher and clear the posting columns;
+ *   - already posted with the same gross → no-op (never double-posts);
+ *   - posted with a changed gross → reverse the old voucher, post a fresh one;
+ *   - not yet posted → post and stamp the voucher onto the bill.
+ *
+ * Failures are swallowed and surfaced as an "Unposted" state so a transient
+ * posting error (e.g. a missing ledger account) never blocks bill CRUD; the
+ * next save re-attempts the posting.
+ */
+export async function syncPurchaseBillPosting(
+  billId: string,
+  opts: { createdBy?: number | null } = {},
+): Promise<{ action: "posted" | "reposted" | "reversed" | "skipped" | "error"; voucherNo?: string }> {
+  const [bill] = (await query(`SELECT * FROM purchase_bills WHERE bill_id = ? LIMIT 1`, [billId])) as any[]
+  if (!bill) return { action: "skipped" }
+
+  const gross = round2(
+    num(bill.gross_bill_amount) ||
+      num(bill.taxable_amount) + num(bill.cgst_amount) + num(bill.sgst_amount) + num(bill.igst_amount) + num(bill.other_tax_cess),
+  )
+  const status = String(bill.payment_status || "").trim()
+  const existingVoucher = bill.voucher_no ? String(bill.voucher_no) : null
+  const postedGross = round2(num(bill.posted_gross))
+
+  // Snapshot of the money fields exactly as they were posted; a reversal must
+  // unwind these, never the (possibly edited) current amounts.
+  let postedSnapshot: Record<string, any> = bill
+  if (bill.posted_snapshot) {
+    try {
+      postedSnapshot = { ...JSON.parse(String(bill.posted_snapshot)), id: bill.id, bill_id: bill.bill_id }
+    } catch {
+      postedSnapshot = bill
+    }
+  }
+
+  const snapshotOf = (b: Record<string, any>) => ({
+    id: b.id,
+    bill_id: b.bill_id,
+    bill_date: b.bill_date,
+    financial_year: b.financial_year,
+    vendor_id: b.vendor_id,
+    vendor_name: b.vendor_name,
+    vendor_legal_name: b.vendor_legal_name,
+    project_id: b.project_id,
+    project_name: b.project_name,
+    taxable_amount: num(b.taxable_amount),
+    cgst_amount: num(b.cgst_amount),
+    sgst_amount: num(b.sgst_amount),
+    igst_amount: num(b.igst_amount),
+    other_tax_cess: num(b.other_tax_cess),
+    tds_amount: num(b.tds_amount),
+    gross_bill_amount: num(b.gross_bill_amount),
+  })
+
+  const reverseExisting = async () => {
+    if (!existingVoucher) return
+    await postPurchaseBill(postedSnapshot, { createdBy: opts.createdBy ?? null, reverse: true })
+    await query(
+      `UPDATE purchase_bills
+          SET reversal_voucher_no = ?, voucher_no = NULL, posting_status = 'Unposted', posted_gross = 0, posted_snapshot = NULL
+        WHERE id = ?`,
+      [existingVoucher, bill.id],
+    )
+  }
+
+  try {
+    // Nothing postable → unwind any prior posting.
+    if (gross <= 0 || UNPOSTABLE_STATUSES.has(status)) {
+      if (existingVoucher) {
+        await reverseExisting()
+        return { action: "reversed" }
+      }
+      return { action: "skipped" }
+    }
+
+    // Already posted and unchanged → idempotent no-op.
+    if (existingVoucher && Math.abs(postedGross - gross) <= 0.01) {
+      return { action: "skipped", voucherNo: existingVoucher }
+    }
+
+    // Amount changed on a posted bill → reverse then re-post.
+    let reposted = false
+    if (existingVoucher) {
+      await reverseExisting()
+      reposted = true
+    }
+
+    const result = await postPurchaseBill(bill, { createdBy: opts.createdBy ?? null })
+    await query(
+      `UPDATE purchase_bills
+          SET voucher_no = ?, posting_status = 'Posted', posted_at = NOW(), posted_gross = ?, posted_snapshot = ?
+        WHERE id = ?`,
+      [result.voucherNo, gross, JSON.stringify(snapshotOf(bill)), bill.id],
+    )
+    return { action: reposted ? "reposted" : "posted", voucherNo: result.voucherNo }
+  } catch (error) {
+    console.log("[v0] purchase bill posting failed for", billId, (error as Error)?.message)
+    await query(`UPDATE purchase_bills SET posting_status = 'Unposted' WHERE id = ?`, [bill.id]).catch(() => {})
+    return { action: "error" }
+  }
+}
+
+/** Reverse and clear a purchase bill's posting (used when the bill is deleted). */
+export async function reversePurchaseBillPosting(bill: Record<string, any>): Promise<void> {
+  if (!bill?.voucher_no) return
+  let toReverse: Record<string, any> = bill
+  if (bill.posted_snapshot) {
+    try {
+      toReverse = { ...JSON.parse(String(bill.posted_snapshot)), id: bill.id, bill_id: bill.bill_id }
+    } catch {
+      toReverse = bill
+    }
+  }
+  try {
+    await postPurchaseBill(toReverse, { reverse: true })
+  } catch (error) {
+    console.log("[v0] purchase bill reversal failed for", bill?.bill_id, (error as Error)?.message)
+  }
 }

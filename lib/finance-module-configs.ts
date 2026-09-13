@@ -122,6 +122,9 @@ const purchaseBills: ModuleConfig = {
     fld("TDS", "tds_amount", "TDS amount", "number", { computed: true, money: true }),
     fld("TDS", "net_payable", "Net payable", "number", { computed: true, money: true }),
     fld("TDS", "outstanding_amount", "Outstanding amount", "number", { computed: true, money: true }),
+    // Phase 33–37 — accounting posting linkage (server-owned, read only).
+    fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
+    fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
     // Phase 4 — ACCOUNTING.
     fld("Accounting", "expense_account", "Expense / asset account", "text"),
     fld("Accounting", "payable_account", "Payable account", "text"),
@@ -156,6 +159,7 @@ const purchaseBills: ModuleConfig = {
     { key: "net_payable", label: "Net Payable", align: "right", money: true },
     { key: "outstanding_amount", label: "Outstanding", align: "right", money: true },
     { key: "payment_status", label: "Payment", badge: { ...PAYMENT_BADGE } },
+    { key: "posting_status", label: "Posting", badge: { Posted: "default", Unposted: "outline" } },
   ],
   kpis: [
     { label: "Total Billed", key: "total_billed", money: true, icon: "Receipt" },

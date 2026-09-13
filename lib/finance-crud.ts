@@ -9,6 +9,7 @@ import type { ModuleConfig } from "@/lib/finance-schema"
 import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns } from "@/lib/finance-ensure"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
 import { syncGstInputForBill, deleteGstInputForBill } from "@/lib/finance-gst-input"
+import { syncPurchaseBillPosting, reversePurchaseBillPosting } from "@/lib/finance-posting"
 import { computeBillItems, persistBillItems } from "@/lib/purchase-bill-items"
 import type { SupplyType } from "@/lib/sales-invoice-compute"
 
@@ -55,6 +56,10 @@ const AFTER_WRITE: Record<
     // Project into the ITC register (idempotent: create → edit → re-post never
     // duplicates a credit, and a zero-GST / excluded bill removes its record).
     await syncGstInputForBill(String(billId), { createdBy: userId })
+    // Project into the Journal + General Ledger (Phases 33–37). Idempotent and
+    // failure-tolerant — a posting error leaves the bill "Unposted" and the next
+    // save retries, so it never blocks bill CRUD.
+    await syncPurchaseBillPosting(String(billId), { createdBy: userId })
   },
 }
 
@@ -63,6 +68,9 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
   "purchase-bills": async (row) => {
     const billId = row?.bill_id
     if (!billId) return
+    // Reverse the accounting posting first so the ledger stays balanced, then
+    // unwind the dependent registers.
+    await reversePurchaseBillPosting(row)
     await deleteGstInputForBill(String(billId))
     await query(`DELETE FROM purchase_bill_items WHERE bill_id = ?`, [billId])
   },

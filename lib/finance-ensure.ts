@@ -144,6 +144,18 @@ export async function ensurePurchaseBillColumns() {
   await ensureColumn(t, "grn_document_url", "VARCHAR(500) DEFAULT NULL")
   await ensureColumn(t, "supporting_docs_url", "TEXT DEFAULT NULL")
 
+  // Phase 33–37 — Journal / General Ledger posting linkage. `voucher_no` ties
+  // the bill to its balanced posting, `posted_gross` makes the sync idempotent,
+  // and `posting_status` surfaces the posted/unposted state in the register.
+  await ensureColumn(t, "voucher_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "reversal_voucher_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "posting_status", "VARCHAR(20) NOT NULL DEFAULT 'Unposted'")
+  await ensureColumn(t, "posted_at", "DATETIME DEFAULT NULL")
+  await ensureColumn(t, "posted_gross", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  // Frozen copy of the money fields as posted, so a later reversal always
+  // unwinds the exact original amounts even if the bill was edited since.
+  await ensureColumn(t, "posted_snapshot", "LONGTEXT DEFAULT NULL")
+
   // Backfill a stable, immutable id for any pre-existing rows so the business
   // key is never blank. Legacy rows are tagged PB-LEGACY-###### by row id.
   await query(

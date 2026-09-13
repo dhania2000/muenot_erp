@@ -135,6 +135,64 @@ export const FINANCE_REPORTS: ReportDef[] = [
       { key: "outstanding", label: "Outstanding", align: "right", money: true },
     ],
   },
+  {
+    key: "purchase-register",
+    label: "Purchase Register",
+    group: "Finance",
+    description: "Purchase bills by vendor with taxable, GST, TDS, gross and net payable (Phase 100).",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''),'Unnamed vendor') AS vendor,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COUNT(*) AS bills,
+             COALESCE(SUM(taxable_amount),0) AS taxable,
+             COALESCE(SUM(cgst_amount + sgst_amount + igst_amount + other_tax_cess),0) AS gst,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(gross_bill_amount),0) AS gross,
+             COALESCE(SUM(net_payable),0) AS net_payable
+      FROM purchase_bills
+      WHERE 1=1 ${RANGE}
+      GROUP BY vendor, gstin
+      ORDER BY gross DESC`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "bills", label: "Bills", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net_payable", label: "Net Payable", align: "right", money: true },
+    ],
+  },
+  {
+    key: "accounts-payable-ageing",
+    label: "Accounts Payable Ageing",
+    group: "Finance",
+    description: "Outstanding vendor payables bucketed by age from due date (Phases 103, 108).",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''),'Unnamed vendor') AS vendor,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) <= 0 THEN outstanding_amount ELSE 0 END),0) AS not_due,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) BETWEEN 1 AND 30 THEN outstanding_amount ELSE 0 END),0) AS d1_30,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) BETWEEN 31 AND 60 THEN outstanding_amount ELSE 0 END),0) AS d31_60,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) BETWEEN 61 AND 90 THEN outstanding_amount ELSE 0 END),0) AS d61_90,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) > 90 THEN outstanding_amount ELSE 0 END),0) AS d90_plus
+      FROM purchase_bills
+      WHERE COALESCE(outstanding_amount,0) > 0 ${RANGE}
+      GROUP BY vendor
+      ORDER BY outstanding DESC`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "not_due", label: "Not Due", align: "right", money: true },
+      { key: "d1_30", label: "1–30d", align: "right", money: true },
+      { key: "d31_60", label: "31–60d", align: "right", money: true },
+      { key: "d61_90", label: "61–90d", align: "right", money: true },
+      { key: "d90_plus", label: "90d+", align: "right", money: true },
+    ],
+  },
   // -------------------------------------------------------------------------
   // Sales / CRM
   // -------------------------------------------------------------------------

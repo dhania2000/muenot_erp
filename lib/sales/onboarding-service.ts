@@ -1873,3 +1873,11 @@ export async function listTemplates(): Promise<any[]> {
   await ensureOnboardingSchema()
   return query<any[]>(`SELECT id, name, description, version, active FROM sales_onboarding_templates WHERE active = 1 ORDER BY name`)
 }
+
+/** Maps a thrown service error to the HTTP status an API route should return. */
+export function onboardingErrorStatus(err: unknown): number {
+  if (err instanceof OnboardingValidationError) return 400
+  if (err instanceof OnboardingNotFoundError) return 404
+  if (err instanceof OnboardingConflictError) return 409
+  return 500
+}

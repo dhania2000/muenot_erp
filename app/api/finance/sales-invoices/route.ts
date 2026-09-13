@@ -15,6 +15,24 @@ import {
 } from "@/lib/sales-invoice-compute"
 import { postSalesInvoice } from "@/lib/finance-posting"
 import { logFinanceEvent, getFinanceEvents } from "@/lib/finance-audit"
+import { runSourceChecks } from "@/lib/sales-invoice-sources"
+
+// Invoice types that must never post real AR/revenue to the ledger.
+const NON_POSTING_TYPES = new Set(["Proforma Invoice"])
+// Credit Note reverses (unwinds) the original posting; everything else posts normally.
+const isCreditNote = (t?: string | null) => String(t || "") === "Credit Note"
+const isNoteType = (t?: string | null) => t === "Credit Note" || t === "Debit Note"
+
+/** Source of the invoice (spec 32–33), derived from the strongest link present. */
+function deriveSourceType(body: Record<string, any>): string {
+  if (body.source_type && body.source_type !== "Manual") return body.source_type
+  if (isNoteType(body.invoice_type)) return "Other"
+  if (body.milestone_id) return "Milestone"
+  if (body.contract_id) return "Contract"
+  if (body.quotation_id) return "Quotation"
+  if (body.project_id) return "Project"
+  return body.source_type || "Manual"
+}
 
 // Header columns a client may set. Every derived money field is recomputed on
 // the server from the line items, so those are never trusted from the browser.
@@ -97,6 +115,116 @@ async function resolveBuyerStateCode(body: Record<string, any>): Promise<string 
   }
 }
 
+/**
+ * Business-rule gate shared by create + draft-edit. Returns a NextResponse to
+ * abort with, or null to proceed. Blocking conditions (over-billing, duplicate
+ * period) can be waived with an authorized override flag, which is audited.
+ */
+async function businessRuleError(
+  body: Record<string, any>,
+  invoiceTotal: number,
+  excludeInvoicePk?: number,
+): Promise<NextResponse | null> {
+  // Billing period sanity (spec 24).
+  if (body.billing_period_from && body.billing_period_to && body.billing_period_to < body.billing_period_from) {
+    return NextResponse.json({ error: "Billing period end must be on or after the start date." }, { status: 400 })
+  }
+
+  // Credit / Debit notes must reference a real original invoice (spec 36–37).
+  if (isNoteType(body.invoice_type)) {
+    if (!body.original_invoice_id) {
+      return NextResponse.json({ error: `${body.invoice_type} must reference the original invoice.` }, { status: 400 })
+    }
+    const [orig] = (await query(
+      `SELECT id FROM sales_invoices WHERE invoice_id = ? OR id = ? LIMIT 1`,
+      [body.original_invoice_id, Number(body.original_invoice_id) || 0],
+    )) as any[]
+    if (!orig) {
+      return NextResponse.json({ error: "Referenced original invoice was not found." }, { status: 400 })
+    }
+  }
+
+  const checks = await runSourceChecks({
+    clientName: body.client_name,
+    contractId: body.contract_id || undefined,
+    quotationId: body.quotation_id || undefined,
+    projectId: body.project_id || undefined,
+    milestoneId: body.milestone_id || undefined,
+    invoiceType: body.invoice_type,
+    attemptedTotal: invoiceTotal,
+    billingFrom: body.billing_period_from || undefined,
+    billingTo: body.billing_period_to || undefined,
+    excludeInvoicePk,
+  })
+
+  // Consistency mismatches always block (spec 29–31).
+  if (checks.consistency) {
+    return NextResponse.json({ error: checks.consistency, check: checks }, { status: 409 })
+  }
+  // Over-billing blocks unless explicitly overridden (spec 20).
+  if (checks.overbilling && !body.allow_overbilling) {
+    const o = checks.overbilling
+    return NextResponse.json(
+      {
+        error: `Over-billing: only ${o.remaining} remains billable on this ${o.kind} (billed ${o.invoiced} of ${o.billable}). This invoice adds ${o.attempted}. Confirm override to continue.`,
+        requiresOverride: "overbilling",
+        check: checks,
+      },
+      { status: 409 },
+    )
+  }
+  // Duplicate billing period blocks unless overridden (spec 25–26).
+  if (checks.duplicate && !body.allow_duplicate) {
+    return NextResponse.json(
+      {
+        error: `A non-cancelled invoice (${checks.duplicate.invoice_id}) already covers this billing period for the same source. Confirm override to continue.`,
+        requiresOverride: "duplicate",
+        check: checks,
+      },
+      { status: 409 },
+    )
+  }
+  return null
+}
+
+/** Resolve stored source ids into human codes for the "why was this invoiced" chain (spec 32). */
+async function resolveSourceChain(inv: Record<string, any>) {
+  const chain: {
+    source_type: string
+    quotation?: string | null
+    contract?: string | null
+    project?: string | null
+    original_invoice?: string | null
+    client?: string | null
+  } = { source_type: inv.source_type || "Manual", client: inv.client_name || inv.client_id || null }
+
+  const grab = async (sql: string, id: any) => {
+    if (!id) return null
+    try {
+      const [r] = (await query(sql, [id])) as any[]
+      return r ? Object.values(r)[0] : null
+    } catch {
+      return null
+    }
+  }
+
+  chain.contract = (await grab(`SELECT contract_code FROM sales_contracts WHERE id = ? LIMIT 1`, inv.contract_id)) as any
+  chain.quotation = (await grab(`SELECT quote_code FROM sales_quotations WHERE id = ? LIMIT 1`, inv.quotation_id)) as any
+  chain.project = (await grab(`SELECT project_name FROM operations_projects WHERE id = ? LIMIT 1`, inv.project_id)) as any
+  if (inv.original_invoice_id) {
+    try {
+      const [r] = (await query(
+        `SELECT invoice_id FROM sales_invoices WHERE invoice_id = ? OR id = ? LIMIT 1`,
+        [inv.original_invoice_id, Number(inv.original_invoice_id) || 0],
+      )) as any[]
+      chain.original_invoice = r?.invoice_id || inv.original_invoice_id
+    } catch {
+      chain.original_invoice = inv.original_invoice_id
+    }
+  }
+  return chain
+}
+
 async function loadItems(invoicePk: number) {
   return (await query(
     `SELECT * FROM sales_invoice_items WHERE invoice_pk = ? ORDER BY line_no ASC, id ASC`,
@@ -132,6 +260,7 @@ export async function GET(req: NextRequest) {
     const [inv] = (await query(`SELECT * FROM sales_invoices WHERE id = ? LIMIT 1`, [pk])) as any[]
     if (!inv) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
     const items = await loadItems(inv.id)
+    const sourceChain = await resolveSourceChain(inv)
     if (p.get("include") === "ledger") {
       const [journal, ledger, audit] = await Promise.all([
         query(
@@ -144,9 +273,9 @@ export async function GET(req: NextRequest) {
         ),
         getFinanceEvents("sales_invoice", pk),
       ])
-      return NextResponse.json({ invoice: inv, items, journal, ledger, audit })
+      return NextResponse.json({ invoice: inv, items, journal, ledger, audit, sourceChain })
     }
-    return NextResponse.json({ invoice: inv, items })
+    return NextResponse.json({ invoice: inv, items, sourceChain })
   }
 
   const conditions: string[] = []
@@ -255,6 +384,14 @@ export async function POST(req: NextRequest) {
     payment_status: body.payment_status,
   })
 
+  // Proforma invoices are non-posting by definition (spec 35).
+  if (NON_POSTING_TYPES.has(body.invoice_type) && body.invoice_status === "Posted") {
+    return NextResponse.json({ error: "Proforma invoices cannot be posted to the ledger." }, { status: 409 })
+  }
+
+  const ruleError = await businessRuleError(body, header.invoice_total)
+  if (ruleError) return ruleError
+
   const invoiceId = await nextDocumentId("invoice")
   const first = items[0]
 
@@ -269,7 +406,7 @@ export async function POST(req: NextRequest) {
     seller_state_code: sellerStateCode,
     place_of_supply_code: body.place_of_supply_code || buyerStateCode || null,
     supply_type: supplyType,
-    source_type: body.source_type || "Manual",
+    source_type: deriveSourceType(body),
     tds_applicable: body.tds_applicable ? 1 : 0,
     tds_rate: num(body.tds_rate),
     // Header mirrors of the first line + aggregates keep the PDF / list working.
@@ -313,6 +450,17 @@ export async function POST(req: NextRequest) {
     actorId: session.userId,
   })
 
+  if (body.allow_overbilling || body.allow_duplicate) {
+    await logFinanceEvent({
+      entityType: "sales_invoice",
+      entityPk: invoicePk,
+      entityRef: invoiceId,
+      type: "override",
+      summary: `Authorized override on ${invoiceId}: ${[body.allow_overbilling && "over-billing", body.allow_duplicate && "duplicate period"].filter(Boolean).join(", ")}`,
+      actorId: session.userId,
+    })
+  }
+
   // A brand-new invoice created straight into Posted state is posted to the
   // ledger immediately (same rules as the PATCH transition).
   if (record.invoice_status === "Posted") {
@@ -337,7 +485,14 @@ export async function POST(req: NextRequest) {
  */
 async function postAndRecord(inv: Record<string, any>, actorId?: number | null) {
   if (inv.journal_entry_id) return
-  const result = await postSalesInvoice(inv, { createdBy: actorId ?? null })
+  // Proforma never posts (spec 35). A Credit Note reverses the AR/revenue that
+  // the original invoice created; a Debit Note posts an additional charge in the
+  // normal direction (spec 38).
+  if (NON_POSTING_TYPES.has(inv.invoice_type)) {
+    throw new Error("Proforma invoices cannot be posted to the ledger.")
+  }
+  const reverse = isCreditNote(inv.invoice_type)
+  const result = await postSalesInvoice(inv, { createdBy: actorId ?? null, reverse })
   await query(
     `UPDATE sales_invoices SET journal_entry_id = ?, invoice_status = 'Posted', posted_at = COALESCE(posted_at, NOW()) WHERE id = ?`,
     [result.voucherNo, inv.id],
@@ -347,10 +502,10 @@ async function postAndRecord(inv: Record<string, any>, actorId?: number | null) 
     entityPk: Number(inv.id),
     entityRef: String(inv.invoice_id || inv.id),
     type: "posted",
-    summary: `Invoice ${inv.invoice_id || inv.id} posted to ledger (voucher ${result.voucherNo})`,
+    summary: `${inv.invoice_type || "Invoice"} ${inv.invoice_id || inv.id} ${reverse ? "reversed on" : "posted to"} ledger (voucher ${result.voucherNo})`,
     amount: result.totalDebit,
     voucherNo: result.voucherNo,
-    detail: { journal_entry_ids: result.journalEntryIds, ledger_ids: result.ledgerIds },
+    detail: { journal_entry_ids: result.journalEntryIds, ledger_ids: result.ledgerIds, reverse },
     actorId: actorId ?? null,
   })
 }
@@ -459,6 +614,12 @@ export async function PATCH(req: NextRequest) {
   })
   const first = items[0]
 
+  if (NON_POSTING_TYPES.has(merged.invoice_type) && body.invoice_status === "Posted") {
+    return NextResponse.json({ error: "Proforma invoices cannot be posted to the ledger." }, { status: 409 })
+  }
+  const ruleError = await businessRuleError(merged, header.invoice_total, id)
+  if (ruleError) return ruleError
+
   const update: Record<string, any> = {}
   for (const field of INPUT_FIELDS) {
     if (field in merged) update[field] = merged[field]
@@ -469,6 +630,7 @@ export async function PATCH(req: NextRequest) {
     seller_state_code: sellerStateCode,
     place_of_supply_code: merged.place_of_supply_code || buyerStateCode || null,
     supply_type: supplyType,
+    source_type: deriveSourceType(merged),
     tds_applicable: merged.tds_applicable ? 1 : 0,
     tds_rate: num(merged.tds_rate),
     hsn_sac: first.hsn_sac, quantity: first.quantity, unit: first.unit, rate: first.rate,

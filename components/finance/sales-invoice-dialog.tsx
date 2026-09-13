@@ -41,6 +41,7 @@ const currency = (n: number) => inr(n || 0)
 
 type LineItem = {
   key: string
+  item_id: string
   description: string
   hsn_sac: string
   quantity: string
@@ -55,7 +56,7 @@ type LineItem = {
 function emptyLine(): LineItem {
   return {
     key: Math.random().toString(36).slice(2),
-    description: "", hsn_sac: "", quantity: "1", unit: "Nos", rate: "",
+    item_id: "", description: "", hsn_sac: "", quantity: "1", unit: "Nos", rate: "",
     discount_type: "amount", discount_value: "", tax_rate: "18", cess_amount: "",
   }
 }
@@ -119,6 +120,30 @@ type Party = {
   customer_party_id: string | null
 }
 
+type TaxRate = { id: number; code: string; name: string; rate: number; category: string }
+type HsnRow = { id: number; code: string; description: string; default_tax_rate: number }
+type ProductRow = {
+  id: number
+  code: string
+  name: string
+  unit: string | null
+  rate: number
+  hsn_sac: string | null
+  tax_rate: number
+}
+type Masters = { taxRates: TaxRate[]; hsnSac: HsnRow[]; products: ProductRow[] }
+
+type SourceCredit = { credit_limit: number | null; outstanding: number; overdue: number; available: number | null }
+type ContractOpt = { id: number; contract_code: string; title: string | null; value: number; status: string }
+type QuotationOpt = { id: number; quote_code: string; version: number; status: string; grand_total: number }
+type ProjectOpt = { id: number; project_name: string; status: string }
+type SourcesData = {
+  contracts: ContractOpt[]
+  quotations: QuotationOpt[]
+  projects: ProjectOpt[]
+  credit: SourceCredit | null
+}
+
 export function SalesInvoiceDialog({
   open,
   onOpenChange,
@@ -135,8 +160,42 @@ export function SalesInvoiceDialog({
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  const [allowOverbilling, setAllowOverbilling] = useState(false)
+  const [allowDuplicate, setAllowDuplicate] = useState(false)
+  const [pendingOverride, setPendingOverride] = useState<"overbilling" | "duplicate" | null>(null)
+  const [sourceBilling, setSourceBilling] = useState<{ label: string; remaining: number } | null>(null)
+
   const { data: partyData } = useSWR<{ parties: Party[] }>(open ? "/api/finance/sales-invoices/parties" : null, fetcher)
   const parties = partyData?.parties ?? []
+
+  // Configurable masters back the line editor (tax rates, HSN/SAC, products).
+  const { data: masters } = useSWR<Masters>(open ? "/api/finance/masters" : null, fetcher)
+  const taxRates = masters?.taxRates ?? []
+  const hsnList = masters?.hsnSac ?? []
+  const products = masters?.products ?? []
+
+  // Source documents + live credit profile for the selected client.
+  const { data: sources } = useSWR<SourcesData>(
+    open && header.client_name ? `/api/finance/sales-invoices/sources?client_name=${encodeURIComponent(header.client_name)}` : null,
+    fetcher,
+  )
+  const credit = sources?.credit ?? null
+
+  // Original-invoice picker options for Credit / Debit notes.
+  const isNote = header.invoice_type === "Credit Note" || header.invoice_type === "Debit Note"
+  const { data: noteSourceData } = useSWR<{ rows: InvoiceRow[] }>(
+    open && isNote && header.client_name
+      ? `/api/finance/sales-invoices?search=${encodeURIComponent(header.client_name)}`
+      : null,
+    fetcher,
+  )
+  const originalInvoiceOptions = (noteSourceData?.rows ?? []).filter(
+    (r) => r.invoice_type !== "Credit Note" && r.invoice_type !== "Debit Note",
+  )
+
+  const taxOptions = taxRates.length
+    ? taxRates.map((t) => ({ label: `${t.name}`, value: String(Number(t.rate)) }))
+    : TAX_RATES.map((r) => ({ label: `${r}%`, value: r }))
 
   // The stored status governs what can be edited (Draft editable, Issued/Sent
   // restricted to payment + compliance, Posted locked to cash application).
@@ -149,6 +208,10 @@ export function SalesInvoiceDialog({
   useEffect(() => {
     if (!open) return
     setError(null)
+    setAllowOverbilling(false)
+    setAllowDuplicate(false)
+    setPendingOverride(null)
+    setSourceBilling(null)
     if (invoice) {
       const next = { ...EMPTY_HEADER }
       for (const key of Object.keys(EMPTY_HEADER) as (keyof HeaderState)[]) {
@@ -166,6 +229,7 @@ export function SalesInvoiceDialog({
             setLines(
               items.map((it: any) => ({
                 key: String(it.id),
+                item_id: it.item_id ?? "",
                 description: it.description ?? "",
                 hsn_sac: it.hsn_sac ?? "",
                 quantity: String(it.quantity ?? ""),
@@ -246,6 +310,80 @@ export function SalesInvoiceDialog({
   }
   function removeLine(key: string) {
     setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev))
+  }
+
+  // Fill a line from the product/service master (spec 46). Values remain editable.
+  function applyProduct(key: string, code: string) {
+    const prod = products.find((p) => p.code === code)
+    if (!prod) return
+    updateLine(key, {
+      item_id: prod.code,
+      description: prod.name,
+      unit: prod.unit || "Nos",
+      rate: prod.rate ? String(prod.rate) : "",
+      hsn_sac: prod.hsn_sac || "",
+      tax_rate: prod.tax_rate != null ? String(Number(prod.tax_rate)) : "18",
+    })
+  }
+
+  // When an HSN/SAC is chosen from the master, adopt its default tax rate.
+  function applyHsn(key: string, code: string) {
+    const row = hsnList.find((h) => h.code === code)
+    updateLine(key, { hsn_sac: code, ...(row ? { tax_rate: String(Number(row.default_tax_rate)) } : {}) })
+  }
+
+  // Selecting a source document (quotation/contract/project) auto-fills the
+  // invoice. The server still recomputes all money and re-validates linkage.
+  async function applySource(kind: "contract" | "quotation" | "project", id: string) {
+    if (!id) {
+      setSourceBilling(null)
+      return
+    }
+    try {
+      const excl = invoice ? `&exclude_invoice_pk=${invoice.id}` : ""
+      const res = await fetch(`/api/finance/sales-invoices/sources?resolve=1&kind=${kind}&id=${id}${excl}`)
+      const data = await res.json()
+      const src = data.source
+      if (!src) return
+      setHeader((prev) => {
+        const next = { ...prev }
+        const a = src.autofill || {}
+        if (kind === "contract") next.contract_id = String(id)
+        if (kind === "quotation") next.quotation_id = String(id)
+        if (kind === "project") {
+          next.project_id = String(id)
+          if (a.project_name) next.project_name = a.project_name
+        }
+        if (a.quotation_id) next.quotation_id = String(a.quotation_id)
+        if (a.place_of_supply) next.place_of_supply = a.place_of_supply
+        if (a.source_type) next.source_type = a.source_type
+        return next
+      })
+      // Copy quotation commercial lines (server recomputes totals — spec 18).
+      if (kind === "quotation" && Array.isArray(src.autofill?.items) && src.autofill.items.length > 0) {
+        setLines(
+          src.autofill.items.map((it: any) => ({
+            ...emptyLine(),
+            description: it.description ?? "",
+            hsn_sac: it.hsn_sac ?? "",
+            quantity: String(it.quantity ?? "1"),
+            unit: it.unit ?? "Nos",
+            rate: String(it.rate ?? ""),
+            discount_type: it.discount_type === "percent" ? "percent" : "amount",
+            discount_value: String(it.discount_value ?? ""),
+            tax_rate: String(it.tax_rate ?? "18"),
+            cess_amount: "",
+          })),
+        )
+      }
+      if (src.billing && src.billing.billable > 0) {
+        setSourceBilling({ label: src.code || kind, remaining: src.billing.remaining })
+      } else {
+        setSourceBilling(null)
+      }
+    } catch {
+      /* non-fatal auto-fill */
+    }
   }
 
   // Live mirror of the server money engine (place-of-supply GST + aggregation).

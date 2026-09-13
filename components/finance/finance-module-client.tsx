@@ -151,7 +151,7 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
       <Card>
         <CardContent className="grid gap-3 pt-6 sm:grid-cols-2 lg:grid-cols-4">
           <Input
-            placeholder="Search..."
+            placeholder={`Search ${cfg.label.toLowerCase()}...`}
             value={filters.search}
             onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
             className="lg:col-span-2"

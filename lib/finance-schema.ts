@@ -128,4 +128,11 @@ export type ModuleConfig = {
    * dialog (e.g. "freelancer_email" for Freelance, "employee_email" for FTE).
    */
   emailField?: string
+  /**
+   * Enables the GSTIN verification panel in the create/edit form. The panel
+   * validates + normalizes the GSTIN, calls the server lookup, and auto-fills
+   * the vendor master (name, legal name, address, state) plus the read-only GST
+   * snapshot fields. Only the Vendors master uses this today.
+   */
+  gstinVerify?: boolean
 }

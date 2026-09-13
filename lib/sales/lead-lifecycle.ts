@@ -305,7 +305,7 @@ export type LeadRecord = {
   [key: string]: unknown
 }
 
-type Actor = number | null | undefined
+export type Actor = number | null | undefined
 
 // ---------------------------------------------------------------------------
 // Shared write primitives (connection-aware so they compose in transactions)

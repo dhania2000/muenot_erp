@@ -9,7 +9,7 @@ import {
   type Actor,
 } from "@/lib/sales/lead-lifecycle"
 import { ensureCompanyMasterSchema, resolveCompanyId } from "@/lib/sales/company-master"
-import { getGoogleAccountForUser } from "@/lib/google-accounts"
+import { getGoogleAccount as getGoogleAccountForUser } from "@/lib/google-accounts"
 import {
   createMeetEventForUser,
   updateMeetEventForUser,

@@ -1,4 +1,4 @@
-import { num, round2, financialYearFor, autoPaymentStatus } from "@/lib/finance-calc"
+import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill } from "@/lib/finance-calc"
 import type { FieldDef, FieldType, ModuleConfig } from "@/lib/finance-schema"
 
 /** Terse field builder. */
@@ -14,22 +14,30 @@ const PAYMENT_STATUSES = ["Unpaid", "Partially Paid", "Paid", "Overdue"]
 const PAYMENT_BADGE = { Paid: "default", "Partially Paid": "secondary", Unpaid: "outline", Overdue: "destructive" } as const
 
 // ---------------------------------------------------------------------------
-// 1. Purchase Bills — PO Number is entered manually (comes from the PO upstream)
+// 1. Purchase Bills
 // ---------------------------------------------------------------------------
+// The Bill ID (PB-2026-000001) is server-generated, immutable and never entered
+// by hand — it is the module's business key (idColumn) but is NOT a form field.
+// PO Number is an optional upstream reference. The vendor is resolved from the
+// Vendor master (party picker + server snapshot); its GSTIN / PAN / TAN / state
+// and tax profile are frozen onto the bill. Every monetary field is recomputed
+// server-side by computePurchaseBillServerFields (see lib/finance-purchase-bills).
+const SUPPLY_TYPES = ["Intra-State", "Inter-State"]
+const BILL_TYPES = ["Purchase Bill", "Debit Note", "Credit Note", "Import Bill"]
+
 const purchaseBills: ModuleConfig = {
   key: "purchase-bills",
   table: "purchase_bills",
   label: "Purchase Bills",
-  subtitle: "Finance management",
+  subtitle: "Finance transaction",
   addLabel: "New bill",
-  idColumn: "po_number",
+  idColumn: "bill_id",
   idPrefix: "PB",
-  editableId: true,
   dateColumn: "bill_date",
   financialYearColumn: "financial_year",
   statusColumn: "payment_status",
   pdfPath: "/api/finance/purchase-bills",
-  searchColumns: ["po_number", "vendor_name", "project_name", "description"],
+  searchColumns: ["bill_id", "bill_number", "po_number", "vendor_name", "vendor_gstin", "project_name", "description"],
   partyLookup: {
     label: "Vendor",
     sourceKey: "customers-vendors",
@@ -37,75 +45,112 @@ const purchaseBills: ModuleConfig = {
     nameField: "vendor_name",
     sourceIdColumn: "party_id",
     sourceNameColumn: "customer_name",
-    // Inherit the vendor's TDS defaults so the bill's TDS block is pre-armed.
+    // Phase 2/3 — pull the vendor's identity, verified GST data, address, tax
+    // profile and commercial terms so nothing is re-entered. The server
+    // re-snapshots authoritatively on save.
     autofill: {
+      legal_name: "vendor_legal_name",
+      gstin: "vendor_gstin",
+      pan: "vendor_pan",
+      tan: "vendor_tan",
+      state: "vendor_state",
+      state_code: "vendor_state_code",
+      gst_registration_type: "gst_registration_type",
+      gst_verification_status: "gst_status",
+      billing_address: "billing_address",
+      payment_terms_days: "payment_terms",
+      currency: "currency",
+      tds_applicable: "tds_applicable",
       tds_section: "tds_section",
       tds_rate: "tds_rate",
-      tds_applicable: "tds_applicable",
     },
   },
   fields: [
-    fld("Bill details", "po_number", "PO Number", "text", { placeholder: "Auto-generated if left blank" }),
-    fld("Bill details", "bill_date", "Bill date", "date", { required: true }),
-    fld("Bill details", "bill_type", "Bill type", "select", { options: ["Purchase Bill", "Debit Note", "Credit Note", "Import Bill"] }),
-    fld("Bill details", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
-    fld("Bill details", "vendor_id", "Vendor ID", "text"),
-    fld("Bill details", "vendor_name", "Vendor name", "text", { required: true }),
-    fld("Bill details", "project_id", "Project ID", "text"),
-    fld("Bill details", "project_name", "Project name", "text"),
-    fld("Bill details", "description", "Description", "textarea"),
-    fld("Line item & taxes", "hsn_sac", "HSN / SAC", "text"),
-    fld("Line item & taxes", "quantity", "Quantity", "number"),
-    fld("Line item & taxes", "unit", "Unit", "select", { options: UNITS, optional: true }),
-    fld("Line item & taxes", "rate", "Rate", "number"),
-    fld("Line item & taxes", "taxable_amount", "Taxable amount (or lump sum)", "number", { placeholder: "auto from qty × rate" }),
-    fld("Line item & taxes", "discount", "Discount", "number"),
-    fld("Line item & taxes", "cgst_percent", "CGST %", "number"),
-    fld("Line item & taxes", "sgst_percent", "SGST %", "number"),
-    fld("Line item & taxes", "igst_percent", "IGST %", "number"),
-    fld("Line item & taxes", "other_tax_cess", "Other tax / cess", "number"),
-    fld("Line item & taxes", "cgst_amount", "CGST amount", "number", { computed: true, money: true }),
-    fld("Line item & taxes", "sgst_amount", "SGST amount", "number", { computed: true, money: true }),
-    fld("Line item & taxes", "igst_amount", "IGST amount", "number", { computed: true, money: true }),
-    fld("Line item & taxes", "gross_bill_amount", "Gross bill amount", "number", { computed: true, money: true }),
-    fld("TDS & payable", "tds_applicable", "TDS applicable", "checkbox"),
-    fld("TDS & payable", "tds_section", "TDS section", "text", { placeholder: "194C" }),
-    fld("TDS & payable", "tds_rate", "TDS rate %", "number"),
-    fld("TDS & payable", "tds_amount", "TDS amount", "number", { computed: true, money: true }),
-    fld("TDS & payable", "net_payable", "Net payable", "number", { computed: true, money: true }),
-    fld("TDS & payable", "outstanding_amount", "Outstanding amount", "number", { computed: true, money: true }),
-    fld("Payment tracking", "due_date", "Due date", "date"),
+    // Phase 4 — BILL INFORMATION (Bill ID is auto/immutable, shown in the title).
+    fld("Bill information", "bill_number", "Bill number (vendor invoice no.)", "text", { required: true }),
+    fld("Bill information", "bill_date", "Bill date", "date", { required: true }),
+    fld("Bill information", "due_date", "Due date", "date", { placeholder: "Auto from payment terms" }),
+    fld("Bill information", "bill_type", "Bill type", "select", { options: BILL_TYPES }),
+    fld("Bill information", "financial_year", "Financial year", "text", { placeholder: "Auto from bill date" }),
+    fld("Bill information", "accounting_period", "Accounting period", "text", { placeholder: "Apr-2026" }),
+    fld("Bill information", "po_number", "PO number", "text", { placeholder: "Optional reference" }),
+    fld("Bill information", "grn_number", "GRN number", "text", { placeholder: "Optional reference" }),
+    // Phase 4 — VENDOR (snapshot autofilled from master; do not re-enter).
+    fld("Vendor", "vendor_name", "Vendor", "text", { required: true, placeholder: "Pick from Vendor master" }),
+    fld("Vendor", "vendor_id", "Vendor ID", "text", { placeholder: "Auto" }),
+    fld("Vendor", "vendor_legal_name", "Legal name", "text"),
+    fld("Vendor", "vendor_gstin", "Vendor GSTIN", "text"),
+    fld("Vendor", "vendor_pan", "Vendor PAN", "text"),
+    fld("Vendor", "vendor_tan", "Vendor TAN", "text"),
+    fld("Vendor", "gst_registration_type", "GST registration type", "text"),
+    fld("Vendor", "gst_status", "GST verification status", "text"),
+    fld("Vendor", "vendor_state", "Vendor state", "text"),
+    fld("Vendor", "vendor_state_code", "Vendor state code", "text"),
+    // Phase 4 / 9 — BILLING & place of supply.
+    fld("Billing", "billing_address", "Billing address", "textarea"),
+    fld("Billing", "supply_location", "Supply / service location", "text"),
+    fld("Billing", "place_of_supply", "Place of supply", "text", { placeholder: "Defaults to vendor state" }),
+    fld("Billing", "place_of_supply_code", "Place of supply code", "text"),
+    fld("Billing", "supply_type", "Supply type", "select", { options: SUPPLY_TYPES, optional: true, emptyLabel: "Auto (from states)" }),
+    // Phase 4 — ITEMS / SERVICES.
+    fld("Items / Services", "description", "Description", "textarea"),
+    fld("Items / Services", "hsn_sac", "HSN / SAC", "text"),
+    fld("Items / Services", "quantity", "Quantity", "number"),
+    fld("Items / Services", "unit", "Unit", "select", { options: UNITS, optional: true }),
+    fld("Items / Services", "rate", "Rate", "number"),
+    fld("Items / Services", "discount", "Discount", "number"),
+    fld("Items / Services", "taxable_amount", "Taxable value (or lump sum)", "number", { placeholder: "auto from qty × rate" }),
+    // Phase 4 — TAX. A single GST rate + supply type drives the CGST/SGST/IGST
+    // split; explicit percents are honoured when no rate is given.
+    fld("Tax", "gst_rate", "GST rate %", "number", { placeholder: "e.g. 18" }),
+    fld("Tax", "cgst_percent", "CGST % (manual)", "number"),
+    fld("Tax", "sgst_percent", "SGST % (manual)", "number"),
+    fld("Tax", "igst_percent", "IGST % (manual)", "number"),
+    fld("Tax", "other_tax_cess", "Other tax / cess", "number"),
+    fld("Tax", "itc_eligible", "ITC eligible", "checkbox"),
+    fld("Tax", "itc_claimed", "ITC claimed", "checkbox"),
+    // Phase 4 — TDS.
+    fld("TDS", "tds_applicable", "TDS applicable", "checkbox"),
+    fld("TDS", "tds_section", "TDS section", "text", { placeholder: "194C" }),
+    fld("TDS", "tds_rate", "TDS rate %", "number"),
+    // Computed money (Phase 5 — server authoritative).
+    fld("Tax", "cgst_amount", "CGST amount", "number", { computed: true, money: true }),
+    fld("Tax", "sgst_amount", "SGST amount", "number", { computed: true, money: true }),
+    fld("Tax", "igst_amount", "IGST amount", "number", { computed: true, money: true }),
+    fld("Tax", "gross_bill_amount", "Gross bill amount", "number", { computed: true, money: true }),
+    fld("TDS", "tds_base", "TDS base", "number", { computed: true, money: true }),
+    fld("TDS", "tds_amount", "TDS amount", "number", { computed: true, money: true }),
+    fld("TDS", "net_payable", "Net payable", "number", { computed: true, money: true }),
+    fld("TDS", "outstanding_amount", "Outstanding amount", "number", { computed: true, money: true }),
+    // Phase 4 — ACCOUNTING.
+    fld("Accounting", "expense_account", "Expense / asset account", "text"),
+    fld("Accounting", "payable_account", "Payable account", "text"),
+    fld("Accounting", "project_id", "Project ID", "text"),
+    fld("Accounting", "project_name", "Project name", "text"),
+    fld("Accounting", "cost_centre", "Cost centre", "text"),
+    fld("Accounting", "department", "Department", "text"),
+    // Phase 4 — PAYMENT TRACKING.
     fld("Payment tracking", "amount_paid", "Amount paid", "number"),
     fld("Payment tracking", "payment_status", "Payment status", "select", { options: PAYMENT_STATUSES, optional: true, emptyLabel: "Auto" }),
     fld("Payment tracking", "payment_date", "Payment date", "date"),
     fld("Payment tracking", "payment_reference", "Payment reference", "text"),
-    fld("ITC & notes", "itc_eligible", "ITC eligible", "checkbox"),
-    fld("ITC & notes", "itc_claimed", "ITC claimed", "checkbox"),
-    fld("ITC & notes", "notes", "Notes", "textarea"),
+    fld("Payment tracking", "currency", "Currency", "select", { options: CURRENCIES, optional: true }),
+    fld("Payment tracking", "payment_terms", "Payment terms (days)", "text"),
+    // Phase 4 — DOCUMENTS.
+    fld("Documents", "bill_attachment_url", "Invoice / bill attachment (URL)", "text"),
+    fld("Documents", "po_document_url", "PO document (URL)", "text"),
+    fld("Documents", "grn_document_url", "GRN document (URL)", "text"),
+    fld("Documents", "supporting_docs_url", "Supporting documents", "textarea"),
+    // Phase 4 — NOTES.
+    fld("Notes", "notes", "Notes", "textarea"),
   ],
-  compute: (v) => {
-    const qty = num(v.quantity), rate = num(v.rate), discount = num(v.discount)
-    const base = qty > 0 && rate > 0 ? qty * rate : num(v.taxable_amount) + discount
-    const taxable = round2(Math.max(base - discount, 0))
-    const cgst = round2((taxable * num(v.cgst_percent)) / 100)
-    const sgst = round2((taxable * num(v.sgst_percent)) / 100)
-    const igst = round2((taxable * num(v.igst_percent)) / 100)
-    const cess = round2(num(v.other_tax_cess))
-    const gross = round2(taxable + cgst + sgst + igst + cess)
-    const tds = v.tds_applicable ? round2((taxable * num(v.tds_rate)) / 100) : 0
-    const net = round2(gross - tds)
-    const paid = round2(num(v.amount_paid))
-    return {
-      taxable_amount: taxable, cgst_amount: cgst, sgst_amount: sgst, igst_amount: igst, other_tax_cess: cess,
-      gross_bill_amount: gross, tds_amount: tds, net_payable: net, amount_paid: paid,
-      outstanding_amount: round2(net - paid),
-      payment_status: autoPaymentStatus(net, paid, v.payment_status),
-      financial_year: v.financial_year || financialYearFor(v.bill_date),
-    }
-  },
+  // Live client mirror of the server money engine (Phase 5). The server
+  // recalculates authoritatively and resolves supply type from vendor vs
+  // company state, so stored numbers never trust the browser.
+  compute: (v) => computePurchaseBill(v),
   tableColumns: [
-    { key: "po_number", label: "PO Number", mono: true },
-    { key: "bill_date", label: "Date" },
+    { key: "bill_id", label: "Bill ID", mono: true },
+    { key: "bill_date", label: "Date", sub: "bill_number" },
     { key: "vendor_name", label: "Vendor", sub: "project_name" },
     { key: "gross_bill_amount", label: "Gross", align: "right", money: true },
     { key: "net_payable", label: "Net Payable", align: "right", money: true },

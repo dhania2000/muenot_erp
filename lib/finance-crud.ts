@@ -8,6 +8,9 @@ import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
 import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns } from "@/lib/finance-ensure"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
+import { syncGstInputForBill, deleteGstInputForBill } from "@/lib/finance-gst-input"
+import { computeBillItems, persistBillItems } from "@/lib/purchase-bill-items"
+import type { SupplyType } from "@/lib/sales-invoice-compute"
 
 /**
  * Optional per-module server augmentation. Runs AFTER the pure `compute`, can

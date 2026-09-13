@@ -36,10 +36,39 @@ ALTER TABLE finance_email_templates
 ALTER TABLE finance_email_templates
   MODIFY COLUMN status ENUM('Draft','Active','Inactive','Archived') NOT NULL DEFAULT 'Draft';
 
-CREATE UNIQUE INDEX uq_finance_email_templates_uid ON finance_email_templates (template_uid);
-CREATE UNIQUE INDEX uq_finance_email_templates_key ON finance_email_templates (template_key);
-CREATE INDEX idx_finance_email_templates_status ON finance_email_templates (status);
-CREATE INDEX idx_finance_email_templates_category ON finance_email_templates (category);
+-- MySQL has no `CREATE INDEX IF NOT EXISTS`, so guard each index against
+-- information_schema to keep this migration safely re-runnable.
+SET @exist := (SELECT COUNT(*) FROM information_schema.statistics
+  WHERE table_schema = DATABASE() AND table_name = 'finance_email_templates'
+  AND index_name = 'uq_finance_email_templates_uid');
+SET @sql := IF(@exist = 0,
+  'CREATE UNIQUE INDEX uq_finance_email_templates_uid ON finance_email_templates (template_uid)',
+  'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @exist := (SELECT COUNT(*) FROM information_schema.statistics
+  WHERE table_schema = DATABASE() AND table_name = 'finance_email_templates'
+  AND index_name = 'uq_finance_email_templates_key');
+SET @sql := IF(@exist = 0,
+  'CREATE UNIQUE INDEX uq_finance_email_templates_key ON finance_email_templates (template_key)',
+  'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @exist := (SELECT COUNT(*) FROM information_schema.statistics
+  WHERE table_schema = DATABASE() AND table_name = 'finance_email_templates'
+  AND index_name = 'idx_finance_email_templates_status');
+SET @sql := IF(@exist = 0,
+  'CREATE INDEX idx_finance_email_templates_status ON finance_email_templates (status)',
+  'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @exist := (SELECT COUNT(*) FROM information_schema.statistics
+  WHERE table_schema = DATABASE() AND table_name = 'finance_email_templates'
+  AND index_name = 'idx_finance_email_templates_category');
+SET @sql := IF(@exist = 0,
+  'CREATE INDEX idx_finance_email_templates_category ON finance_email_templates (category)',
+  'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Immutable snapshot of every saved revision for audit / rollback.
 CREATE TABLE IF NOT EXISTS finance_email_template_versions (

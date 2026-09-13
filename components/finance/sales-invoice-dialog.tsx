@@ -421,27 +421,32 @@ export function SalesInvoiceDialog({
     setLoading(true)
     setError(null)
 
-    const payload: Record<string, any> = {
-      ...header,
-      id: invoice?.id,
-      tds_applicable: header.tds_applicable ? 1 : 0,
-    }
-    // Structural data is only sent for editable (Draft) invoices; for restricted
-    // states we send just the payment/compliance changes the server allows.
+    let payload: Record<string, any>
+    // Structural data is only sent for editable (Draft) invoices. For restricted
+    // states we send ONLY the fields the server still accepts for that status, so
+    // payment tracking keeps working after issue/posting. Sending any locked field
+    // (e.g. notes on a Posted invoice) makes the server reject the whole PATCH,
+    // which would silently block the payment-status update the user wants.
     if (isDraft) {
+      payload = {
+        ...header,
+        id: invoice?.id,
+        tds_applicable: header.tds_applicable ? 1 : 0,
+      }
       payload.items = lines.map((l) => ({
         description: l.description, hsn_sac: l.hsn_sac, quantity: l.quantity, unit: l.unit,
         rate: l.rate, discount_type: l.discount_type, discount_value: l.discount_value,
         tax_rate: l.tax_rate, cess_amount: l.cess_amount,
       }))
     } else {
-      for (const k of ["items", "client_id", "client_name", "customer_party_id", "contract_id",
-        "quotation_id", "project_id", "project_name", "supply_type", "place_of_supply",
-        "place_of_supply_code", "tds_applicable", "tds_section", "tds_rate", "invoice_date",
-        "invoice_type", "billing_period_from", "billing_period_to", "financial_year",
-        "source_type", "original_invoice_id", "due_date"]) {
-        delete payload[k]
-      }
+      // Mirror the server's editable sets: Posted allows cash application only;
+      // Issued/Sent additionally allow compliance refs, notes and status moves.
+      const allowed = isPosted
+        ? (["amount_received", "payment_status", "payment_date", "payment_reference"] as const)
+        : (["amount_received", "payment_status", "payment_date", "payment_reference",
+            "irn_reference", "eway_bill_no", "notes", "invoice_status"] as const)
+      payload = { id: invoice?.id }
+      for (const k of allowed) payload[k] = header[k]
     }
 
     try {

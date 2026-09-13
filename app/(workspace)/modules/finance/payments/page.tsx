@@ -1,5 +1,5 @@
-import { FinanceModuleClient } from "@/components/finance/finance-module-client"
+import { PaymentsClient } from "@/components/finance/payments-client"
 
 export default function PaymentsPage() {
-  return <FinanceModuleClient moduleKey="payments" />
+  return <PaymentsClient />
 }

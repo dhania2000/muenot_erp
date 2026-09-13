@@ -1,0 +1,226 @@
+import { query } from "@/lib/db"
+import { nextRecordId } from "@/lib/record-ids"
+import { logFinanceEvent } from "@/lib/finance-audit"
+
+/**
+ * GST filing engine (server-only) — Phase 3.
+ *
+ * GST returns are DERIVED from the posted sales-invoice ledger, never typed by
+ * hand (spec 120–125). For a tax period (a calendar month, GST's return unit)
+ * this builds a GSTR-1-style outward-supply summary:
+ *
+ *   - document totals (taxable / CGST / SGST / IGST / cess), with credit notes
+ *     shown separately as reductions,
+ *   - a rate-wise breakup from the invoice line items, and
+ *   - an intra- vs inter-state split.
+ *
+ * Only Issued / Sent / Posted tax documents are included; Proforma invoices are
+ * excluded (spec 220). A filing can be locked for a period, and a locked period
+ * cannot be filed twice (duplicate prevention, spec 122).
+ *
+ * Schema is self-creating + idempotent — `gst_filings` has no migration yet, so
+ * the engine owns its DDL the same way the payments/masters modules do.
+ */
+
+const num = (v: any) => {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+const round2 = (n: number) => Math.round((num(n) + Number.EPSILON) * 100) / 100
+
+let ensured = false
+
+export async function ensureGstFilingSchema() {
+  if (ensured) return
+  await query(
+    `CREATE TABLE IF NOT EXISTS gst_filings (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      filing_id VARCHAR(40) NOT NULL,
+      return_type VARCHAR(20) NOT NULL DEFAULT 'GSTR-1',
+      period VARCHAR(7) NOT NULL,               -- YYYY-MM
+      financial_year VARCHAR(12) DEFAULT NULL,
+      invoice_count INT NOT NULL DEFAULT 0,
+      total_taxable DECIMAL(16,2) NOT NULL DEFAULT 0,
+      total_cgst DECIMAL(16,2) NOT NULL DEFAULT 0,
+      total_sgst DECIMAL(16,2) NOT NULL DEFAULT 0,
+      total_igst DECIMAL(16,2) NOT NULL DEFAULT 0,
+      total_cess DECIMAL(16,2) NOT NULL DEFAULT 0,
+      total_tax DECIMAL(16,2) NOT NULL DEFAULT 0,
+      status VARCHAR(20) NOT NULL DEFAULT 'Filed',   -- Filed | Amended
+      arn VARCHAR(40) DEFAULT NULL,
+      snapshot LONGTEXT DEFAULT NULL,
+      filed_at TIMESTAMP NULL DEFAULT NULL,
+      filed_by BIGINT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_gst_return_period (return_type, period),
+      UNIQUE KEY uq_gst_filing_id (filing_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+  ensured = true
+}
+
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+
+function periodRange(period: string) {
+  if (!PERIOD_RE.test(period)) throw new Error("Period must be in YYYY-MM format.")
+  const [y, m] = period.split("-").map(Number)
+  const from = `${period}-01`
+  const last = new Date(y, m, 0).getDate()
+  const to = `${period}-${String(last).padStart(2, "0")}`
+  return { from, to }
+}
+
+const INCLUDED_STATUS = "('Issued','Sent','Posted')"
+
+/** Build the GSTR-1 outward-supply summary for a calendar-month period. */
+export async function gstSummary(period: string) {
+  await ensureGstFilingSchema()
+  const { from, to } = periodRange(period)
+
+  const [totals] = (await query(
+    `SELECT
+        COUNT(*) AS invoice_count,
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN 0 ELSE taxable_amount END),0) AS taxable,
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN 0 ELSE cgst_amount END),0) AS cgst,
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN 0 ELSE sgst_amount END),0) AS sgst,
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN 0 ELSE igst_amount END),0) AS igst,
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN 0 ELSE other_tax_cess END),0) AS cess,
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN taxable_amount ELSE 0 END),0) AS cn_taxable,
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN (cgst_amount+sgst_amount+igst_amount+other_tax_cess) ELSE 0 END),0) AS cn_tax
+      FROM sales_invoices
+     WHERE invoice_date >= ? AND invoice_date <= ?
+       AND invoice_status IN ${INCLUDED_STATUS}
+       AND invoice_type <> 'Proforma Invoice'`,
+    [from, to],
+  ).catch(() => [{}])) as any[]
+
+  const rateWise = (await query(
+    `SELECT it.tax_rate AS rate,
+            COALESCE(SUM(it.taxable_value),0) AS taxable,
+            COALESCE(SUM(it.cgst_amount),0) AS cgst,
+            COALESCE(SUM(it.sgst_amount),0) AS sgst,
+            COALESCE(SUM(it.igst_amount),0) AS igst,
+            COALESCE(SUM(it.cess_amount),0) AS cess
+       FROM sales_invoice_items it
+       JOIN sales_invoices si ON si.id = it.invoice_pk
+      WHERE si.invoice_date >= ? AND si.invoice_date <= ?
+        AND si.invoice_status IN ${INCLUDED_STATUS}
+        AND si.invoice_type NOT IN ('Proforma Invoice','Credit Note')
+      GROUP BY it.tax_rate
+      ORDER BY it.tax_rate ASC`,
+    [from, to],
+  ).catch(() => [])) as any[]
+
+  const supply = (await query(
+    `SELECT COALESCE(supply_type,'Intra-State') AS supply_type,
+            COALESCE(SUM(taxable_amount),0) AS taxable,
+            COALESCE(SUM(cgst_amount+sgst_amount+igst_amount+other_tax_cess),0) AS tax
+       FROM sales_invoices
+      WHERE invoice_date >= ? AND invoice_date <= ?
+        AND invoice_status IN ${INCLUDED_STATUS}
+        AND invoice_type NOT IN ('Proforma Invoice','Credit Note')
+      GROUP BY COALESCE(supply_type,'Intra-State')`,
+    [from, to],
+  ).catch(() => [])) as any[]
+
+  const taxable = round2(num(totals?.taxable))
+  const cgst = round2(num(totals?.cgst))
+  const sgst = round2(num(totals?.sgst))
+  const igst = round2(num(totals?.igst))
+  const cess = round2(num(totals?.cess))
+  const totalTax = round2(cgst + sgst + igst + cess)
+
+  const [existing] = (await query(
+    `SELECT * FROM gst_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    [period],
+  )) as any[]
+
+  return {
+    period,
+    range: { from, to },
+    totals: {
+      invoice_count: Number(totals?.invoice_count ?? 0),
+      taxable,
+      cgst,
+      sgst,
+      igst,
+      cess,
+      total_tax: totalTax,
+      credit_note_taxable: round2(num(totals?.cn_taxable)),
+      credit_note_tax: round2(num(totals?.cn_tax)),
+    },
+    rate_wise: rateWise.map((r) => ({
+      rate: num(r.rate),
+      taxable: round2(num(r.taxable)),
+      cgst: round2(num(r.cgst)),
+      sgst: round2(num(r.sgst)),
+      igst: round2(num(r.igst)),
+      cess: round2(num(r.cess)),
+    })),
+    supply_split: supply.map((r) => ({
+      supply_type: r.supply_type,
+      taxable: round2(num(r.taxable)),
+      tax: round2(num(r.tax)),
+    })),
+    filing: existing
+      ? {
+          filing_id: existing.filing_id,
+          status: existing.status,
+          arn: existing.arn,
+          filed_at: existing.filed_at,
+        }
+      : null,
+  }
+}
+
+export async function listGstFilings() {
+  await ensureGstFilingSchema()
+  return (await query(`SELECT * FROM gst_filings ORDER BY period DESC, id DESC LIMIT 200`)) as any[]
+}
+
+/** Lock (file) a period's GSTR-1 from the derived summary. Duplicate-safe. */
+export async function fileGstReturn(period: string, arn: string | null, actorId?: number | null) {
+  await ensureGstFilingSchema()
+  const [existing] = (await query(
+    `SELECT id FROM gst_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    [period],
+  )) as any[]
+  if (existing) throw new Error(`GSTR-1 for ${period} is already filed. Use an amendment instead.`)
+
+  const summary = await gstSummary(period)
+  if (summary.totals.invoice_count === 0) {
+    throw new Error(`No tax documents found for ${period}; nothing to file.`)
+  }
+
+  const filingId = await nextRecordId("GST")
+  const fy = financialYearFor(`${period}-01`)
+  await query(
+    `INSERT INTO gst_filings
+       (filing_id, return_type, period, financial_year, invoice_count, total_taxable,
+        total_cgst, total_sgst, total_igst, total_cess, total_tax, status, arn, snapshot, filed_at, filed_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`,
+    [
+      filingId, "GSTR-1", period, fy, summary.totals.invoice_count, summary.totals.taxable,
+      summary.totals.cgst, summary.totals.sgst, summary.totals.igst, summary.totals.cess,
+      summary.totals.total_tax, "Filed", arn || null, JSON.stringify(summary), actorId ?? null,
+    ],
+  )
+  await logFinanceEvent({
+    entityType: "gst_filing",
+    entityRef: filingId,
+    type: "posted",
+    summary: `GSTR-1 filed for ${period}: taxable ${summary.totals.taxable}, tax ${summary.totals.total_tax}`,
+    amount: summary.totals.total_tax,
+    actorId: actorId ?? null,
+  })
+  return { filing_id: filingId, period }
+}
+
+function financialYearFor(dateStr: string) {
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return null
+  const y = d.getFullYear()
+  const start = d.getMonth() >= 3 ? y : y - 1
+  return `${start}-${String((start + 1) % 100).padStart(2, "0")}`
+}

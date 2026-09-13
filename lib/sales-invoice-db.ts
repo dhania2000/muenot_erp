@@ -86,6 +86,11 @@ export async function ensureSalesInvoiceSchema() {
     ["issued_at", "TIMESTAMP NULL DEFAULT NULL"],
     ["posted_at", "TIMESTAMP NULL DEFAULT NULL"],
     ["cancelled_at", "TIMESTAMP NULL DEFAULT NULL"],
+    // Email delivery + payment-reminder bookkeeping (Phase 3 wiring).
+    ["invoice_last_sent_at", "TIMESTAMP NULL DEFAULT NULL"],
+    ["invoice_last_sent_to", "VARCHAR(190) DEFAULT NULL"],
+    ["reminder_count", "INT UNSIGNED NOT NULL DEFAULT 0"],
+    ["last_reminder_at", "TIMESTAMP NULL DEFAULT NULL"],
   ]
   for (const [name, def] of cols) {
     await addColumnIfMissing("sales_invoices", name, def)

@@ -14,7 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Plus, FilterX, Receipt, Wallet, TrendingUp, Clock, Pencil, Eye, Trash2, FileDown } from "lucide-react"
+import { Plus, FilterX, Receipt, Wallet, TrendingUp, Clock, Pencil, Eye, Trash2, FileDown, Mail, BellRing } from "lucide-react"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { SalesInvoiceDialog } from "@/components/finance/sales-invoice-dialog"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
@@ -98,6 +100,7 @@ export function SalesInvoicesClient() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<InvoiceRow | null>(null)
   const [viewing, setViewing] = useState<InvoiceRow | null>(null)
+  const [emailFor, setEmailFor] = useState<{ row: InvoiceRow; kind: "invoice" | "reminder" } | null>(null)
 
   const queryKey = useMemo(() => {
     const params = new URLSearchParams()
@@ -290,6 +293,29 @@ export function SalesInvoicesClient() {
                         >
                           <FileDown className="size-4" />
                         </Button>
+                        {row.invoice_status !== "Draft" && row.invoice_status !== "Cancelled" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Email invoice"
+                            onClick={() => setEmailFor({ row, kind: "invoice" })}
+                          >
+                            <Mail className="size-4" />
+                          </Button>
+                        )}
+                        {row.invoice_status !== "Draft" &&
+                          row.invoice_status !== "Cancelled" &&
+                          row.payment_status !== "Paid" &&
+                          Number(row.outstanding_amount) > 0 && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Send payment reminder"
+                              onClick={() => setEmailFor({ row, kind: "reminder" })}
+                            >
+                              <BellRing className="size-4" />
+                            </Button>
+                          )}
                         <Button variant="ghost" size="icon" aria-label="View" onClick={() => setViewing(row)}>
                           <Eye className="size-4" />
                         </Button>
@@ -320,7 +346,141 @@ export function SalesInvoicesClient() {
       />
 
       <InvoiceDetailDialog invoice={viewing} onClose={() => setViewing(null)} />
+
+      <InvoiceEmailDialog
+        request={emailFor}
+        onClose={() => setEmailFor(null)}
+        onSent={() => {
+          setEmailFor(null)
+          mutate()
+        }}
+      />
     </main>
+  )
+}
+
+function InvoiceEmailDialog({
+  request,
+  onClose,
+  onSent,
+}: {
+  request: { row: InvoiceRow; kind: "invoice" | "reminder" } | null
+  onClose: () => void
+  onSent: () => void
+}) {
+  const [to, setTo] = useState("")
+  const [subject, setSubject] = useState("")
+  const [message, setMessage] = useState("")
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Reset fields whenever a new request opens the dialog.
+  const row = request?.row ?? null
+  const kind = request?.kind ?? "invoice"
+  const key = row ? `${row.id}:${kind}` : ""
+  const [seenKey, setSeenKey] = useState("")
+  if (key && key !== seenKey) {
+    setSeenKey(key)
+    setTo("")
+    setSubject("")
+    setMessage("")
+    setError(null)
+  }
+
+  const isReminder = kind === "reminder"
+
+  async function submit() {
+    if (!row) return
+    setSending(true)
+    setError(null)
+    try {
+      const res = await fetch(
+        `/api/finance/sales-invoices/${row.id}/${isReminder ? "remind" : "send"}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: to.trim() || undefined,
+            subject: subject.trim() || undefined,
+            message: message.trim() || undefined,
+          }),
+        },
+      )
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(json.error || "Send failed.")
+        return
+      }
+      onSent()
+    } catch {
+      setError("Network error while sending.")
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <Dialog open={!!request} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        {row && (
+          <>
+            <DialogHeader>
+              <DialogTitle>
+                {isReminder ? "Send payment reminder" : "Email invoice"}
+              </DialogTitle>
+              <DialogDescription>
+                {isReminder
+                  ? `Remind the customer about the outstanding balance on ${row.invoice_id}. The invoice PDF is attached.`
+                  : `Email invoice ${row.invoice_id} with its PDF attached to the customer.`}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="inv-email-to">Recipient</Label>
+                <Input
+                  id="inv-email-to"
+                  type="email"
+                  placeholder="Leave blank to use the client's email on file"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="inv-email-subject">Subject</Label>
+                <Input
+                  id="inv-email-subject"
+                  placeholder={
+                    isReminder ? "Payment reminder (auto)" : "Invoice email subject (auto)"
+                  }
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="inv-email-message">Message</Label>
+                <Textarea
+                  id="inv-email-message"
+                  rows={4}
+                  placeholder="Leave blank to use the default message."
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                />
+              </div>
+              {error && <p className="text-sm text-destructive">{error}</p>}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose} disabled={sending}>
+                Cancel
+              </Button>
+              <Button onClick={submit} disabled={sending}>
+                {isReminder ? <BellRing data-icon="inline-start" /> : <Mail data-icon="inline-start" />}
+                {sending ? "Sending..." : isReminder ? "Send reminder" : "Send invoice"}
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
 

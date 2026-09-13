@@ -532,6 +532,57 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Cancelled invoices cannot be edited." }, { status: 409 })
   }
 
+  // ---- Cancellation (spec 140–144) -------------------------------------------
+  // Cancelling a non-Draft invoice is a dedicated action: a Posted invoice must
+  // reverse its ledger voucher, and any invoice with an active payment must be
+  // settled/reversed first. A cancel reason is mandatory for the audit trail.
+  if (body.invoice_status === "Cancelled" && status !== "Draft") {
+    const reason = String(body.cancel_reason || "").trim()
+    if (!reason) {
+      return NextResponse.json({ error: "A cancellation reason is required." }, { status: 400 })
+    }
+    const [pay] = (await query(
+      `SELECT COALESCE(SUM(a.amount),0) AS paid
+         FROM payment_allocations a JOIN payments p ON p.id = a.payment_pk
+        WHERE a.invoice_pk = ? AND p.status = 'Active'`,
+      [id],
+    ).catch(() => [{ paid: 0 }])) as any[]
+    if (Number(pay?.paid ?? 0) > 0.01) {
+      return NextResponse.json(
+        { error: "This invoice has active payments. Reverse the payment(s) before cancelling." },
+        { status: 409 },
+      )
+    }
+
+    let reversalVoucher: string | null = null
+    if (existing.journal_entry_id) {
+      try {
+        const result = await postSalesInvoice(existing, { createdBy: session.userId, reverse: true })
+        reversalVoucher = result.voucherNo
+      } catch (error) {
+        return NextResponse.json({ error: `Cancellation posting failed: ${(error as Error).message}` }, { status: 409 })
+      }
+    }
+
+    await query(
+      `UPDATE sales_invoices
+          SET invoice_status = 'Cancelled', cancelled_at = NOW(), cancel_reason = ?, reversal_voucher_no = ?
+        WHERE id = ?`,
+      [reason, reversalVoucher, id],
+    )
+    await logFinanceEvent({
+      entityType: "sales_invoice",
+      entityPk: id,
+      entityRef: String(existing.invoice_id || id),
+      type: "cancelled",
+      summary: `Invoice ${existing.invoice_id || id} cancelled: ${reason}${reversalVoucher ? ` (reversal voucher ${reversalVoucher})` : ""}`,
+      amount: Number(existing.invoice_total) || null,
+      voucherNo: reversalVoucher,
+      actorId: session.userId,
+    })
+    return NextResponse.json({ ok: true, reversal_voucher_no: reversalVoucher })
+  }
+
   // Posted / Issued / Sent: restrict edits to the allowed field set. Amounts and
   // line items are frozen; only payment/compliance/status changes are applied.
   if (status !== "Draft") {

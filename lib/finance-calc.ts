@@ -132,6 +132,98 @@ export function computePurchaseBill(v: Record<string, any>) {
   }
 }
 
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+/** Accounting period label derived from a date, e.g. "Apr-2026". */
+export function accountingPeriodFor(dateStr?: string | null): string {
+  if (!dateStr) return ""
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return ""
+  return `${MONTH_SHORT[d.getMonth()]}-${d.getFullYear()}`
+}
+
+/**
+ * Pure, client-safe Expense money engine (Phase 15).
+ *
+ * Single source of truth shared by the live form preview (config `compute`) and
+ * the server-authoritative recalculation (computeExpenseServerFields). Given the
+ * raw inputs it derives the taxable value, GST split, gross, TDS, the employee
+ * advance adjustment (Phase 19/20) and the net payable / outstanding (Phase 17).
+ *
+ * GST split rules mirror Purchase Bills: a single `gst_rate` + `supply_type` is
+ * authoritative (Intra splits into CGST+SGST, Inter goes to IGST); when no rate
+ * is supplied the explicit cgst/sgst/igst amounts are used as-is (imported /
+ * historical rows). TDS is always computed on the taxable value.
+ */
+export function computeExpense(v: Record<string, any>) {
+  const qty = num(v.quantity)
+  const rate = num(v.rate)
+  const discount = round2(num(v.discount))
+  const base = qty > 0 && rate > 0 ? qty * rate : num(v.taxable_amount) + discount
+  const taxable = round2(Math.max(base - discount, 0))
+
+  const gstApplicable = !!v.gst_applicable
+  const gstRate = num(v.gst_rate)
+  const interState = String(v.supply_type || "").trim() === "Inter-State"
+
+  let cgst = round2(num(v.cgst_amount))
+  let sgst = round2(num(v.sgst_amount))
+  let igst = round2(num(v.igst_amount))
+  if (gstApplicable && gstRate > 0) {
+    if (interState) {
+      igst = round2((taxable * gstRate) / 100)
+      cgst = 0
+      sgst = 0
+    } else {
+      cgst = round2((taxable * gstRate) / 2 / 100)
+      sgst = round2((taxable * gstRate) / 2 / 100)
+      igst = 0
+    }
+  } else if (!gstApplicable) {
+    cgst = 0
+    sgst = 0
+    igst = 0
+  }
+  const cess = round2(num(v.cess_amount))
+  const gross = round2(taxable + cgst + sgst + igst + cess)
+
+  const tds = v.tds_applicable ? round2((taxable * num(v.tds_rate)) / 100) : 0
+  const netBeforeAdj = round2(gross - tds)
+
+  // Phase 19/20 — employee advance adjustment.
+  const advance = round2(num(v.advance_amount))
+  const advanceAdjusted = advance > 0 ? round2(Math.min(advance, netBeforeAdj)) : 0
+  const remainingAdvance = advance > 0 ? round2(advance - advanceAdjusted) : 0
+  const additionalReimbursement = advance > 0 ? round2(Math.max(netBeforeAdj - advance, 0)) : 0
+  const otherAdjustment = round2(num(v.other_adjustment))
+
+  const netPayable = round2(Math.max(netBeforeAdj - advanceAdjusted - otherAdjustment, 0))
+  const paid = round2(num(v.amount_paid))
+
+  return {
+    taxable_amount: taxable,
+    discount,
+    gst_rate: gstRate,
+    cgst_amount: cgst,
+    sgst_amount: sgst,
+    igst_amount: igst,
+    cess_amount: cess,
+    gross_amount: gross,
+    tds_amount: tds,
+    advance_amount: advance,
+    advance_adjusted: advanceAdjusted,
+    remaining_advance: remainingAdvance,
+    additional_reimbursement: additionalReimbursement,
+    other_adjustment: otherAdjustment,
+    net_payable: netPayable,
+    amount_paid: paid,
+    outstanding_amount: round2(netPayable - paid),
+    payment_status: autoPaymentStatus(netPayable, paid, v.payment_status),
+    financial_year: v.financial_year || financialYearFor(v.expense_date),
+    accounting_period: v.accounting_period || accountingPeriodFor(v.expense_date),
+  }
+}
+
 /** Add `days` to an ISO date string, returning YYYY-MM-DD (or "" when invalid). */
 export function addDays(dateStr?: string | null, days?: any): string {
   if (!dateStr) return ""

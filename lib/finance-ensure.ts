@@ -178,6 +178,118 @@ export async function ensurePurchaseBillColumns() {
   pbEnsured = true
 }
 
+let expenseEnsured = false
+
+/**
+ * Self-healing schema for the Expenses upgrade (Phases 1–34).
+ *
+ * The base `expenses` table already carries the core fields (id, date, type,
+ * party, project, category/head, single-line tax, TDS, approval, reimbursement,
+ * GST-credit). This adds the frozen Employee snapshot (from HR), the frozen
+ * Vendor snapshot (from Finance Vendors), the Project/Client/Cost-Centre
+ * linkage, the accounting period + references, the COA expense-head mapping,
+ * the GST rate/cess/supply-type split, the payment-status/outstanding tracking,
+ * the employee advance + reimbursement adjustment fields, the document URLs and
+ * the duplicate hash — none of which exist in the original migration. It also
+ * adds the indexes required by Phase 34. Runs once per process.
+ */
+export async function ensureExpenseColumns() {
+  if (expenseEnsured) return
+  const t = "expenses"
+
+  // Phase 13 — expense details / references.
+  await ensureColumn(t, "accounting_period", "VARCHAR(20) DEFAULT NULL")
+  await ensureColumn(t, "reference_number", "VARCHAR(80) DEFAULT NULL")
+  await ensureColumn(t, "vendor_invoice_number", "VARCHAR(80) DEFAULT NULL")
+  await ensureColumn(t, "hsn_sac", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "quantity", "DECIMAL(14,3) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "rate", "DECIMAL(14,4) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "discount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
+  // Phase 4 — frozen Employee snapshot (sourced from HR → Employees).
+  await ensureColumn(t, "employee_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "employee_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "department", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn(t, "designation", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn(t, "employment_type", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn(t, "employee_email", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "employee_mobile", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "employee_manager", "VARCHAR(160) DEFAULT NULL")
+
+  // Phase 5 — frozen Vendor snapshot (sourced from Finance → Vendors).
+  await ensureColumn(t, "vendor_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "vendor_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "vendor_legal_name", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn(t, "vendor_gstin", "VARCHAR(20) DEFAULT NULL")
+  await ensureColumn(t, "gst_status", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "gst_registration_type", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "vendor_pan", "VARCHAR(15) DEFAULT NULL")
+  await ensureColumn(t, "vendor_state", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn(t, "vendor_state_code", "VARCHAR(6) DEFAULT NULL")
+  await ensureColumn(t, "vendor_pin", "VARCHAR(12) DEFAULT NULL")
+  await ensureColumn(t, "vendor_address", "TEXT DEFAULT NULL")
+  await ensureColumn(t, "payment_terms", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "currency", "VARCHAR(10) DEFAULT NULL")
+
+  // Phase 6/7/8 — project / client / cost-centre linkage.
+  await ensureColumn(t, "client_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "project_status", "VARCHAR(60) DEFAULT NULL")
+
+  // Phase 9 — expense head → Chart of Accounts mapping.
+  await ensureColumn(t, "expense_head_account_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "expense_head_account_name", "VARCHAR(190) DEFAULT NULL")
+
+  // Phase 10 — bank/cash account snapshot.
+  await ensureColumn(t, "bank_cash_account_name", "VARCHAR(160) DEFAULT NULL")
+
+  // Phase 15 — GST rate + cess + supply-type driven split.
+  await ensureColumn(t, "gst_applicable", "TINYINT(1) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "gst_rate", "DECIMAL(6,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "cess_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "supply_type", "VARCHAR(20) DEFAULT NULL")
+  await ensureColumn(t, "itc_status", "VARCHAR(30) DEFAULT NULL")
+
+  // Phase 17 — payment status tracking (derived, never hand-maintained).
+  await ensureColumn(t, "payment_status", "VARCHAR(30) NOT NULL DEFAULT 'Unpaid'")
+  await ensureColumn(t, "payment_mode", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "amount_paid", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "outstanding_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
+  // Phase 19/20 — employee advance + adjustment.
+  await ensureColumn(t, "advance_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "advance_adjusted", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "remaining_advance", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "additional_reimbursement", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "other_adjustment", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
+  // Phase 18 — reimbursement workflow submission timestamp.
+  await ensureColumn(t, "submitted_at", "DATETIME DEFAULT NULL")
+
+  // Phase 22 — document attachments (existing ERP blob storage).
+  await ensureColumn(t, "receipt_url", "VARCHAR(500) DEFAULT NULL")
+  await ensureColumn(t, "vendor_invoice_url", "VARCHAR(500) DEFAULT NULL")
+  await ensureColumn(t, "supporting_docs_url", "TEXT DEFAULT NULL")
+
+  // Phase 24 — duplicate detection fingerprint.
+  await ensureColumn(t, "duplicate_hash", "VARCHAR(64) DEFAULT NULL")
+
+  // Phase 34 — indexes for search + aggregation performance.
+  const idx = async (name: string, cols: string) => {
+    if (!(await hasIndex(t, name))) await query(`ALTER TABLE ${t} ADD KEY ${name} (${cols})`)
+  }
+  await idx("idx_exp_employee", "employee_id")
+  await idx("idx_exp_vendor", "vendor_id")
+  await idx("idx_exp_project", "project_id")
+  await idx("idx_exp_type", "expense_type")
+  await idx("idx_exp_payment_status", "payment_status")
+  await idx("idx_exp_approval", "approval_status")
+  await idx("idx_exp_gstin", "vendor_gstin")
+  await idx("idx_exp_pan", "vendor_pan")
+  await idx("idx_exp_dup", "duplicate_hash")
+
+  expenseEnsured = true
+}
+
 let gstInputEnsured = false
 
 /**

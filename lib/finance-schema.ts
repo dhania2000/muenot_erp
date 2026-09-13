@@ -6,6 +6,13 @@
 
 export type FieldType = "text" | "number" | "date" | "textarea" | "select" | "checkbox"
 
+/**
+ * Visibility rule for a field, section or lookup. The element renders only when
+ * the current form value for `field` is one of `in`. For checkboxes the truthy
+ * value is "1". Used to drive the dynamic Expense form (Phase 12).
+ */
+export type VisibleWhen = { field: string; in: string[] }
+
 export type FieldDef = {
   section: string
   key: string
@@ -14,6 +21,10 @@ export type FieldDef = {
   options?: string[]
   placeholder?: string
   required?: boolean
+  /** Only render this field when the condition matches the current form. */
+  visibleWhen?: VisibleWhen
+  /** Render an "Upload" affordance next to the input (needs ModuleConfig.uploadPath). */
+  upload?: boolean
   /** Derived on the server — rendered read-only in the computed summary box. */
   computed?: boolean
   /** Format the value as currency in tables, details and the computed box. */
@@ -185,6 +196,22 @@ export type ModuleConfig = {
    * the vendor's TDS defaults and payment terms.
    */
   partyLookup?: PartyLookupConfig
+  /**
+   * Generalized multi-source pickers rendered at the top of the create/edit
+   * form (Employee, Vendor, Project, Expense Head, Bank/Cash). Each may be
+   * conditionally shown via `visibleWhen`.
+   */
+  lookups?: LookupConfig[]
+  /**
+   * When set, the form renders an "Upload" affordance for fields marked
+   * `upload: true`, POSTing a file to this path and storing the returned URL.
+   */
+  uploadPath?: string
+  /**
+   * When true, a create can return HTTP 409 with `{ duplicate }` and the form
+   * asks the user to confirm before re-submitting with `__forceCreate` (Phase 24).
+   */
+  duplicateCheck?: boolean
 }
 
 /**
@@ -192,6 +219,41 @@ export type ModuleConfig = {
  * whose list endpoint supplies the options (e.g. "customers-vendors"). `autofill`
  * maps source columns -> this module's field keys.
  */
+/**
+ * A generalized in-form picker sourced from any authoritative module list
+ * endpoint (HR employees, Vendors, Projects, Chart of Accounts, Bank/Cash).
+ * Selecting a row fills the id + name fields and copies the mapped snapshot
+ * columns into the form (empty fields only). Multiple lookups per module are
+ * supported and each may be conditionally shown via `visibleWhen` (Phase 12).
+ */
+export type LookupConfig = {
+  /** Stable key for the picker (also used for React keys). */
+  key: string
+  label: string
+  /** API path returning the option rows. */
+  path: string
+  /** Key in the JSON response holding the rows array (default "rows"). */
+  rowsKey?: string
+  /** Source column holding the business id. */
+  sourceIdColumn: string
+  /** Source column holding the display name. */
+  sourceNameColumn: string
+  /** Optional secondary line shown under each option. */
+  sourceSubColumn?: string
+  /** Field that receives the selected business id. */
+  idField: string
+  /** Field that receives the selected display name. */
+  nameField: string
+  /** Map of source column -> this module's field key, filled when empty. */
+  autofill: Record<string, string>
+  /** Only selectable rows: each rule requires the column value to be in the set. */
+  selectableWhen?: { column: string; in: string[] }[]
+  /** Only render the picker when this form condition matches. */
+  visibleWhen?: VisibleWhen
+  placeholder?: string
+  required?: boolean
+}
+
 export type PartyLookupConfig = {
   /** Module key whose `/api/finance/module/<key>` list feeds the picker. */
   sourceKey: string

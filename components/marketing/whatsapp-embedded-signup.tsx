@@ -245,11 +245,30 @@ export function WhatsAppEmbeddedSignup({
     // origin the SDK will present; it is the value that must be whitelisted in
     // the Meta dashboard. Never log tokens, secrets, or the auth code.
     const origin = resolveEmbeddedSignupOrigin()
-    console.log("[v0] Embedded Signup starting", {
+
+    // The coexistence launch selector. The WhatsApp Business App onboarding
+    // branch is triggered strictly by `featureType`; `setup` must be present
+    // (even empty) and `sessionInfoVersion` is vestigial for v4 but harmless.
+    // This is the exact object handed to FB.login below — we log it verbatim so
+    // the browser console proves what Meta actually receives at runtime.
+    const extras = {
+      setup: {},
+      featureType: "whatsapp_business_app_onboarding",
+      sessionInfoVersion: "3",
+    } as const
+
+    // Sanitized diagnostic — never logs tokens, secrets or the auth code. The
+    // `configId` / `featureType` printed here are the values Meta receives; if
+    // configId is not 1416471993755763 the production env var is wrong, and if
+    // Meta still shows the new-number screen with featureType present, the
+    // remaining issue is Meta-side config/eligibility, not this code.
+    console.log("[WhatsApp ES] launch config", {
       appId: APP_ID,
       configId: CONFIG_ID,
+      graphVersion: SDK_GRAPH_VERSION,
       origin,
       redirectUri: origin,
+      extras,
     })
 
     sessionInfo.current = {}
@@ -283,13 +302,10 @@ export function WhatsAppEmbeddedSignup({
         config_id: CONFIG_ID,
         response_type: "code",
         override_default_response_type: true,
-        extras: {
-          setup: {},
-          // Coexistence onboarding: keep the existing WhatsApp Business App
-          // number and complete the QR scan instead of registering a new one.
-          featureType: "whatsapp_business_app_onboarding",
-          sessionInfoVersion: "3",
-        },
+        // Coexistence onboarding: keep the existing WhatsApp Business App number
+        // and complete the QR scan instead of registering a new one. Same object
+        // that was logged above, so the diagnostic can't drift from what is sent.
+        extras,
       },
     )
   }

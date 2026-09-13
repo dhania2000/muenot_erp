@@ -85,6 +85,37 @@ export function ContractDetailDrawer({
   const contract = data?.contract
   const events = data?.events ?? []
   const signatures = data?.signatures ?? []
+  const hasActiveOnboarding = (relations?.onboarding ?? []).some(
+    (o) => o.status !== "Completed" && o.status !== "Cancelled",
+  )
+
+  async function startOnboarding() {
+    if (!id) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/sales/onboarding`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_contract_id: id }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const existing = body?.details?.existingCode
+        toast.error(
+          existing ? `An active onboarding already exists (${existing}).` : body.error || "Could not start onboarding",
+        )
+        return
+      }
+      toast.success(`Onboarding ${body.onboarding_code ?? ""} started`)
+      await mutate()
+      onChanged()
+      window.location.assign(`/modules/sales/onboarding/${body.id}`)
+    } catch {
+      toast.error("Something went wrong")
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function runAction(payload: Record<string, any>) {
     if (!id) return
@@ -279,12 +310,29 @@ export function ContractDetailDrawer({
                   )}
                 </RelationSection>
 
-                <RelationSection icon={<RocketIcon className="size-4" />} title="Onboarding">
+                <RelationSection
+                  icon={<RocketIcon className="size-4" />}
+                  title="Onboarding"
+                  action={
+                    canManage && !hasActiveOnboarding ? (
+                      <Button size="sm" variant="outline" disabled={busy} onClick={startOnboarding}>
+                        <RocketIcon data-icon="inline-start" />
+                        Start onboarding
+                      </Button>
+                    ) : null
+                  }
+                >
                   {relations?.onboarding?.length ? (
                     <MiniTable
                       head={["Code", "Date", "Stage", "Status"]}
                       rows={relations.onboarding.map((o) => [
-                        o.onboarding_code,
+                        <a
+                          key={o.id}
+                          href={`/modules/sales/onboarding/${o.id}`}
+                          className="font-medium text-primary underline-offset-2 hover:underline"
+                        >
+                          {o.onboarding_code}
+                        </a>,
                         formatDate(o.onboarding_date),
                         o.current_stage || "—",
                         o.status || "—",
@@ -530,16 +578,21 @@ function RelationSection({
   icon,
   title,
   children,
+  action,
 }: {
   icon: React.ReactNode
   title: string
   children: React.ReactNode
+  action?: React.ReactNode
 }) {
   return (
     <div className="mb-5">
-      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-        {icon}
-        <span>{title}</span>
+      <div className="mb-2 flex items-center justify-between gap-2 text-sm font-medium">
+        <div className="flex items-center gap-2">
+          {icon}
+          <span>{title}</span>
+        </div>
+        {action}
       </div>
       {children}
     </div>

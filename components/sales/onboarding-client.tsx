@@ -177,7 +177,12 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
       </div>
 
       {canManage && selected.size > 0 && (
-        <SelectionToolbar count={selected.size} onClear={clear} onDelete={() => del.requestMany([...selected])} />
+        <SelectionToolbar
+          count={selected.size}
+          noun="onboarding"
+          onClear={clear}
+          onDelete={() => del.requestBulk([...selected])}
+        />
       )}
 
       <div className="rounded-md border border-border bg-card">

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server"
 import { requireFeature } from "@/lib/api-auth"
-import { createOnboarding, listOnboarding, onboardingErrorStatus } from "@/lib/sales/onboarding-service"
+import {
+  createFromContract,
+  createOnboarding,
+  listOnboarding,
+  onboardingErrorStatus,
+} from "@/lib/sales/onboarding-service"
 
 /** GET /api/sales/onboarding — filtered list of onboarding records. */
 export async function GET(request: Request) {
@@ -34,7 +39,10 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => ({}))
   try {
-    const record = await createOnboarding(body, session.userId)
+    const fromContractId = body?.from_contract_id ? Number(body.from_contract_id) : null
+    const record = fromContractId
+      ? await createFromContract(fromContractId, session.userId)
+      : await createOnboarding(body, session.userId)
     return NextResponse.json({ id: record.id, onboarding_code: record.onboarding_code, record })
   } catch (err) {
     return NextResponse.json(

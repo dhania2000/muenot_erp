@@ -2,6 +2,7 @@ import "server-only"
 import type { PoolConnection } from "mysql2/promise"
 import { pool, query } from "@/lib/db"
 import { resolveCompanyId } from "@/lib/sales/company-master"
+import { createContractFromQuotation } from "@/lib/sales/contract-service"
 import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
 import { computeQuoteTotals, type DiscountType, type GstTreatment, type TaxMode } from "@/lib/sales/quotation-calc"
 import { round2 } from "@/lib/finance-calc"
@@ -940,60 +941,30 @@ export async function convertToContract(
   if (q.converted_contract_id) {
     throw new QuotationError("This quotation has already been converted to a contract.", 409)
   }
-  const conn = await pool.getConnection()
-  try {
-    await conn.beginTransaction()
-    const [maxRows] = await conn.query<any[]>(
-      "SELECT COALESCE(MAX(CAST(SUBSTRING(contract_code, 4) AS UNSIGNED)), 0) + 1 AS next FROM sales_contracts",
-    )
-    const contractCode = `CT-${String(Number(maxRows[0]?.next || 1)).padStart(3, "0")}`
-    const [res] = await conn.query<any>(
-      `INSERT INTO sales_contracts
-       (contract_code, contract_date, company_name, start_date, end_date, value, contract_type, status,
-        signed_by_client, notes, source_quotation_id, added_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Draft', ?, ?, ?, ?)`,
-      [
-        contractCode,
-        new Date().toISOString().slice(0, 10),
-        q.company_name,
-        opts.start_date || null,
-        opts.end_date || null,
-        q.grand_total,
-        opts.contract_type || q.opportunity_name || "Service",
-        q.contact_person || null,
-        `Generated from quotation ${q.quote_code}`,
-        id,
-        actorId,
-      ],
-    )
-    const contractId = res.insertId as number
-    await conn.query("UPDATE sales_quotations SET converted_contract_id = ? WHERE id = ?", [contractId, id])
-    await logQuotationEvent({
-      quotationId: id,
-      type: "converted_contract",
-      description: `Converted to contract ${contractCode}`,
-      meta: { contractId, contractCode },
+  // Delegate to the canonical contract service so the new contract shares the
+  // same safe numbering (CON-0001), company linkage, root/version tracking, and
+  // append-only timeline as every other contract. No second insert path here.
+  const { id: contractId, contract_code: contractCode } = await createContractFromQuotation(q, actorId, opts)
+
+  await query("UPDATE sales_quotations SET converted_contract_id = ? WHERE id = ?", [contractId, id])
+  await logQuotationEvent({
+    quotationId: id,
+    type: "converted_contract",
+    description: `Converted to contract ${contractCode}`,
+    meta: { contractId, contractCode },
+    actorId,
+  })
+  if (q.lead_id) {
+    await attachLeadEvent({
+      leadId: Number(q.lead_id),
+      type: "contract",
+      title: `Quotation ${q.quote_code} converted to contract ${contractCode}`,
+      refType: "contract",
+      refId: contractId,
       actorId,
-      conn,
-    })
-    await conn.commit()
-    if (q.lead_id) {
-      await attachLeadEvent({
-        leadId: Number(q.lead_id),
-        type: "contract",
-        title: `Quotation ${q.quote_code} converted to contract ${contractCode}`,
-        refType: "contract",
-        refId: contractId,
-        actorId,
-      }).catch(() => {})
-    }
-    return { contract_id: contractId, contract_code: contractCode }
-  } catch (err) {
-    await conn.rollback()
-    throw err
-  } finally {
-    conn.release()
+    }).catch(() => {})
   }
+  return { contract_id: contractId, contract_code: contractCode }
 }
 
 export async function convertToInvoice(id: number, actorId: number): Promise<{ invoice_id: number; invoice_code: string }> {

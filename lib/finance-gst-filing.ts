@@ -124,6 +124,20 @@ export async function gstSummary(period: string) {
     [from, to],
   ).catch(() => [])) as any[]
 
+  // Diagnostics: invoices that fall in the period but are excluded from the
+  // return, so the UI can explain an empty summary ("1 Draft not included")
+  // instead of silently showing zeros.
+  const [diag] = (await query(
+    `SELECT
+        COUNT(*) AS in_period,
+        COALESCE(SUM(CASE WHEN invoice_status = 'Draft' THEN 1 ELSE 0 END),0) AS draft,
+        COALESCE(SUM(CASE WHEN invoice_status = 'Cancelled' THEN 1 ELSE 0 END),0) AS cancelled,
+        COALESCE(SUM(CASE WHEN invoice_type = 'Proforma Invoice' THEN 1 ELSE 0 END),0) AS proforma
+      FROM sales_invoices
+     WHERE invoice_date >= ? AND invoice_date <= ?`,
+    [from, to],
+  ).catch(() => [{}])) as any[]
+
   const taxable = round2(num(totals?.taxable))
   const cgst = round2(num(totals?.cgst))
   const sgst = round2(num(totals?.sgst))
@@ -163,6 +177,12 @@ export async function gstSummary(period: string) {
       taxable: round2(num(r.taxable)),
       tax: round2(num(r.tax)),
     })),
+    excluded: {
+      in_period: Number(diag?.in_period ?? 0),
+      draft: Number(diag?.draft ?? 0),
+      cancelled: Number(diag?.cancelled ?? 0),
+      proforma: Number(diag?.proforma ?? 0),
+    },
     filing: existing
       ? {
           filing_id: existing.filing_id,

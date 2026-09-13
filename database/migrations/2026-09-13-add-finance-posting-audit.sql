@@ -106,66 +106,75 @@ CREATE TABLE IF NOT EXISTS finance_audit_events (
 -- ---------------------------------------------------------------------------
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
-  'COA-AR' account_id, '1200' account_code, 'Accounts Receivable' account_name,
-  'Asset' account_group, 'Current Asset' account_type, 'Debit' nature,
-  0 bank_cash_account, 0 gst_applicable, 0 tds_applicable, 'Active' active_status) t
+SELECT
+  'COA-AR', '1200', 'Accounts Receivable',
+  'Asset', 'Current Asset', 'Debit',
+  0, 0, 0, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '1200');
 
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
+SELECT
   'COA-TDS-RECV', '1450', 'TDS Receivable', 'Asset', 'Current Asset', 'Debit',
-  0, 0, 1, 'Active') t
+  0, 0, 1, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '1450');
 
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
+SELECT
   'COA-BANK', '1000', 'Bank Account', 'Asset', 'Bank', 'Debit',
-  1, 0, 0, 'Active') t
+  1, 0, 0, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '1000');
 
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
+SELECT
   'COA-CASH', '1010', 'Cash', 'Asset', 'Cash', 'Debit',
-  1, 0, 0, 'Active') t
+  1, 0, 0, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '1010');
 
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
+SELECT
   'COA-SALES', '4000', 'Sales Revenue', 'Income', 'Direct Income', 'Credit',
-  0, 1, 0, 'Active') t
+  0, 1, 0, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '4000');
 
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
+SELECT
   'COA-CGST-OUT', '2110', 'Output CGST Payable', 'Liability', 'Duties & Taxes', 'Credit',
-  0, 1, 0, 'Active') t
+  0, 1, 0, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '2110');
 
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
+SELECT
   'COA-SGST-OUT', '2120', 'Output SGST Payable', 'Liability', 'Duties & Taxes', 'Credit',
-  0, 1, 0, 'Active') t
+  0, 1, 0, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '2120');
 
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
+SELECT
   'COA-IGST-OUT', '2130', 'Output IGST Payable', 'Liability', 'Duties & Taxes', 'Credit',
-  0, 1, 0, 'Active') t
+  0, 1, 0, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '2130');
 
 INSERT INTO chart_of_accounts
   (account_id, account_code, account_name, account_group, account_type, nature, bank_cash_account, gst_applicable, tds_applicable, active_status)
-SELECT * FROM (SELECT
+SELECT
   'COA-CESS-OUT', '2140', 'Output Cess Payable', 'Liability', 'Duties & Taxes', 'Credit',
-  0, 1, 0, 'Active') t
+  0, 1, 0, 'Active'
+FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM chart_of_accounts c WHERE c.account_code = '2140');
 
 -- ---------------------------------------------------------------------------

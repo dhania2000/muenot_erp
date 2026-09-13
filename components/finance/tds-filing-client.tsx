@@ -25,6 +25,7 @@ type Summary = {
 }
 
 type DetailRow = {
+  source: string
   doc_id: string
   doc_date: string
   doc_ref: string
@@ -36,6 +37,12 @@ type DetailRow = {
   rate: number
   tds: number
   status: string
+}
+
+const SOURCE_BADGE: Record<string, "default" | "secondary" | "outline"> = {
+  "Purchase Bill": "default",
+  Expense: "secondary",
+  "Sales Invoice": "outline",
 }
 
 const DIRECTION_COPY: Record<Direction, { label: string; blurb: string; partyLabel: string }> = {
@@ -192,6 +199,7 @@ export function TdsFilingClient() {
             <TableHeader>
               <TableRow>
                 <TableHead>Document</TableHead>
+                {direction === "payable" ? <TableHead>Source</TableHead> : null}
                 <TableHead>{copy.partyLabel}</TableHead>
                 {direction === "payable" ? <TableHead>PAN</TableHead> : null}
                 <TableHead>Section</TableHead>
@@ -214,6 +222,11 @@ export function TdsFilingClient() {
                       <div className="font-mono text-xs">{r.doc_ref || r.doc_id}</div>
                       <div className="text-xs text-muted-foreground">{String(r.doc_date).slice(0, 10)}</div>
                     </TableCell>
+                    {direction === "payable" ? (
+                      <TableCell>
+                        <Badge variant={SOURCE_BADGE[r.source] ?? "outline"}>{r.source || "Purchase Bill"}</Badge>
+                      </TableCell>
+                    ) : null}
                     <TableCell className="font-medium">{r.party_name}</TableCell>
                     {direction === "payable" ? (
                       <TableCell className="font-mono text-xs text-muted-foreground">{r.pan || "—"}</TableCell>

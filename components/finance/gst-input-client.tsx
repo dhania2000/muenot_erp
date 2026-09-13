@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FileSpreadsheet, RefreshCcw, ScrollText } from "lucide-react"
+import { FileSpreadsheet, RefreshCcw, ScrollText, TriangleAlert } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 
 const currency = (n: any) => inr0(Number(n) || 0)
@@ -34,6 +34,21 @@ type Monthly = {
   rows: Record<string, any>[]
 }
 
+type TaxException = {
+  expense_id: string
+  expense_date: string | null
+  party: string
+  severity: "high" | "medium" | "low"
+  category: string
+  message: string
+}
+
+const SEVERITY_BADGE: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  high: "destructive",
+  medium: "secondary",
+  low: "outline",
+}
+
 const RECON_BADGE: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   Matched: "default",
   Mismatch: "destructive",
@@ -53,9 +68,13 @@ export function GstInputClient() {
   const [error, setError] = useState("")
   const [selected, setSelected] = useState<Set<number>>(new Set())
 
-  const { data, mutate } = useSWR<{ monthly: Monthly }>(`/api/finance/gst-input?period=${period}`, fetcher)
+  const { data, mutate } = useSWR<{ monthly: Monthly; exceptions: TaxException[] }>(
+    `/api/finance/gst-input?period=${period}`,
+    fetcher,
+  )
   const m = data?.monthly
   const rows = m?.rows ?? []
+  const exceptions = data?.exceptions ?? []
 
   const selectableIds = useMemo(
     () => rows.filter((r) => Number(r.itc_eligible) === 1).map((r) => Number(r.id)),
@@ -102,7 +121,7 @@ export function GstInputClient() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">GST Input (ITC) Register</h1>
           <p className="text-sm text-muted-foreground">
-            Input tax credit from posted purchase bills, reconciled against GSTR-2B.
+            Input tax credit from posted purchase bills and expenses (incl. RCM), reconciled against GSTR-2B.
           </p>
         </div>
         <div className="flex flex-col gap-1">
@@ -224,6 +243,50 @@ export function GstInputClient() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
+            <TriangleAlert className="h-4 w-4" />
+            Tax exceptions — {period}
+            {exceptions.length > 0 ? <Badge variant="destructive">{exceptions.length}</Badge> : null}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Severity</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Document</TableHead>
+                <TableHead>Party</TableHead>
+                <TableHead>Issue</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {exceptions.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">
+                    No tax exceptions detected in this period.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                exceptions.map((ex, i) => (
+                  <TableRow key={`${ex.expense_id}-${i}`}>
+                    <TableCell>
+                      <Badge variant={SEVERITY_BADGE[ex.severity] ?? "outline"}>{ex.severity}</Badge>
+                    </TableCell>
+                    <TableCell className="text-sm">{ex.category}</TableCell>
+                    <TableCell className="font-mono text-xs">{ex.expense_id}</TableCell>
+                    <TableCell className="text-sm">{ex.party}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{ex.message}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
             <ScrollText className="h-4 w-4" />
             ITC register — {period}
           </CardTitle>
@@ -235,8 +298,9 @@ export function GstInputClient() {
                 <TableHead className="w-10">
                   <Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all eligible" />
                 </TableHead>
-                <TableHead>Bill</TableHead>
-                <TableHead>Vendor</TableHead>
+                <TableHead>Document</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Party</TableHead>
                 <TableHead className="text-right">Taxable</TableHead>
                 <TableHead className="text-right">Total GST</TableHead>
                 <TableHead className="text-right">Net ITC</TableHead>
@@ -270,7 +334,13 @@ export function GstInputClient() {
                         <div className="text-xs text-muted-foreground">{r.bill_number || "—"}</div>
                       </TableCell>
                       <TableCell>
-                        <div className="font-medium">{r.vendor_name || "—"}</div>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant="outline">{r.source || "Purchase Bill"}</Badge>
+                          {Number(r.rcm_applicable) === 1 ? <Badge variant="secondary">RCM</Badge> : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">{r.vendor_name || r.employee_name || "—"}</div>
                         <div className="text-xs text-muted-foreground">{r.vendor_gstin || "Unregistered"}</div>
                       </TableCell>
                       <TableCell className="text-right">{currency(r.taxable_amount)}</TableCell>

@@ -100,19 +100,36 @@ async function sectionAggregate(period: string, direction: TdsDirection) {
   const { from, to } = periodRange(period)
 
   if (direction === "payable") {
+    // Payable TDS is deducted BOTH on vendor purchase bills and on vendor
+    // expenses (Phase 26/40). Both ledgers feed one 26Q return, so aggregate
+    // over their union keyed on the statutory section.
     return (await query(
-      `SELECT COALESCE(NULLIF(tds_section,''),'Unspecified') AS section,
+      `SELECT section,
               COUNT(*) AS invoice_count,
-              COALESCE(SUM(COALESCE(NULLIF(tds_base,0), taxable_amount)),0) AS base,
-              COALESCE(SUM(tds_amount),0) AS tds,
-              COALESCE(AVG(NULLIF(tds_rate,0)),0) AS avg_rate
-         FROM purchase_bills
-        WHERE bill_date >= ? AND bill_date <= ?
-          AND tds_applicable = 1 AND tds_amount > 0
-          AND COALESCE(payment_status,'') NOT IN ('Cancelled','Draft','Void')
-        GROUP BY COALESCE(NULLIF(tds_section,''),'Unspecified')
+              COALESCE(SUM(base),0) AS base,
+              COALESCE(SUM(tds),0) AS tds,
+              COALESCE(AVG(NULLIF(rate,0)),0) AS avg_rate
+         FROM (
+           SELECT COALESCE(NULLIF(tds_section,''),'Unspecified') AS section,
+                  COALESCE(NULLIF(tds_base,0), taxable_amount) AS base,
+                  tds_amount AS tds, tds_rate AS rate
+             FROM purchase_bills
+            WHERE bill_date >= ? AND bill_date <= ?
+              AND tds_applicable = 1 AND tds_amount > 0
+              AND COALESCE(payment_status,'') NOT IN ('Cancelled','Draft','Void')
+           UNION ALL
+           SELECT COALESCE(NULLIF(tds_section,''),'Unspecified') AS section,
+                  COALESCE(NULLIF(tds_base,0), taxable_amount) AS base,
+                  tds_amount AS tds, tds_rate AS rate
+             FROM expenses
+            WHERE expense_date >= ? AND expense_date <= ?
+              AND tds_applicable = 1 AND tds_amount > 0
+              AND vendor_id IS NOT NULL AND vendor_id <> ''
+              AND COALESCE(approval_status,'') NOT IN ('Cancelled','Rejected','Void')
+         ) u
+        GROUP BY section
         ORDER BY tds DESC`,
-      [from, to],
+      [from, to, from, to],
     ).catch(() => [])) as any[]
   }
 
@@ -180,22 +197,42 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
   const { from, to } = periodRange(period)
 
   if (dir === "payable") {
+    // Line-level payable register: one row per vendor purchase bill AND vendor
+    // expense that carries TDS, each tagged with its source module so a preparer
+    // can trace every rupee back to the document it came from (Phase 27/29).
     const rows = (await query(
-      `SELECT bill_id AS doc_id, bill_date AS doc_date, bill_number AS doc_ref,
-              financial_year,
-              vendor_id AS party_id, vendor_name AS party_name, vendor_legal_name AS party_legal_name,
-              vendor_pan AS pan, vendor_gstin AS gstin,
-              COALESCE(NULLIF(tds_section,''),'Unspecified') AS section,
-              COALESCE(NULLIF(tds_base,0), taxable_amount) AS base,
-              tds_rate AS rate, tds_amount AS tds, payment_status AS status
-         FROM purchase_bills
-        WHERE bill_date >= ? AND bill_date <= ?
-          AND tds_applicable = 1 AND tds_amount > 0
-          AND COALESCE(payment_status,'') NOT IN ('Cancelled','Draft','Void')
-        ORDER BY tds_amount DESC, bill_date ASC`,
-      [from, to],
+      `SELECT * FROM (
+         SELECT 'Purchase Bill' AS source, bill_id AS doc_id, bill_date AS doc_date, bill_number AS doc_ref,
+                financial_year,
+                vendor_id AS party_id, vendor_name AS party_name, vendor_legal_name AS party_legal_name,
+                vendor_pan AS pan, vendor_gstin AS gstin,
+                COALESCE(NULLIF(tds_section,''),'Unspecified') AS section,
+                COALESCE(NULLIF(tds_base,0), taxable_amount) AS base,
+                tds_rate AS rate, tds_amount AS tds, payment_status AS status, bill_date AS sort_date
+           FROM purchase_bills
+          WHERE bill_date >= ? AND bill_date <= ?
+            AND tds_applicable = 1 AND tds_amount > 0
+            AND COALESCE(payment_status,'') NOT IN ('Cancelled','Draft','Void')
+         UNION ALL
+         SELECT 'Expense' AS source, expense_id AS doc_id, expense_date AS doc_date,
+                COALESCE(NULLIF(vendor_invoice_number,''), bill_receipt_no) AS doc_ref,
+                financial_year,
+                vendor_id AS party_id, vendor_name AS party_name, vendor_legal_name AS party_legal_name,
+                vendor_pan AS pan, vendor_gstin AS gstin,
+                COALESCE(NULLIF(tds_section,''),'Unspecified') AS section,
+                COALESCE(NULLIF(tds_base,0), taxable_amount) AS base,
+                tds_rate AS rate, tds_amount AS tds, approval_status AS status, expense_date AS sort_date
+           FROM expenses
+          WHERE expense_date >= ? AND expense_date <= ?
+            AND tds_applicable = 1 AND tds_amount > 0
+            AND vendor_id IS NOT NULL AND vendor_id <> ''
+            AND COALESCE(approval_status,'') NOT IN ('Cancelled','Rejected','Void')
+       ) u
+       ORDER BY tds DESC, sort_date ASC`,
+      [from, to, from, to],
     ).catch(() => [])) as any[]
     return rows.map((r) => ({
+      source: r.source,
       doc_id: r.doc_id,
       doc_date: r.doc_date,
       doc_ref: r.doc_ref,
@@ -227,6 +264,7 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
     [from, to],
   ).catch(() => [])) as any[]
   return rows.map((r) => ({
+    source: "Sales Invoice",
     doc_id: r.doc_id,
     doc_date: r.doc_date,
     doc_ref: r.doc_ref,

@@ -7,6 +7,7 @@ import {
   reconcilePeriod,
   draftGstr2bFromBills,
   setClaimState,
+  detectTaxExceptions,
 } from "@/lib/finance-gst-input"
 
 // The GST Input / ITC register is a GST compliance surface, so it is gated by
@@ -24,12 +25,13 @@ export async function GET(req: NextRequest) {
   const period = p.get("period") || thisMonth()
 
   try {
-    const [monthly, financialYears] = await Promise.all([
+    const [monthly, financialYears, exceptions] = await Promise.all([
       gstInputMonthlySummary(period),
       gstInputFinancialYears(),
+      detectTaxExceptions(period),
     ])
     const quarterly = financialYear ? await gstInputQuarterlySummary(financialYear) : null
-    return NextResponse.json({ monthly, quarterly, financialYears })
+    return NextResponse.json({ monthly, quarterly, financialYears, exceptions })
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 400 })
   }

@@ -20,23 +20,96 @@ import {
 } from "@/lib/email"
 import { renderEmailTemplate } from "@/lib/sales/email-template-engine"
 import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
+import { ensureSalesEmailHubSchema } from "@/lib/sales/sales-email-automation"
+import { toMysqlDateTime } from "@/lib/sales/sales-email-scheduler"
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await requireFeature("sales.send_emails")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   await ensureEmailTables()
-  const emails = await query(
-    `SELECT e.id, e.lead_id, e.to_email, e.to_name, e.subject, e.status,
-            e.open_count, e.first_opened_at, e.last_opened_at, e.error_message,
-            e.sent_at, e.thread_id, e.mail_type, u.name AS sent_by_name, l.contact_person AS lead_contact
-     FROM sales_emails e
-     LEFT JOIN users u ON u.id = e.sent_by
-     LEFT JOIN sales_leads l ON l.id = e.lead_id
-     ORDER BY e.sent_at DESC
-     LIMIT 500`,
-  )
-  return NextResponse.json({ emails, emailConfigured: isEmailConfigured() })
+  // Ensure the hub columns (category/email_type/status enum/scheduled_at) exist
+  // so filtering, summary and the history view work on legacy databases.
+  await ensureSalesEmailHubSchema()
+
+  const sp = new URL(request.url).searchParams
+  const where: string[] = []
+  const args: any[] = []
+
+  const q = (sp.get("q") || "").trim()
+  if (q) {
+    const like = `%${q}%`
+    where.push("(e.to_email LIKE ? OR e.to_name LIKE ? OR e.subject LIKE ? OR e.category LIKE ?)")
+    args.push(like, like, like, like)
+  }
+  const status = sp.get("status") || ""
+  if (status && status !== "all") {
+    where.push("e.status = ?")
+    args.push(status)
+  }
+  const category = sp.get("category") || ""
+  if (category && category !== "all") {
+    where.push("e.category = ?")
+    args.push(category)
+  }
+  const mailType = sp.get("mail_type") || ""
+  if (mailType === "new" || mailType === "followup") {
+    where.push("e.mail_type = ?")
+    args.push(mailType)
+  }
+
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : ""
+  // Pagination is opt-in: when no page is supplied we keep the legacy behaviour
+  // of returning the most recent 500 rows in one shot.
+  const paginated = sp.has("page") || sp.has("pageSize")
+  const page = Math.max(1, Number(sp.get("page") || 1))
+  const pageSize = Math.min(200, Math.max(1, Number(sp.get("pageSize") || 25)))
+  const limit = paginated ? pageSize : 500
+  const offset = paginated ? (page - 1) * pageSize : 0
+
+  const [emails, totalRows, summaryRows] = await Promise.all([
+    query<any[]>(
+      `SELECT e.id, e.lead_id, e.to_email, e.to_name, e.subject, e.status, e.category,
+              e.email_type, e.open_count, e.first_opened_at, e.last_opened_at, e.error_message,
+              e.scheduled_at, e.sent_at, e.thread_id, e.mail_type,
+              u.name AS sent_by_name, l.contact_person AS lead_contact
+       FROM sales_emails e
+       LEFT JOIN users u ON u.id = e.sent_by
+       LEFT JOIN sales_leads l ON l.id = e.lead_id
+       ${clause}
+       ORDER BY COALESCE(e.scheduled_at, e.sent_at) DESC, e.id DESC
+       LIMIT ? OFFSET ?`,
+      [...args, limit, offset],
+    ),
+    query<any[]>(`SELECT COUNT(*) AS total FROM sales_emails e ${clause}`, args),
+    query<any[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(status IN ('Sent','Opened')) AS sent,
+         SUM(status = 'Failed') AS failed,
+         SUM(status IN ('Scheduled','Queued','Sending')) AS pending,
+         SUM(status = 'Draft') AS drafts,
+         SUM(COALESCE(open_count,0) > 0) AS opened
+       FROM sales_emails`,
+    ),
+  ])
+
+  const s = summaryRows[0] || {}
+  return NextResponse.json({
+    emails,
+    total: Number(totalRows[0]?.total || 0),
+    page,
+    pageSize,
+    emailConfigured: isEmailConfigured(),
+    summary: {
+      total: Number(s.total || 0),
+      sent: Number(s.sent || 0),
+      failed: Number(s.failed || 0),
+      pending: Number(s.pending || 0),
+      drafts: Number(s.drafts || 0),
+      opened: Number(s.opened || 0),
+    },
+  })
 }
 
 export async function POST(request: Request) {
@@ -65,6 +138,14 @@ export async function POST(request: Request) {
   const department = body.department === "hr" || body.department === "finance" ? body.department : "sales"
   await hydrateDepartmentSMTP(department)
 
+  // Send mode mirrors the HR Email Hub: send now, save as draft, or schedule for
+  // later (dispatched by the sales-emails cron). Anything else falls back to send.
+  const mode: "send" | "draft" | "schedule" =
+    body.mode === "draft" || body.mode === "schedule" ? body.mode : "send"
+  const category = (body.category || "General").toString().trim() || "General"
+  const cc = body.cc ? String(body.cc).trim() || null : null
+  const bcc = body.bcc ? String(body.bcc).trim() || null : null
+
   if (!to_email || !subject || !content) {
     return NextResponse.json({ error: "Recipient, subject, and body are required" }, { status: 400 })
   }
@@ -73,7 +154,9 @@ export async function POST(request: Request) {
   if (/[\r\n,;]/.test(normalizedTo) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedTo)) {
     return NextResponse.json({ error: "Enter a single valid recipient email address." }, { status: 400 })
   }
-  if (!isEmailConfigured(department)) {
+  // Drafts and scheduled sends can be saved even before transport is configured;
+  // only an immediate send needs a working SMTP/Gmail transport up front.
+  if (mode === "send" && !isEmailConfigured(department)) {
     return NextResponse.json(
       { error: "Email is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS in your environment." },
       { status: 400 },
@@ -121,11 +204,63 @@ export async function POST(request: Request) {
   const token = generateTrackingToken()
   const messageId = buildMessageId(token, department)
 
+  const recipientKey = buildRecipientKey(lead_id, to_email)
+
+  // Draft / Schedule: persist the composed email without sending. Threading is
+  // resolved later at DISPATCH time by the sales-email scheduler (for scheduled
+  // rows) or when the draft is manually sent — exactly like the HR hub.
+  if (mode !== "send") {
+    await ensureSalesEmailHubSchema()
+    const scheduledAt = mode === "schedule" ? toMysqlDateTime(body.scheduled_at) : null
+    if (mode === "schedule" && !scheduledAt) {
+      return NextResponse.json({ error: "Pick a valid date and time to schedule." }, { status: 400 })
+    }
+    const draftSubject = renderEmailTemplate(subject, vars)
+    const draftBody = renderEmailTemplate(content, vars)
+    const draftThreadId = mailType === "new" ? buildNewThreadId(recipientKey, token) : null
+    const attachmentPathname = attachment?.pathname || null
+    const inserted = await query<any>(
+      `INSERT INTO sales_emails
+         (lead_id, template_id, to_email, to_name, subject, body, tracking_token,
+          status, sent_by, thread_id, recipient_key, mail_type, idempotency_key,
+          category, email_type, source_module, cc, bcc, department,
+          scheduled_at, reply_to_email_id, attachment_pathname)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Manual', 'manual', ?, ?, ?, ?, ?, ?)`,
+      [
+        lead_id || null,
+        template_id || null,
+        normalizedTo,
+        to_name || null,
+        draftSubject,
+        draftBody,
+        token,
+        mode === "schedule" ? "Scheduled" : "Draft",
+        session.userId,
+        draftThreadId,
+        recipientKey,
+        mailType,
+        idempotencyKey,
+        category,
+        cc,
+        bcc,
+        department,
+        scheduledAt,
+        replyToEmailId,
+        attachmentPathname,
+      ],
+    )
+    return NextResponse.json({
+      id: inserted.insertId,
+      status: mode === "schedule" ? "Scheduled" : "Draft",
+      mode,
+      mail_type: mailType,
+    })
+  }
+
   // Decide which conversation this email belongs to.
   // - New:       always a brand-new thread, even for a known recipient.
   // - Follow Up: continue the recipient's most recent thread; if they've never
   //              been emailed before, it naturally becomes a new thread.
-  const recipientKey = buildRecipientKey(lead_id, to_email)
   let threadId: string
   let anchor: LatestThread | null = null
   if (mailType === "followup") {
@@ -225,6 +360,8 @@ export async function POST(request: Request) {
   try {
     const sendResult = await sendEmail({
       to: to_email,
+      cc: cc || undefined,
+      bcc: bcc || undefined,
       subject: renderedSubject,
       html: htmlWithPixel,
       messageId,
@@ -274,8 +411,9 @@ export async function POST(request: Request) {
     `INSERT INTO sales_emails
        (lead_id, template_id, to_email, to_name, subject, body, tracking_token,
         status, error_message, sent_by, message_id, in_reply_to, references_header,
-        thread_id, recipient_key, provider_thread_id, mail_type, idempotency_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        thread_id, recipient_key, provider_thread_id, mail_type, idempotency_key,
+        category, email_type, source_module, cc, bcc)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Manual', 'manual', ?, ?)`,
     [
       lead_id || null,
       template_id || null,
@@ -302,6 +440,11 @@ export async function POST(request: Request) {
       // that makes the idempotency short-circuit above actually work on retries.
       mailType,
       idempotencyKey,
+      // Hub metadata: category the sender chose, plus optional CC/BCC. email_type
+      // and source_module are literals ('Manual'/'manual') in the SQL above.
+      category,
+      cc,
+      bcc,
     ],
   )
 

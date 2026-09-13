@@ -18,8 +18,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 
-/** Manual credential entry — the advanced fallback to Embedded Signup. */
-export function IntegrateManuallyDialog({ onConnected }: { onConnected: () => void }) {
+/** Cloud API credential entry — the only way to connect a WhatsApp number. */
+export function IntegrateManuallyDialog({
+  onConnected,
+  label = "Connect WhatsApp Cloud API",
+  variant = "default",
+}: {
+  onConnected: () => void
+  label?: string
+  variant?: React.ComponentProps<typeof Button>["variant"]
+}) {
   const [open, setOpen] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [form, setForm] = React.useState({ wabaId: "", phoneNumberId: "", accessToken: "", businessName: "" })
@@ -57,9 +65,9 @@ export function IntegrateManuallyDialog({ onConnected }: { onConnected: () => vo
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
-          <Button variant="outline">
+          <Button variant={variant}>
             <Plug className="size-4" />
-            Enter credentials manually
+            {label}
           </Button>
         }
       />

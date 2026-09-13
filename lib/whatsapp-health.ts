@@ -147,8 +147,8 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
     // (#133010) "Account not registered" at send time. Meta only reports
     // `status: "CONNECTED"` once the number is actually registered/usable on
     // the Cloud API. Anything else (or an unreported status) means messaging
-    // is not confirmed and the number likely needs to be (re)connected via
-    // Embedded Signup.
+    // is not confirmed and the number likely needs to be registered on the
+    // Cloud API in the Meta app dashboard.
     const status = (profile.status || "").toUpperCase()
     checks.push({
       id: "registration",
@@ -158,8 +158,8 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
         status === "CONNECTED"
           ? "Number is registered on the Cloud API and can send/receive messages."
           : status
-            ? `Meta reports status "${status}" — Cloud API messaging is not registered. Reconnect the number with "Connect WhatsApp" (Embedded Signup).`
-            : "Meta did not report a registration status. If sending fails with (#133010), reconnect the number with \u201CConnect WhatsApp\u201D (Embedded Signup).",
+            ? `Meta reports status "${status}" — Cloud API messaging is not registered. Register the number on the Cloud API in your Meta app dashboard, then update the credentials.`
+            : "Meta did not report a registration status. If sending fails with (#133010), register the number on the Cloud API in your Meta app dashboard, then update the credentials.",
     })
   } catch (err) {
     checks.push({

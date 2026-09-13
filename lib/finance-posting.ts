@@ -3,6 +3,7 @@ import { pool, query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import {
   resolveAccount,
+  resolveAccountById,
   isDebitNature,
   ensurePurchasePostingAccounts,
   type AccountRole,
@@ -35,6 +36,13 @@ type PostingLine = {
   /** portion of this line that is tax, for GST/TDS reporting on the row */
   gst?: number
   tds?: number
+  /**
+   * Optional explicit Chart-of-Accounts id. When present the line posts to this
+   * exact account instead of the role's default (Phase 11 — an expense posts to
+   * its own mapped expense head). The role is still carried for reporting/debit-
+   * nature fallback if the account cannot be resolved.
+   */
+  accountId?: string | null
 }
 
 export type PostingResult = {
@@ -168,10 +176,20 @@ export async function postLines(lines: PostingLine[], args: PostArgs): Promise<P
   const { debit, credit } = assertBalanced(oriented)
 
   // Resolve every account up front (outside the txn) so a missing account fails
-  // before we open a transaction.
+  // before we open a transaction. A line keyed to an explicit account id posts
+  // to that exact head; everything else resolves via its role default. Explicit
+  // ids are cached separately so a role and a same-role explicit head coexist.
   const resolved = new Map<AccountRole, ResolvedAccount>()
+  const resolvedById = new Map<string, ResolvedAccount>()
   for (const line of oriented) {
-    if (!resolved.has(line.role)) resolved.set(line.role, await resolveAccount(line.role))
+    if (line.accountId) {
+      if (!resolvedById.has(line.accountId)) {
+        const explicit = (await resolveAccountById(line.accountId)) ?? (await resolveAccount(line.role))
+        resolvedById.set(line.accountId, explicit)
+      }
+    } else if (!resolved.has(line.role)) {
+      resolved.set(line.role, await resolveAccount(line.role))
+    }
   }
 
   const voucherNo = await nextRecordId("VCH")
@@ -182,7 +200,7 @@ export async function postLines(lines: PostingLine[], args: PostArgs): Promise<P
     const ledgerIds: string[] = []
 
     for (const line of oriented) {
-      const account = resolved.get(line.role)!
+      const account = line.accountId ? resolvedById.get(line.accountId)! : resolved.get(line.role)!
       const journalEntryId = await nextRecordId("JE")
       const ledgerId = await nextRecordId("GL")
 

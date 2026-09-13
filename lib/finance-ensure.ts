@@ -165,3 +165,134 @@ export async function ensurePurchaseBillColumns() {
 
   pbEnsured = true
 }
+
+let gstInputEnsured = false
+
+/**
+ * Self-healing schema for the GST Input (ITC) subsystem — Phases 6–20.
+ *
+ * Creates the purchase-bill line items table, the GST Input register, the
+ * GSTR-2B staging table, and adds effective-dating to the tax master. MySQL 8
+ * supports `CREATE TABLE IF NOT EXISTS`, so the tables are idempotent without
+ * information_schema gymnastics; the tax-rate columns still need the guarded
+ * ADD COLUMN because the base table pre-exists. Runs once per process.
+ */
+export async function ensureGstInputSchema() {
+  if (gstInputEnsured) return
+
+  await query(`CREATE TABLE IF NOT EXISTS purchase_bill_items (
+    id                INT AUTO_INCREMENT PRIMARY KEY,
+    bill_id           VARCHAR(30) NOT NULL,
+    line_no           INT NOT NULL DEFAULT 1,
+    description       VARCHAR(500) DEFAULT NULL,
+    hsn_sac           VARCHAR(20) DEFAULT NULL,
+    quantity          DECIMAL(14,3) NOT NULL DEFAULT 0,
+    unit              VARCHAR(20) DEFAULT NULL,
+    rate              DECIMAL(14,4) NOT NULL DEFAULT 0,
+    discount_type     VARCHAR(10) NOT NULL DEFAULT 'amount',
+    discount_value    DECIMAL(14,2) NOT NULL DEFAULT 0,
+    discount_amount   DECIMAL(14,2) NOT NULL DEFAULT 0,
+    taxable_value     DECIMAL(14,2) NOT NULL DEFAULT 0,
+    gst_rate          DECIMAL(6,2) NOT NULL DEFAULT 0,
+    cgst_percent      DECIMAL(6,2) NOT NULL DEFAULT 0,
+    cgst_amount       DECIMAL(14,2) NOT NULL DEFAULT 0,
+    sgst_percent      DECIMAL(6,2) NOT NULL DEFAULT 0,
+    sgst_amount       DECIMAL(14,2) NOT NULL DEFAULT 0,
+    igst_percent      DECIMAL(6,2) NOT NULL DEFAULT 0,
+    igst_amount       DECIMAL(14,2) NOT NULL DEFAULT 0,
+    cess_amount       DECIMAL(14,2) NOT NULL DEFAULT 0,
+    line_total        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_eligibility   VARCHAR(20) NOT NULL DEFAULT 'Eligible',
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_pbi_bill (bill_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS finance_gst_input (
+    id                    INT AUTO_INCREMENT PRIMARY KEY,
+    gst_input_id          VARCHAR(30) NOT NULL,
+    source                VARCHAR(40) NOT NULL DEFAULT 'Purchase Bill',
+    source_bill_id        VARCHAR(30) NOT NULL,
+    source_bill_ref       VARCHAR(60) DEFAULT NULL,
+    bill_number           VARCHAR(120) DEFAULT NULL,
+    bill_date             DATE DEFAULT NULL,
+    period                VARCHAR(7) DEFAULT NULL,
+    quarter               VARCHAR(7) DEFAULT NULL,
+    financial_year        VARCHAR(12) DEFAULT NULL,
+    vendor_id             VARCHAR(40) DEFAULT NULL,
+    vendor_name           VARCHAR(255) DEFAULT NULL,
+    vendor_gstin          VARCHAR(20) DEFAULT NULL,
+    vendor_state          VARCHAR(120) DEFAULT NULL,
+    vendor_state_code     VARCHAR(6) DEFAULT NULL,
+    place_of_supply       VARCHAR(120) DEFAULT NULL,
+    supply_type           VARCHAR(20) DEFAULT NULL,
+    taxable_amount        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    gst_rate              DECIMAL(6,2) NOT NULL DEFAULT 0,
+    cgst_amount           DECIMAL(14,2) NOT NULL DEFAULT 0,
+    sgst_amount           DECIMAL(14,2) NOT NULL DEFAULT 0,
+    igst_amount           DECIMAL(14,2) NOT NULL DEFAULT 0,
+    cess_amount           DECIMAL(14,2) NOT NULL DEFAULT 0,
+    total_gst             DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_eligible          TINYINT(1) NOT NULL DEFAULT 1,
+    itc_section           VARCHAR(40) DEFAULT 'Input Services',
+    itc_gross             DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_eligible_amount   DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_ineligible_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_reversal_amount   DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_net               DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_cgst              DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_sgst              DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_igst              DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_cess              DECIMAL(14,2) NOT NULL DEFAULT 0,
+    itc_claimed           TINYINT(1) NOT NULL DEFAULT 0,
+    claimed_period        VARCHAR(7) DEFAULT NULL,
+    reconciliation_status VARCHAR(20) NOT NULL DEFAULT 'Unreconciled',
+    gstr2b_reference      VARCHAR(120) DEFAULT NULL,
+    gstr2b_taxable        DECIMAL(14,2) DEFAULT NULL,
+    gstr2b_tax            DECIMAL(14,2) DEFAULT NULL,
+    match_variance        DECIMAL(14,2) DEFAULT NULL,
+    status                VARCHAR(20) NOT NULL DEFAULT 'Available',
+    narration             VARCHAR(500) DEFAULT NULL,
+    created_by            INT DEFAULT NULL,
+    created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_gin_source (source, source_bill_id),
+    UNIQUE KEY uq_gin_id (gst_input_id),
+    KEY idx_gin_period (period),
+    KEY idx_gin_quarter (quarter),
+    KEY idx_gin_vendor_gstin (vendor_gstin),
+    KEY idx_gin_recon (reconciliation_status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS finance_gstr2b (
+    id                INT AUTO_INCREMENT PRIMARY KEY,
+    period            VARCHAR(7) NOT NULL,
+    supplier_gstin    VARCHAR(20) DEFAULT NULL,
+    supplier_name     VARCHAR(255) DEFAULT NULL,
+    bill_number       VARCHAR(120) DEFAULT NULL,
+    bill_date         DATE DEFAULT NULL,
+    taxable_amount    DECIMAL(14,2) NOT NULL DEFAULT 0,
+    cgst_amount       DECIMAL(14,2) NOT NULL DEFAULT 0,
+    sgst_amount       DECIMAL(14,2) NOT NULL DEFAULT 0,
+    igst_amount       DECIMAL(14,2) NOT NULL DEFAULT 0,
+    cess_amount       DECIMAL(14,2) NOT NULL DEFAULT 0,
+    total_tax         DECIMAL(14,2) NOT NULL DEFAULT 0,
+    source            VARCHAR(30) NOT NULL DEFAULT 'Draft',
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_g2b_period (period),
+    KEY idx_g2b_gstin (supplier_gstin)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  // Phase 10 — effective-dating on the (pre-existing) tax master, when present.
+  const taxTable = await query<any[]>(
+    `SELECT 1 FROM information_schema.tables
+       WHERE table_schema = DATABASE() AND table_name = 'finance_tax_rates' LIMIT 1`,
+  )
+  if (taxTable.length > 0) {
+    await ensureColumn("finance_tax_rates", "effective_from", "DATE DEFAULT NULL")
+    await ensureColumn("finance_tax_rates", "effective_to", "DATE DEFAULT NULL")
+    await ensureColumn("finance_tax_rates", "status", "VARCHAR(20) NOT NULL DEFAULT 'Active'")
+  }
+
+  gstInputEnsured = true
+}

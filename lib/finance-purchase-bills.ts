@@ -151,9 +151,48 @@ export async function computePurchaseBillServerFields(
   })
   out.supply_type = supplyType
 
-  // --- Phase 5: authoritative money recalculation ----------------------------
-  const money = computePurchaseBill({ ...merged, ...out, supply_type: supplyType })
-  Object.assign(out, money)
+  // --- Phase 5/6: authoritative money recalculation --------------------------
+  // When multi line items are supplied, the header taxable value + GST split are
+  // aggregated from the (server-recomputed) lines and override the single-line
+  // fields; otherwise the classic single-line compute is used.
+  const rawItems = Array.isArray(merged.__items) ? (merged.__items as any[]) : null
+  if (rawItems && rawItems.length > 0) {
+    const { totals } = computeBillItems(rawItems, supplyType)
+    const aggregatedInput = {
+      ...merged,
+      ...out,
+      supply_type: supplyType,
+      quantity: 0,
+      rate: 0,
+      discount: totals.discount,
+      taxable_amount: totals.taxable_amount,
+      gst_rate: totals.gst_rate,
+      cgst_percent: 0,
+      sgst_percent: 0,
+      igst_percent: 0,
+      other_tax_cess: totals.other_tax_cess,
+    }
+    const money = computePurchaseBill(aggregatedInput as Record<string, any>)
+    // Trust the item aggregate for the tax split (handles mixed GST rates).
+    Object.assign(out, money, {
+      taxable_amount: totals.taxable_amount,
+      cgst_amount: totals.cgst_amount,
+      sgst_amount: totals.sgst_amount,
+      igst_amount: totals.igst_amount,
+      other_tax_cess: totals.other_tax_cess,
+      gross_bill_amount: totals.gross_bill_amount,
+    })
+    // Recompute TDS / net / outstanding on the aggregated taxable + gross.
+    const tds = merged.tds_applicable ? round2((totals.taxable_amount * Number(merged.tds_rate || 0)) / 100) : 0
+    const paid = round2(Number(out.amount_paid ?? merged.amount_paid ?? 0))
+    out.tds_base = totals.taxable_amount
+    out.tds_amount = tds
+    out.net_payable = round2(totals.gross_bill_amount - tds)
+    out.outstanding_amount = round2(out.net_payable - paid)
+  } else {
+    const money = computePurchaseBill({ ...merged, ...out, supply_type: supplyType })
+    Object.assign(out, money)
+  }
 
   // --- Phase 38: due date from bill date + vendor payment terms --------------
   const hasDue = merged.due_date && String(merged.due_date).trim() !== ""

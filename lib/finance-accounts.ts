@@ -28,6 +28,11 @@ export type AccountRole =
   | "input_cess"
   | "payable"
   | "tds_payable"
+  // Expense-side roles (Phases 9–11 — expense posting).
+  | "expense"
+  | "employee_payable"
+  | "vendor_payable"
+  | "employee_advance"
 
 /** Default account_code for each posting role (matches the migration seed). */
 export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
@@ -48,6 +53,12 @@ export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
   input_cess: "1440",
   payable: "2000",
   tds_payable: "2150",
+  // Expense-side defaults. `expense` is the generic fallback head used only when
+  // an expense has no explicit Chart-of-Accounts mapping of its own.
+  expense: "5100",
+  employee_payable: "2200",
+  vendor_payable: "2000",
+  employee_advance: "1460",
 }
 
 /**
@@ -76,11 +87,21 @@ const PURCHASE_ACCOUNT_SEEDS: CoaSeed[] = [
   { code: "2150", id: "COA-TDS-PAY", name: "TDS Payable", group: "Liability", type: "Duties & Taxes", nature: "Credit", tds: true },
 ]
 
-let purchaseAccountsEnsured = false
+/**
+ * Expense-side accounts (Phases 9–11). The generic expense head, the
+ * employee-reimbursement payable and the employee-advance asset are not in the
+ * original migration seed, so seed any that are missing before an expense is
+ * posted. Vendor expenses reuse the shared Accounts Payable (2000) and the
+ * input-GST / TDS-payable accounts already seeded on the purchase side.
+ */
+const EXPENSE_ACCOUNT_SEEDS: CoaSeed[] = [
+  { code: "5100", id: "COA-EXPENSE", name: "General Expenses", group: "Expense", type: "Indirect Expense", nature: "Debit" },
+  { code: "2200", id: "COA-EMP-PAY", name: "Employee Reimbursements Payable", group: "Liability", type: "Current Liability", nature: "Credit" },
+  { code: "1460", id: "COA-EMP-ADV", name: "Employee Advances", group: "Asset", type: "Current Asset", nature: "Debit" },
+]
 
-export async function ensurePurchasePostingAccounts(): Promise<void> {
-  if (purchaseAccountsEnsured) return
-  for (const a of PURCHASE_ACCOUNT_SEEDS) {
+async function seedAccounts(seeds: CoaSeed[]): Promise<void> {
+  for (const a of seeds) {
     await query(
       `INSERT INTO chart_of_accounts
          (account_id, account_code, account_name, account_group, account_type, nature,
@@ -90,7 +111,48 @@ export async function ensurePurchasePostingAccounts(): Promise<void> {
       [a.id, a.code, a.name, a.group, a.type, a.nature, a.gst ? 1 : 0, a.tds ? 1 : 0, a.code],
     )
   }
+}
+
+let purchaseAccountsEnsured = false
+
+export async function ensurePurchasePostingAccounts(): Promise<void> {
+  if (purchaseAccountsEnsured) return
+  await seedAccounts(PURCHASE_ACCOUNT_SEEDS)
   purchaseAccountsEnsured = true
+}
+
+let expenseAccountsEnsured = false
+
+export async function ensureExpensePostingAccounts(): Promise<void> {
+  if (expenseAccountsEnsured) return
+  // Expenses reuse the purchase-side input-GST / AP / TDS accounts, so ensure
+  // both seed sets are present.
+  await seedAccounts(PURCHASE_ACCOUNT_SEEDS)
+  await seedAccounts(EXPENSE_ACCOUNT_SEEDS)
+  expenseAccountsEnsured = true
+}
+
+/** Resolve a live Chart-of-Accounts row by its `account_id` (explicit head). */
+export async function resolveAccountById(accountId: string): Promise<ResolvedAccount | null> {
+  if (!accountId) return null
+  const rows = (await query(
+    `SELECT account_id, account_code, account_name, account_group, account_type, nature
+       FROM chart_of_accounts
+      WHERE account_id = ?
+      ORDER BY (active_status = 'Active') DESC, id ASC
+      LIMIT 1`,
+    [accountId],
+  )) as any[]
+  const row = rows?.[0]
+  if (!row) return null
+  return {
+    account_id: row.account_id,
+    account_code: row.account_code ?? null,
+    account_name: row.account_name ?? accountId,
+    account_group: row.account_group ?? null,
+    account_type: row.account_type ?? null,
+    nature: row.nature ?? null,
+  }
 }
 
 export type ResolvedAccount = {

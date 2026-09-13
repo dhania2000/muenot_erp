@@ -307,6 +307,28 @@ export async function ensureExpenseColumns() {
   await ensureColumn(t, "gst_rule_version", "VARCHAR(40) DEFAULT NULL")
   await ensureColumn(t, "gst_rate_source", "VARCHAR(60) DEFAULT NULL")
 
+  // Journal / General Ledger posting linkage (accrual-on-post). `voucher_no`
+  // ties the expense to its balanced posting, `posted_gross` makes the sync
+  // idempotent, and `posted_snapshot` freezes the amounts as posted so a later
+  // reversal always unwinds the exact original figures even if the row changed.
+  await ensureColumn(t, "voucher_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "reversal_voucher_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "posting_status", "VARCHAR(20) NOT NULL DEFAULT 'Unposted'")
+  await ensureColumn(t, "posted_at", "DATETIME DEFAULT NULL")
+  await ensureColumn(t, "posted_gross", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "posted_snapshot", "LONGTEXT DEFAULT NULL")
+
+  // Full lifecycle state machine (Draft → Submitted → Pending Approval →
+  // Approved → Posted → Paid, plus Rejected / Cancelled). `approval_status`
+  // stays as the coarse Pending/Approved/Rejected mirror the list UI badges,
+  // while `workflow_status` carries the authoritative fine-grained state.
+  await ensureColumn(t, "workflow_status", "VARCHAR(30) NOT NULL DEFAULT 'Draft'")
+  await ensureColumn(t, "approved_by_id", "INT DEFAULT NULL")
+  await ensureColumn(t, "approved_at", "DATETIME DEFAULT NULL")
+  await ensureColumn(t, "rejected_reason", "VARCHAR(500) DEFAULT NULL")
+  await ensureColumn(t, "cancelled_reason", "VARCHAR(500) DEFAULT NULL")
+  await ensureColumn(t, "refunded_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
   // Phase 34 — indexes for search + aggregation performance.
   const idx = async (name: string, cols: string) => {
     if (!(await hasIndex(t, name))) await query(`ALTER TABLE ${t} ADD KEY ${name} (${cols})`)

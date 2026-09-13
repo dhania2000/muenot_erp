@@ -532,6 +532,86 @@ export async function createContract(
   }
 }
 
+/**
+ * Canonical creation of a contract FROM an accepted quotation. This is the ONE
+ * place quotation→contract conversion happens so it shares the same safe,
+ * settings-driven numbering (CON-0001), company linkage, root/version tracking,
+ * and append-only timeline as every other contract. `quotation` is a loaded
+ * `sales_quotations` row.
+ */
+export async function createContractFromQuotation(
+  quotation: Record<string, any>,
+  actorId: Actor,
+  opts: { start_date?: string; end_date?: string; contract_type?: string } = {},
+): Promise<{ id: number; contract_code: string }> {
+  await ensureContractSchema()
+  if (!quotation?.company_name) throw new ContractError("Quotation has no company to contract with")
+
+  const contractCode = await nextDocumentId("contract")
+  const companyId = await resolveCompanyId({
+    company_id: quotation.company_id,
+    company_name: quotation.company_name,
+  })
+
+  // Carry the quotation's commercial terms into the contract body.
+  const termsParts = [
+    quotation.payment_terms ? `Payment terms: ${quotation.payment_terms}` : null,
+    quotation.delivery_terms ? `Delivery terms: ${quotation.delivery_terms}` : null,
+    quotation.terms_text || null,
+  ].filter(Boolean)
+  const terms = termsParts.length ? termsParts.join("\n\n") : null
+
+  const value = Number(quotation.grand_total ?? quotation.value ?? 0) || 0
+
+  const conn = await pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    const [res] = await conn.query<any>(
+      `INSERT INTO sales_contracts
+       (contract_code, title, contract_date, company_name, company_id, start_date, end_date, value,
+        contract_type, status, signed_by_client, terms, notes, source_quotation_id,
+        relation, version_no, added_by)
+       VALUES (?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, 'Draft', ?, ?, ?, ?, 'Original', 1, ?)`,
+      [
+        contractCode,
+        quotation.opportunity_name || quotation.reference || null,
+        quotation.company_name,
+        companyId,
+        opts.start_date || null,
+        opts.end_date || null,
+        value,
+        opts.contract_type || quotation.opportunity_name || "Service",
+        quotation.contact_person || null,
+        terms,
+        `Generated from quotation ${quotation.quote_code}`,
+        quotation.id,
+        actorId ?? null,
+      ],
+    )
+    const id = res.insertId as number
+    await conn.query("UPDATE sales_contracts SET root_contract_id = ? WHERE id = ?", [id, id])
+    await logEvent(conn, {
+      contractId: id,
+      type: "created_from_quotation",
+      description: `Contract ${contractCode} created from quotation ${quotation.quote_code}`,
+      meta: {
+        quotation_id: quotation.id,
+        quote_code: quotation.quote_code,
+        currency: quotation.currency,
+        value,
+      },
+      actorId,
+    })
+    await conn.commit()
+    return { id, contract_code: contractCode }
+  } catch (err) {
+    await conn.rollback()
+    throw err
+  } finally {
+    conn.release()
+  }
+}
+
 /** Editable fields. Locked once the contract leaves Draft/Pending Signature. */
 const EDITABLE_FIELDS = [
   "title",

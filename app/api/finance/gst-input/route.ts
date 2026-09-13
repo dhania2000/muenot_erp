@@ -1,0 +1,66 @@
+import { NextRequest, NextResponse } from "next/server"
+import { requireFeature } from "@/lib/api-auth"
+import {
+  gstInputMonthlySummary,
+  gstInputQuarterlySummary,
+  gstInputFinancialYears,
+  reconcilePeriod,
+  draftGstr2bFromBills,
+  setClaimState,
+} from "@/lib/finance-gst-input"
+
+// The GST Input / ITC register is a GST compliance surface, so it is gated by
+// the same feature as GST Filing rather than introducing a new grant.
+const FEATURE = "finance.gst_filing"
+
+const thisMonth = () => new Date().toISOString().slice(0, 7)
+
+export async function GET(req: NextRequest) {
+  const session = await requireFeature(FEATURE)
+  if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const p = req.nextUrl.searchParams
+  const financialYear = p.get("financial_year")
+  const period = p.get("period") || thisMonth()
+
+  try {
+    const [monthly, financialYears] = await Promise.all([
+      gstInputMonthlySummary(period),
+      gstInputFinancialYears(),
+    ])
+    const quarterly = financialYear ? await gstInputQuarterlySummary(financialYear) : null
+    return NextResponse.json({ monthly, quarterly, financialYears })
+  } catch (error) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 })
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const session = await requireFeature(FEATURE)
+  if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const body = await req.json().catch(() => ({}) as Record<string, any>)
+  const action = String(body.action || "")
+  const period = String(body.period || "")
+
+  try {
+    if (action === "draft-2b") {
+      if (!period) throw new Error("A tax period is required to draft GSTR-2B.")
+      const result = await draftGstr2bFromBills(period)
+      return NextResponse.json({ ok: true, ...result })
+    }
+    if (action === "reconcile") {
+      if (!period) throw new Error("A tax period is required to reconcile.")
+      const result = await reconcilePeriod(period)
+      return NextResponse.json({ ok: true, ...result })
+    }
+    if (action === "claim") {
+      const ids = Array.isArray(body.ids) ? body.ids.map((n: any) => Number(n)).filter(Boolean) : []
+      const result = await setClaimState(ids, Boolean(body.claimed), period || null)
+      return NextResponse.json({ ok: true, ...result })
+    }
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 })
+  } catch (error) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 })
+  }
+}

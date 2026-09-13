@@ -31,6 +31,48 @@ const ID_GENERATORS: Record<string, (record: Record<string, any>) => Promise<str
   "purchase-bills": (record) => nextPurchaseBillId(record.bill_date),
 }
 
+/**
+ * Optional per-module side effect that runs AFTER a create/update has been
+ * committed to the module's own table. For Purchase Bills this is where the
+ * frozen line-item snapshot is persisted (Phase 6/7) and the bill is projected
+ * into the GST Input / ITC register (Phase 11–20). Everything here keys off the
+ * authoritative, server-recomputed row, never the raw browser payload.
+ */
+const AFTER_WRITE: Record<
+  string,
+  (ctx: { finalRow: Record<string, any>; body: Record<string, any>; userId: number; isCreate: boolean }) => Promise<void>
+> = {
+  "purchase-bills": async ({ finalRow, body, userId }) => {
+    const billId = finalRow[cfgIdColumn("purchase-bills")]
+    if (!billId) return
+    // Persist the frozen multi-line snapshot when the client sent line items.
+    const raw = Array.isArray(body.__items) ? (body.__items as any[]) : null
+    if (raw && raw.length > 0) {
+      const supplyType = (finalRow.supply_type as SupplyType) || "Intra-State"
+      const { items } = computeBillItems(raw, supplyType)
+      await persistBillItems(String(billId), items)
+    }
+    // Project into the ITC register (idempotent: create → edit → re-post never
+    // duplicates a credit, and a zero-GST / excluded bill removes its record).
+    await syncGstInputForBill(String(billId), { createdBy: userId })
+  },
+}
+
+/** Optional per-module side effect that runs when a record is deleted. */
+const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> = {
+  "purchase-bills": async (row) => {
+    const billId = row?.bill_id
+    if (!billId) return
+    await deleteGstInputForBill(String(billId))
+    await query(`DELETE FROM purchase_bill_items WHERE bill_id = ?`, [billId])
+  },
+}
+
+/** Resolve a module's id column without importing the whole config graph twice. */
+function cfgIdColumn(moduleKey: string): string {
+  return FINANCE_MODULE_CONFIGS[moduleKey]?.idColumn ?? "id"
+}
+
 /** Column keys a client is allowed to write (everything except computed fields). */
 function inputKeys(cfg: ModuleConfig) {
   return cfg.fields.filter((f) => !f.computed).map((f) => f.key)
@@ -165,6 +207,9 @@ export function createFinanceHandlers(moduleKey: string) {
       cols.map((c) => record[c]),
     )
 
+    const afterWrite = AFTER_WRITE[moduleKey]
+    if (afterWrite) await afterWrite({ finalRow: record, body, userId: session.userId, isCreate: true })
+
     return NextResponse.json({ ok: true, id: record[cfg.idColumn] }, { status: 201 })
   }
 
@@ -213,6 +258,14 @@ export function createFinanceHandlers(moduleKey: string) {
       )
     }
 
+    const afterWrite = AFTER_WRITE[moduleKey]
+    if (afterWrite) {
+      // Re-read the row so the side effect keys off the committed state (the
+      // update set only carries changed columns, not the whole bill).
+      const [finalRow] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
+      if (finalRow) await afterWrite({ finalRow, body, userId: session.userId, isCreate: false })
+    }
+
     return NextResponse.json({ ok: true })
   }
 
@@ -221,7 +274,20 @@ export function createFinanceHandlers(moduleKey: string) {
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     const id = Number(req.nextUrl.searchParams.get("id"))
     if (!id) return NextResponse.json({ error: "Record id is required" }, { status: 400 })
+
+    // Capture the row before deletion so module side effects can unwind
+    // dependent records (line items, ITC register) keyed off its business id.
+    const afterDelete = AFTER_DELETE[moduleKey]
+    let doomed: Record<string, any> | null = null
+    if (typeof afterDelete === "function") {
+      const [row] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
+      doomed = row ?? null
+    }
+
     await query(`DELETE FROM ${cfg.table} WHERE id = ?`, [id])
+
+    if (typeof afterDelete === "function" && doomed) await afterDelete(doomed)
+
     return NextResponse.json({ ok: true })
   }
 

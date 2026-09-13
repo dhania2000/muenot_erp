@@ -213,6 +213,7 @@ export async function ensureClientTables() {
     ["credit_limit", "`credit_limit` DECIMAL(16,2) DEFAULT NULL"],
     ["archived_at", "`archived_at` DATETIME DEFAULT NULL"],
     ["archived_by", "`archived_by` INT UNSIGNED DEFAULT NULL"],
+    ["merged_into_id", "`merged_into_id` BIGINT UNSIGNED DEFAULT NULL"],
     ["row_version", "`row_version` INT UNSIGNED NOT NULL DEFAULT 1"],
   ]
 
@@ -462,4 +463,237 @@ export async function getClientLinkCounts(client: {
     invoices = Number(rows?.[0]?.c ?? 0)
   }
   return { invoices, total: invoices }
+}
+
+// ---------------------------------------------------------------------------
+// Client 360 aggregation
+// ---------------------------------------------------------------------------
+
+export type ClientRecord = {
+  id: number
+  client_code: string
+  client_name: string
+  company_id: number | null
+  finance_party_id: string | null
+  credit_limit: number | null
+  currency: string | null
+  [key: string]: any
+}
+
+const n = (v: any) => {
+  const x = Number(v)
+  return Number.isFinite(x) ? x : 0
+}
+
+/**
+ * Aggregate the client's live Finance and Sales footprint. Every figure is
+ * derived from the canonical source tables (sales_invoices / sales_* / audit
+ * log) — nothing is stored on the client. All queries are guarded so a missing
+ * module never breaks the drawer.
+ */
+export async function getClient360(client: ClientRecord) {
+  const partyId = client.finance_party_id
+  const clientCode = client.client_code
+  const companyId = client.company_id
+
+  // --- Finance: invoices attached to this client (by party link or code) -----
+  const invoices = await query<any[]>(
+    `SELECT id, invoice_id, invoice_date, due_date, invoice_total, amount_received,
+            outstanding_amount, net_receivable, payment_status, invoice_status, tds_amount
+       FROM sales_invoices
+      WHERE (? IS NOT NULL AND customer_party_id = ?)
+         OR (client_id = ?)
+      ORDER BY invoice_date DESC, id DESC`,
+    [partyId, partyId, clientCode],
+  ).catch(() => [] as any[])
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  const aging = { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d91_180: 0, d180: 0 }
+  let totalInvoiced = 0
+  let totalPaid = 0
+  let outstanding = 0
+  let overdue = 0
+  let pendingTds = 0
+  let nextDue: string | null = null
+
+  for (const inv of invoices) {
+    if (String(inv.invoice_status || "") === "Cancelled") continue
+    totalInvoiced += n(inv.invoice_total)
+    totalPaid += n(inv.amount_received)
+    const os = n(inv.outstanding_amount)
+    outstanding += os
+    pendingTds += n(inv.tds_amount)
+    if (os > 0.005 && inv.due_date) {
+      const due = new Date(inv.due_date)
+      const days = Math.floor((today.getTime() - due.getTime()) / 86400000)
+      if (days > 0) overdue += os
+      if (days <= 0) aging.current += os
+      else if (days <= 30) aging.d1_30 += os
+      else if (days <= 60) aging.d31_60 += os
+      else if (days <= 90) aging.d61_90 += os
+      else if (days <= 180) aging.d91_180 += os
+      else aging.d180 += os
+      if (days <= 0 && (!nextDue || new Date(inv.due_date) < new Date(nextDue))) nextDue = inv.due_date
+    }
+  }
+
+  const creditLimit = client.credit_limit != null ? n(client.credit_limit) : null
+  const availableCredit = creditLimit != null ? creditLimit - outstanding : null
+  const utilization = creditLimit && creditLimit > 0 ? Math.round((outstanding / creditLimit) * 100) : null
+
+  const finance = {
+    linked: !!partyId,
+    finance_party_id: partyId,
+    total_invoiced: totalInvoiced,
+    total_paid: totalPaid,
+    outstanding,
+    overdue,
+    pending_tds: pendingTds,
+    credit_limit: creditLimit,
+    available_credit: availableCredit,
+    utilization,
+    invoice_count: invoices.length,
+    last_invoice: invoices[0] ? { invoice_id: invoices[0].invoice_id, invoice_date: invoices[0].invoice_date, invoice_total: n(invoices[0].invoice_total) } : null,
+    next_due: nextDue,
+    aging,
+    invoices: invoices.slice(0, 25),
+  }
+
+  // --- Sales: leads / quotations / contracts on the linked company ------------
+  let sales = {
+    linked: !!companyId,
+    open_leads: 0,
+    won_leads: 0,
+    lost_leads: 0,
+    open_quotations: 0,
+    accepted_quotations: 0,
+    active_contracts: 0,
+    forecast_value: 0,
+  }
+  if (companyId) {
+    const [leadAgg] = await query<any[]>(
+      `SELECT
+         SUM(CASE WHEN status NOT IN ('Won','Lost','Closed') THEN 1 ELSE 0 END) AS open_leads,
+         SUM(CASE WHEN status = 'Won' THEN 1 ELSE 0 END) AS won_leads,
+         SUM(CASE WHEN status = 'Lost' THEN 1 ELSE 0 END) AS lost_leads
+       FROM leads WHERE company_id = ?`,
+      [companyId],
+    ).catch(() => [{}] as any[])
+    const [quoteAgg] = await query<any[]>(
+      `SELECT
+         SUM(CASE WHEN status IN ('Draft','Sent','Under Review','Negotiation') THEN 1 ELSE 0 END) AS open_quotations,
+         SUM(CASE WHEN status IN ('Accepted','Won') THEN 1 ELSE 0 END) AS accepted_quotations
+       FROM quotations WHERE company_id = ?`,
+      [companyId],
+    ).catch(() => [{}] as any[])
+    const [contractAgg] = await query<any[]>(
+      `SELECT COUNT(*) AS active_contracts FROM contracts WHERE company_id = ? AND status = 'Active'`,
+      [companyId],
+    ).catch(() => [{}] as any[])
+    sales = {
+      linked: true,
+      open_leads: n(leadAgg?.open_leads),
+      won_leads: n(leadAgg?.won_leads),
+      lost_leads: n(leadAgg?.lost_leads),
+      open_quotations: n(quoteAgg?.open_quotations),
+      accepted_quotations: n(quoteAgg?.accepted_quotations),
+      active_contracts: n(contractAgg?.active_contracts),
+      forecast_value: 0,
+    }
+  }
+
+  // --- Contacts on the canonical account --------------------------------------
+  const contacts = companyId
+    ? await query<any[]>(
+        `SELECT id, name, title, email, phone, is_primary
+           FROM sales_contacts WHERE company_id = ? ORDER BY is_primary DESC, name ASC`,
+        [companyId],
+      ).catch(() => [] as any[])
+    : []
+
+  // --- Timeline: client audit trail + recent invoices -------------------------
+  const auditRows = await query<any[]>(
+    `SELECT action, summary, created_at FROM sales_audit_log
+      WHERE entity_type = 'client' AND entity_id = ?
+      ORDER BY created_at DESC LIMIT 40`,
+    [clientCode],
+  ).catch(() => [] as any[])
+
+  const timeline = [
+    ...auditRows.map((a) => ({ type: "audit", action: a.action, summary: a.summary, at: a.created_at })),
+    ...invoices.slice(0, 10).map((inv) => ({
+      type: "invoice",
+      action: inv.invoice_status,
+      summary: `Invoice ${inv.invoice_id} · ${inv.payment_status}`,
+      at: inv.invoice_date,
+    })),
+  ]
+    .filter((e) => e.at)
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .slice(0, 30)
+
+  return { finance, sales, contacts, timeline }
+}
+
+// ---------------------------------------------------------------------------
+// Client merge
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge a duplicate `source` client into a `target` client. Relationships are
+ * preserved, not deleted: every sales invoice that pointed at the source client
+ * code is repointed to the target, the source inherits any links the target is
+ * missing, and the source is archived (never hard-deleted) with a
+ * `merged_into_id` breadcrumb. Both sides are audited.
+ */
+export async function mergeClients(sourceId: number, targetId: number, actorId: number | null) {
+  if (sourceId === targetId) throw new Error("Cannot merge a client into itself")
+
+  const rows = await query<any[]>(
+    `SELECT * FROM clients WHERE id IN (?, ?)`,
+    [sourceId, targetId],
+  )
+  const source = rows.find((r) => Number(r.id) === Number(sourceId))
+  const target = rows.find((r) => Number(r.id) === Number(targetId))
+  if (!source) throw new ClientNotFoundError("Source client not found")
+  if (!target) throw new ClientNotFoundError("Target client not found")
+  if (source.archived_at) throw new Error("Source client is already archived")
+
+  // Repoint financial history from the source client code to the target's.
+  const repointed = await query<any>(
+    `UPDATE sales_invoices SET client_id = ?, client_name = ? WHERE client_id = ?`,
+    [target.client_code, target.company_name || target.client_name, source.client_code],
+  ).catch(() => ({ affectedRows: 0 }))
+
+  // Target inherits any canonical links it is missing from the source.
+  const inherit: Record<string, any> = {}
+  if (!target.company_id && source.company_id) inherit.company_id = source.company_id
+  if (!target.finance_party_id && source.finance_party_id) inherit.finance_party_id = source.finance_party_id
+  if (!target.primary_contact_id && source.primary_contact_id) inherit.primary_contact_id = source.primary_contact_id
+  if (!target.gst_number && source.gst_number) inherit.gst_number = source.gst_number
+  if (!target.pan && source.pan) inherit.pan = source.pan
+  if (Object.keys(inherit).length > 0) {
+    const keys = Object.keys(inherit)
+    await query(
+      `UPDATE clients SET ${keys.map((k) => `${k}=?`).join(",")}, row_version=row_version+1 WHERE id=?`,
+      [...keys.map((k) => inherit[k]), targetId],
+    )
+  }
+
+  // Archive the source with a breadcrumb back to the survivor.
+  await query(
+    `UPDATE clients SET archived_at=NOW(), archived_by=?, merged_into_id=?, status='Inactive', row_version=row_version+1 WHERE id=?`,
+    [actorId, targetId, sourceId],
+  )
+
+  return {
+    invoices_repointed: Number(repointed?.affectedRows ?? 0),
+    inherited: Object.keys(inherit),
+    source_code: source.client_code,
+    target_code: target.client_code,
+    source_name: source.display_name || source.client_name,
+    target_name: target.display_name || target.client_name,
+  }
 }

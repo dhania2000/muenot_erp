@@ -61,7 +61,7 @@ export function createFinanceHandlers(moduleKey: string) {
     const orderBy = cfg.dateColumn ? `x.${cfg.dateColumn} DESC, x.id DESC` : "x.id DESC"
 
     const rows = await query(
-      `SELECT x.*, u.name AS created_by_name
+      `SELECT x.*, u.name AS created_by_name${cfg.extraSelect ? `, ${cfg.extraSelect}` : ""}
          FROM ${cfg.table} x
          LEFT JOIN users u ON u.id = x.created_by
          ${where}

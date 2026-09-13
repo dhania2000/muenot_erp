@@ -73,6 +73,46 @@ export async function ensureEmailTables() {
   await ensureColumn("sales_email_templates", "attachment_type", "VARCHAR(150) DEFAULT NULL")
   await ensureColumn("sales_email_templates", "attachment_size", "INT UNSIGNED DEFAULT NULL")
 
+  // --- Central CRM template columns (added idempotently) ---
+  // template_key: stable machine key for wiring a template to a workflow event
+  //   (e.g. "lead.introduction", "quotation.sent"). Distinct from the display name.
+  // status: Draft | Active | Archived lifecycle. Only Active templates are offered
+  //   to senders; Archived ones are kept for history but hidden from pickers.
+  // description: short human note about when to use the template.
+  // module: which Sales area the template belongs to (leads, quotations, ...).
+  // version: monotonically increasing counter, bumped on every content change.
+  await ensureColumn("sales_email_templates", "template_key", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn("sales_email_templates", "status", "VARCHAR(20) NOT NULL DEFAULT 'Active'")
+  await ensureColumn("sales_email_templates", "description", "VARCHAR(500) DEFAULT NULL")
+  await ensureColumn("sales_email_templates", "module", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn("sales_email_templates", "version", "INT UNSIGNED NOT NULL DEFAULT 1")
+  await ensureIndex("sales_email_templates", "idx_email_templates_status", "status")
+  await ensureIndex("sales_email_templates", "idx_email_templates_key", "template_key")
+
+  // --- Immutable version history ---
+  // Every create/update writes a full snapshot here. Rows are never mutated or
+  // deleted, so the complete edit history of a template is always auditable and
+  // any prior version can be restored by writing a new snapshot from it.
+  await query(
+    `CREATE TABLE IF NOT EXISTS sales_email_template_versions (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      template_id INT UNSIGNED NOT NULL,
+      version INT UNSIGNED NOT NULL,
+      name VARCHAR(150) NOT NULL,
+      subject VARCHAR(255) NOT NULL,
+      body MEDIUMTEXT NOT NULL,
+      category VARCHAR(80) DEFAULT NULL,
+      description VARCHAR(500) DEFAULT NULL,
+      status VARCHAR(20) DEFAULT NULL,
+      change_note VARCHAR(255) DEFAULT NULL,
+      edited_by INT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_tpl_versions_template (template_id),
+      KEY idx_tpl_versions_editor (edited_by)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+
   // --- Threading columns (added idempotently so existing installs upgrade) ---
   // thread_id groups every email to the same lead/recipient into one conversation.
   // message_id / in_reply_to / references_header carry the RFC 5322 headers that

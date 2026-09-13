@@ -22,7 +22,7 @@ import { encryptToken, decryptToken } from "@/lib/token-crypto"
  * have to touch code when Meta deprecates a version. Keep the default on a
  * currently-supported version.
  */
-export const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION?.trim() || "v23.0"
+export const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION?.trim() || "v26.0"
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`
 
 /** Structured Graph API error, surfaced to callers without leaking secrets. */
@@ -849,7 +849,21 @@ export async function subscribeWabaWebhook(
   const token = decryptToken(integration.access_token)
   if (!token) return { ok: false, error: "Stored access token could not be read." }
 
-  const url = `${GRAPH_BASE}/${encodeURIComponent(integration.waba_id)}/subscribed_apps`
+  // Coexistence numbers must be subscribed to the WhatsApp Business App fields
+  // so inbound messages, the initial chat `history` import, echoes of messages
+  // the owner sends from the WhatsApp Business App (`smb_message_echoes`) and
+  // app state changes (`smb_app_state_sync`) all reach the ERP webhook. This is
+  // NOT the generic `message_echoes` field, which is a different (non-SMB)
+  // subscription and is not the coexistence field.
+  const subscribedFields = [
+    "messages",
+    "history",
+    "smb_message_echoes",
+    "smb_app_state_sync",
+  ].join(",")
+  const url =
+    `${GRAPH_BASE}/${encodeURIComponent(integration.waba_id)}/subscribed_apps` +
+    `?subscribed_fields=${encodeURIComponent(subscribedFields)}`
   try {
     const res = await fetch(url, {
       method: "POST",

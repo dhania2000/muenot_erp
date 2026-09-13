@@ -45,8 +45,15 @@ declare global {
   }
 }
 
-/** Graph version used to initialise the SDK; matches the server default. */
-const SDK_GRAPH_VERSION = "v23.0"
+/**
+ * Graph version used to initialise the SDK; matches the server default.
+ *
+ * The Meta JS SDK derives the OAuth dialog version from FB.init's `version`,
+ * so this MUST be current — an old value makes the popup open
+ * `facebook.com/<old>/dialog/oauth`, which routes to the generic new-number
+ * onboarding instead of the WhatsApp Business App coexistence flow.
+ */
+const SDK_GRAPH_VERSION = "v26.0"
 const SDK_SRC = "https://connect.facebook.net/en_US/sdk.js"
 
 const APP_ID = process.env.NEXT_PUBLIC_WHATSAPP_APP_ID
@@ -140,7 +147,15 @@ export function WhatsAppEmbeddedSignup({
       }
       if (payload?.type !== "WA_EMBEDDED_SIGNUP") return
 
-      if (payload.event === "FINISH") {
+      // Coexistence onboarding completes with
+      // `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`; the plain `FINISH` /
+      // `FINISH_ONLY_WABA` variants are emitted by the other ES flows. Treat
+      // them all as success and stash the ids for the code exchange.
+      if (
+        payload.event === "FINISH" ||
+        payload.event === "FINISH_ONLY_WABA" ||
+        payload.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"
+      ) {
         sessionInfo.current = {
           wabaId: payload.data?.waba_id,
           phoneNumberId: payload.data?.phone_number_id,
@@ -246,10 +261,21 @@ export function WhatsAppEmbeddedSignup({
           void complete(code)
         } else if (!terminated.current) {
           // The FB.login callback fired without a code and no ERROR/CANCEL
-          // session-info message arrived — the popup was closed or Meta blocked
-          // onboarding (e.g. the "can't onboard customers" barrier).
+          // session-info message arrived — the popup was closed, or Meta showed
+          // the generic "Add your WhatsApp phone number / create a new one"
+          // screen instead of the coexistence QR step. The latter means the
+          // Embedded Signup configuration did not launch with the coexistence
+          // feature type.
+          console.warn(
+            "[v0] Embedded Signup returned no code. If Meta showed the generic new-number screen, the coexistence flow did not launch.",
+            {
+              configId: CONFIG_ID,
+              featureType: "whatsapp_business_app_onboarding",
+              sdkVersion: SDK_GRAPH_VERSION,
+            },
+          )
           toast.message(
-            "WhatsApp onboarding didn't complete. If Meta showed a blocked screen, the app may not be approved for customer onboarding yet.",
+            "WhatsApp onboarding didn't complete. If Meta asked you to create a NEW number instead of scanning a QR code, the WhatsApp Business App coexistence flow wasn't launched — check the Embedded Signup Config ID and that its feature type is “WhatsApp Business App onboarding”.",
           )
         }
       },

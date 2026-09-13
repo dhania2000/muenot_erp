@@ -13,6 +13,8 @@ import {
   taxAllowedForType,
   type InvoiceItemInput,
 } from "@/lib/sales-invoice-compute"
+import { postSalesInvoice } from "@/lib/finance-posting"
+import { logFinanceEvent, getFinanceEvents } from "@/lib/finance-audit"
 
 // Header columns a client may set. Every derived money field is recomputed on
 // the server from the line items, so those are never trusted from the browser.
@@ -121,12 +123,29 @@ export async function GET(req: NextRequest) {
 
   const p = req.nextUrl.searchParams
 
-  // Single invoice + its line items (used by the edit dialog).
+  // Single invoice + its line items (used by the edit dialog). When
+  // include=ledger the posted voucher (journal + general ledger) and the audit
+  // trail are attached so a detail view can show the accounting behind it.
   const idParam = p.get("id")
   if (idParam) {
-    const [inv] = (await query(`SELECT * FROM sales_invoices WHERE id = ? LIMIT 1`, [Number(idParam)])) as any[]
+    const pk = Number(idParam)
+    const [inv] = (await query(`SELECT * FROM sales_invoices WHERE id = ? LIMIT 1`, [pk])) as any[]
     if (!inv) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
     const items = await loadItems(inv.id)
+    if (p.get("include") === "ledger") {
+      const [journal, ledger, audit] = await Promise.all([
+        query(
+          `SELECT * FROM journal_entries WHERE source_entity_type = 'sales_invoice' AND source_entity_id = ? ORDER BY id ASC`,
+          [pk],
+        ),
+        query(
+          `SELECT * FROM general_ledger WHERE source_entity_type = 'sales_invoice' AND source_entity_id = ? ORDER BY id ASC`,
+          [pk],
+        ),
+        getFinanceEvents("sales_invoice", pk),
+      ])
+      return NextResponse.json({ invoice: inv, items, journal, ledger, audit })
+    }
     return NextResponse.json({ invoice: inv, items })
   }
 
@@ -283,7 +302,57 @@ export async function POST(req: NextRequest) {
   const invoicePk = Number(result?.insertId)
   await replaceItems(invoicePk, items)
 
+  await logFinanceEvent({
+    entityType: "sales_invoice",
+    entityPk: invoicePk,
+    entityRef: invoiceId,
+    type: "created",
+    summary: `Invoice ${invoiceId} created as ${record.invoice_status}`,
+    amount: header.invoice_total,
+    detail: { client_name: record.client_name ?? null, status: record.invoice_status },
+    actorId: session.userId,
+  })
+
+  // A brand-new invoice created straight into Posted state is posted to the
+  // ledger immediately (same rules as the PATCH transition).
+  if (record.invoice_status === "Posted") {
+    try {
+      const [full] = (await query("SELECT * FROM sales_invoices WHERE id = ?", [invoicePk])) as any[]
+      await postAndRecord(full, session.userId)
+    } catch (error) {
+      return NextResponse.json(
+        { ok: true, id: invoicePk, invoice_id: invoiceId, warning: `Saved, but posting failed: ${(error as Error).message}` },
+        { status: 201 },
+      )
+    }
+  }
+
   return NextResponse.json({ ok: true, id: invoicePk, invoice_id: invoiceId }, { status: 201 })
+}
+
+/**
+ * Post an invoice to the ledger and stamp the voucher back onto the row, then
+ * record the audit event. Idempotent: an invoice that already carries a
+ * journal_entry_id (voucher) is never posted twice.
+ */
+async function postAndRecord(inv: Record<string, any>, actorId?: number | null) {
+  if (inv.journal_entry_id) return
+  const result = await postSalesInvoice(inv, { createdBy: actorId ?? null })
+  await query(
+    `UPDATE sales_invoices SET journal_entry_id = ?, invoice_status = 'Posted', posted_at = COALESCE(posted_at, NOW()) WHERE id = ?`,
+    [result.voucherNo, inv.id],
+  )
+  await logFinanceEvent({
+    entityType: "sales_invoice",
+    entityPk: Number(inv.id),
+    entityRef: String(inv.invoice_id || inv.id),
+    type: "posted",
+    summary: `Invoice ${inv.invoice_id || inv.id} posted to ledger (voucher ${result.voucherNo})`,
+    amount: result.totalDebit,
+    voucherNo: result.voucherNo,
+    detail: { journal_entry_ids: result.journalEntryIds, ledger_ids: result.ledgerIds },
+    actorId: actorId ?? null,
+  })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -334,17 +403,40 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    // Posting flips the status itself (inside postAndRecord) after writing a
+    // balanced voucher, so keep it out of the generic column update to avoid a
+    // Posted row that has no ledger entry.
+    const wantsPost = body.invoice_status === "Posted"
     const update: Record<string, any> = {}
     for (const field of attempted) update[field] = body[field]
+    if (wantsPost) delete update.invoice_status
     if ("amount_received" in update || "payment_status" in update) {
       const pay = recomputePayment(existing.net_receivable, update.amount_received ?? existing.amount_received, update.payment_status)
       Object.assign(update, pay)
     }
-    if (body.invoice_status === "Posted") update.posted_at = new Date()
 
     const cols = Object.keys(update)
     if (cols.length > 0) {
       await query(`UPDATE sales_invoices SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id=?`, [...cols.map((c) => update[c]), id])
+    }
+
+    if (wantsPost) {
+      try {
+        const [full] = (await query("SELECT * FROM sales_invoices WHERE id = ?", [id])) as any[]
+        await postAndRecord(full, session.userId)
+      } catch (error) {
+        return NextResponse.json({ error: `Posting failed: ${(error as Error).message}` }, { status: 409 })
+      }
+    } else if ("amount_received" in update && Number(update.amount_received) !== Number(existing.amount_received)) {
+      await logFinanceEvent({
+        entityType: "sales_invoice",
+        entityPk: id,
+        entityRef: String(existing.invoice_id || id),
+        type: "payment_recorded",
+        summary: `Payment updated on ${existing.invoice_id || id}: received ${update.amount_received}`,
+        amount: Number(update.amount_received),
+        actorId: session.userId,
+      })
     }
     return NextResponse.json({ ok: true })
   }
@@ -394,10 +486,34 @@ export async function PATCH(req: NextRequest) {
     payment_status: header.payment_status,
   })
   if (body.invoice_status === "Issued" && status === "Draft") update.issued_at = new Date()
+  // Posting owns the flip to Posted (see postAndRecord); never write it here.
+  const wantsPost = body.invoice_status === "Posted"
+  if (wantsPost) update.invoice_status = "Issued"
 
   const cols = Object.keys(update)
   await query(`UPDATE sales_invoices SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id=?`, [...cols.map((c) => update[c]), id])
   await replaceItems(id, items)
+
+  if (body.invoice_status === "Issued" && status === "Draft") {
+    await logFinanceEvent({
+      entityType: "sales_invoice",
+      entityPk: id,
+      entityRef: String(existing.invoice_id || id),
+      type: "issued",
+      summary: `Invoice ${existing.invoice_id || id} issued`,
+      amount: header.invoice_total,
+      actorId: session.userId,
+    })
+  }
+
+  if (wantsPost) {
+    try {
+      const [full] = (await query("SELECT * FROM sales_invoices WHERE id = ?", [id])) as any[]
+      await postAndRecord(full, session.userId)
+    } catch (error) {
+      return NextResponse.json({ error: `Saved as Issued, but posting failed: ${(error as Error).message}` }, { status: 409 })
+    }
+  }
 
   return NextResponse.json({ ok: true })
 }

@@ -145,6 +145,34 @@ export async function gstSummary(period: string) {
   const cess = round2(num(totals?.cess))
   const totalTax = round2(cgst + sgst + igst + cess)
 
+  // Invoice-level detail (document register) for the period — every non-Draft
+  // tax document that feeds the return, with the client's GSTIN pulled from the
+  // clients master so the UI can show "Client GST + Invoice Details" per row.
+  const invoices = (await query(
+    `SELECT si.invoice_id,
+            si.invoice_date,
+            si.invoice_type,
+            si.client_name,
+            si.project_name,
+            si.place_of_supply,
+            COALESCE(si.supply_type,'Intra-State') AS supply_type,
+            si.invoice_status,
+            COALESCE(c.gst_number,'') AS client_gstin,
+            si.taxable_amount,
+            si.cgst_amount,
+            si.sgst_amount,
+            si.igst_amount,
+            si.other_tax_cess AS cess_amount,
+            si.invoice_total
+       FROM sales_invoices si
+       LEFT JOIN clients c ON c.id = si.client_id OR c.client_id = si.client_id
+      WHERE si.invoice_date >= ? AND si.invoice_date <= ?
+        AND si.invoice_status IN ${INCLUDED_STATUS}
+        AND si.invoice_type <> 'Proforma Invoice'
+      ORDER BY si.invoice_date ASC, si.invoice_id ASC`,
+    [from, to],
+  ).catch(() => [])) as any[]
+
   const [existing] = (await query(
     `SELECT * FROM gst_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
     [period],
@@ -176,6 +204,23 @@ export async function gstSummary(period: string) {
       supply_type: r.supply_type,
       taxable: round2(num(r.taxable)),
       tax: round2(num(r.tax)),
+    })),
+    invoices: invoices.map((r) => ({
+      invoice_id: r.invoice_id,
+      invoice_date: r.invoice_date,
+      invoice_type: r.invoice_type,
+      client_name: r.client_name || "—",
+      client_gstin: r.client_gstin || "",
+      project_name: r.project_name || "",
+      place_of_supply: r.place_of_supply || "",
+      supply_type: r.supply_type,
+      status: r.invoice_status,
+      taxable: round2(num(r.taxable_amount)),
+      cgst: round2(num(r.cgst_amount)),
+      sgst: round2(num(r.sgst_amount)),
+      igst: round2(num(r.igst_amount)),
+      cess: round2(num(r.cess_amount)),
+      total: round2(num(r.invoice_total)),
     })),
     excluded: {
       in_period: Number(diag?.in_period ?? 0),

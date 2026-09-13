@@ -24,9 +24,10 @@ export async function GET(req: NextRequest) {
 
   const clients = (await query(
     `SELECT client_code, client_name, company_name, email, mobile, gst_number, tax_name,
-            address, city, state, country, postal_code, currency
+            address, city, state, country, postal_code, currency, finance_party_id
        FROM clients
-       ${search ? "WHERE client_name LIKE ? OR company_name LIKE ? OR client_code LIKE ? OR gst_number LIKE ?" : ""}
+       WHERE archived_at IS NULL
+       ${search ? "AND (client_name LIKE ? OR company_name LIKE ? OR client_code LIKE ? OR gst_number LIKE ?)" : ""}
        ORDER BY client_name ASC
        LIMIT 50`,
     search ? [like, like, like, like] : [],
@@ -39,15 +40,20 @@ export async function GET(req: NextRequest) {
             gst_registration_type
        FROM customers_vendors`,
   )) as any[]
+  const byId = new Map<string, any>()
   const byGstin = new Map<string, any>()
   const byName = new Map<string, any>()
   for (const pt of parties) {
+    if (pt.party_id) byId.set(String(pt.party_id), pt)
     if (pt.gstin) byGstin.set(String(pt.gstin).toUpperCase(), pt)
     if (pt.customer_name) byName.set(String(pt.customer_name).toLowerCase(), pt)
   }
 
   const rows = clients.map((c) => {
+    // Prefer the explicit finance-party link stored on the client; fall back to
+    // matching by GSTIN, then name, for rows created before linking existed.
     const match =
+      (c.finance_party_id && byId.get(String(c.finance_party_id))) ||
       (c.gst_number && byGstin.get(String(c.gst_number).toUpperCase())) ||
       byName.get(String(c.company_name || c.client_name || "").toLowerCase()) ||
       null

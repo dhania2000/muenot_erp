@@ -147,4 +147,12 @@ export type ModuleConfig = {
    * dialog (e.g. "freelancer_email" for Freelance, "employee_email" for FTE).
    */
   emailField?: string
+  /**
+   * When set, the list's per-row "View" action navigates to a dedicated detail
+   * page at `${detailPath}/${row[idColumn]}` (e.g. the Vendor 360 view) instead
+   * of opening the inline detail dialog.
+   */
+  detailPath?: string
+  /** Optional GSTIN verification capability (Vendor master). */
+  gstin?: GstinVerifyConfig
 }

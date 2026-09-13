@@ -548,6 +548,7 @@ const customersVendors: ModuleConfig = {
   idColumn: "party_id",
   idPrefix: "VEN",
   statusColumn: "status",
+  detailPath: "/modules/finance/customers-vendors",
   searchColumns: ["party_id", "customer_name", "legal_name", "gstin", "pan", "city", "mobile"],
   gstin: {
     column: "gstin",

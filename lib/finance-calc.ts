@@ -185,6 +185,7 @@ export function computeExpense(v: Record<string, any>) {
     igst = 0
   }
   const cess = round2(num(v.cess_amount))
+  const gstAmount = round2(cgst + sgst + igst)
   const gross = round2(taxable + cgst + sgst + igst + cess)
 
   const tds = v.tds_applicable ? round2((taxable * num(v.tds_rate)) / 100) : 0
@@ -208,6 +209,7 @@ export function computeExpense(v: Record<string, any>) {
     sgst_amount: sgst,
     igst_amount: igst,
     cess_amount: cess,
+    gst_amount: gstAmount,
     gross_amount: gross,
     tds_amount: tds,
     advance_amount: advance,

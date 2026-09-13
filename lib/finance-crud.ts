@@ -147,7 +147,11 @@ export function createFinanceHandlers(moduleKey: string) {
     if (moduleKey === "fte-invoices") await ensureFteInvoiceColumns()
     if (moduleKey === "customers-vendors") await ensureCustomerVendorGstColumns()
     if (moduleKey === "purchase-bills") await ensurePurchaseBillColumns()
+    if (moduleKey === "expenses") await ensureExpenseColumns()
   }
+
+  const validate = VALIDATORS[moduleKey]
+  const duplicateCheck = DUPLICATE_CHECKS[moduleKey]
 
   const augment = SERVER_AUGMENT[moduleKey]
   const idGenerator = ID_GENERATORS[moduleKey]
@@ -208,6 +212,21 @@ export function createFinanceHandlers(moduleKey: string) {
       Object.assign(record, extra)
     }
 
+    // Hard validation (Phase 25) on the merged, snapshot-filled record. Runs
+    // before the id is minted so a rejected request never burns a sequence.
+    if (validate) {
+      const message = validate({ ...body, ...record })
+      if (message) return NextResponse.json({ error: message }, { status: 400 })
+    }
+
+    // Duplicate guard (Phase 24). Only on create, and only when the client has
+    // not already confirmed with `__forceCreate`. A hit returns 409 so the form
+    // can surface the existing record and ask the user to confirm.
+    if (duplicateCheck && !body.__forceCreate) {
+      const hit = await duplicateCheck({ ...body, ...record })
+      if (hit) return NextResponse.json({ duplicate: hit }, { status: 409 })
+    }
+
     if (idGenerator) {
       // Custom immutable business key (never client-supplied, concurrency-safe).
       record[cfg.idColumn] = await idGenerator(record)
@@ -256,6 +275,13 @@ export function createFinanceHandlers(moduleKey: string) {
     if (!existing) return NextResponse.json({ error: "Record not found" }, { status: 404 })
 
     const merged = { ...existing, ...body }
+
+    // Hard validation (Phase 25) on the merged row before any write.
+    if (validate) {
+      const message = validate(merged)
+      if (message) return NextResponse.json({ error: message }, { status: 400 })
+    }
+
     const derived = cfg.compute ? cfg.compute(merged) : {}
 
     const update: Record<string, any> = {}

@@ -245,6 +245,7 @@ export async function ensureExpenseColumns() {
   // Phase 15 — GST rate + cess + supply-type driven split.
   await ensureColumn(t, "gst_applicable", "TINYINT(1) NOT NULL DEFAULT 0")
   await ensureColumn(t, "gst_rate", "DECIMAL(6,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "gst_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
   await ensureColumn(t, "cess_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
   await ensureColumn(t, "supply_type", "VARCHAR(20) DEFAULT NULL")
   await ensureColumn(t, "itc_status", "VARCHAR(30) DEFAULT NULL")

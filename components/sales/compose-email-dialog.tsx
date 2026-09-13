@@ -66,6 +66,21 @@ type FormState = {
   attachment: EmailAttachment | null
 }
 
+/**
+ * Optional starting context when the composer is opened from a specific place
+ * (e.g. the email detail dialog's "Follow up" / "New conversation" actions).
+ * A replyToEmailId forces the follow-up to thread into that EXACT email's
+ * conversation — the strongest, least-ambiguous follow-up path (spec 160/162) —
+ * instead of re-discovering one by recipient address.
+ */
+export type ComposeInitial = {
+  mailType?: MailType
+  toEmail?: string
+  toName?: string
+  leadId?: number | null
+  replyToEmailId?: number | null
+}
+
 const EMPTY: FormState = {
   lead_id: "",
   template_id: "",
@@ -98,12 +113,14 @@ export function ComposeEmailDialog({
   onSent,
   emailConfigured,
   initialLead,
+  initial,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSent: () => void
   emailConfigured: boolean
   initialLead?: LeadRow | null
+  initial?: ComposeInitial | null
 }) {
   const { data: leadsData } = useSWR<{ leads: LeadRow[] }>(open ? "/api/sales/leads" : null, fetcher)
   const { data: templatesData } = useSWR<{ templates: EmailTemplateRow[] }>(
@@ -122,16 +139,37 @@ export function ComposeEmailDialog({
   const leads = leadsData?.leads ?? []
   const templates = templatesData?.templates ?? []
 
+  // When opened targeting a specific prior email (from the detail dialog's
+  // "Follow up" action), force that email as the thread anchor so the reply
+  // joins THAT exact conversation rather than the recipient's latest one.
+  const forcedReplyToEmailId = useRef<number | null>(null)
+
   useEffect(() => {
     if (!open) return
-    setForm(
-      initialLead
-        ? { ...EMPTY, lead_id: String(initialLead.id), to_email: initialLead.email || "", to_name: initialLead.contact_person || "" }
-        : EMPTY,
-    )
+    if (initial) {
+      setForm({
+        ...EMPTY,
+        mail_type: initial.mailType ?? "new",
+        lead_id: initial.leadId != null ? String(initial.leadId) : "",
+        to_email: initial.toEmail || "",
+        to_name: initial.toName || "",
+      })
+      forcedReplyToEmailId.current = initial.replyToEmailId ?? null
+    } else if (initialLead) {
+      setForm({
+        ...EMPTY,
+        lead_id: String(initialLead.id),
+        to_email: initialLead.email || "",
+        to_name: initialLead.contact_person || "",
+      })
+      forcedReplyToEmailId.current = null
+    } else {
+      setForm(EMPTY)
+      forcedReplyToEmailId.current = null
+    }
     setError(null)
     idempotencyKey.current = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  }, [open, initialLead])
+  }, [open, initialLead, initial])
 
   // Debounce the recipient address used for the follow-up thread lookup so we
   // don't fire a request on every keystroke.
@@ -239,7 +277,9 @@ export function ComposeEmailDialog({
           attachment: form.attachment,
           // Strongest, unambiguous follow-up path: reply to a SPECIFIC prior
           // email. The server re-verifies this id, so a stale preview can't send.
-          reply_to_email_id: hasThread ? preview!.thread!.latestEmailId : null,
+          // A forced id (opened from a specific email) wins over the recipient's
+          // latest thread resolved by the live preview.
+          reply_to_email_id: forcedReplyToEmailId.current ?? (hasThread ? preview!.thread!.latestEmailId : null),
           idempotency_key: idempotencyKey.current,
         }),
       })

@@ -8,6 +8,7 @@ export default async function EmailsPage() {
   if (!session) redirect("/login")
   const canSend = await userHasFeature(session.userId, session.role, "sales.send_emails")
   if (!canSend) redirect("/modules/sales")
+  const canManage = await userHasFeature(session.userId, session.role, "sales.manage_email_templates")
 
-  return <EmailsClient canSend={canSend} />
+  return <EmailsClient canSend={canSend} canManage={canManage} />
 }

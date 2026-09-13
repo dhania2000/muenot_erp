@@ -29,7 +29,7 @@ export async function GET() {
   const emails = await query(
     `SELECT e.id, e.lead_id, e.to_email, e.to_name, e.subject, e.status,
             e.open_count, e.first_opened_at, e.last_opened_at, e.error_message,
-            e.sent_at, e.thread_id, u.name AS sent_by_name, l.contact_person AS lead_contact
+            e.sent_at, e.thread_id, e.mail_type, u.name AS sent_by_name, l.contact_person AS lead_contact
      FROM sales_emails e
      LEFT JOIN users u ON u.id = e.sent_by
      LEFT JOIN sales_leads l ON l.id = e.lead_id

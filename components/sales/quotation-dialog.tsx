@@ -389,7 +389,7 @@ export function QuotationDialog({
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <Field>
                       <FieldLabel>Company (master)</FieldLabel>
-                      <Select value={form.company_id || NONE} onValueChange={handleCompanyChange}>
+                      <Select value={form.company_id || NONE} onValueChange={(v) => handleCompanyChange(v ?? NONE)}>
                         <SelectTrigger>
                           <SelectValue placeholder="Link a company" />
                         </SelectTrigger>
@@ -439,7 +439,7 @@ export function QuotationDialog({
                     </Field>
                     <Field>
                       <FieldLabel>Linked lead</FieldLabel>
-                      <Select value={form.lead_id || NONE} onValueChange={handleLeadChange}>
+                      <Select value={form.lead_id || NONE} onValueChange={(v) => handleLeadChange(v ?? NONE)}>
                         <SelectTrigger>
                           <SelectValue placeholder="Link a lead" />
                         </SelectTrigger>
@@ -457,7 +457,7 @@ export function QuotationDialog({
                       <FieldLabel>Linked meeting</FieldLabel>
                       <Select
                         value={form.meeting_id || NONE}
-                        onValueChange={(v) => update("meeting_id", v === NONE ? "" : v)}
+                        onValueChange={(v) => update("meeting_id", v && v !== NONE ? v : "")}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Link a meeting" />
@@ -664,7 +664,7 @@ export function QuotationDialog({
                               <Label className="text-xs text-muted-foreground">GST %</Label>
                               <Select
                                 value={line.tax_rate}
-                                onValueChange={(v) => updateLine(i, { tax_rate: v })}
+                                onValueChange={(v) => updateLine(i, { tax_rate: v ?? "0" })}
                                 disabled={!gstOn}
                               >
                                 <SelectTrigger>

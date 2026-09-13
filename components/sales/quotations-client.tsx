@@ -180,7 +180,7 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
               className="w-64 pl-8"
             />
           </div>
-          <Select value={status} onValueChange={setStatus}>
+          <Select value={status} onValueChange={(v) => setStatus(v ?? "All")}>
             <SelectTrigger className="w-40">
               <SelectValue />
             </SelectTrigger>
@@ -226,7 +226,12 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
       </div>
 
       {canManage && selected.size > 0 && (
-        <SelectionToolbar count={selected.size} onClear={clear} onDelete={() => del.requestMany([...selected])} />
+        <SelectionToolbar
+          count={selected.size}
+          noun="quotation"
+          onClear={clear}
+          onDelete={() => del.requestBulk([...selected])}
+        />
       )}
 
       <div className="rounded-md border border-border bg-card">

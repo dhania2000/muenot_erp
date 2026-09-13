@@ -274,6 +274,37 @@ export async function ensureExpenseColumns() {
   // Phase 24 — duplicate detection fingerprint.
   await ensureColumn(t, "duplicate_hash", "VARCHAR(64) DEFAULT NULL")
 
+  // --- Part 2 tax automation -------------------------------------------------
+  // Phase 5 — Reverse Charge Mechanism (self-assessed GST).
+  await ensureColumn(t, "rcm_applicable", "TINYINT(1) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "rcm_taxable_value", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "rcm_cgst", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "rcm_sgst", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "rcm_igst", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "rcm_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "rcm_itc", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
+  // Phase 6 — ITC ledger (separately tracked from the GST charged).
+  await ensureColumn(t, "gst_credit_eligible", "TINYINT(1) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "itc_cgst", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "itc_sgst", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "itc_igst", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "itc_cess", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "itc_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "itc_reversal", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "itc_net", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
+  // Phase 19–25 — TDS base + rule snapshot (frozen from the TDS Rule Master).
+  await ensureColumn(t, "tds_base", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "tds_entity_type", "VARCHAR(30) DEFAULT NULL")
+  await ensureColumn(t, "tds_nature_of_payment", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "tds_threshold_annual", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "tds_rule_version", "VARCHAR(30) DEFAULT NULL")
+
+  // Phase 39 — GST rule versioning (which config produced the rate).
+  await ensureColumn(t, "gst_rule_version", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "gst_rate_source", "VARCHAR(60) DEFAULT NULL")
+
   // Phase 34 — indexes for search + aggregation performance.
   const idx = async (name: string, cols: string) => {
     if (!(await hasIndex(t, name))) await query(`ALTER TABLE ${t} ADD KEY ${name} (${cols})`)

@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FileCheck2, Landmark } from "lucide-react"
+import { FileCheck2, Landmark, Download } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
+import * as XLSX from "xlsx"
 
 const currency = (n: any) => inr0(Number(n) || 0)
 const thisMonth = () => new Date().toISOString().slice(0, 7)
@@ -50,6 +51,49 @@ export function GstFilingClient() {
   const s = data?.summary
   const filings = filingsData?.filings ?? []
 
+  function exportExcel() {
+    if (!s) return
+    const wb = XLSX.utils.book_new()
+
+    const summaryRows = [
+      ["GSTR-1 Outward Supply Summary"],
+      ["Tax period", s.period],
+      ["Generated on", new Date().toLocaleString()],
+      [],
+      ["Documents", s.totals.invoice_count],
+      ["Taxable value", s.totals.taxable],
+      ["CGST", s.totals.cgst],
+      ["SGST", s.totals.sgst],
+      ["IGST", s.totals.igst],
+      ["Cess", s.totals.cess],
+      ["Total tax", s.totals.total_tax],
+      ["Credit note taxable", s.totals.credit_note_taxable],
+      ["Credit note tax reduced", s.totals.credit_note_tax],
+    ]
+    if (s.filing) {
+      summaryRows.push([], ["Filing ID", s.filing.filing_id], ["Status", s.filing.status], ["ARN", s.filing.arn || "—"])
+    }
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows)
+    wsSummary["!cols"] = [{ wch: 26 }, { wch: 22 }]
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Summary")
+
+    const rateHeader = ["GST rate (%)", "Taxable", "CGST", "SGST", "IGST", "Cess"]
+    const rateRows = s.rate_wise.map((r) => [r.rate, r.taxable, r.cgst, r.sgst, r.igst, r.cess])
+    const wsRate = XLSX.utils.aoa_to_sheet([rateHeader, ...rateRows])
+    wsRate["!cols"] = [{ wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }]
+    XLSX.utils.book_append_sheet(wb, wsRate, "Rate-wise")
+
+    if (s.supply_split?.length) {
+      const supplyHeader = ["Supply type", "Taxable", "Tax"]
+      const supplyRows = s.supply_split.map((r) => [r.supply_type, r.taxable, r.tax])
+      const wsSupply = XLSX.utils.aoa_to_sheet([supplyHeader, ...supplyRows])
+      wsSupply["!cols"] = [{ wch: 24 }, { wch: 16 }, { wch: 16 }]
+      XLSX.utils.book_append_sheet(wb, wsSupply, "Supply split")
+    }
+
+    XLSX.writeFile(wb, `GSTR-1_${s.period}.xlsx`)
+  }
+
   async function file() {
     setBusy(true)
     setError("")
@@ -87,6 +131,15 @@ export function GstFilingClient() {
             </label>
             <Input id="period" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-40" />
           </div>
+          <Button
+            variant="outline"
+            onClick={exportExcel}
+            disabled={!s || s.totals.invoice_count === 0}
+            className="gap-2"
+          >
+            <Download className="h-4 w-4" />
+            Export Excel
+          </Button>
         </div>
       </header>
 

@@ -1,58 +1,46 @@
 import { NextResponse } from "next/server"
-import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
-import { resolveCompanyId } from "@/lib/sales/company-master"
+import {
+  createContract,
+  getContractAnalytics,
+  listContracts,
+  ContractError,
+  type ListFilters,
+} from "@/lib/sales/contract-service"
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await requireFeature("sales.view_contracts")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-  const contracts = await query(
-    `SELECT c.*, u.name AS added_by_name
-     FROM sales_contracts c
-     LEFT JOIN users u ON u.id = c.added_by
-     ORDER BY c.created_at DESC`,
-  )
-  return NextResponse.json({ contracts })
+  const url = new URL(request.url)
+  const p = url.searchParams
+  const filters: ListFilters = {
+    search: p.get("search") || undefined,
+    status: p.get("status") || undefined,
+    contract_type: p.get("type") || undefined,
+    company_id: p.get("company_id") ? Number(p.get("company_id")) : undefined,
+    from: p.get("from") || undefined,
+    to: p.get("to") || undefined,
+    expiringInDays: p.get("expiring") ? Number(p.get("expiring")) : undefined,
+    includeArchived: p.get("archived") === "1",
+    sort: p.get("sort") || undefined,
+    dir: (p.get("dir") as "asc" | "desc") || undefined,
+  }
+
+  const [contracts, analytics] = await Promise.all([listContracts(filters), getContractAnalytics()])
+  return NextResponse.json({ contracts, analytics })
 }
 
 export async function POST(request: Request) {
   const session = await requireFeature("sales.manage_contracts")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-  const body = await request.json()
-  if (!body.company_name || !body.value) {
-    return NextResponse.json({ error: "Company name and value are required" }, { status: 400 })
+  const body = await request.json().catch(() => ({}))
+  try {
+    const result = await createContract(body, session.userId)
+    return NextResponse.json(result, { status: 201 })
+  } catch (err) {
+    if (err instanceof ContractError) return NextResponse.json({ error: err.message }, { status: err.status })
+    return NextResponse.json({ error: (err as any)?.message || "Unable to create contract" }, { status: 500 })
   }
-
-  const [{ next }] = await query<{ next: number }[]>(
-    "SELECT COALESCE(MAX(CAST(SUBSTRING(contract_code, 4) AS UNSIGNED)), 0) + 1 AS next FROM sales_contracts",
-  )
-  const contractCode = `CT-${String(next).padStart(3, "0")}`
-
-  const companyId = await resolveCompanyId({ company_id: body.company_id, company_name: body.company_name })
-
-  const result = await query<any>(
-    `INSERT INTO sales_contracts
-     (contract_code, contract_date, company_name, company_id, start_date, end_date, value, contract_type,
-      status, signed_by_client, signed_by_company, notes, added_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      contractCode,
-      new Date().toISOString().slice(0, 10),
-      body.company_name,
-      companyId,
-      body.start_date || null,
-      body.end_date || null,
-      body.value,
-      body.contract_type || null,
-      body.status || "Draft",
-      body.signed_by_client || null,
-      body.signed_by_company || null,
-      body.notes || null,
-      session.userId,
-    ],
-  )
-
-  return NextResponse.json({ id: result.insertId, contract_code: contractCode })
 }

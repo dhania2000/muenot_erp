@@ -1,45 +1,61 @@
 import { NextResponse } from "next/server"
-import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import {
+  archiveContract,
+  deleteContract,
+  getContract,
+  getContractEvents,
+  getContractSignatures,
+  updateContract,
+  ContractError,
+} from "@/lib/sales/contract-service"
 
-const ALLOWED = [
-  "company_name",
-  "start_date",
-  "end_date",
-  "value",
-  "contract_type",
-  "status",
-  "signed_by_client",
-  "signed_by_company",
-  "notes",
-]
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireFeature("sales.view_contracts")
+  if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const { id } = await params
+  const contractId = Number(id)
+  const contract = await getContract(contractId)
+  if (!contract) return NextResponse.json({ error: "Contract not found" }, { status: 404 })
+
+  const [events, signatures] = await Promise.all([
+    getContractEvents(contractId),
+    getContractSignatures(contractId),
+  ])
+  return NextResponse.json({ contract, events, signatures })
+}
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireFeature("sales.manage_contracts")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const { id } = await params
-  const body = await request.json()
-
-  const fields: string[] = []
-  const values: any[] = []
-  for (const key of ALLOWED) {
-    if (key in body) {
-      fields.push(`${key} = ?`)
-      values.push(body[key] === "" ? null : body[key])
-    }
+  const body = await request.json().catch(() => ({}))
+  try {
+    await updateContract(Number(id), body, session.userId, body.row_version)
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    if (err instanceof ContractError) return NextResponse.json({ error: err.message }, { status: err.status })
+    return NextResponse.json({ error: (err as any)?.message || "Unable to update contract" }, { status: 500 })
   }
-  if (fields.length === 0) return NextResponse.json({ error: "No fields to update" }, { status: 400 })
-
-  await query(`UPDATE sales_contracts SET ${fields.join(", ")} WHERE id = ?`, [...values, id])
-  return NextResponse.json({ success: true })
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireFeature("sales.manage_contracts")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const { id } = await params
-  await query("DELETE FROM sales_contracts WHERE id = ?", [id])
-  return NextResponse.json({ success: true })
+  const url = new URL(request.url)
+  try {
+    if (url.searchParams.get("mode") === "archive") {
+      await archiveContract(Number(id), session.userId)
+    } else {
+      await deleteContract(Number(id), session.userId)
+    }
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    if (err instanceof ContractError) return NextResponse.json({ error: err.message }, { status: err.status })
+    return NextResponse.json({ error: (err as any)?.message || "Unable to delete contract" }, { status: 500 })
+  }
 }

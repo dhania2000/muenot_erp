@@ -13,43 +13,42 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2Icon } from "lucide-react"
 import { toDateInputValue } from "@/lib/utils"
 import type { ContractRow } from "@/components/sales/contracts-client"
 
-const STATUSES = ["Draft", "Active", "Expired", "Terminated"]
-
 type FormState = {
+  title: string
   company_name: string
   start_date: string
   end_date: string
   value: string
   contract_type: string
-  status: string
   signed_by_client: string
   signed_by_company: string
+  terms: string
   notes: string
+  auto_renew: boolean
+  renewal_term_months: string
+  notice_period_days: string
 }
 
 const EMPTY: FormState = {
+  title: "",
   company_name: "",
   start_date: "",
   end_date: "",
   value: "",
   contract_type: "",
-  status: "Draft",
   signed_by_client: "",
   signed_by_company: "",
+  terms: "",
   notes: "",
+  auto_renew: false,
+  renewal_term_months: "",
+  notice_period_days: "",
 }
 
 export function ContractDialog({
@@ -67,20 +66,27 @@ export function ContractDialog({
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // Once a contract is Active/closed its commercial terms are locked server-side.
+  const locked = !!contract && !["Draft", "Pending Signature"].includes(contract.status)
+
   useEffect(() => {
     if (!open) return
     setError(null)
     if (contract) {
       setForm({
+        title: contract.title || "",
         company_name: contract.company_name || "",
         start_date: toDateInputValue(contract.start_date),
         end_date: toDateInputValue(contract.end_date),
         value: String(contract.value ?? ""),
         contract_type: contract.contract_type || "",
-        status: contract.status || "Draft",
         signed_by_client: contract.signed_by_client || "",
         signed_by_company: contract.signed_by_company || "",
+        terms: contract.terms || "",
         notes: contract.notes || "",
+        auto_renew: !!contract.auto_renew,
+        renewal_term_months: contract.renewal_term_months ? String(contract.renewal_term_months) : "",
+        notice_period_days: contract.notice_period_days ? String(contract.notice_period_days) : "",
       })
     } else {
       setForm(EMPTY)
@@ -100,7 +106,13 @@ export function ContractDialog({
     setLoading(true)
     setError(null)
 
-    const payload = { ...form, value: Number(form.value) }
+    const payload: Record<string, any> = {
+      ...form,
+      value: Number(form.value),
+      renewal_term_months: form.renewal_term_months ? Number(form.renewal_term_months) : null,
+      notice_period_days: form.notice_period_days ? Number(form.notice_period_days) : null,
+    }
+    if (contract) payload.row_version = contract.row_version
 
     try {
       const res = await fetch(contract ? `/api/sales/contracts/${contract.id}` : "/api/sales/contracts", {
@@ -129,7 +141,7 @@ export function ContractDialog({
           <DialogHeader>
             <DialogTitle>{contract ? "Edit contract" : "Create contract"}</DialogTitle>
             <DialogDescription>
-              {contract ? "Update this contract's details." : "Add a new signed or draft contract."}
+              {contract ? "Update this contract's details." : "Draft a new contract. It starts in Draft status."}
             </DialogDescription>
           </DialogHeader>
 
@@ -139,8 +151,27 @@ export function ContractDialog({
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+            {locked && (
+              <Alert>
+                <AlertDescription>
+                  This {contract?.status} contract&apos;s terms are locked. You can still update notes and renewal
+                  settings.
+                </AlertDescription>
+              </Alert>
+            )}
 
             <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="title">Title</FieldLabel>
+                <Input
+                  id="title"
+                  placeholder="e.g. Annual Services Agreement"
+                  value={form.title}
+                  onChange={(e) => update("title", e.target.value)}
+                  disabled={locked}
+                />
+              </Field>
+
               <div className="grid grid-cols-2 gap-4">
                 <Field>
                   <FieldLabel htmlFor="company_name">Company</FieldLabel>
@@ -149,6 +180,7 @@ export function ContractDialog({
                     value={form.company_name}
                     onChange={(e) => update("company_name", e.target.value)}
                     required
+                    disabled={locked}
                   />
                 </Field>
                 <Field>
@@ -158,6 +190,7 @@ export function ContractDialog({
                     placeholder="e.g. Annual, Retainer"
                     value={form.contract_type}
                     onChange={(e) => update("contract_type", e.target.value)}
+                    disabled={locked}
                   />
                 </Field>
               </div>
@@ -170,6 +203,7 @@ export function ContractDialog({
                     type="date"
                     value={form.start_date}
                     onChange={(e) => update("start_date", e.target.value)}
+                    disabled={locked}
                   />
                 </Field>
                 <Field>
@@ -179,6 +213,7 @@ export function ContractDialog({
                     type="date"
                     value={form.end_date}
                     onChange={(e) => update("end_date", e.target.value)}
+                    disabled={locked}
                   />
                 </Field>
               </div>
@@ -194,54 +229,79 @@ export function ContractDialog({
                     value={form.value}
                     onChange={(e) => update("value", e.target.value)}
                     required
+                    disabled={locked}
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="status">Status</FieldLabel>
-                  <Select value={form.status} onValueChange={(v) => update("status", v ?? "")}>
-                    <SelectTrigger id="status" className="w-full">
-                      <SelectValue placeholder="Select status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {STATUSES.map((s) => (
-                          <SelectItem key={s} value={s}>
-                            {s}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                  <FieldLabel htmlFor="notice_period_days">Notice period (days)</FieldLabel>
+                  <Input
+                    id="notice_period_days"
+                    type="number"
+                    min="0"
+                    value={form.notice_period_days}
+                    onChange={(e) => update("notice_period_days", e.target.value)}
+                  />
                 </Field>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <Field>
-                  <FieldLabel htmlFor="signed_by_client">Signed by (client)</FieldLabel>
+                  <FieldLabel htmlFor="signed_by_client">Signatory (client)</FieldLabel>
                   <Input
                     id="signed_by_client"
                     value={form.signed_by_client}
                     onChange={(e) => update("signed_by_client", e.target.value)}
+                    disabled={locked}
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="signed_by_company">Signed by (company)</FieldLabel>
+                  <FieldLabel htmlFor="signed_by_company">Signatory (company)</FieldLabel>
                   <Input
                     id="signed_by_company"
                     value={form.signed_by_company}
                     onChange={(e) => update("signed_by_company", e.target.value)}
+                    disabled={locked}
                   />
                 </Field>
               </div>
 
+              <div className="flex items-center gap-3 rounded-md border border-border p-3">
+                <Checkbox
+                  id="auto_renew"
+                  checked={form.auto_renew}
+                  onCheckedChange={(v) => update("auto_renew", !!v)}
+                />
+                <div className="flex-1">
+                  <FieldLabel htmlFor="auto_renew" className="cursor-pointer">
+                    Auto-renew on expiry
+                  </FieldLabel>
+                </div>
+                <Input
+                  aria-label="Renewal term in months"
+                  type="number"
+                  min="1"
+                  placeholder="Term (months)"
+                  className="w-36"
+                  value={form.renewal_term_months}
+                  onChange={(e) => update("renewal_term_months", e.target.value)}
+                />
+              </div>
+
+              <Field>
+                <FieldLabel htmlFor="terms">Terms &amp; conditions</FieldLabel>
+                <Textarea
+                  id="terms"
+                  rows={4}
+                  placeholder="Contract terms rendered into the PDF..."
+                  value={form.terms}
+                  onChange={(e) => update("terms", e.target.value)}
+                  disabled={locked}
+                />
+              </Field>
+
               <Field>
                 <FieldLabel htmlFor="notes">Notes</FieldLabel>
-                <Textarea
-                  id="notes"
-                  rows={3}
-                  value={form.notes}
-                  onChange={(e) => update("notes", e.target.value)}
-                />
+                <Textarea id="notes" rows={2} value={form.notes} onChange={(e) => update("notes", e.target.value)} />
               </Field>
             </FieldGroup>
           </div>

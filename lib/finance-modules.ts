@@ -13,7 +13,7 @@ export const FINANCE_MODULES: Record<string, { label: string; prefix: string }> 
   "bank-transactions": { label: "Bank Transactions", prefix: "BTX" },
   "bank-cash": { label: "Bank & Cash", prefix: "ACC" },
   "chart-of-accounts": { label: "Chart of Accounts", prefix: "COA" },
-  "customers-vendors": { label: "Customer / Vendor", prefix: "CV" },
+  "customers-vendors": { label: "Vendors", prefix: "VEN" },
   "gst-filing": { label: "GST Filing", prefix: "GST" },
   "tds-filing": { label: "TDS Filing", prefix: "TDS" },
   "journal-entries": { label: "Journal Entries", prefix: "JE" },

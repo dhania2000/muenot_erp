@@ -27,6 +27,25 @@ export type FieldDef = {
    * verification metadata) that the user should not hand-edit.
    */
   hidden?: boolean
+  /** Seed value for new records (used for fixed fields such as party_type). */
+  default?: string
+}
+
+/**
+ * Optional GSTIN verification capability for a master module (the Vendor
+ * master). When present, the form renders a dedicated GSTIN block that calls
+ * the lookup endpoint, autofills empty fields from the GST network snapshot,
+ * flags conflicts and duplicates, and stores the verification metadata.
+ */
+export type GstinVerifyConfig = {
+  /** Column holding the GSTIN (e.g. "gstin"). */
+  column: string
+  /** Server route that verifies + returns autofill/meta/duplicate payloads. */
+  lookupPath: string
+  /** Map of GST-network snapshot keys -> module field keys to autofill. */
+  autofill: { name?: string; legalName?: string; pan?: string; address?: string; state?: string }
+  /** Field key that receives the authoritative verification status string. */
+  statusField: string
 }
 
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline"

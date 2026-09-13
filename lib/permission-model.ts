@@ -105,7 +105,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "finance.bank_transactions", label: "Bank Transactions", group: "finance", aliases: ["bank_transaction", "transaction"], scope: { table: "bank_transactions", addedBy: "created_by" } },
       { key: "finance.bank_cash", label: "Bank & Cash", group: "finance", aliases: ["bank_cash"], scope: { table: "finance_accounts", addedBy: "created_by" } },
       { key: "finance.chart_of_accounts", label: "Chart of Accounts", group: "finance", aliases: ["chart"], scope: { table: "chart_of_accounts", addedBy: "created_by" } },
-      { key: "finance.customers_vendors", label: "Customer / Vendor", group: "finance", aliases: ["customer", "vendor"], scope: { table: "customers_vendors", addedBy: "created_by" } },
+      { key: "finance.customers_vendors", label: "Vendors", group: "finance", aliases: ["customer", "vendor"], scope: { table: "customers_vendors", addedBy: "created_by" } },
       { key: "finance.gst_filing", label: "GST Filing", group: "finance", aliases: ["gst"], scope: { table: "gst_filings" } },
       { key: "finance.tds_filing", label: "TDS Filing", group: "finance", aliases: ["tds"], scope: { table: "tds_filings" } },
       { key: "finance.journal", label: "Journal & Ledger", group: "finance", aliases: ["journal", "ledger"], scope: { table: "finance_records", addedBy: "created_by" } },

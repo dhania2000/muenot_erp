@@ -55,6 +55,13 @@ let cvEnsured = false
  */
 export async function ensureCustomerVendorGstColumns() {
   if (cvEnsured) return
+  // Vendor master fields introduced with the Vendors upgrade.
+  await ensureColumn("customers_vendors", "trade_name", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("customers_vendors", "vendor_category", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn("customers_vendors", "registered_address", "TEXT DEFAULT NULL")
+  await ensureColumn("customers_vendors", "upi_id", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn("customers_vendors", "tds_applicable", "TINYINT(1) NOT NULL DEFAULT 0")
+  await ensureColumn("customers_vendors", "kyc_status", "VARCHAR(30) DEFAULT NULL")
   await ensureColumn("customers_vendors", "gst_trade_name", "VARCHAR(255) DEFAULT NULL")
   await ensureColumn("customers_vendors", "gst_status", "VARCHAR(40) DEFAULT NULL")
   await ensureColumn("customers_vendors", "gst_taxpayer_type", "VARCHAR(60) DEFAULT NULL")

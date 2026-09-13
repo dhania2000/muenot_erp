@@ -530,22 +530,38 @@ const chartOfAccounts: ModuleConfig = {
 // ---------------------------------------------------------------------------
 // 8. Customer / Vendor (master data)
 // ---------------------------------------------------------------------------
+// The Vendor master keeps the historical `customers_vendors` table and its
+// `party_id` / `customer_name` columns so every downstream link (Clients,
+// Sales Invoices, Payments, GST/TDS filing) keeps resolving. Only the presented
+// surface is vendor-first: new records get a VEN- id and party_type is fixed to
+// "Vendor" (Customers are managed from the Clients master, not here).
+const VENDOR_CATEGORIES = [
+  "Goods Supplier", "Service Provider", "Contractor", "Professional",
+  "Rent / Landlord", "Utility", "Transporter", "Import Vendor", "Other",
+]
 const customersVendors: ModuleConfig = {
   key: "customers-vendors",
   table: "customers_vendors",
-  label: "Customer / Vendor",
-  subtitle: "Finance masters",
-  addLabel: "New party",
+  label: "Vendors",
+  subtitle: "Finance master",
+  addLabel: "New vendor",
   idColumn: "party_id",
-  idPrefix: "CV",
+  idPrefix: "VEN",
   statusColumn: "status",
   searchColumns: ["party_id", "customer_name", "legal_name", "gstin", "pan", "city", "mobile"],
+  gstin: {
+    column: "gstin",
+    lookupPath: "/api/finance/vendors/gstin-lookup",
+    autofill: { name: "customer_name", legalName: "legal_name", pan: "pan", address: "registered_address", state: "state" },
+    statusField: "gst_verification_status",
+  },
   fields: [
-    fld("Identity", "customer_name", "Customer name", "text", { required: true }),
-    fld("Identity", "legal_name", "Name (as registered)", "text"),
-    fld("Identity", "party_type", "Party type", "select", { options: ["Customer", "Vendor", "Both"] }),
-    fld("Identity", "party_category", "Party category", "text"),
-    fld("Identity", "gstin", "GSTIN", "text"),
+    fld("Identity", "customer_name", "Vendor name", "text", { required: true }),
+    fld("Identity", "legal_name", "Legal name (as registered)", "text"),
+    fld("Identity", "trade_name", "Trade name", "text"),
+    fld("Identity", "party_type", "Party type", "text", { hidden: true, default: "Vendor" }),
+    fld("Identity", "vendor_category", "Vendor category", "select", { options: VENDOR_CATEGORIES, optional: true }),
+    fld("Identity", "gstin", "GSTIN", "text", { placeholder: "15-character GSTIN" }),
     fld("Identity", "pan", "PAN", "text"),
     fld("Identity", "tan", "TAN", "text"),
     fld("Contact", "contact_person", "Contact person", "text"),
@@ -554,7 +570,8 @@ const customersVendors: ModuleConfig = {
     fld("Contact", "alternate_email", "Personal / alternate email", "text"),
     fld("Contact", "mobile", "Mobile", "text"),
     fld("Contact", "alternate_mobile", "Alternate mobile", "text"),
-    fld("Address", "billing_address", "Billing address", "textarea"),
+    fld("Address", "registered_address", "Registered address", "textarea"),
+    fld("Address", "billing_address", "Billing / correspondence address", "textarea"),
     fld("Address", "city", "City", "text"),
     fld("Address", "state", "State", "text"),
     fld("Address", "state_code", "State code", "text"),
@@ -568,25 +585,46 @@ const customersVendors: ModuleConfig = {
     fld("Banking", "bank_account_no", "Bank account no.", "text"),
     fld("Banking", "ifsc", "IFSC", "text"),
     fld("Banking", "account_holder_name", "Account holder name", "text"),
-    fld("Tax & status", "tds_section", "TDS section", "text"),
-    fld("Tax & status", "tds_rate", "TDS rate %", "number"),
-    fld("Tax & status", "gst_registration_type", "GST registration type", "select", { options: ["Regular", "Composition", "Unregistered", "SEZ", "Overseas"] }),
-    fld("Tax & status", "status", "Status", "select", { options: ["Active", "Inactive"] }),
-    fld("Tax & status", "notes", "Notes", "textarea"),
+    fld("Banking", "upi_id", "UPI ID", "text"),
+    fld("Tax & compliance", "tds_applicable", "TDS applicable", "checkbox"),
+    fld("Tax & compliance", "tds_section", "TDS section", "text", { placeholder: "194C" }),
+    fld("Tax & compliance", "tds_rate", "TDS rate %", "number"),
+    fld("Tax & compliance", "gst_registration_type", "GST registration type", "select", { options: ["Regular", "Composition", "Unregistered", "SEZ", "Overseas"] }),
+    fld("Tax & compliance", "kyc_status", "KYC status", "select", { options: ["Pending", "Verified", "Rejected"], optional: true }),
+    fld("Tax & compliance", "status", "Status", "select", { options: ["Active", "Inactive", "On Hold", "Archived"] }),
+    fld("Tax & compliance", "notes", "Notes", "textarea"),
+    // GST-network verification snapshot: server-populated, read-only in the form
+    // but persisted and shown in the detail view.
+    fld("GST verification", "gst_verification_status", "Verification status", "text", { hidden: true }),
+    fld("GST verification", "gst_trade_name", "GST trade name", "text", { hidden: true }),
+    fld("GST verification", "gst_status", "GST portal status", "text", { hidden: true }),
+    fld("GST verification", "gst_taxpayer_type", "Taxpayer type", "text", { hidden: true }),
+    fld("GST verification", "business_constitution", "Business constitution", "text", { hidden: true }),
+    fld("GST verification", "gst_registration_date", "GST registration date", "text", { hidden: true }),
+    fld("GST verification", "gst_cancellation_date", "GST cancellation date", "text", { hidden: true }),
+    fld("GST verification", "gst_block_status", "e-Way bill block status", "text", { hidden: true }),
+    fld("GST verification", "gst_verified_at", "Verified at", "text", { hidden: true }),
+    fld("GST verification", "gst_verification_source", "Verification source", "text", { hidden: true }),
   ],
   tableColumns: [
-    { key: "party_id", label: "Party ID", mono: true },
-    { key: "customer_name", label: "Name", sub: "party_type" },
+    { key: "party_id", label: "Vendor ID", mono: true },
+    { key: "customer_name", label: "Vendor", sub: "vendor_category" },
     { key: "gstin", label: "GSTIN", mono: true },
+    { key: "gst_verification_status", label: "GST", badge: { Verified: "default", Unverified: "outline", Failed: "destructive", Cancelled: "destructive" } },
     { key: "city", label: "City", sub: "state" },
-    { key: "mobile", label: "Mobile" },
-    { key: "status", label: "Status", badge: { Active: "default", Inactive: "outline" } },
+    { key: "status", label: "Status", badge: { Active: "default", Inactive: "outline", "On Hold": "secondary", Archived: "destructive" } },
   ],
   kpis: [
-    { label: "Total Parties", key: "total_rows", icon: "Users" },
-    { label: "Credit Limit", key: "total_credit", money: true, icon: "Coins" },
+    { label: "Total Vendors", key: "total_rows", icon: "Users" },
+    { label: "Active", key: "active_rows", icon: "TrendingUp" },
+    { label: "GST Verified", key: "verified_rows", icon: "Landmark" },
+    { label: "TDS Applicable", key: "tds_rows", icon: "Coins" },
   ],
-  summarySelect: "COUNT(*) total_rows, COALESCE(SUM(credit_limit),0) total_credit",
+  summarySelect:
+    "COUNT(*) total_rows, " +
+    "COALESCE(SUM(status='Active'),0) active_rows, " +
+    "COALESCE(SUM(gst_verification_status='Verified'),0) verified_rows, " +
+    "COALESCE(SUM(tds_applicable=1),0) tds_rows",
 }
 
 // ---------------------------------------------------------------------------

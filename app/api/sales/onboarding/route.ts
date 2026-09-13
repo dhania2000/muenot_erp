@@ -1,56 +1,45 @@
 import { NextResponse } from "next/server"
-import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
-import { resolveCompanyId } from "@/lib/sales/company-master"
+import { createOnboarding, listOnboarding, onboardingErrorStatus } from "@/lib/sales/onboarding-service"
 
-export async function GET() {
-  const session = await requireFeature("sales.manage_onboarding")
+/** GET /api/sales/onboarding — filtered list of onboarding records. */
+export async function GET(request: Request) {
+  const session = await requireFeature("sales.view_onboarding")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-  const onboarding = await query(
-    `SELECT o.*, u.name AS added_by_name
-     FROM sales_onboarding o
-     LEFT JOIN users u ON u.id = o.added_by
-     ORDER BY o.created_at DESC`,
-  )
-  return NextResponse.json({ onboarding })
+  const sp = new URL(request.url).searchParams
+  try {
+    const onboarding = await listOnboarding({
+      search: sp.get("search") || undefined,
+      status: sp.get("status") || undefined,
+      stage: sp.get("stage") || undefined,
+      health: sp.get("health") || undefined,
+      ownerId: sp.get("ownerId") ? Number(sp.get("ownerId")) : undefined,
+      companyId: sp.get("companyId") ? Number(sp.get("companyId")) : undefined,
+      includeArchived: sp.get("archived") === "1",
+    })
+    return NextResponse.json({ onboarding })
+  } catch (err) {
+    return NextResponse.json(
+      { error: (err as Error)?.message || "Failed to load onboarding" },
+      { status: onboardingErrorStatus(err) },
+    )
+  }
 }
 
+/** POST /api/sales/onboarding — create a relational onboarding record. */
 export async function POST(request: Request) {
   const session = await requireFeature("sales.manage_onboarding")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-  const body = await request.json()
-  if (!body.company_name) {
-    return NextResponse.json({ error: "Company name is required" }, { status: 400 })
+  const body = await request.json().catch(() => ({}))
+  try {
+    const record = await createOnboarding(body, session.userId)
+    return NextResponse.json({ id: record.id, onboarding_code: record.onboarding_code, record })
+  } catch (err) {
+    return NextResponse.json(
+      { error: (err as Error)?.message || "Failed to create onboarding", details: (err as any)?.details },
+      { status: onboardingErrorStatus(err) },
+    )
   }
-
-  const [{ next }] = await query<{ next: number }[]>(
-    "SELECT COALESCE(MAX(CAST(SUBSTRING(onboarding_code, 4) AS UNSIGNED)), 0) + 1 AS next FROM sales_onboarding",
-  )
-  const onboardingCode = `OB-${String(next).padStart(3, "0")}`
-
-  const companyId = await resolveCompanyId({ company_id: body.company_id, company_name: body.company_name })
-
-  const result = await query<any>(
-    `INSERT INTO sales_onboarding
-     (onboarding_code, onboarding_date, company_name, company_id, contract_code, start_date,
-      kickoff_meeting_date, current_stage, status, onboarding_by, added_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      onboardingCode,
-      new Date().toISOString().slice(0, 10),
-      body.company_name,
-      companyId,
-      body.contract_code || null,
-      body.start_date || null,
-      body.kickoff_meeting_date || null,
-      body.current_stage || "Kickoff",
-      body.status || "Not Started",
-      body.onboarding_by || null,
-      session.userId,
-    ],
-  )
-
-  return NextResponse.json({ id: result.insertId, onboarding_code: onboardingCode })
 }

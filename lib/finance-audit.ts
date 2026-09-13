@@ -22,6 +22,7 @@ export type FinanceAuditEventType =
   | "cancelled"
   | "reversed"
   | "deleted"
+  | "override"
 
 export type FinanceAuditEvent = {
   id: number

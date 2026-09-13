@@ -520,7 +520,7 @@ export function SalesInvoiceDialog({
               <Grid>
                 <Field>
                   <FieldLabel>Client</FieldLabel>
-                  <Select value={header.client_id || ""} disabled={structuralLocked} onValueChange={applyParty}>
+                  <Select value={header.client_id || ""} disabled={structuralLocked} onValueChange={(v) => applyParty(v ?? "")}>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder={parties.length ? "Select a client" : "No clients found"} />
                     </SelectTrigger>
@@ -617,7 +617,7 @@ export function SalesInvoiceDialog({
                         <td className="p-1"><Input className="w-16" type="number" step="any" value={l.quantity} disabled={structuralLocked}
                           onChange={(e) => updateLine(l.key, { quantity: e.target.value })} /></td>
                         <td className="p-1">
-                          <Select value={l.unit || "Nos"} disabled={structuralLocked} onValueChange={(v) => updateLine(l.key, { unit: v })}>
+                          <Select value={l.unit || "Nos"} disabled={structuralLocked} onValueChange={(v) => updateLine(l.key, { unit: v ?? "" })}>
                             <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
                             <SelectContent>{UNITS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
                           </Select>
@@ -627,7 +627,7 @@ export function SalesInvoiceDialog({
                         <td className="p-1"><Input className="w-20" type="number" step="any" value={l.discount_value} disabled={structuralLocked}
                           onChange={(e) => updateLine(l.key, { discount_value: e.target.value })} /></td>
                         <td className="p-1">
-                          <Select value={l.tax_rate || "18"} disabled={structuralLocked} onValueChange={(v) => updateLine(l.key, { tax_rate: v })}>
+                          <Select value={l.tax_rate || "18"} disabled={structuralLocked} onValueChange={(v) => updateLine(l.key, { tax_rate: v ?? "" })}>
                             <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
                             <SelectContent>{TAX_RATES.map((r) => <SelectItem key={r} value={r}>{r}%</SelectItem>)}</SelectContent>
                           </Select>

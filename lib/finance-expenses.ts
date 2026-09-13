@@ -213,7 +213,7 @@ export async function computeExpenseServerFields(
   // --- Phase 6/7/8: project / client / cost-centre (Operations) --------------
   const project = await loadProject(merged.project_id)
   if (project) {
-    out.project_id = project.project_id
+    out.project_id = String(project.project_id)
     out.project_name = project.project_name
     snap("client_name", project.client_name)
     snap("project_status", project.status)

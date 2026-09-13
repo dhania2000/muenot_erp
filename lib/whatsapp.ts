@@ -47,7 +47,7 @@ export function parseGraphError(
   let message = base
 
   if (code === 133010) {
-    message = `${base}. This number is not connected to the WhatsApp Cloud API yet — use "Connect WhatsApp Business App" to run Meta's coexistence onboarding (QR scan), then try again.`
+    message = `${base}. This number is not registered on the WhatsApp Cloud API yet — connect it with "Connect WhatsApp" (Embedded Signup) so Meta registers it for the Cloud API, then try again.`
   } else if (code === 190) {
     message = `${base}. The access token is invalid or expired — an administrator needs to generate a new permanent System User token.`
   } else if (code === 10 || code === 200 || code === 3) {
@@ -64,7 +64,7 @@ let tableEnsured = false
 /**
  * Adds a column only if it does not already exist. MySQL has no portable
  * `ADD COLUMN IF NOT EXISTS`, so we probe information_schema first. Used to
- * evolve the integration table (coexistence fields) without a manual migration.
+ * evolve the integration table without a manual migration.
  */
 async function ensureColumn(table: string, column: string, ddl: string) {
   const rows = await query<{ c: number }[]>(
@@ -89,7 +89,6 @@ export async function ensureWhatsAppTable() {
       \`business_name\` VARCHAR(191) DEFAULT NULL,
       \`quality_rating\` VARCHAR(32) DEFAULT NULL,
       \`platform_type\` VARCHAR(32) DEFAULT NULL,
-      \`is_on_biz_app\` TINYINT(1) DEFAULT NULL,
       \`access_token\` TEXT NOT NULL,
       \`connected_by_user_id\` INT UNSIGNED DEFAULT NULL,
       \`connected_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -98,16 +97,11 @@ export async function ensureWhatsAppTable() {
       UNIQUE KEY \`uniq_phone_number\` (\`phone_number_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
-  // Older deployments predate the coexistence columns — add them idempotently.
+  // Older deployments predate the platform_type column — add it idempotently.
   await ensureColumn(
     "marketing_whatsapp_integration",
     "platform_type",
     "`platform_type` VARCHAR(32) DEFAULT NULL",
-  )
-  await ensureColumn(
-    "marketing_whatsapp_integration",
-    "is_on_biz_app",
-    "`is_on_biz_app` TINYINT(1) DEFAULT NULL",
   )
   tableEnsured = true
 }
@@ -121,7 +115,6 @@ export type WhatsAppIntegrationRow = {
   business_name: string | null
   quality_rating: string | null
   platform_type: string | null
-  is_on_biz_app: number | null
   access_token: string
   connected_by_user_id: number | null
   connected_at: string
@@ -138,8 +131,6 @@ export type WhatsAppIntegrationPublic = {
   businessName: string | null
   qualityRating: string | null
   platformType: string | null
-  /** True when this number also runs in the WhatsApp Business App (coexistence). */
-  coexistence: boolean
   connectedAt: string
 }
 
@@ -153,7 +144,6 @@ export function toPublicIntegration(row: WhatsAppIntegrationRow): WhatsAppIntegr
     businessName: row.business_name,
     qualityRating: row.quality_rating,
     platformType: row.platform_type,
-    coexistence: row.is_on_biz_app === 1,
     connectedAt: row.connected_at,
   }
 }
@@ -162,20 +152,18 @@ export function toPublicIntegration(row: WhatsAppIntegrationRow): WhatsAppIntegr
  * Builds an integration row from the server environment when an administrator
  * has provisioned the number via env vars instead of the UI.
  *
- * This is the admin-only backend configuration path: the WhatsApp Business App
- * number stays live and we NEVER call `/register`. The access token is read
+ * This is the admin-only backend configuration path. The access token is read
  * from the env only on the server and is treated as plaintext by decryptToken
  * (it has no `enc:v1:` marker), so no key is needed. Returns null unless the
  * three core identifiers are all present.
  *
- * IMPORTANT: we deliberately leave `platform_type` and `is_on_biz_app` as
- * `null` here. The mere presence of env vars proves nothing about whether Meta
- * has actually completed WhatsApp Business App coexistence onboarding for this
- * number. Coexistence is only ever asserted from a LIVE Meta probe
- * (verifyWhatsAppCredentials → is_on_biz_app) or from data validated during
- * Embedded Signup and persisted to the DB. This prevents the UI from showing a
- * false green "Coexistence" state (see the #133010 "Account not registered"
- * case, where env vars exist but Cloud API messaging is not registered).
+ * IMPORTANT: we deliberately leave `platform_type` as `null` here. The mere
+ * presence of env vars proves nothing about the number's live Cloud API state;
+ * `platform_type` is only ever asserted from a LIVE Meta probe
+ * (verifyWhatsAppCredentials) or from data validated during Embedded Signup and
+ * persisted to the DB. This prevents the UI from showing a false state (see the
+ * #133010 "Account not registered" case, where env vars exist but Cloud API
+ * messaging is not registered).
  */
 export function getEnvIntegration(): WhatsAppIntegrationRow | null {
   const wabaId = process.env.WHATSAPP_WABA_ID?.trim()
@@ -195,9 +183,8 @@ export function getEnvIntegration(): WhatsAppIntegrationRow | null {
     verified_name: businessName,
     business_name: businessName,
     quality_rating: null,
-    // Unknown until Meta confirms it live — NEVER hardcode a coexistence claim.
+    // Unknown until Meta confirms it live.
     platform_type: null,
-    is_on_biz_app: null,
     access_token: accessToken,
     connected_by_user_id: null,
     connected_at: now,
@@ -208,7 +195,7 @@ export function getEnvIntegration(): WhatsAppIntegrationRow | null {
 /**
  * Returns the active WhatsApp integration. A row saved through the UI (Embedded
  * Signup or manual credentials) takes precedence; otherwise we fall back to the
- * env-provisioned coexistence number so the connection works out of the box.
+ * env-provisioned number so the connection works out of the box.
  */
 export async function getWhatsAppIntegration(): Promise<WhatsAppIntegrationRow | null> {
   await ensureWhatsAppTable()
@@ -224,8 +211,6 @@ export type PhoneNumberProfile = {
   qualityRating: string | null
   /** CLOUD_API | ON_PREMISE | NOT_APPLICABLE (when Meta reports it). */
   platformType: string | null
-  /** True when the number is also active in the WhatsApp Business App (coexistence). */
-  isOnBizApp: boolean | null
   /**
    * The phone number node's registration status on the Cloud API
    * (e.g. CONNECTED | PENDING | MIGRATED | BANNED). CONNECTED is the signal
@@ -240,7 +225,6 @@ type RawPhoneProfile = {
   verified_name?: string
   quality_rating?: string
   platform_type?: string
-  is_on_biz_app?: boolean
   status?: string
   error?: { message?: string; type?: string; code?: number; error_subcode?: number }
 }
@@ -270,11 +254,11 @@ async function requestPhoneProfile(
 
 /**
  * Validates the credentials by asking the Graph API for the phone number's
- * profile, including the coexistence signals `platform_type` and
- * `is_on_biz_app`. Some numbers / API versions do not expose those extra
- * fields, so we transparently retry with the base field set rather than
- * failing the connect flow. Throws a human-friendly message when Meta rejects
- * the credentials outright.
+ * profile, including `platform_type` and the Cloud API registration `status`.
+ * Some numbers / API versions do not expose those extra fields, so we
+ * transparently retry with the base field set rather than failing the connect
+ * flow. Throws a human-friendly message when Meta rejects the credentials
+ * outright.
  */
 export async function verifyWhatsAppCredentials(input: {
   phoneNumberId: string
@@ -285,11 +269,11 @@ export async function verifyWhatsAppCredentials(input: {
     data = await requestPhoneProfile(
       input.phoneNumberId,
       input.accessToken,
-      "display_phone_number,verified_name,quality_rating,platform_type,is_on_biz_app,status",
+      "display_phone_number,verified_name,quality_rating,platform_type,status",
     )
   } catch {
     // Retry with the base fields (covers numbers/versions without the extra
-    // coexistence/status fields and re-surfaces a genuine auth error from the
+    // platform_type/status fields and re-surfaces a genuine auth error from the
     // second attempt).
     data = await requestPhoneProfile(
       input.phoneNumberId,
@@ -303,7 +287,6 @@ export async function verifyWhatsAppCredentials(input: {
     verifiedName: data.verified_name ?? null,
     qualityRating: data.quality_rating ?? null,
     platformType: data.platform_type ?? null,
-    isOnBizApp: typeof data.is_on_biz_app === "boolean" ? data.is_on_biz_app : null,
     status: data.status ?? null,
   }
 }
@@ -316,7 +299,6 @@ export type ConnectWhatsApp = {
   businessName: string | null
   qualityRating: string | null
   platformType: string | null
-  isOnBizApp: boolean | null
   accessToken: string
   connectedByUserId: number | null
 }
@@ -326,8 +308,8 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
   await query(
     `INSERT INTO \`marketing_whatsapp_integration\`
       (waba_id, phone_number_id, display_phone_number, verified_name, business_name,
-       quality_rating, platform_type, is_on_biz_app, access_token, connected_by_user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       quality_rating, platform_type, access_token, connected_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        waba_id = VALUES(waba_id),
        display_phone_number = VALUES(display_phone_number),
@@ -335,7 +317,6 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
        business_name = VALUES(business_name),
        quality_rating = VALUES(quality_rating),
        platform_type = VALUES(platform_type),
-       is_on_biz_app = VALUES(is_on_biz_app),
        access_token = VALUES(access_token),
        connected_by_user_id = VALUES(connected_by_user_id)`,
     [
@@ -346,7 +327,6 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
       data.businessName,
       data.qualityRating,
       data.platformType,
-      data.isOnBizApp == null ? null : data.isOnBizApp ? 1 : 0,
       encryptToken(data.accessToken),
       data.connectedByUserId,
     ],
@@ -359,7 +339,7 @@ export async function deleteWhatsAppIntegration(id: number) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Embedded Signup (coexistence / QR onboarding)                       */
+/* Embedded Signup (standard Cloud API onboarding)                     */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -380,12 +360,10 @@ export function getAppId(): string | null {
 
 /**
  * Exchanges the short-lived authorization `code` returned by Meta's Embedded
- * Signup popup for a business access token, using the app id + app secret. This
- * is the coexistence onboarding path: the QR scan and number selection happen
- * inside Meta's popup, so we NEVER call `/{phone-number-id}/register` and NEVER
- * deregister the number — the WhatsApp Business App number and its coexistence
- * stay intact. The returned token is what we store (encrypted) and use for all
- * subsequent Graph API calls.
+ * Signup popup for a business access token, using the app id + app secret. The
+ * WABA and phone number are created/selected and registered on the Cloud API
+ * inside Meta's popup during standard onboarding. The returned token is what we
+ * store (encrypted) and use for all subsequent Graph API calls.
  */
 export async function exchangeEmbeddedSignupCode(
   code: string,
@@ -849,18 +827,9 @@ export async function subscribeWabaWebhook(
   const token = decryptToken(integration.access_token)
   if (!token) return { ok: false, error: "Stored access token could not be read." }
 
-  // Coexistence numbers must be subscribed to the WhatsApp Business App fields
-  // so inbound messages, the initial chat `history` import, echoes of messages
-  // the owner sends from the WhatsApp Business App (`smb_message_echoes`) and
-  // app state changes (`smb_app_state_sync`) all reach the ERP webhook. This is
-  // NOT the generic `message_echoes` field, which is a different (non-SMB)
-  // subscription and is not the coexistence field.
-  const subscribedFields = [
-    "messages",
-    "history",
-    "smb_message_echoes",
-    "smb_app_state_sync",
-  ].join(",")
+  // Standard Cloud API: subscribe to the `messages` field so inbound messages
+  // and outbound status updates reach the ERP webhook.
+  const subscribedFields = ["messages"].join(",")
   const url =
     `${GRAPH_BASE}/${encodeURIComponent(integration.waba_id)}/subscribed_apps` +
     `?subscribed_fields=${encodeURIComponent(subscribedFields)}`

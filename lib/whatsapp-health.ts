@@ -35,7 +35,6 @@ export type ConnectionHealth = {
     verifiedName: string | null
     qualityRating: string | null
     platformType: string | null
-    coexistence: boolean | null
   } | null
   webhook: {
     lastEventAt: string | null
@@ -130,7 +129,6 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
       verifiedName: profile.verifiedName,
       qualityRating: profile.qualityRating,
       platformType: profile.platformType,
-      coexistence: profile.isOnBizApp,
     }
     checks.push({
       id: "api",
@@ -149,7 +147,8 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
     // (#133010) "Account not registered" at send time. Meta only reports
     // `status: "CONNECTED"` once the number is actually registered/usable on
     // the Cloud API. Anything else (or an unreported status) means messaging
-    // is not confirmed and the coexistence onboarding likely needs to run.
+    // is not confirmed and the number likely needs to be (re)connected via
+    // Embedded Signup.
     const status = (profile.status || "").toUpperCase()
     checks.push({
       id: "registration",
@@ -159,22 +158,8 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
         status === "CONNECTED"
           ? "Number is registered on the Cloud API and can send/receive messages."
           : status
-            ? `Meta reports status "${status}" — Cloud API messaging is not registered. Run "Connect WhatsApp Business App" to complete coexistence onboarding.`
-            : "Meta did not report a registration status. If sending fails with (#133010), run \u201CConnect WhatsApp Business App\u201D to complete coexistence onboarding.",
-    })
-
-    // WhatsApp Business App coexistence — asserted ONLY from Meta's live
-    // `is_on_biz_app` signal, never inferred from env vars.
-    checks.push({
-      id: "coexistence",
-      label: "Business App coexistence",
-      status: profile.isOnBizApp === true ? "ok" : profile.isOnBizApp === false ? "warn" : "unknown",
-      detail:
-        profile.isOnBizApp === true
-          ? "Meta confirms this number also runs in the WhatsApp Business App (coexistence active)."
-          : profile.isOnBizApp === false
-            ? "Meta reports this number is not running in the WhatsApp Business App. Coexistence onboarding is incomplete."
-            : "Meta did not report a coexistence state for this number yet.",
+            ? `Meta reports status "${status}" — Cloud API messaging is not registered. Reconnect the number with "Connect WhatsApp" (Embedded Signup).`
+            : "Meta did not report a registration status. If sending fails with (#133010), reconnect the number with \u201CConnect WhatsApp\u201D (Embedded Signup).",
     })
   } catch (err) {
     checks.push({
@@ -232,7 +217,7 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
   // When it is reachable but a functional check fails (e.g. Cloud API messaging
   // not registered, or webhook not subscribed) we report "degraded" — truthful,
   // and never a false green — while still keeping the workspace usable so the
-  // admin can run coexistence onboarding.
+  // admin can reconnect the number.
   const overall: ConnectionHealth["overall"] = !phoneOk || !tokenReadable
     ? "down"
     : hasError || hasWarn

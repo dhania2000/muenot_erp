@@ -6,7 +6,7 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns } from "@/lib/finance-ensure"
 
 /** Column keys a client is allowed to write (everything except computed fields). */
 function inputKeys(cfg: ModuleConfig) {
@@ -49,6 +49,7 @@ export function createFinanceHandlers(moduleKey: string) {
   const ensureSchema = async () => {
     if (moduleKey === "freelance-invoices") await ensureFreelanceInvoiceColumns()
     if (moduleKey === "fte-invoices") await ensureFteInvoiceColumns()
+    if (moduleKey === "customers-vendors") await ensureCustomerVendorGstColumns()
   }
 
   async function GET(req: NextRequest) {

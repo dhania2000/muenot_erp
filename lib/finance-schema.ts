@@ -21,6 +21,12 @@ export type FieldDef = {
   /** Optional select: renders an empty choice. */
   optional?: boolean
   emptyLabel?: string
+  /**
+   * Stored + shown in the detail view, but never rendered as an editable input
+   * in the create/edit form. Used for server-populated snapshots (e.g. GSTIN
+   * verification metadata) that the user should not hand-edit.
+   */
+  hidden?: boolean
 }
 
 export type BadgeVariant = "default" | "secondary" | "destructive" | "outline"

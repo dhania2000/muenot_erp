@@ -8,11 +8,14 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FileCheck2, Landmark } from "lucide-react"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { FileCheck2, Landmark, Users } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 
 const currency = (n: any) => inr0(Number(n) || 0)
 const thisMonth = () => new Date().toISOString().slice(0, 7)
+
+type Direction = "receivable" | "payable"
 
 type Summary = {
   period: string
@@ -21,16 +24,52 @@ type Summary = {
   filing: { filing_id: string; status: string; challan_no: string | null; filed_at: string | null } | null
 }
 
+type DetailRow = {
+  doc_id: string
+  doc_date: string
+  doc_ref: string
+  party_name: string
+  pan: string
+  gstin: string
+  section: string
+  base: number
+  rate: number
+  tds: number
+  status: string
+}
+
+const DIRECTION_COPY: Record<Direction, { label: string; blurb: string; partyLabel: string }> = {
+  receivable: {
+    label: "TDS Receivable (Form 26AS)",
+    blurb: "Section-wise TDS deducted by customers, derived from posted sales invoices.",
+    partyLabel: "Customer",
+  },
+  payable: {
+    label: "TDS Payable (Form 26Q)",
+    blurb: "Section-wise TDS you deducted on vendor purchase bills and must deposit with the government.",
+    partyLabel: "Vendor",
+  },
+}
+
 export function TdsFilingClient() {
+  const [direction, setDirection] = useState<Direction>("receivable")
   const [period, setPeriod] = useState(thisMonth())
   const [challan, setChallan] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
-  const { data, mutate } = useSWR<{ summary: Summary }>(`/api/finance/tds-filing?period=${period}`, fetcher)
-  const { data: filingsData, mutate: mutateFilings } = useSWR<{ filings: any[] }>("/api/finance/tds-filing", fetcher)
+  const { data, mutate } = useSWR<{ summary: Summary; detail: DetailRow[] }>(
+    `/api/finance/tds-filing?period=${period}&direction=${direction}`,
+    fetcher,
+  )
+  const { data: filingsData, mutate: mutateFilings } = useSWR<{ filings: any[] }>(
+    `/api/finance/tds-filing?direction=${direction}`,
+    fetcher,
+  )
   const s = data?.summary
+  const detail = data?.detail ?? []
   const filings = filingsData?.filings ?? []
+  const copy = DIRECTION_COPY[direction]
 
   async function file() {
     setBusy(true)
@@ -39,7 +78,7 @@ export function TdsFilingClient() {
       const res = await fetch("/api/finance/tds-filing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ period, challan_no: challan }),
+        body: JSON.stringify({ period, challan_no: challan, direction }),
       })
       const body = await res.json()
       if (!res.ok) throw new Error(body.error || "Filing failed")
@@ -58,9 +97,7 @@ export function TdsFilingClient() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">TDS Filing</h1>
-          <p className="text-sm text-muted-foreground">
-            Section-wise TDS deducted by customers, derived from posted sales invoices.
-          </p>
+          <p className="text-sm text-muted-foreground">{copy.blurb}</p>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs text-muted-foreground" htmlFor="period">
@@ -70,17 +107,26 @@ export function TdsFilingClient() {
         </div>
       </header>
 
+      <Tabs value={direction} onValueChange={(v) => setDirection(v as Direction)}>
+        <TabsList>
+          <TabsTrigger value="receivable">Receivable (from customers)</TabsTrigger>
+          <TabsTrigger value="payable">Payable (on vendor bills)</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
       {error ? <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
 
       <div className="grid grid-cols-3 gap-4">
         <Stat label="Documents" value={String(s?.totals.invoice_count ?? 0)} />
         <Stat label="Base amount" value={currency(s?.totals.total_base)} />
-        <Stat label="TDS deducted" value={currency(s?.totals.total_tds)} />
+        <Stat label={direction === "payable" ? "TDS deducted (payable)" : "TDS deducted"} value={currency(s?.totals.total_tds)} />
       </div>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base">Return for {period}</CardTitle>
+          <CardTitle className="text-base">
+            {copy.label} · {period}
+          </CardTitle>
           {s?.filing ? (
             <Badge variant="default" className="gap-1">
               <FileCheck2 className="h-3.5 w-3.5" />
@@ -125,6 +171,56 @@ export function TdsFilingClient() {
                     <TableCell className="text-right">{r.invoice_count}</TableCell>
                     <TableCell className="text-right">{currency(r.base)}</TableCell>
                     <TableCell className="text-right">{r.avg_rate}%</TableCell>
+                    <TableCell className="text-right font-medium">{currency(r.tds)}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Users className="h-4 w-4" />
+            {copy.partyLabel}-wise detail
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Document</TableHead>
+                <TableHead>{copy.partyLabel}</TableHead>
+                {direction === "payable" ? <TableHead>PAN</TableHead> : null}
+                <TableHead>Section</TableHead>
+                <TableHead className="text-right">Base</TableHead>
+                <TableHead className="text-right">Rate</TableHead>
+                <TableHead className="text-right">TDS</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {detail.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={direction === "payable" ? 7 : 6} className="py-8 text-center text-sm text-muted-foreground">
+                    No {copy.partyLabel.toLowerCase()} TDS entries in this period.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                detail.map((r, i) => (
+                  <TableRow key={`${r.doc_id}-${i}`}>
+                    <TableCell>
+                      <div className="font-mono text-xs">{r.doc_ref || r.doc_id}</div>
+                      <div className="text-xs text-muted-foreground">{String(r.doc_date).slice(0, 10)}</div>
+                    </TableCell>
+                    <TableCell className="font-medium">{r.party_name}</TableCell>
+                    {direction === "payable" ? (
+                      <TableCell className="font-mono text-xs text-muted-foreground">{r.pan || "—"}</TableCell>
+                    ) : null}
+                    <TableCell>{r.section}</TableCell>
+                    <TableCell className="text-right">{currency(r.base)}</TableCell>
+                    <TableCell className="text-right">{r.rate}%</TableCell>
                     <TableCell className="text-right font-medium">{currency(r.tds)}</TableCell>
                   </TableRow>
                 ))

@@ -109,6 +109,7 @@ async function sectionAggregate(period: string, direction: TdsDirection) {
          FROM purchase_bills
         WHERE bill_date >= ? AND bill_date <= ?
           AND tds_applicable = 1 AND tds_amount > 0
+          AND COALESCE(payment_status,'') NOT IN ('Cancelled','Draft','Void')
         GROUP BY COALESCE(NULLIF(tds_section,''),'Unspecified')
         ORDER BY tds DESC`,
       [from, to],
@@ -164,6 +165,82 @@ export async function tdsSummary(period: string, direction: TdsDirection = "rece
       ? { filing_id: existing.filing_id, status: existing.status, challan_no: existing.challan_no, filed_at: existing.filed_at }
       : null,
   }
+}
+
+/**
+ * Raw deductee/vendor-wise TDS ledger for a period and direction (Phase 27/72).
+ * This is the line-level register behind the section-wise summary — one row per
+ * source document — so a preparer can tie every rupee of the return back to the
+ * bill (payable) or invoice (receivable) it came from. Payable rows carry the
+ * vendor PAN/GSTIN snapshot frozen on the purchase bill (Phase 47).
+ */
+export async function tdsDetail(period: string, direction: TdsDirection = "receivable") {
+  await ensureTdsFilingSchema()
+  const dir = normDirection(direction)
+  const { from, to } = periodRange(period)
+
+  if (dir === "payable") {
+    const rows = (await query(
+      `SELECT bill_id AS doc_id, bill_date AS doc_date, bill_number AS doc_ref,
+              financial_year,
+              vendor_id AS party_id, vendor_name AS party_name, vendor_legal_name AS party_legal_name,
+              vendor_pan AS pan, vendor_gstin AS gstin,
+              COALESCE(NULLIF(tds_section,''),'Unspecified') AS section,
+              COALESCE(NULLIF(tds_base,0), taxable_amount) AS base,
+              tds_rate AS rate, tds_amount AS tds, payment_status AS status
+         FROM purchase_bills
+        WHERE bill_date >= ? AND bill_date <= ?
+          AND tds_applicable = 1 AND tds_amount > 0
+          AND COALESCE(payment_status,'') NOT IN ('Cancelled','Draft','Void')
+        ORDER BY tds_amount DESC, bill_date ASC`,
+      [from, to],
+    ).catch(() => [])) as any[]
+    return rows.map((r) => ({
+      doc_id: r.doc_id,
+      doc_date: r.doc_date,
+      doc_ref: r.doc_ref,
+      financial_year: r.financial_year,
+      party_id: r.party_id,
+      party_name: r.party_legal_name || r.party_name || "—",
+      pan: r.pan || "",
+      gstin: r.gstin || "",
+      section: r.section,
+      base: round2(num(r.base)),
+      rate: round2(num(r.rate)),
+      tds: round2(num(r.tds)),
+      status: r.status || "",
+    }))
+  }
+
+  const rows = (await query(
+    `SELECT invoice_id AS doc_id, invoice_date AS doc_date, invoice_id AS doc_ref,
+            financial_year,
+            client_id AS party_id, client_name AS party_name,
+            COALESCE(NULLIF(tds_section,''),'Unspecified') AS section,
+            taxable_amount AS base, tds_rate AS rate, tds_amount AS tds, invoice_status AS status
+       FROM sales_invoices
+      WHERE invoice_date >= ? AND invoice_date <= ?
+        AND invoice_status IN ('Issued','Sent','Posted')
+        AND invoice_type NOT IN ('Proforma Invoice','Credit Note')
+        AND tds_applicable = 1 AND tds_amount > 0
+      ORDER BY tds_amount DESC, invoice_date ASC`,
+    [from, to],
+  ).catch(() => [])) as any[]
+  return rows.map((r) => ({
+    doc_id: r.doc_id,
+    doc_date: r.doc_date,
+    doc_ref: r.doc_ref,
+    financial_year: r.financial_year,
+    party_id: r.party_id,
+    party_name: r.party_name || "—",
+    pan: "",
+    gstin: "",
+    section: r.section,
+    base: round2(num(r.base)),
+    rate: round2(num(r.rate)),
+    tds: round2(num(r.tds)),
+    status: r.status || "",
+  }))
 }
 
 export async function listTdsFilings(direction?: TdsDirection) {

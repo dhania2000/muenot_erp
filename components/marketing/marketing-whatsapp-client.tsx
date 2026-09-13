@@ -23,7 +23,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { fetcher } from "@/lib/fetcher"
 import { WhatsAppInbox } from "@/components/marketing/whatsapp-inbox"
-import { WhatsAppEmbeddedSignup } from "@/components/marketing/whatsapp-embedded-signup"
 import { WhatsAppConnectionBadge } from "@/components/marketing/whatsapp/connection-badge"
 import { OverviewTab } from "@/components/marketing/whatsapp/overview-tab"
 import { ContactsTab } from "@/components/marketing/whatsapp/contacts-tab"
@@ -144,9 +143,9 @@ export function MarketingWhatsAppClient() {
 /* ------------------------------------------------------------------ */
 
 const PREREQUISITES: string[] = [
-  "Keep using the WhatsApp Business App on the number you want to connect — coexistence onboarding preserves that number, its chats and its app; it never replaces or deregisters it.",
-  "Have the phone with the WhatsApp Business App handy: you will scan a QR code from within the app (Settings → Linked devices) to finish connecting.",
-  "Sign in with the Meta (Facebook) account that manages, or can create, the WhatsApp Business Account for this number when the guided popup asks.",
+  "Have a WhatsApp Business Account (WABA) with a phone number registered on the WhatsApp Cloud API in your Meta app dashboard.",
+  "Generate a permanent access token from a System User in Meta Business Settings — it is stored encrypted and never shown.",
+  "Copy the WABA ID and Phone Number ID from the Meta app dashboard so you can paste them when connecting.",
 ]
 
 function NotConnected({ onConnected }: { onConnected: () => void }) {
@@ -160,12 +159,11 @@ function NotConnected({ onConnected }: { onConnected: () => void }) {
           <div className="space-y-1.5">
             <h2 className="text-lg font-semibold tracking-tight">Connect your WhatsApp Business number</h2>
             <p className="mx-auto max-w-md text-sm text-muted-foreground text-pretty">
-              Run Meta&apos;s coexistence onboarding to bring your number into the ERP shared inbox. The WhatsApp
-              Business App keeps working on the same number — there is no registration step or PIN.
+              Connect your WhatsApp Cloud API credentials to bring your number into the ERP shared inbox. Paste your
+              WABA ID, Phone Number ID and permanent access token to get started.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <WhatsAppEmbeddedSignup onConnected={onConnected} />
             <IntegrateManuallyDialog onConnected={onConnected} />
             <a
               href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"

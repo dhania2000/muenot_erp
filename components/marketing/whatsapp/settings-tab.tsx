@@ -36,7 +36,7 @@ import {
 import { cn } from "@/lib/utils"
 import { fetcher } from "@/lib/fetcher"
 import { WhatsAppWebhookSetup } from "@/components/marketing/whatsapp-webhook-setup"
-import { WhatsAppEmbeddedSignup } from "@/components/marketing/whatsapp-embedded-signup"
+import { IntegrateManuallyDialog } from "@/components/marketing/whatsapp/integrate-dialog"
 import { TabState, formatDateTime } from "./shared"
 import type { ConnectionHealth, StatusResponse } from "./types"
 
@@ -54,29 +54,26 @@ type Integration = {
 type IntegrationResponse = { connected: boolean; integration: Integration | null }
 
 /**
- * Derives a TRUTHFUL coexistence badge from the live Meta health probe — never
- * a hardcoded green pill. `health.phone.coexistence` mirrors Meta's
- * `is_on_biz_app`, and the `registration` check reflects whether Cloud API
- * messaging is actually usable (the #133010 antidote).
+ * Derives a TRUTHFUL Cloud API connection badge from the live Meta health
+ * probe — never a hardcoded green pill. The `registration` check reflects
+ * whether Cloud API messaging is actually usable (the #133010 antidote).
  */
-function coexistenceBadge(health: ConnectionHealth | null) {
+function connectionBadge(health: ConnectionHealth | null) {
   const registration = health?.checks.find((c) => c.id === "registration")
-  const registered = registration?.status === "ok"
-  const onBizApp = health?.phone?.coexistence
 
-  if (onBizApp === true && registered) {
-    return { label: "Coexistence active", icon: ShieldCheck, className: "border-transparent bg-[#25D366] text-white" }
+  if (registration?.status === "ok") {
+    return { label: "Cloud API connected", icon: ShieldCheck, className: "border-transparent bg-[#25D366] text-white" }
   }
-  if (onBizApp === false || registration?.status === "error") {
-    return { label: "Coexistence onboarding incomplete", icon: ShieldAlert, className: "border-transparent bg-amber-500 text-white" }
+  if (registration?.status === "error") {
+    return { label: "Cloud API not registered", icon: ShieldAlert, className: "border-transparent bg-amber-500 text-white" }
   }
   return { label: "Setup required", icon: ShieldAlert, className: "border-transparent bg-muted-foreground text-white" }
 }
 
-/** Admin settings: account details, coexistence onboarding, webhook, disconnect. */
+/** Admin settings: account details, Cloud API credentials, webhook, disconnect. */
 export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; onChanged: () => void }) {
   const { data, isLoading, mutate } = useSWR<IntegrationResponse>("/api/marketing/whatsapp/integration", fetcher)
-  // Live health drives the truthful coexistence/registration state. Shares the
+  // Live health drives the truthful Cloud API registration state. Shares the
   // SWR cache key with the workspace shell, so this is a free read.
   const { data: status, mutate: mutateStatus } = useSWR<StatusResponse>(
     "/api/marketing/whatsapp/status",
@@ -113,11 +110,11 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
 
   const number = integration.displayPhoneNumber || "—"
   const name = integration.verifiedName || integration.businessName || "WhatsApp Business"
-  const badge = coexistenceBadge(health)
+  const badge = connectionBadge(health)
   const BadgeIcon = badge.icon
   const registration = health?.checks.find((c) => c.id === "registration")
   const subscription = health?.checks.find((c) => c.id === "subscription")
-  const needsOnboarding = badge.label !== "Coexistence active"
+  const needsOnboarding = badge.label !== "Cloud API connected"
 
   return (
     <div className="flex flex-col gap-6">
@@ -167,12 +164,11 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
               <p className="font-medium text-amber-700 dark:text-amber-400">
                 {registration?.status === "error"
                   ? "This number is not registered on the WhatsApp Cloud API yet."
-                  : "WhatsApp Business App coexistence is not confirmed yet."}
+                  : "Cloud API messaging is not confirmed yet."}
               </p>
               <p className="mt-1 text-xs text-muted-foreground text-pretty">
-                Run Meta&apos;s coexistence onboarding (QR scan from the WhatsApp Business App) to enable Cloud API
-                messaging. Your existing number, chats and the Business App stay intact — there is no PIN or
-                registration step, and nothing is deregistered.
+                Make sure the number is registered on the WhatsApp Cloud API in your Meta app dashboard, then update
+                the credentials below so the ERP can send and receive messages.
               </p>
             </div>
           ) : null}
@@ -180,9 +176,9 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
           <Separator />
           <div className="flex flex-wrap items-center gap-3">
             {isAdmin ? (
-              <WhatsAppEmbeddedSignup
+              <IntegrateManuallyDialog
                 onConnected={refreshAll}
-                label={needsOnboarding ? "Connect WhatsApp Business App" : "Re-run coexistence onboarding"}
+                label={needsOnboarding ? "Connect WhatsApp Cloud API" : "Update credentials"}
                 variant={needsOnboarding ? "default" : "outline"}
               />
             ) : null}
@@ -190,10 +186,9 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
             {isAdmin ? <DisconnectButton disconnecting={disconnecting} onConfirm={disconnect} /> : null}
           </div>
           <p className="text-xs text-muted-foreground text-pretty">
-            Coexistence keeps this number fully usable in the WhatsApp Business App while the ERP handles the same
-            conversations through the Cloud API. The access token is stored encrypted and never shown. Disconnecting
-            only removes the ERP integration — it never deregisters the number or touches your Meta / WhatsApp Business
-            App setup.
+            The ERP handles conversations through the WhatsApp Cloud API using the credentials from your Meta app. The
+            access token is stored encrypted and never shown. Disconnecting only removes the ERP integration — it never
+            deregisters the number or touches your Meta WhatsApp Business Account.
           </p>
         </CardContent>
       </Card>
@@ -217,9 +212,9 @@ function DisconnectButton({ disconnecting, onConfirm }: { disconnecting: boolean
         <AlertDialogHeader>
           <AlertDialogTitle>Disconnect WhatsApp from the ERP?</AlertDialogTitle>
           <AlertDialogDescription className="text-pretty">
-            This removes the WhatsApp integration from the ERP only. It does NOT deregister the phone number, does not
-            remove it from the WhatsApp Business App, and does not touch your Meta WhatsApp Business Account. You can
-            reconnect any time with &ldquo;Connect WhatsApp Business App&rdquo;.
+            This removes the WhatsApp integration from the ERP only. It does NOT deregister the phone number and does
+            not touch your Meta WhatsApp Business Account. You can reconnect any time by entering your Cloud API
+            credentials again.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

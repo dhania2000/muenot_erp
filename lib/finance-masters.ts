@@ -192,6 +192,51 @@ export async function listProducts(search = "", activeOnly = true) {
   )) as any[]
 }
 
+/**
+ * Resolve the GST rate for an expense / bill line from the centralized tax
+ * configuration (Phase 2 — rates are never hard-coded into the engine). The
+ * HSN/SAC catalogue is authoritative for a code; otherwise the default taxable
+ * slab is used. Returns the rate, cess and a version stamp so the posting can
+ * freeze exactly which configuration applied (Phase 39).
+ */
+export async function resolveGstRate(opts: {
+  hsnSac?: string | null
+  date?: string | null
+}): Promise<{ rate: number; cess: number; source: string; version: string } | null> {
+  await ensureFinanceMasters()
+  const code = String(opts.hsnSac ?? "").trim()
+  const day = opts.date ? String(opts.date).slice(0, 10) : new Date().toISOString().slice(0, 10)
+
+  if (code) {
+    const rows = (await query(
+      `SELECT default_tax_rate, category FROM finance_hsn_sac WHERE code = ? AND is_active = 1 LIMIT 1`,
+      [code],
+    )) as any[]
+    if (rows[0]) {
+      return {
+        rate: Number(rows[0].default_tax_rate) || 0,
+        cess: 0,
+        source: `HSN/SAC ${code}`,
+        version: `HSN:${code}@${day}`,
+      }
+    }
+  }
+
+  const def = (await query(
+    `SELECT code, rate, cess_rate FROM finance_tax_rates
+       WHERE is_active = 1 AND is_default = 1 ORDER BY updated_at DESC LIMIT 1`,
+  )) as any[]
+  if (def[0]) {
+    return {
+      rate: Number(def[0].rate) || 0,
+      cess: Number(def[0].cess_rate) || 0,
+      source: `Tax slab ${def[0].code}`,
+      version: `TAX:${def[0].code}@${day}`,
+    }
+  }
+  return null
+}
+
 const MASTER_TABLE: Record<string, string> = {
   tax: "finance_tax_rates",
   hsn: "finance_hsn_sac",

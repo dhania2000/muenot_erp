@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Dialog,
   DialogContent,
@@ -10,24 +10,56 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Loader2Icon } from "lucide-react"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
 import { handleHtmlSourcePaste } from "@/lib/utils"
 import type { EmailTemplateRow } from "@/components/sales/email-templates-client"
+import {
+  groupedVariables,
+  renderEmailTemplate,
+  sampleContext,
+  unknownVariables,
+  SALES_TEMPLATE_MODULES,
+  TEMPLATE_STATUSES,
+  type TemplateStatus,
+} from "@/lib/sales/email-template-engine"
 
 type FormState = {
   name: string
   category: string
+  module: string
+  status: TemplateStatus
+  description: string
   subject: string
   body: string
   attachment: EmailAttachment | null
 }
 
-const EMPTY: FormState = { name: "", category: "", subject: "", body: "", attachment: null }
+const EMPTY: FormState = {
+  name: "",
+  category: "",
+  module: "General",
+  status: "Draft",
+  description: "",
+  subject: "",
+  body: "",
+  attachment: null,
+}
+
+type ActiveField = "subject" | "body"
 
 export function EmailTemplateDialog({
   open,
@@ -44,6 +76,13 @@ export function EmailTemplateDialog({
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  const subjectRef = useRef<HTMLInputElement>(null)
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
+  // Remember which editable field (and cursor position) last had focus so the
+  // variable palette inserts the placeholder exactly where the user was typing.
+  const activeField = useRef<ActiveField>("body")
+  const caret = useRef<Record<ActiveField, number>>({ subject: 0, body: 0 })
+
   useEffect(() => {
     if (!open) return
     setError(null)
@@ -51,9 +90,19 @@ export function EmailTemplateDialog({
       setForm({
         name: template.name || "",
         category: template.category || "",
+        module: template.module || "General",
+        status: template.status || "Draft",
+        description: template.description || "",
         subject: template.subject || "",
         body: template.body || "",
-        attachment: (template as any).attachment_pathname ? { pathname: (template as any).attachment_pathname, filename: (template as any).attachment_name, contentType: (template as any).attachment_type, size: (template as any).attachment_size } : null,
+        attachment: template.attachment_pathname
+          ? {
+              pathname: template.attachment_pathname,
+              filename: template.attachment_name || "",
+              contentType: template.attachment_type || "",
+              size: template.attachment_size || 0,
+            }
+          : null,
       })
     } else {
       setForm(EMPTY)
@@ -63,6 +112,41 @@ export function EmailTemplateDialog({
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
+
+  function rememberCaret(field: ActiveField, el: HTMLInputElement | HTMLTextAreaElement | null) {
+    activeField.current = field
+    if (el) caret.current[field] = el.selectionStart ?? el.value.length
+  }
+
+  function insertVariable(key: string) {
+    const token = `{{${key}}}`
+    const field = activeField.current
+    setForm((prev) => {
+      const current = prev[field]
+      const pos = Math.min(caret.current[field] ?? current.length, current.length)
+      const next = current.slice(0, pos) + token + current.slice(pos)
+      caret.current[field] = pos + token.length
+      return { ...prev, [field]: next }
+    })
+    // Restore focus + caret after the controlled update flushes.
+    requestAnimationFrame(() => {
+      const el = field === "subject" ? subjectRef.current : bodyRef.current
+      if (el) {
+        el.focus()
+        const p = caret.current[field]
+        el.setSelectionRange(p, p)
+      }
+    })
+  }
+
+  const sample = useMemo(() => sampleContext(), [])
+  const previewSubject = useMemo(() => renderEmailTemplate(form.subject, sample), [form.subject, sample])
+  const previewBody = useMemo(() => renderEmailTemplate(form.body, sample), [form.body, sample])
+  const unknown = useMemo(
+    () => [...new Set([...unknownVariables(form.subject), ...unknownVariables(form.body)])],
+    [form.subject, form.body],
+  )
+  const groups = useMemo(() => groupedVariables(), [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -97,25 +181,24 @@ export function EmailTemplateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
-            <DialogTitle>{template ? "Edit template" : "Create template"}</DialogTitle>
-            <DialogDescription>
-              Use placeholders like {"{{contact_person}}"}, {"{{company_name}}"}, and {"{{email}}"} — they are
-              replaced with the lead&apos;s details when you send.
-            </DialogDescription>
-          </DialogHeader>
+      <DialogContent className="flex max-h-[90vh] w-[calc(100vw-2rem)] max-w-3xl flex-col overflow-hidden">
+        <DialogHeader>
+          <DialogTitle>{template ? "Edit template" : "Create template"}</DialogTitle>
+          <DialogDescription>
+            Insert variables from the palette. They resolve to each lead&apos;s details when the email is sent.
+          </DialogDescription>
+        </DialogHeader>
 
-          <div className="flex flex-col gap-4 py-4">
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             {error && (
-              <Alert variant="destructive">
+              <Alert variant="destructive" className="mb-4">
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
 
             <FieldGroup>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="name">Template name</FieldLabel>
                   <Input id="name" value={form.name} onChange={(e) => update("name", e.target.value)} required />
@@ -131,36 +214,168 @@ export function EmailTemplateDialog({
                 </Field>
               </div>
 
-              <Field>
-                <FieldLabel htmlFor="subject">Subject</FieldLabel>
-                <Input
-                  id="subject"
-                  value={form.subject}
-                  onChange={(e) => update("subject", e.target.value)}
-                  required
-                />
-              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="module">Module</FieldLabel>
+                  <Select value={form.module} onValueChange={(v) => update("module", v ?? "General")}>
+                    <SelectTrigger id="module" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SALES_TEMPLATE_MODULES.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="status">Status</FieldLabel>
+                  <Select value={form.status} onValueChange={(v) => update("status", (v as TemplateStatus) ?? "Draft")}>
+                    <SelectTrigger id="status" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TEMPLATE_STATUSES.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>Only Active templates are offered when sending.</FieldDescription>
+                </Field>
+              </div>
 
               <Field>
-                <FieldLabel htmlFor="body">Body (HTML)</FieldLabel>
-                <Textarea
-                  id="body"
-                  rows={12}
-                  className="font-mono text-xs"
-                  value={form.body}
-                  onChange={(e) => update("body", e.target.value)}
-                  onPaste={(e) => handleHtmlSourcePaste(e, form.body, (next) => update("body", next))}
-                  required
+                <FieldLabel htmlFor="description">Description</FieldLabel>
+                <Input
+                  id="description"
+                  placeholder="Short note about when to use this template"
+                  value={form.description}
+                  onChange={(e) => update("description", e.target.value)}
                 />
-                <FieldDescription>
-                  Basic HTML is supported. A hidden tracking pixel is added automatically when sending.
-                </FieldDescription>
               </Field>
             </FieldGroup>
-            <EmailAttachmentPicker value={form.attachment} onChange={(attachment) => update("attachment", attachment)} />
+
+            <Tabs defaultValue="edit" className="mt-4">
+              <TabsList>
+                <TabsTrigger value="edit">Edit</TabsTrigger>
+                <TabsTrigger value="preview">Preview</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="edit" className="mt-4">
+                <div className="grid gap-4 lg:grid-cols-[1fr_15rem]">
+                  <FieldGroup className="min-w-0">
+                    <Field>
+                      <FieldLabel htmlFor="subject">Subject</FieldLabel>
+                      <Input
+                        id="subject"
+                        ref={subjectRef}
+                        value={form.subject}
+                        onChange={(e) => update("subject", e.target.value)}
+                        onFocus={(e) => rememberCaret("subject", e.currentTarget)}
+                        onKeyUp={(e) => rememberCaret("subject", e.currentTarget)}
+                        onClick={(e) => rememberCaret("subject", e.currentTarget)}
+                        required
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="body">Body (HTML)</FieldLabel>
+                      <Textarea
+                        id="body"
+                        ref={bodyRef}
+                        rows={12}
+                        className="font-mono text-xs"
+                        value={form.body}
+                        onChange={(e) => update("body", e.target.value)}
+                        onFocus={(e) => rememberCaret("body", e.currentTarget)}
+                        onKeyUp={(e) => rememberCaret("body", e.currentTarget)}
+                        onClick={(e) => rememberCaret("body", e.currentTarget)}
+                        onPaste={(e) => handleHtmlSourcePaste(e, form.body, (next) => update("body", next))}
+                        required
+                      />
+                      <FieldDescription>
+                        Supports fallbacks like {"{{"}first_name | there{"}}"} and conditional blocks like{" "}
+                        {"{{"}#if company_name{"}}"}...{"{{"}/if{"}}"}.
+                      </FieldDescription>
+                    </Field>
+                    {unknown.length > 0 && (
+                      <Alert variant="destructive">
+                        <AlertDescription>
+                          Unrecognized variable{unknown.length > 1 ? "s" : ""}: {unknown.map((u) => `{{${u}}}`).join(", ")}. These
+                          will render empty unless the value is provided when sending.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </FieldGroup>
+
+                  <div className="flex min-w-0 flex-col rounded-lg border bg-muted/20">
+                    <p className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">Variable palette</p>
+                    <div className="max-h-80 overflow-y-auto p-3">
+                      <div className="flex flex-col gap-3">
+                        {groups.map((g) => (
+                          <div key={g.group}>
+                            <p className="mb-1.5 text-xs font-semibold text-muted-foreground">{g.group}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {g.variables.map((v) => (
+                                <button
+                                  key={v.key}
+                                  type="button"
+                                  title={v.description}
+                                  onClick={() => insertVariable(v.key)}
+                                  className="rounded-md border bg-background px-2 py-1 text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+                                >
+                                  {v.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <EmailAttachmentPicker
+                    value={form.attachment}
+                    onChange={(attachment) => update("attachment", attachment)}
+                  />
+                </div>
+              </TabsContent>
+
+              <TabsContent value="preview" className="mt-4">
+                <div className="rounded-lg border bg-card">
+                  <div className="border-b px-4 py-3">
+                    <p className="text-xs text-muted-foreground">Subject</p>
+                    <p className="mt-0.5 font-medium">{previewSubject || <span className="text-muted-foreground">(empty)</span>}</p>
+                  </div>
+                  <div className="px-4 py-3">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Badge variant="outline">Sample data</Badge>
+                      <span className="text-xs text-muted-foreground">Rendered with example values</span>
+                    </div>
+                    {form.body.trim() ? (
+                      <div
+                        className="prose prose-sm max-w-none dark:prose-invert"
+                        // eslint-disable-next-line react/no-danger -- rendering the template preview for the author
+                        dangerouslySetInnerHTML={{ __html: previewBody }}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">Add body content to see a preview.</p>
+                    )}
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="mt-4">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+              Cancel
+            </Button>
             <Button type="submit" disabled={loading}>
               {loading && <Loader2Icon className="animate-spin" data-icon="inline-start" />}
               {template ? "Save changes" : "Create template"}

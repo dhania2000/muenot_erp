@@ -244,8 +244,9 @@ export function EmailTemplatesClient({ canManage }: { canManage: boolean }) {
       {canManage && selected.size > 0 && (
         <SelectionToolbar
           count={selected.size}
+          noun="template"
           onClear={clear}
-          onDelete={() => del.requestMany([...selected], `${selected.size} template(s)`)}
+          onDelete={() => del.requestBulk([...selected])}
         />
       )}
 

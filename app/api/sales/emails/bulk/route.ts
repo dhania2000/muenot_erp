@@ -10,11 +10,11 @@ import {
   hydrateDepartmentSMTP,
   isEmailConfigured,
   loadAttachment,
-  renderTemplate,
   resolveBaseUrl,
   sendEmail,
   withTrackingPixel,
 } from "@/lib/email"
+import { renderEmailTemplate } from "@/lib/sales/email-template-engine"
 
 type IncomingRecipient = {
   lead_id?: number | string | null
@@ -115,8 +115,8 @@ export async function POST(request: Request) {
     const recipientKey = buildRecipientKey(leadId, toEmail)
     const threadId = buildNewThreadId(recipientKey, token)
 
-    const renderedSubject = renderTemplate(subject, vars)
-    const renderedBody = renderTemplate(content, vars)
+    const renderedSubject = renderEmailTemplate(subject, vars)
+    const renderedBody = renderEmailTemplate(content, vars)
     const htmlWithPixel = withTrackingPixel(renderedBody, baseUrl, token)
 
     let status: "Sent" | "Failed" = "Sent"

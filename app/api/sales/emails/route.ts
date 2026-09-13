@@ -12,12 +12,12 @@ import {
   getThreadContext,
   isEmailConfigured,
   loadAttachment,
-  renderTemplate,
   resolveBaseUrl,
   sendEmail,
   withTrackingPixel,
   hydrateDepartmentSMTP,
 } from "@/lib/email"
+import { renderEmailTemplate } from "@/lib/sales/email-template-engine"
 import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
 
 export async function GET() {
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     threadId = buildNewThreadId(recipientKey, token)
   }
 
-  let renderedSubject = renderTemplate(subject, vars)
+  let renderedSubject = renderEmailTemplate(subject, vars)
   // If continuing a conversation, normalize the subject to "Re: <root subject>"
   // so mail clients reliably keep the follow-up in the same thread.
   if (thread) {
@@ -119,7 +119,7 @@ export async function POST(request: Request) {
     thread_providerThreadId: thread?.providerThreadId ?? null,
     renderedSubject,
   })
-  const renderedBody = renderTemplate(content, vars)
+  const renderedBody = renderEmailTemplate(content, vars)
   const baseUrl = resolveBaseUrl(request)
   const htmlWithPixel = withTrackingPixel(renderedBody, baseUrl, token)
 

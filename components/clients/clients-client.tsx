@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
@@ -24,6 +24,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
   Table,
   TableBody,
   TableCell,
@@ -37,9 +47,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Plus, Search, BriefcaseBusiness } from "lucide-react"
+import { MoreHorizontal, Plus, Search, BriefcaseBusiness, Building2, UserRound } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
+import { EntityCombobox, type ComboOption } from "@/components/clients/entity-combobox"
 
 export type ClientRow = {
   id: number
@@ -68,14 +79,41 @@ export type ClientRow = {
   status: "Active" | "Inactive"
   notes: string | null
   created_at: string
+  // Relational + tax fields added in the foundation phase.
+  client_type?: "Company" | "Individual"
+  legal_name?: string | null
+  display_name?: string | null
+  company_id?: number | null
+  primary_contact_id?: number | null
+  finance_party_id?: string | null
+  pan?: string | null
+  state_code?: string | null
+  account_manager_id?: number | null
+  row_version?: number
+  archived_at?: string | null
+  linked_company_name?: string | null
+  company_code?: string | null
+  finance_party_name?: string | null
+  account_manager_name?: string | null
+}
+
+type DuplicateMatch = {
+  id: number
+  client_code: string
+  client_name: string
+  company_name: string | null
+  email: string | null
+  gst_number: string | null
+  pan: string | null
+  reason: string
 }
 
 const SALUTATIONS = ["Mr", "Mrs", "Ms", "Dr"] as const
 
-type Field = { key: keyof ClientRow; label: string; type?: string; required?: boolean }
+type Field = { key: string; label: string; type?: string; required?: boolean }
 
-const ACCOUNT_FIELDS: Field[] = [
-  { key: "client_name", label: "Client Name", required: true },
+const CONTACT_FIELDS: Field[] = [
+  { key: "client_name", label: "Contact Name", required: true },
   { key: "email", label: "Email", type: "email", required: true },
   { key: "mobile", label: "Mobile" },
   { key: "gender", label: "Gender" },
@@ -84,9 +122,11 @@ const ACCOUNT_FIELDS: Field[] = [
 
 const COMPANY_FIELDS: Field[] = [
   { key: "company_name", label: "Company Name" },
+  { key: "legal_name", label: "Legal Name" },
   { key: "website", label: "Website" },
   { key: "tax_name", label: "Tax Name" },
-  { key: "gst_number", label: "GST/VAT Number" },
+  { key: "gst_number", label: "GSTIN" },
+  { key: "pan", label: "PAN" },
   { key: "office_phone", label: "Office Phone" },
   { key: "category", label: "Category" },
   { key: "sub_category", label: "Sub Category" },
@@ -94,6 +134,7 @@ const COMPANY_FIELDS: Field[] = [
   { key: "address", label: "Address" },
   { key: "city", label: "City" },
   { key: "state", label: "State" },
+  { key: "state_code", label: "State Code" },
   { key: "country", label: "Country" },
   { key: "postal_code", label: "Postal Code" },
 ]
@@ -111,168 +152,353 @@ function ClientDialog({
 }) {
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [dupes, setDupes] = useState<DuplicateMatch[] | null>(null)
 
-  // Sync form state whenever the dialog opens for a new/edit target.
   const seed = useMemo(() => {
     const base: Record<string, string> = {
       salutation: client?.salutation ?? "Mr",
       login_allowed: client?.login_allowed ?? "No",
       email_notifications: client?.email_notifications ?? "Yes",
       status: client?.status ?? "Active",
+      client_type: client?.client_type ?? "Company",
+      company_id: client?.company_id != null ? String(client.company_id) : "",
+      primary_contact_id: client?.primary_contact_id != null ? String(client.primary_contact_id) : "",
+      finance_party_id: client?.finance_party_id ?? "",
     }
-    for (const f of [...ACCOUNT_FIELDS, ...COMPANY_FIELDS]) {
-      base[f.key as string] = (client?.[f.key] as string) ?? ""
+    for (const f of [...CONTACT_FIELDS, ...COMPANY_FIELDS]) {
+      base[f.key] = (client?.[f.key as keyof ClientRow] as string) ?? ""
     }
     base.notes = client?.notes ?? ""
     return base
   }, [client])
 
   const value = (k: string) => (k in form ? form[k] : seed[k]) ?? ""
-  const set = (k: string, v: string) => setForm((p) => ({ ...p, [k]: v }))
+  const set = (k: string, v: string) => {
+    setForm((p) => ({ ...p, [k]: v }))
+    setFieldErrors((p) => (p[k] ? { ...p, [k]: "" } : p))
+  }
+  const patch = (obj: Record<string, string>) => setForm((p) => ({ ...p, ...obj }))
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault()
+  const searchCompanies = useCallback(async (q: string): Promise<ComboOption[]> => {
+    const res = await fetch(`/api/clients/lookups?entity=companies&q=${encodeURIComponent(q)}`)
+    if (!res.ok) return []
+    const data = await res.json()
+    return (data.companies ?? []).map((c: any) => ({
+      value: String(c.id),
+      label: c.company_name,
+      sub: [c.company_code, c.city].filter(Boolean).join(" · "),
+      data: c,
+    }))
+  }, [])
+
+  const searchContacts = useCallback(
+    async (q: string): Promise<ComboOption[]> => {
+      const cid = value("company_id")
+      if (!cid) return []
+      const res = await fetch(`/api/clients/lookups?entity=contacts&company_id=${cid}`)
+      if (!res.ok) return []
+      const data = await res.json()
+      let list = (data.contacts ?? []) as any[]
+      if (q) list = list.filter((c) => String(c.name || "").toLowerCase().includes(q.toLowerCase()))
+      return list.map((c) => ({
+        value: String(c.id),
+        label: c.name,
+        sub: [c.title, c.email].filter(Boolean).join(" · "),
+        data: c,
+      }))
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [form.company_id, seed.company_id],
+  )
+
+  function linkCompany(opt: ComboOption) {
+    const c = opt.data ?? {}
+    patch({
+      company_id: String(c.id),
+      company_name: c.company_name || "",
+      legal_name: c.legal_name || c.company_name || "",
+      website: c.website || (c.domain ? `https://${c.domain}` : value("website")),
+      office_phone: c.phone || value("office_phone"),
+      address: c.address_line || value("address"),
+      city: c.city || value("city"),
+      state: c.state || value("state"),
+      postal_code: c.postal_code || value("postal_code"),
+      client_type: "Company",
+      primary_contact_id: "",
+    })
+  }
+
+  function linkContact(opt: ComboOption) {
+    const c = opt.data ?? {}
+    patch({
+      primary_contact_id: String(c.id),
+      client_name: c.name || value("client_name"),
+      email: c.email || value("email"),
+      mobile: c.phone || value("mobile"),
+    })
+  }
+
+  async function submit(force: boolean) {
     setSaving(true)
-    const payload: Record<string, string> = { ...seed, ...form }
+    const payload: Record<string, any> = { ...seed, ...form }
+    if (force) payload.force = true
+    if (client?.row_version != null) payload.row_version = client.row_version
+
     const res = await fetch(client ? `/api/clients/${client.id}` : "/api/clients", {
       method: client ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     })
     setSaving(false)
+    const data = await res.json().catch(() => ({}) as any)
+
     if (res.ok) {
+      setDupes(null)
       onOpenChange(false)
       setForm({})
       onSaved()
-    } else {
-      const err = await res.json().catch(() => ({}))
-      toast.error(err.error || "Unable to save client")
+      return
     }
+    if (res.status === 400 && data.fields) {
+      setFieldErrors(data.fields)
+      toast.error("Please fix the highlighted fields")
+      return
+    }
+    if (res.status === 409 && data.duplicates) {
+      setDupes(data.duplicates)
+      return
+    }
+    toast.error(data.error || "Unable to save client")
   }
 
+  const companyLinked = !!value("company_id")
+  const contactLinked = !!value("primary_contact_id")
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v) setForm({})
-        onOpenChange(v)
-      }}
-    >
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{client ? "Edit client" : "Add client"}</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={save} className="grid gap-6">
-          <section className="grid gap-4">
-            <h3 className="text-sm font-semibold text-muted-foreground">Client Details</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="salutation">Salutation</Label>
-                <Select value={value("salutation")} onValueChange={(v) => set("salutation", v as string)}>
-                  <SelectTrigger id="salutation">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SALUTATIONS.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {s}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {ACCOUNT_FIELDS.map((f) => (
-                <div key={f.key as string} className="grid gap-2">
-                  <Label htmlFor={f.key as string}>
-                    {f.label}
-                    {f.required ? " *" : ""}
-                  </Label>
-                  <Input
-                    id={f.key as string}
-                    type={f.type || "text"}
-                    required={f.required}
-                    value={value(f.key as string)}
-                    onChange={(e) => set(f.key as string, e.target.value)}
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          if (!v) {
+            setForm({})
+            setFieldErrors({})
+          }
+          onOpenChange(v)
+        }}
+      >
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{client ? "Edit client" : "Add client"}</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              setFieldErrors({})
+              submit(false)
+            }}
+            className="grid gap-6"
+          >
+            {/* Step 1 — link to the canonical account + contact masters. */}
+            <section className="grid gap-4 rounded-lg border border-border bg-muted/30 p-4">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Building2 className="size-4 text-primary" /> Link to account
+              </h3>
+              <p className="-mt-2 text-xs text-muted-foreground">
+                Search an existing company to auto-fill its details, or leave blank to create a standalone client.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label>Company account</Label>
+                  <EntityCombobox
+                    selectedLabel={companyLinked ? value("company_name") || "Linked account" : null}
+                    placeholder="Search companies…"
+                    emptyText="No companies found"
+                    onSearch={searchCompanies}
+                    onSelect={linkCompany}
+                    onClear={() => patch({ company_id: "", primary_contact_id: "" })}
                   />
                 </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="grid gap-4">
-            <h3 className="text-sm font-semibold text-muted-foreground">Company Details</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {COMPANY_FIELDS.map((f) => (
-                <div key={f.key as string} className="grid gap-2">
-                  <Label htmlFor={f.key as string}>{f.label}</Label>
-                  <Input
-                    id={f.key as string}
-                    type={f.type || "text"}
-                    value={value(f.key as string)}
-                    onChange={(e) => set(f.key as string, e.target.value)}
+                <div className="grid gap-2">
+                  <Label>Primary contact</Label>
+                  <EntityCombobox
+                    selectedLabel={contactLinked ? value("client_name") || "Selected contact" : null}
+                    placeholder={companyLinked ? "Search contacts…" : "Link a company first"}
+                    emptyText="No contacts on this account"
+                    disabled={!companyLinked}
+                    onSearch={searchContacts}
+                    onSelect={linkContact}
+                    onClear={() => patch({ primary_contact_id: "" })}
                   />
                 </div>
-              ))}
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="notes">Notes</Label>
-              <Textarea id="notes" rows={3} value={value("notes")} onChange={(e) => set("notes", e.target.value)} />
-            </div>
-          </section>
+              </div>
+            </section>
 
-          <section className="grid gap-4">
-            <h3 className="text-sm font-semibold text-muted-foreground">Portal Access</h3>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="grid gap-2">
-                <Label htmlFor="login_allowed">Login Allowed</Label>
-                <Select value={value("login_allowed")} onValueChange={(v) => set("login_allowed", v as string)}>
-                  <SelectTrigger id="login_allowed">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Yes">Yes</SelectItem>
-                    <SelectItem value="No">No</SelectItem>
-                  </SelectContent>
-                </Select>
+            <section className="grid gap-4">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <UserRound className="size-4" /> Contact details
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="salutation">Salutation</Label>
+                  <Select value={value("salutation")} onValueChange={(v) => set("salutation", v as string)}>
+                    <SelectTrigger id="salutation">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SALUTATIONS.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {CONTACT_FIELDS.map((f) => (
+                  <div key={f.key} className="grid gap-2">
+                    <Label htmlFor={f.key}>
+                      {f.label}
+                      {f.required ? " *" : ""}
+                    </Label>
+                    <Input
+                      id={f.key}
+                      type={f.type || "text"}
+                      required={f.required}
+                      aria-invalid={!!fieldErrors[f.key]}
+                      value={value(f.key)}
+                      onChange={(e) => set(f.key, e.target.value)}
+                    />
+                    {fieldErrors[f.key] && <p className="text-xs text-destructive">{fieldErrors[f.key]}</p>}
+                  </div>
+                ))}
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="email_notifications">Email Notifications</Label>
-                <Select
-                  value={value("email_notifications")}
-                  onValueChange={(v) => set("email_notifications", v as string)}
-                >
-                  <SelectTrigger id="email_notifications">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Yes">Yes</SelectItem>
-                    <SelectItem value="No">No</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="status">Status</Label>
-                <Select value={value("status")} onValueChange={(v) => set("status", v as string)}>
-                  <SelectTrigger id="status">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Active">Active</SelectItem>
-                    <SelectItem value="Inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </section>
+            </section>
 
-          <DialogFooter>
-            <Button type="submit" disabled={saving}>
-              {saving ? "Saving…" : client ? "Update client" : "Save client"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+            <section className="grid gap-4">
+              <h3 className="text-sm font-semibold text-muted-foreground">Company &amp; tax details</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {COMPANY_FIELDS.map((f) => (
+                  <div key={f.key} className="grid gap-2">
+                    <Label htmlFor={f.key}>{f.label}</Label>
+                    <Input
+                      id={f.key}
+                      type={f.type || "text"}
+                      aria-invalid={!!fieldErrors[f.key]}
+                      value={value(f.key)}
+                      onChange={(e) => set(f.key, e.target.value)}
+                    />
+                    {fieldErrors[f.key] && <p className="text-xs text-destructive">{fieldErrors[f.key]}</p>}
+                  </div>
+                ))}
+              </div>
+              {client?.finance_party_id ? (
+                <p className="text-xs text-muted-foreground">
+                  Finance profile linked: <span className="font-medium text-foreground">{client.finance_party_name || client.finance_party_id}</span>
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  A matching finance profile is linked automatically by GSTIN or PAN when one exists.
+                </p>
+              )}
+              <div className="grid gap-2">
+                <Label htmlFor="notes">Notes</Label>
+                <Textarea id="notes" rows={3} value={value("notes")} onChange={(e) => set("notes", e.target.value)} />
+              </div>
+            </section>
+
+            <section className="grid gap-4">
+              <h3 className="text-sm font-semibold text-muted-foreground">Portal access</h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="login_allowed">Login allowed</Label>
+                  <Select value={value("login_allowed")} onValueChange={(v) => set("login_allowed", v as string)}>
+                    <SelectTrigger id="login_allowed">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Yes">Yes</SelectItem>
+                      <SelectItem value="No">No</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="email_notifications">Email notifications</Label>
+                  <Select
+                    value={value("email_notifications")}
+                    onValueChange={(v) => set("email_notifications", v as string)}
+                  >
+                    <SelectTrigger id="email_notifications">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Yes">Yes</SelectItem>
+                      <SelectItem value="No">No</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="status">Status</Label>
+                  <Select value={value("status")} onValueChange={(v) => set("status", v as string)}>
+                    <SelectTrigger id="status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Active">Active</SelectItem>
+                      <SelectItem value="Inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </section>
+
+            <DialogFooter>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving…" : client ? "Update client" : "Save client"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!dupes} onOpenChange={(v) => !v && setDupes(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Possible duplicate client</AlertDialogTitle>
+            <AlertDialogDescription>
+              We found {dupes?.length} existing client{(dupes?.length ?? 0) > 1 ? "s" : ""} that may be the same party.
+              Review before creating a new record.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="max-h-56 overflow-y-auto rounded-md border border-border">
+            {dupes?.map((d) => (
+              <div key={d.id} className="border-b border-border px-3 py-2 text-sm last:border-b-0">
+                <div className="font-medium">
+                  {d.company_name || d.client_name}{" "}
+                  <span className="font-mono text-xs text-muted-foreground">{d.client_code}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {[d.email, d.gst_number, d.pan].filter(Boolean).join(" · ")}
+                </div>
+                <Badge variant="outline" className="mt-1">
+                  {d.reason}
+                </Badge>
+              </div>
+            ))}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setDupes(null)
+                submit(true)
+              }}
+            >
+              Save anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
@@ -287,20 +513,21 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
     const q = search.trim().toLowerCase()
     if (!q) return clients
     return clients.filter((c) =>
-      [c.client_code, c.client_name, c.email, c.company_name, c.category, c.country]
+      [c.client_code, c.client_name, c.email, c.company_name, c.gst_number, c.pan, c.category, c.country]
         .filter(Boolean)
         .some((v) => v!.toLowerCase().includes(q)),
     )
   }, [clients, search])
 
-  async function deleteClient(client: ClientRow) {
-    if (!confirm(`Delete ${client.client_name}? This cannot be undone.`)) return
+  async function archiveClient(client: ClientRow) {
+    if (!confirm(`Archive ${client.client_name}? Linked invoices stay intact and the client can be restored later.`)) return
     const res = await fetch(`/api/clients/${client.id}`, { method: "DELETE" })
+    const body = await res.json().catch(() => ({}) as any)
     if (res.ok) {
-      toast.success("Client deleted")
+      toast.success(body.deleted ? "Client deleted" : "Client archived")
       mutate()
     } else {
-      toast.error("Unable to delete client")
+      toast.error(body.error || "Unable to archive client")
     }
   }
 
@@ -327,7 +554,9 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
               { header: "Mobile", value: (r: ClientRow) => r.mobile },
               { header: "Company", value: (r: ClientRow) => r.company_name },
               { header: "Website", value: (r: ClientRow) => r.website },
-              { header: "GST Number", value: (r: ClientRow) => r.gst_number },
+              { header: "GSTIN", value: (r: ClientRow) => r.gst_number },
+              { header: "PAN", value: (r: ClientRow) => r.pan },
+              { header: "Finance Party", value: (r: ClientRow) => r.finance_party_id },
               { header: "Category", value: (r: ClientRow) => r.category },
               { header: "Sub Category", value: (r: ClientRow) => r.sub_category },
               { header: "City", value: (r: ClientRow) => r.city },
@@ -369,7 +598,7 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
             <TableRow>
               <TableHead>Client</TableHead>
               <TableHead>Company</TableHead>
-              <TableHead>Category</TableHead>
+              <TableHead>Tax</TableHead>
               <TableHead>Location</TableHead>
               <TableHead>Login</TableHead>
               <TableHead>Status</TableHead>
@@ -404,13 +633,19 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
                     </span>
                   </div>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{client.company_name || "—"}</TableCell>
                 <TableCell className="text-muted-foreground">
-                  {client.category ? (
-                    <span>
-                      {client.category}
-                      {client.sub_category ? ` / ${client.sub_category}` : ""}
-                    </span>
+                  <div className="flex flex-col">
+                    <span>{client.company_name || "—"}</span>
+                    {client.company_id ? (
+                      <span className="text-xs text-primary">Linked account</span>
+                    ) : null}
+                  </div>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {client.gst_number ? (
+                    <span className="font-mono text-xs">{client.gst_number}</span>
+                  ) : client.pan ? (
+                    <span className="font-mono text-xs">{client.pan}</span>
                   ) : (
                     "—"
                   )}
@@ -441,8 +676,8 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
                         >
                           Edit client
                         </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => deleteClient(client)}>
-                          Delete client
+                        <DropdownMenuItem variant="destructive" onClick={() => archiveClient(client)}>
+                          Archive client
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>

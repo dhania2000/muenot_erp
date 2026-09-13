@@ -28,9 +28,19 @@ import {
 } from "@/components/ui/select"
 import { Loader2Icon } from "lucide-react"
 import { inr } from "@/lib/finance-calc"
-import type { FieldDef, ModuleConfig } from "@/lib/finance-schema"
+import type { FieldDef, LookupConfig, ModuleConfig, VisibleWhen } from "@/lib/finance-schema"
 
 type FormState = Record<string, string>
+
+/**
+ * Evaluate a `visibleWhen` rule against the current form. Checkbox truthiness is
+ * normalized to "1" so a rule like `{ field: "gst_applicable", in: ["1"] }`
+ * works for a checked box. Drives the dynamic Expense form (Phase 12).
+ */
+function isVisible(form: FormState, vw?: VisibleWhen) {
+  if (!vw) return true
+  return vw.in.includes(form[vw.field] ?? "")
+}
 
 /** Build the initial blank form from a config's input (non-computed) fields. */
 function emptyForm(cfg: ModuleConfig): FormState {
@@ -78,6 +88,8 @@ export function FinanceModuleDialog({
     status: "idle" | "loading" | "ok" | "error"
     message?: string
   }>({ status: "idle" })
+  // Pending duplicate returned by the server (HTTP 409) awaiting confirmation.
+  const [dup, setDup] = useState<{ [k: string]: any; reason: string } | null>(null)
 
   const fieldLabels = useMemo(() => {
     const map: Record<string, string> = {}
@@ -216,6 +228,27 @@ export function FinanceModuleDialog({
     })
   }
 
+  /**
+   * Apply a row picked from a config-driven lookup (Phases 4–10). Sets the id +
+   * name fields and overwrites each mapped snapshot column, since choosing a
+   * master record is an explicit action. The server re-snapshots authoritatively
+   * on save, so this is purely for immediate form feedback.
+   */
+  function applyLookupPick(l: LookupConfig, row: Record<string, any>) {
+    setForm((prev) => {
+      const next = { ...prev }
+      next[l.idField] = row[l.sourceIdColumn] != null ? String(row[l.sourceIdColumn]) : ""
+      next[l.nameField] = row[l.sourceNameColumn] != null ? String(row[l.sourceNameColumn]) : ""
+      for (const [sourceCol, targetKey] of Object.entries(l.autofill)) {
+        if (!(targetKey in next)) continue
+        const v = row[sourceCol]
+        if (checkboxKeys.has(targetKey)) next[targetKey] = v ? "1" : ""
+        else next[targetKey] = v === null || v === undefined ? "" : String(v)
+      }
+      return next
+    })
+  }
+
   // Live mirror of the server calculation so users see totals before saving.
   const computed = useMemo(() => {
     if (!cfg.compute) return {} as Record<string, any>
@@ -228,20 +261,19 @@ export function FinanceModuleDialog({
     }
   }, [cfg, form, checkboxKeys])
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    for (const f of cfg.fields) {
-      if (f.required && !form[f.key]) {
-        setError(`${f.label} is required`)
-        return
-      }
-    }
+  /**
+   * Send the record. `force` sets `__forceCreate` so the server skips its
+   * duplicate guard after the user confirms. A 409 with a `duplicate` payload
+   * surfaces the existing record and pauses for confirmation (Phase 24).
+   */
+  async function submit(force: boolean) {
     setLoading(true)
     setError(null)
 
     const payload: Record<string, any> = { ...form }
     for (const key of checkboxKeys) payload[key] = form[key] ? 1 : 0
     if (record?.id) payload.id = record.id
+    if (force) payload.__forceCreate = true
 
     try {
       const res = await fetch(`/api/finance/module/${cfg.key}`, {
@@ -250,6 +282,11 @@ export function FinanceModuleDialog({
         body: JSON.stringify(payload),
       })
       const body = await res.json().catch(() => ({}))
+      if (res.status === 409 && body.duplicate) {
+        setDup(body.duplicate)
+        setLoading(false)
+        return
+      }
       if (!res.ok) {
         setError(body.error || `Unable to save ${cfg.label.toLowerCase()}`)
         setLoading(false)
@@ -261,6 +298,20 @@ export function FinanceModuleDialog({
       setError("Something went wrong. Please try again.")
       setLoading(false)
     }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    // Required only counts for fields the user can actually see right now — a
+    // hidden conditional section must never block the save.
+    for (const f of cfg.fields) {
+      if (f.required && isVisible(form, f.visibleWhen) && !form[f.key]) {
+        setError(`${f.label} is required`)
+        return
+      }
+    }
+    setDup(null)
+    submit(false)
   }
 
   const idLabel = cfg.fields.find((f) => f.key === cfg.idColumn)?.label ?? "ID"
@@ -291,6 +342,36 @@ export function FinanceModuleDialog({
               </Alert>
             )}
 
+            {dup && (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  <div className="flex flex-col gap-3">
+                    <p className="font-medium">
+                      {`A similar ${cfg.label.toLowerCase()} already exists${
+                        dup[cfg.idColumn] ? ` (${dup[cfg.idColumn]})` : ""
+                      }${dup.reason ? ` — matched by ${dup.reason}` : ""}. Create this one anyway?`}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => {
+                          setDup(null)
+                          submit(true)
+                        }}
+                      >
+                        Create anyway
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setDup(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
             {cfg.partyLookup && (
               <PartyPicker
                 cfg={cfg}
@@ -300,6 +381,22 @@ export function FinanceModuleDialog({
                 onChange={update}
               />
             )}
+
+            {(cfg.lookups ?? [])
+              .filter((l) => isVisible(form, l.visibleWhen))
+              .map((l) => (
+                <LookupPicker
+                  key={l.key}
+                  lookup={l}
+                  selectedName={form[l.nameField] ?? ""}
+                  selectedId={form[l.idField] ?? ""}
+                  onPick={(row) => applyLookupPick(l, row)}
+                  onClear={() => {
+                    update(l.idField, "")
+                    update(l.nameField, "")
+                  }}
+                />
+              ))}
 
             {cfg.gstin && (
               <GstinVerify
@@ -350,7 +447,7 @@ export function FinanceModuleDialog({
 
             {sections.map((section) => {
               const fields = cfg.fields.filter(
-                (f) => f.section === section && !f.computed && !f.hidden,
+                (f) => f.section === section && !f.computed && !f.hidden && isVisible(form, f.visibleWhen),
               )
               if (!fields.length) return null
               return (
@@ -373,6 +470,7 @@ export function FinanceModuleDialog({
                               }
                             : undefined
                         }
+                        uploadPath={f.upload ? cfg.uploadPath : undefined}
                       />
                     ))}
                   </div>
@@ -659,11 +757,124 @@ function PartyPicker({
   )
 }
 
+/**
+ * Config-driven master picker (Phases 4–10). Unlike PartyPicker (which loads a
+ * whole module list and filters client-side), this hits a dedicated lookup
+ * endpoint that server-filters + limits results, so it scales to large masters
+ * and mixed sources (employees, vendors, accounts, projects, banks). On pick it
+ * hands the row up so the dialog can fill the id/name + snapshot columns.
+ */
+function LookupPicker({
+  lookup,
+  selectedName,
+  selectedId,
+  onPick,
+  onClear,
+}: {
+  lookup: LookupConfig
+  selectedName: string
+  selectedId: string
+  onPick: (row: Record<string, any>) => void
+  onClear: () => void
+}) {
+  const [query, setQuery] = useState("")
+  const [openList, setOpenList] = useState(false)
+  const sep = lookup.path.includes("?") ? "&" : "?"
+  const key =
+    openList || selectedName
+      ? `${lookup.path}${sep}search=${encodeURIComponent(query.trim())}`
+      : null
+  const { data, isLoading } = useSWR<Record<string, any>>(key, fetcher)
+  const rowsKey = lookup.rowsKey ?? "rows"
+  const rows: Record<string, any>[] = (data?.[rowsKey] as any[]) ?? []
+
+  const selectable = useMemo(() => {
+    const rules = lookup.selectableWhen ?? []
+    if (!rules.length) return rows
+    return rows.filter((r) => rules.every((rule) => rule.in.includes(String(r[rule.column] ?? ""))))
+  }, [rows, lookup.selectableWhen])
+
+  return (
+    <FieldGroup>
+      <h3 className="text-sm font-semibold text-foreground">
+        {lookup.label}
+        {lookup.required && <span className="text-destructive"> *</span>}
+      </h3>
+      <div className="relative flex flex-col gap-2 rounded-lg border bg-muted/30 p-4">
+        <Field>
+          <FieldLabel htmlFor={`lookup-${lookup.key}`}>Search {lookup.label.toLowerCase()}</FieldLabel>
+          <Input
+            id={`lookup-${lookup.key}`}
+            placeholder={lookup.placeholder ?? `Type a ${lookup.label.toLowerCase()} name or code`}
+            value={query}
+            autoComplete="off"
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setOpenList(true)
+            }}
+            onFocus={() => setOpenList(true)}
+          />
+        </Field>
+
+        {selectedName && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Selected:</span>
+            <Badge variant="secondary">{selectedName}</Badge>
+            {selectedId && <span className="font-mono text-xs text-muted-foreground">#{selectedId}</span>}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="ml-auto"
+              onClick={() => {
+                onClear()
+                setQuery("")
+              }}
+            >
+              Clear
+            </Button>
+          </div>
+        )}
+
+        {openList && (
+          <div className="max-h-56 overflow-y-auto rounded-md border bg-background">
+            {isLoading && <p className="p-3 text-sm text-muted-foreground">Searching…</p>}
+            {!isLoading && selectable.length === 0 && (
+              <p className="p-3 text-sm text-muted-foreground">No matching {lookup.label.toLowerCase()} found.</p>
+            )}
+            {selectable.map((r, i) => (
+              <button
+                key={String(r[lookup.sourceIdColumn] ?? i)}
+                type="button"
+                className="flex w-full flex-col items-start gap-0.5 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-muted/60"
+                onClick={() => {
+                  onPick(r)
+                  setQuery("")
+                  setOpenList(false)
+                }}
+              >
+                <span className="font-medium">{r[lookup.sourceNameColumn]}</span>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {r[lookup.sourceIdColumn]}
+                  {lookup.sourceSubColumn && r[lookup.sourceSubColumn]
+                    ? ` · ${r[lookup.sourceSubColumn]}`
+                    : ""}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </FieldGroup>
+  )
+}
+
 function FieldInput({
   field,
   value,
   onChange,
   lookup,
+  uploadPath,
 }: {
   field: FieldDef
   value: string
@@ -674,8 +885,38 @@ function FieldInput({
     onLookup: (value: string) => void
     onReset: () => void
   }
+  uploadPath?: string
 }) {
   const wide = field.type === "textarea"
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+
+  async function uploadFile(file: File) {
+    if (!uploadPath) return
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const fd = new FormData()
+      fd.append("file", file)
+      const res = await fetch(uploadPath, { method: "POST", body: fd })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setUploadError(body.error || "Upload failed")
+        return
+      }
+      const url: string = body.url || body.pathname || ""
+      if (url) {
+        // Supporting-docs style fields accumulate a comma-separated list; other
+        // document fields hold a single URL.
+        const existing = value.trim()
+        onChange(field.key, existing ? `${existing},${url}` : url)
+      }
+    } catch {
+      setUploadError("Upload failed")
+    } finally {
+      setUploading(false)
+    }
+  }
 
   if (field.type === "checkbox") {
     return (

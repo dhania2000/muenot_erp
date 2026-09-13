@@ -335,6 +335,650 @@ export const FINANCE_REPORTS: ReportDef[] = [
       { key: "overtime_hours", label: "Overtime Hrs", align: "right" },
     ],
   },
+
+  // =========================================================================
+  // Expenses (Finance → Expenses reporting suite, Phases 1–12, 19, 20)
+  //
+  // Every report below is a read-only projection over the authoritative
+  // `expenses` engine table (and the shared `finance_gst_input` register for
+  // GST). No value is duplicated or hand-maintained: taxable / GST / TDS /
+  // gross / net / paid / outstanding all come straight from the columns the
+  // server engine computes on write (lib/finance-expenses.ts). Grouped under
+  // "Expenses" so they surface as their own category on the Financial Reports
+  // page while still being served by the finance-domain reports route.
+  // =========================================================================
+  {
+    key: "expense-register",
+    label: "Expense Register",
+    group: "Expenses",
+    description: "Every expense line with payee, PAN/GSTIN, tax, gross, net, paid and outstanding (Phase 2).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT expense_id,
+             expense_date AS date,
+             COALESCE(NULLIF(expense_type,''),'—') AS type,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(vendor_pan,''),'—') AS pan,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(expense_category,''),'—') AS category,
+             COALESCE(NULLIF(expense_head,''),'—') AS head,
+             COALESCE(NULLIF(project_name,''),'—') AS project,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(gst_amount,0) AS gst,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(gross_amount,0) AS gross,
+             COALESCE(net_payable,0) AS net,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             COALESCE(NULLIF(workflow_status,''), approval_status) AS status
+      FROM expenses
+      WHERE 1=1 ${RANGE}
+      ORDER BY expense_date DESC, id DESC`,
+    columns: [
+      { key: "expense_id", label: "Expense ID" },
+      { key: "date", label: "Date" },
+      { key: "type", label: "Type" },
+      { key: "party", label: "Employee / Vendor" },
+      { key: "pan", label: "PAN" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "category", label: "Category" },
+      { key: "head", label: "Head" },
+      { key: "project", label: "Project" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "employee-expense",
+    label: "Employee Expense",
+    group: "Expenses",
+    description: "Employee-borne expenses with advance, adjustment and reimbursement payable (Phase 3).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT COALESCE(NULLIF(employee_name,''), party_name) AS employee,
+             COALESCE(NULLIF(employee_id,''),'—') AS employee_id,
+             COALESCE(NULLIF(department,''),'—') AS department,
+             expense_id AS expense,
+             expense_date AS date,
+             COALESCE(NULLIF(expense_category,''),'—') AS category,
+             COALESCE(NULLIF(project_name,''),'—') AS project,
+             COALESCE(gst_amount,0) AS gst,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(advance_amount,0) AS advance,
+             COALESCE(advance_adjusted,0) AS adjusted,
+             COALESCE(net_payable,0) AS payable,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding
+      FROM expenses
+      WHERE employee_id IS NOT NULL AND employee_id <> '' ${RANGE}
+      ORDER BY expense_date DESC, id DESC`,
+    columns: [
+      { key: "employee", label: "Employee" },
+      { key: "employee_id", label: "Employee ID" },
+      { key: "department", label: "Department" },
+      { key: "expense", label: "Expense" },
+      { key: "date", label: "Date" },
+      { key: "category", label: "Category" },
+      { key: "project", label: "Project" },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "advance", label: "Advance", align: "right", money: true },
+      { key: "adjusted", label: "Adjusted", align: "right", money: true },
+      { key: "payable", label: "Payable", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "vendor-expense",
+    label: "Vendor Expense",
+    group: "Expenses",
+    description: "Vendor-borne expenses with GSTIN, PAN, invoice, tax, gross, net, paid and outstanding (Phase 4).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''), party_name) AS vendor,
+             COALESCE(NULLIF(vendor_id,''),'—') AS vendor_id,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(vendor_pan,''),'—') AS pan,
+             expense_id AS expense,
+             COALESCE(NULLIF(vendor_invoice_number,''), NULLIF(bill_receipt_no,''),'—') AS invoice,
+             expense_date AS date,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(gst_amount,0) AS gst,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(gross_amount,0) AS gross,
+             COALESCE(net_payable,0) AS net,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding
+      FROM expenses
+      WHERE vendor_id IS NOT NULL AND vendor_id <> '' ${RANGE}
+      ORDER BY expense_date DESC, id DESC`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "vendor_id", label: "Vendor ID" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "pan", label: "PAN" },
+      { key: "expense", label: "Expense" },
+      { key: "invoice", label: "Invoice / Receipt" },
+      { key: "date", label: "Date" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "reimbursement-register",
+    label: "Reimbursement Register",
+    group: "Expenses",
+    description: "Employee reimbursements with advance, adjustment, additional claim and settlement status.",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT COALESCE(NULLIF(employee_name,''), party_name) AS employee,
+             expense_id AS expense,
+             expense_date AS date,
+             COALESCE(gross_amount,0) AS gross,
+             COALESCE(advance_amount,0) AS advance,
+             COALESCE(advance_adjusted,0) AS adjusted,
+             COALESCE(additional_reimbursement,0) AS additional,
+             COALESCE(net_payable,0) AS payable,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             COALESCE(NULLIF(reimbursement_status,''), NULLIF(workflow_status,''), approval_status) AS status
+      FROM expenses
+      WHERE employee_id IS NOT NULL AND employee_id <> '' ${RANGE}
+      ORDER BY expense_date DESC, id DESC`,
+    columns: [
+      { key: "employee", label: "Employee" },
+      { key: "expense", label: "Expense" },
+      { key: "date", label: "Date" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "advance", label: "Advance", align: "right", money: true },
+      { key: "adjusted", label: "Adjusted", align: "right", money: true },
+      { key: "additional", label: "Additional", align: "right", money: true },
+      { key: "payable", label: "Payable", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "project-expense",
+    label: "Project Expense",
+    group: "Expenses",
+    description: "Expenses attributed to projects with client, payee, category, tax, gross and outstanding (Phase 7).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT COALESCE(NULLIF(project_name,''),'Unassigned') AS project,
+             COALESCE(NULLIF(client_name,''),'—') AS client,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(expense_category,''),'—') AS category,
+             COALESCE(NULLIF(expense_head,''),'—') AS head,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(gst_amount,0) AS gst,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(gross_amount,0) AS gross,
+             COALESCE(net_payable,0) AS net,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding
+      FROM expenses
+      WHERE 1=1 ${RANGE}
+      ORDER BY project, expense_date DESC`,
+    columns: [
+      { key: "project", label: "Project" },
+      { key: "client", label: "Client" },
+      { key: "party", label: "Employee / Vendor" },
+      { key: "category", label: "Category" },
+      { key: "head", label: "Expense Head" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "department-expense",
+    label: "Department Expense",
+    group: "Expenses",
+    description: "Spend rolled up by department with tax, gross, net, paid and outstanding.",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT COALESCE(NULLIF(department,''),'Unassigned') AS department,
+             COUNT(*) AS records,
+             COALESCE(SUM(taxable_amount),0) AS taxable,
+             COALESCE(SUM(gst_amount),0) AS gst,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(gross_amount),0) AS gross,
+             COALESCE(SUM(net_payable),0) AS net,
+             COALESCE(SUM(amount_paid),0) AS paid,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding
+      FROM expenses
+      WHERE 1=1 ${RANGE}
+      GROUP BY department
+      ORDER BY gross DESC`,
+    columns: [
+      { key: "department", label: "Department" },
+      { key: "records", label: "Records", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "cost-centre-expense",
+    label: "Cost Centre Expense",
+    group: "Expenses",
+    description: "Spend rolled up by cost centre with tax, gross, net, paid and outstanding.",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT COALESCE(NULLIF(cost_centre,''),'Unassigned') AS cost_centre,
+             COUNT(*) AS records,
+             COALESCE(SUM(taxable_amount),0) AS taxable,
+             COALESCE(SUM(gst_amount),0) AS gst,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(gross_amount),0) AS gross,
+             COALESCE(SUM(net_payable),0) AS net,
+             COALESCE(SUM(amount_paid),0) AS paid,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding
+      FROM expenses
+      WHERE 1=1 ${RANGE}
+      GROUP BY cost_centre
+      ORDER BY gross DESC`,
+    columns: [
+      { key: "cost_centre", label: "Cost Centre" },
+      { key: "records", label: "Records", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "expense-payment-register",
+    label: "Payment Register",
+    group: "Expenses",
+    description: "Expenses with a payment made — mode, date, reference, gross, TDS, net, paid and balance.",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT expense_id AS expense,
+             expense_date AS date,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(payment_mode,''),'—') AS mode,
+             payment_date,
+             COALESCE(NULLIF(payment_reference,''),'—') AS reference,
+             COALESCE(gross_amount,0) AS gross,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(net_payable,0) AS net,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM expenses
+      WHERE COALESCE(amount_paid,0) > 0 ${RANGE}
+      ORDER BY payment_date DESC, id DESC`,
+    columns: [
+      { key: "expense", label: "Expense" },
+      { key: "date", label: "Date" },
+      { key: "party", label: "Employee / Vendor" },
+      { key: "mode", label: "Mode" },
+      { key: "payment_date", label: "Paid On" },
+      { key: "reference", label: "Reference" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Balance", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "outstanding-expense",
+    label: "Outstanding Expense",
+    group: "Expenses",
+    description: "All expenses with a balance still payable, aged from the expense date.",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT expense_id AS expense,
+             expense_date AS date,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(gross_amount,0) AS gross,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             DATEDIFF(CURDATE(), expense_date) AS age_days,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM expenses
+      WHERE COALESCE(outstanding_amount,0) > 0 ${RANGE}
+      ORDER BY outstanding_amount DESC`,
+    columns: [
+      { key: "expense", label: "Expense" },
+      { key: "date", label: "Date" },
+      { key: "party", label: "Employee / Vendor" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "age_days", label: "Age (days)", align: "right" },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "overdue-expense",
+    label: "Overdue Expense",
+    group: "Expenses",
+    description: "Outstanding expenses aged beyond their payment terms (default 30 days when no term is set).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT expense_id AS expense,
+             expense_date AS date,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(payment_terms,''),'—') AS terms,
+             COALESCE(gross_amount,0) AS gross,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             DATEDIFF(CURDATE(), expense_date) AS age_days
+      FROM expenses
+      WHERE COALESCE(outstanding_amount,0) > 0
+        AND DATEDIFF(CURDATE(), expense_date) > COALESCE(NULLIF(CAST(payment_terms AS UNSIGNED),0),30)
+        ${RANGE}
+      ORDER BY age_days DESC`,
+    columns: [
+      { key: "expense", label: "Expense" },
+      { key: "date", label: "Date" },
+      { key: "party", label: "Employee / Vendor" },
+      { key: "terms", label: "Terms (days)" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "age_days", label: "Age (days)", align: "right" },
+    ],
+  },
+  {
+    key: "expense-category-analytics",
+    label: "Category Analytics",
+    group: "Expenses",
+    description: "Spend by category and expense head with record count and gross / net split (Phase 10).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT COALESCE(NULLIF(expense_category,''),'Uncategorised') AS category,
+             COALESCE(NULLIF(expense_head,''),'—') AS head,
+             COUNT(*) AS records,
+             COALESCE(SUM(taxable_amount),0) AS taxable,
+             COALESCE(SUM(gst_amount),0) AS gst,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(gross_amount),0) AS gross,
+             COALESCE(SUM(net_payable),0) AS net
+      FROM expenses
+      WHERE 1=1 ${RANGE}
+      GROUP BY category, head
+      ORDER BY gross DESC`,
+    columns: [
+      { key: "category", label: "Category" },
+      { key: "head", label: "Expense Head" },
+      { key: "records", label: "Records", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+    ],
+  },
+  {
+    key: "expense-top-spend",
+    label: "Top Expenses",
+    group: "Expenses",
+    description: "Highest single expenses by gross amount with payee, category and project (Phase 11).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT expense_id AS expense,
+             expense_date AS date,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(expense_category,''),'—') AS category,
+             COALESCE(NULLIF(project_name,''),'—') AS project,
+             COALESCE(gross_amount,0) AS gross,
+             COALESCE(net_payable,0) AS net,
+             COALESCE(outstanding_amount,0) AS outstanding
+      FROM expenses
+      WHERE 1=1 ${RANGE}
+      ORDER BY gross_amount DESC
+      LIMIT 50`,
+    columns: [
+      { key: "expense", label: "Expense" },
+      { key: "date", label: "Date" },
+      { key: "party", label: "Employee / Vendor" },
+      { key: "category", label: "Category" },
+      { key: "project", label: "Project" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "expense-monthly-trend",
+    label: "Expense Trend",
+    group: "Expenses",
+    description: "Month-by-month expense gross, tax and net across the selected period (Phase 9).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT DATE_FORMAT(expense_date, '%Y-%m') AS period,
+             COUNT(*) AS records,
+             COALESCE(SUM(taxable_amount),0) AS taxable,
+             COALESCE(SUM(gst_amount),0) AS gst,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(gross_amount),0) AS gross,
+             COALESCE(SUM(net_payable),0) AS net
+      FROM expenses
+      WHERE expense_date IS NOT NULL ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Month" },
+      { key: "records", label: "Records", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+    ],
+  },
+  {
+    key: "expense-gst-input",
+    label: "Expense GST Input",
+    group: "Expenses",
+    description: "ITC register rows sourced from expenses — taxable, rate, CGST/SGST/IGST/Cess, net ITC and 2B reconciliation (Phase 5).",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(source_transaction_id,''), source_bill_id) AS expense_id,
+             COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(vendor_pan,''),'—') AS pan,
+             COALESCE(NULLIF(bill_number,''),'—') AS invoice,
+             bill_date AS date,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(gst_rate,0) AS gst_rate,
+             COALESCE(cgst_amount,0) AS cgst,
+             COALESCE(sgst_amount,0) AS sgst,
+             COALESCE(igst_amount,0) AS igst,
+             COALESCE(cess_amount,0) AS cess,
+             COALESCE(itc_eligible_amount,0) AS itc,
+             COALESCE(itc_reversal_amount,0) AS itc_reversal,
+             COALESCE(itc_net,0) AS net_itc,
+             COALESCE(NULLIF(gstr2b_reference,''),'—') AS twob_status,
+             COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') AS reconciliation
+      FROM finance_gst_input
+      WHERE source = 'Expense' ${RANGE}
+      ORDER BY bill_date DESC, id DESC`,
+    columns: [
+      { key: "expense_id", label: "Expense ID" },
+      { key: "vendor", label: "Vendor" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "pan", label: "PAN" },
+      { key: "invoice", label: "Invoice" },
+      { key: "date", label: "Date" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst_rate", label: "GST Rate", align: "right" },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "cess", label: "Cess", align: "right", money: true },
+      { key: "itc", label: "ITC", align: "right", money: true },
+      { key: "itc_reversal", label: "ITC Reversal", align: "right", money: true },
+      { key: "net_itc", label: "Net ITC", align: "right", money: true },
+      { key: "twob_status", label: "2B Status" },
+      { key: "reconciliation", label: "Reconciliation" },
+    ],
+  },
+  {
+    key: "expense-tds",
+    label: "Expense TDS",
+    group: "Expenses",
+    description: "TDS deducted on expenses — section, nature, gross, rate, TDS, paid and balance (Phase 6).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT expense_id,
+             COALESCE(NULLIF(party_name,''),'—') AS payee,
+             COALESCE(NULLIF(vendor_pan,''),'—') AS pan,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(tds_section,''),'—') AS section,
+             COALESCE(NULLIF(tds_nature_of_payment,''),'—') AS nature,
+             COALESCE(tds_base,0) AS gross,
+             COALESCE(tds_rate,0) AS tds_rate,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS balance
+      FROM expenses
+      WHERE COALESCE(tds_applicable,0) = 1 AND COALESCE(tds_amount,0) > 0 ${RANGE}
+      ORDER BY expense_date DESC, id DESC`,
+    columns: [
+      { key: "expense_id", label: "Expense ID" },
+      { key: "payee", label: "Vendor / Employee" },
+      { key: "pan", label: "PAN" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "section", label: "Section" },
+      { key: "nature", label: "Nature" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "tds_rate", label: "TDS Rate", align: "right" },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+    ],
+  },
+  {
+    key: "expense-raw-gst",
+    label: "Raw GST Data",
+    group: "Expenses",
+    description: "Flat GST export for the CA / return filing — FY, period, quarter and the full ITC breakdown (Phase 19).",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(financial_year,''),'—') AS fy,
+             COALESCE(NULLIF(period,''),'—') AS month,
+             COALESCE(NULLIF(quarter,''),'—') AS quarter,
+             COALESCE(NULLIF(source_transaction_id,''), source_bill_id) AS expense_id,
+             COALESCE(NULLIF(source,''),'—') AS source,
+             COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(vendor_pan,''),'—') AS pan,
+             COALESCE(NULLIF(bill_number,''),'—') AS invoice,
+             bill_date AS date,
+             COALESCE(NULLIF(hsn_sac,''),'—') AS hsn_sac,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(gst_rate,0) AS gst_rate,
+             COALESCE(cgst_amount,0) AS cgst,
+             COALESCE(sgst_amount,0) AS sgst,
+             COALESCE(igst_amount,0) AS igst,
+             COALESCE(cess_amount,0) AS cess,
+             COALESCE(itc_eligible_amount,0) AS itc,
+             COALESCE(itc_reversal_amount,0) AS itc_reversal,
+             COALESCE(itc_net,0) AS net_itc,
+             COALESCE(NULLIF(gstr2b_reference,''),'—') AS twob_status,
+             COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') AS reconciliation
+      FROM finance_gst_input
+      WHERE source = 'Expense' ${RANGE}
+      ORDER BY bill_date DESC, id DESC`,
+    columns: [
+      { key: "fy", label: "FY" },
+      { key: "month", label: "Month" },
+      { key: "quarter", label: "Quarter" },
+      { key: "expense_id", label: "Expense ID" },
+      { key: "source", label: "Source" },
+      { key: "vendor", label: "Vendor" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "pan", label: "PAN" },
+      { key: "invoice", label: "Invoice" },
+      { key: "date", label: "Date" },
+      { key: "hsn_sac", label: "HSN/SAC" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gst_rate", label: "GST Rate", align: "right" },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "cess", label: "Cess", align: "right", money: true },
+      { key: "itc", label: "ITC", align: "right", money: true },
+      { key: "itc_reversal", label: "ITC Reversal", align: "right", money: true },
+      { key: "net_itc", label: "Net ITC", align: "right", money: true },
+      { key: "twob_status", label: "2B Status" },
+      { key: "reconciliation", label: "Reconciliation" },
+    ],
+  },
+  {
+    key: "expense-raw-tds",
+    label: "Raw TDS Data",
+    group: "Expenses",
+    description: "Flat TDS export for the CA / return filing — FY, quarter, section, nature, rate, TDS, paid and balance (Phase 20).",
+    dateColumn: "expense_date",
+    sql: `
+      SELECT COALESCE(NULLIF(financial_year,''),'—') AS fy,
+             COALESCE(NULLIF(accounting_period,''),'—') AS month,
+             COALESCE(NULLIF(party_name,''),'—') AS payee,
+             expense_id,
+             COALESCE(NULLIF(expense_type,''),'—') AS source,
+             COALESCE(NULLIF(vendor_pan,''),'—') AS pan,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(tds_section,''),'—') AS section,
+             COALESCE(NULLIF(tds_nature_of_payment,''),'—') AS nature,
+             COALESCE(tds_base,0) AS gross,
+             COALESCE(tds_rate,0) AS tds_rate,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS balance
+      FROM expenses
+      WHERE COALESCE(tds_applicable,0) = 1 AND COALESCE(tds_amount,0) > 0 ${RANGE}
+      ORDER BY expense_date DESC, id DESC`,
+    columns: [
+      { key: "fy", label: "FY" },
+      { key: "month", label: "Month" },
+      { key: "payee", label: "Vendor / Employee" },
+      { key: "expense_id", label: "Expense ID" },
+      { key: "source", label: "Source" },
+      { key: "pan", label: "PAN" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "section", label: "Section" },
+      { key: "nature", label: "Nature" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "tds_rate", label: "TDS Rate", align: "right" },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+    ],
+  },
 ]
 
 export const FINANCE_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
@@ -345,8 +989,11 @@ export const FINANCE_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
 // under the Finance module's "Financial Reports" page, while every cross-
 // department report (Sales / HR / Operations) lives under the standalone
 // "Reports" facility. Membership is derived from the report's `group`.
-export const FINANCE_ONLY_REPORTS = FINANCE_REPORTS.filter((r) => r.group === "Finance")
-export const GENERAL_REPORTS = FINANCE_REPORTS.filter((r) => r.group !== "Finance")
+// The Expenses reporting suite (Phases 1–12, 19, 20) is a finance-domain
+// group so it surfaces on the Financial Reports page as its own category.
+const FINANCE_DOMAIN_GROUPS = new Set(["Finance", "Expenses"])
+export const FINANCE_ONLY_REPORTS = FINANCE_REPORTS.filter((r) => FINANCE_DOMAIN_GROUPS.has(r.group))
+export const GENERAL_REPORTS = FINANCE_REPORTS.filter((r) => !FINANCE_DOMAIN_GROUPS.has(r.group))
 
 export const FINANCE_ONLY_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
   FINANCE_ONLY_REPORTS.map((r) => [r.key, r]),

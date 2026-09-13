@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { userHasFeature } from "@/lib/permissions"
-import { EmailsClient } from "@/components/sales/emails-client"
+import { SalesEmailHub } from "@/components/sales/sales-email-hub"
 
 export default async function EmailsPage() {
   const session = await getSession()
@@ -10,5 +10,5 @@ export default async function EmailsPage() {
   if (!canSend) redirect("/modules/sales")
   const canManage = await userHasFeature(session.userId, session.role, "sales.manage_email_templates")
 
-  return <EmailsClient canSend={canSend} canManage={canManage} />
+  return <SalesEmailHub canSend={canSend} canManage={canManage} />
 }

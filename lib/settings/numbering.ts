@@ -53,19 +53,28 @@ const PREFIX_SETTING_OVERRIDES: Record<string, string> = {
 }
 
 /**
+ * Some built-in prefixes want a wider zero-padded number than the default of 4
+ * digits. The Vendor master, for example, uses VEN-000001 (6 digits).
+ */
+const PREFIX_DIGITS: Record<string, number> = {
+  VEN: 6,
+}
+
+/**
  * Like nextRecordId, but first checks whether the given built-in prefix has a
  * configured override in Company Settings. Used by the generic Support /
  * Finance / Recruitment CRUD factories so their settings-driven prefixes take
  * effect without changing each module config.
  */
 export async function nextRecordIdForPrefix(prefix: string): Promise<string> {
+  const digits = PREFIX_DIGITS[prefix.toUpperCase()]
   const settingKey = PREFIX_SETTING_OVERRIDES[prefix.toUpperCase()]
   if (settingKey) {
     const settings = await getSettings()
     const override = (settings[settingKey] || "").trim()
     if (override && override.toUpperCase() !== prefix.toUpperCase()) {
-      return nextRecordId(override, { allowCustom: true })
+      return nextRecordId(override, { allowCustom: true, digits })
     }
   }
-  return nextRecordId(prefix)
+  return nextRecordId(prefix, { digits })
 }

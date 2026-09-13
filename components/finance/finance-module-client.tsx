@@ -250,9 +250,20 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
                             <Send className="size-4" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" aria-label="View" onClick={() => setViewing(row)}>
-                          <Eye className="size-4" />
-                        </Button>
+                        {cfg.detailPath ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Open detail view"
+                            render={<a href={`${cfg.detailPath}/${encodeURIComponent(row[cfg.idColumn])}`} />}
+                          >
+                            <Eye className="size-4" />
+                          </Button>
+                        ) : (
+                          <Button variant="ghost" size="icon" aria-label="View" onClick={() => setViewing(row)}>
+                            <Eye className="size-4" />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" aria-label="Edit" onClick={() => openEdit(row)}>
                           <Pencil className="size-4" />
                         </Button>

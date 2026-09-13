@@ -5,6 +5,7 @@ import { requireFeature } from "@/lib/api-auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { parseSpreadsheetDate } from "@/lib/excel-import"
 import { getImportConfig, type ImportColumn } from "@/lib/import-configs"
+import { FINANCE_IMPORT_AUGMENTS } from "@/lib/finance-import-augment"
 
 /**
  * Generic, config-driven bulk importer used by every list sub-module. The
@@ -46,6 +47,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ key: strin
   const createdByColumn = config.createdBy === undefined ? "created_by" : config.createdBy
   const today = new Date().toISOString().slice(0, 10)
 
+  // Dedicated-table finance modules (Expenses) route each row through their
+  // authoritative create pipeline — master snapshot resolution, server money
+  // recompute, FY/period, duplicate fingerprint and the immutable business id —
+  // so an imported record is identical to a hand-created one (Phase 30).
+  const financeAugment = FINANCE_IMPORT_AUGMENTS[key]
+  if (financeAugment) await financeAugment.ensure()
+
   // For modules that derive the next code from their own table, seed the
   // counter once and increment locally as rows succeed.
   let counter = 0
@@ -83,7 +91,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ key: strin
     }
 
     try {
-      if (config.id && config.idColumn) {
+      if (financeAugment) {
+        Object.assign(record, await financeAugment.augment({ ...record }))
+        if (financeAugment.validate) {
+          const message = financeAugment.validate({ ...record })
+          if (message) {
+            errors.push(`Row ${index + 2}: ${message}`)
+            continue
+          }
+        }
+        record[financeAugment.idColumn] = await financeAugment.generateId(record)
+      } else if (config.id && config.idColumn) {
         if (config.id.strategy === "sequence") {
           record[config.idColumn] = await nextRecordId(config.id.prefix, { allowCustom: config.id.allowCustom })
         } else {

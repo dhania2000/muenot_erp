@@ -3,6 +3,7 @@ import { pool, query } from "@/lib/db"
 import { getSettings } from "@/lib/settings/server"
 import { computePurchaseBill, addDays, round2 } from "@/lib/finance-calc"
 import { stateCodeFromGstin, resolveSupplyType } from "@/lib/sales-invoice-compute"
+import { computeBillItems } from "@/lib/purchase-bill-items"
 
 /**
  * Purchase Bill server engine (Phases 1–5).

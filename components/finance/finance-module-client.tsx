@@ -57,10 +57,15 @@ export function FinanceModuleClient({ moduleKey }: { moduleKey: string }) {
 }
 
 function ModuleView({ cfg }: { cfg: ModuleConfig }) {
-  const emptyFilters = useMemo(
-    () => ({ search: "", financial_year: "", month: "", date_from: "", date_to: "" }),
-    [],
+  const selectFilters = useMemo(
+    () => (cfg.filters ?? []).filter((f): f is Extract<typeof f, { type: "select" }> => f.type === "select"),
+    [cfg.filters],
   )
+  const emptyFilters = useMemo(() => {
+    const base: Record<string, string> = { search: "", financial_year: "", month: "", date_from: "", date_to: "" }
+    for (const f of selectFilters) base[f.key] = ""
+    return base
+  }, [selectFilters])
   const [filters, setFilters] = useState(emptyFilters)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -185,6 +190,18 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
               <Input type="date" aria-label="To date" value={filters.date_to} onChange={(e) => setFilters((f) => ({ ...f, date_to: e.target.value }))} />
             </div>
           )}
+          {selectFilters.map((f) => (
+            <select
+              key={f.key}
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              aria-label={f.label}
+              value={filters[f.key] ?? ""}
+              onChange={(e) => setFilters((prev) => ({ ...prev, [f.key]: e.target.value }))}
+            >
+              <option value="">All {f.label.toLowerCase()}</option>
+              {f.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+          ))}
           {activeFilterCount > 0 && (
             <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => setFilters(emptyFilters)}>
               <FilterX data-icon="inline-start" />

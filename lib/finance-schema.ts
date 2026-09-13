@@ -155,4 +155,40 @@ export type ModuleConfig = {
   detailPath?: string
   /** Optional GSTIN verification capability (Vendor master). */
   gstin?: GstinVerifyConfig
+  /**
+   * Extra SELECT expressions appended to the list query (aliased on `x`), used
+   * for derived columns that live in another table — e.g. the Vendor list's
+   * outstanding total computed from purchase_bills. Must be a safe, static SQL
+   * fragment (never interpolated from user input).
+   */
+  extraSelect?: string
+  /**
+   * Optional party (vendor) picker rendered at the top of the create/edit form.
+   * Selecting a party fills the id + name fields and copies the mapped master
+   * columns into the form (empty fields only), e.g. a Purchase Bill inheriting
+   * the vendor's TDS defaults and payment terms.
+   */
+  partyLookup?: PartyLookupConfig
+}
+
+/**
+ * Config for the in-form party picker. `sourceKey` is another finance module
+ * whose list endpoint supplies the options (e.g. "customers-vendors"). `autofill`
+ * maps source columns -> this module's field keys.
+ */
+export type PartyLookupConfig = {
+  /** Module key whose `/api/finance/module/<key>` list feeds the picker. */
+  sourceKey: string
+  /** Field that receives the party's business id (e.g. "vendor_id"). */
+  idField: string
+  /** Field that receives the party's display name (e.g. "vendor_name"). */
+  nameField: string
+  /** Source column holding the business id (e.g. "party_id"). */
+  sourceIdColumn: string
+  /** Source column holding the display name (e.g. "customer_name"). */
+  sourceNameColumn: string
+  /** Map of source column -> this module's field key, filled when empty. */
+  autofill: Record<string, string>
+  /** Label for the picker block. */
+  label: string
 }

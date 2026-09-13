@@ -30,6 +30,20 @@ const purchaseBills: ModuleConfig = {
   statusColumn: "payment_status",
   pdfPath: "/api/finance/purchase-bills",
   searchColumns: ["po_number", "vendor_name", "project_name", "description"],
+  partyLookup: {
+    label: "Vendor",
+    sourceKey: "customers-vendors",
+    idField: "vendor_id",
+    nameField: "vendor_name",
+    sourceIdColumn: "party_id",
+    sourceNameColumn: "customer_name",
+    // Inherit the vendor's TDS defaults so the bill's TDS block is pre-armed.
+    autofill: {
+      tds_section: "tds_section",
+      tds_rate: "tds_rate",
+      tds_applicable: "tds_applicable",
+    },
+  },
   fields: [
     fld("Bill details", "po_number", "PO Number", "text", { placeholder: "Auto-generated if left blank" }),
     fld("Bill details", "bill_date", "Bill date", "date", { required: true }),
@@ -550,6 +564,14 @@ const customersVendors: ModuleConfig = {
   statusColumn: "status",
   detailPath: "/modules/finance/customers-vendors",
   searchColumns: ["party_id", "customer_name", "legal_name", "gstin", "pan", "city", "mobile"],
+  filters: [
+    { type: "select", key: "status", label: "Status", options: ["Active", "Inactive", "On Hold", "Archived"] },
+    { type: "select", key: "vendor_category", label: "Category", options: VENDOR_CATEGORIES },
+    { type: "select", key: "gst_verification_status", label: "GST status", options: ["Verified", "Unverified", "Failed", "Cancelled"] },
+  ],
+  // Outstanding payable is derived from the vendor's open purchase bills.
+  extraSelect:
+    "(SELECT COALESCE(SUM(pb.outstanding_amount),0) FROM purchase_bills pb WHERE pb.vendor_id = x.party_id) AS outstanding_amount",
   gstin: {
     column: "gstin",
     lookupPath: "/api/finance/vendors/gstin-lookup",
@@ -613,6 +635,7 @@ const customersVendors: ModuleConfig = {
     { key: "gstin", label: "GSTIN", mono: true },
     { key: "gst_verification_status", label: "GST", badge: { Verified: "default", Unverified: "outline", Failed: "destructive", Cancelled: "destructive" } },
     { key: "city", label: "City", sub: "state" },
+    { key: "outstanding_amount", label: "Outstanding", align: "right", money: true },
     { key: "status", label: "Status", badge: { Active: "default", Inactive: "outline", "On Hold": "secondary", Archived: "destructive" } },
   ],
   kpis: [

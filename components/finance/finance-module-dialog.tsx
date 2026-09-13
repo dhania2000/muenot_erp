@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import useSWR from "swr"
+import { fetcher } from "@/lib/fetcher"
 import {
   Dialog,
   DialogContent,
@@ -69,6 +71,15 @@ export function FinanceModuleDialog({
   const [form, setForm] = useState<FormState>(() => emptyForm(cfg))
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [gstinConflicts, setGstinConflicts] = useState<
+    { key: string; label: string; current: string; verified: string }[]
+  >([])
+
+  const fieldLabels = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const f of cfg.fields) map[f.key] = f.label
+    return map
+  }, [cfg])
 
   const checkboxKeys = useMemo(
     () => new Set(cfg.fields.filter((f) => f.type === "checkbox").map((f) => f.key)),
@@ -80,6 +91,7 @@ export function FinanceModuleDialog({
   useEffect(() => {
     if (!open) return
     setError(null)
+    setGstinConflicts([])
     const base = emptyForm(cfg)
     if (record) {
       for (const key of Object.keys(base)) {
@@ -99,24 +111,64 @@ export function FinanceModuleDialog({
    * Apply a GSTIN verification result. `autofill` fields fill visible inputs
    * only when they are still empty (never clobber user-entered values), while
    * `meta` fields are server-authoritative and always overwrite the stored
-   * snapshot. `suggestedName` seeds the vendor name when blank.
+   * snapshot. `suggestedName` seeds the vendor name when blank. When a verified
+   * value differs from a value the user already typed, it is NOT overwritten —
+   * instead it is surfaced as a conflict the user resolves explicitly.
    */
   function applyGstin(payload: {
     autofill?: Record<string, string>
     meta?: Record<string, string>
     suggestedName?: string | null
   }) {
+    const conflicts: { key: string; label: string; current: string; verified: string }[] = []
+    const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+
     setForm((prev) => {
       const next = { ...prev }
+      const consider = (key: string, verified: string) => {
+        if (!(key in next) || verified === null || verified === undefined || String(verified).trim() === "") return
+        const current = next[key] ?? ""
+        if (!current.trim()) {
+          next[key] = verified // empty → fill silently
+        } else if (!same(current, verified)) {
+          conflicts.push({ key, label: fieldLabels[key] ?? key, current, verified }) // differ → ask
+        }
+      }
       const nameKey = cfg.gstin?.autofill?.name
-      if (nameKey && payload.suggestedName && !next[nameKey]?.trim()) {
-        next[nameKey] = payload.suggestedName
-      }
-      for (const [k, v] of Object.entries(payload.autofill ?? {})) {
-        if (k in next && !next[k]?.trim()) next[k] = v
-      }
+      if (nameKey && payload.suggestedName) consider(nameKey, payload.suggestedName)
+      for (const [k, v] of Object.entries(payload.autofill ?? {})) consider(k, v)
+      // `meta` is server-authoritative snapshot data — always overwrite.
       for (const [k, v] of Object.entries(payload.meta ?? {})) {
         if (k in next) next[k] = v
+      }
+      return next
+    })
+    setGstinConflicts(conflicts)
+  }
+
+  /** Accept a verified value for one conflicting field, then drop it from the list. */
+  function resolveConflict(key: string, verified: string) {
+    setForm((prev) => ({ ...prev, [key]: verified }))
+    setGstinConflicts((prev) => prev.filter((c) => c.key !== key))
+  }
+
+  /**
+   * Apply a picked party (e.g. a vendor on a Purchase Bill). Always sets the id
+   * + name fields, and overwrites the mapped master defaults (TDS profile, etc.)
+   * since choosing a party is an explicit action.
+   */
+  function applyPartyPick(row: Record<string, any>) {
+    const pl = cfg.partyLookup
+    if (!pl) return
+    setForm((prev) => {
+      const next = { ...prev }
+      next[pl.idField] = row[pl.sourceIdColumn] != null ? String(row[pl.sourceIdColumn]) : ""
+      next[pl.nameField] = row[pl.sourceNameColumn] != null ? String(row[pl.sourceNameColumn]) : ""
+      for (const [sourceCol, targetKey] of Object.entries(pl.autofill)) {
+        if (!(targetKey in next)) continue
+        const v = row[sourceCol]
+        if (checkboxKeys.has(targetKey)) next[targetKey] = v ? "1" : ""
+        else next[targetKey] = v === null || v === undefined ? "" : String(v)
       }
       return next
     })
@@ -197,6 +249,16 @@ export function FinanceModuleDialog({
               </Alert>
             )}
 
+            {cfg.partyLookup && (
+              <PartyPicker
+                cfg={cfg}
+                selectedName={form[cfg.partyLookup.nameField] ?? ""}
+                selectedId={form[cfg.partyLookup.idField] ?? ""}
+                onPick={applyPartyPick}
+                onChange={update}
+              />
+            )}
+
             {cfg.gstin && (
               <GstinVerify
                 cfg={cfg}
@@ -204,7 +266,44 @@ export function FinanceModuleDialog({
                 excludeId={record?.id ?? null}
                 onChange={update}
                 onApply={applyGstin}
+                onReset={() => setGstinConflicts([])}
               />
+            )}
+
+            {gstinConflicts.length > 0 && (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  <div className="flex flex-col gap-3">
+                    <p className="font-medium">
+                      The GST network returned different values for {gstinConflicts.length} field
+                      {gstinConflicts.length > 1 ? "s" : ""}. Your entries were kept — choose which to trust.
+                    </p>
+                    {gstinConflicts.map((c) => (
+                      <div key={c.key} className="flex flex-col gap-1 rounded-md border border-destructive/30 bg-background p-2 text-foreground">
+                        <span className="text-xs font-medium text-muted-foreground">{c.label}</span>
+                        <div className="flex flex-wrap items-center gap-2 text-sm">
+                          <span>
+                            Yours: <span className="font-medium">{c.current}</span>
+                          </span>
+                          <span className="text-muted-foreground">·</span>
+                          <span>
+                            Verified: <span className="font-medium">{c.verified}</span>
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="ml-auto"
+                            onClick={() => resolveConflict(c.key, c.verified)}
+                          >
+                            Use verified
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </AlertDescription>
+              </Alert>
             )}
 
             {sections.map((section) => {
@@ -281,6 +380,7 @@ function GstinVerify({
   excludeId,
   onChange,
   onApply,
+  onReset,
 }: {
   cfg: ModuleConfig
   value: string
@@ -291,6 +391,7 @@ function GstinVerify({
     meta?: Record<string, string>
     suggestedName?: string | null
   }) => void
+  onReset: () => void
 }) {
   const gcfg = cfg.gstin!
   const [checking, setChecking] = useState(false)
@@ -354,6 +455,7 @@ function GstinVerify({
                 setResult(null)
                 setDuplicate(null)
                 setNote(null)
+                onReset()
               }}
             />
           </Field>
@@ -373,10 +475,11 @@ function GstinVerify({
         )}
 
         {duplicate && (
-          <Alert>
+          <Alert variant="destructive">
             <AlertDescription>
-              This GSTIN is already used by <span className="font-medium">{duplicate.customer_name}</span> (
-              {duplicate.party_id}).
+              Possible duplicate: this GSTIN is already on file for{" "}
+              <span className="font-medium">{duplicate.customer_name}</span> ({duplicate.party_id}). Saving will
+              create a second record with the same GSTIN.
             </AlertDescription>
           </Alert>
         )}
@@ -386,6 +489,113 @@ function GstinVerify({
           <p className="text-xs text-muted-foreground">
             Verified details filled empty fields below. Existing values were kept unchanged.
           </p>
+        )}
+      </div>
+    </FieldGroup>
+  )
+}
+
+/**
+ * Searchable party selector for transaction modules (e.g. the vendor on a
+ * Purchase Bill). Loads master rows from the source module's list API and, on
+ * pick, hands the full row back so the dialog can copy id/name + master
+ * defaults into the form.
+ */
+function PartyPicker({
+  cfg,
+  selectedName,
+  selectedId,
+  onPick,
+  onChange,
+}: {
+  cfg: ModuleConfig
+  selectedName: string
+  selectedId: string
+  onPick: (row: Record<string, any>) => void
+  onChange: (key: string, value: string) => void
+}) {
+  const pl = cfg.partyLookup!
+  const [query, setQuery] = useState("")
+  const [openList, setOpenList] = useState(false)
+  const { data } = useSWR<{ rows: Record<string, any>[] }>(
+    `/api/finance/module/${pl.sourceKey}`,
+    fetcher,
+  )
+  const rows = data?.rows ?? []
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const base = q
+      ? rows.filter((r) => {
+          const name = String(r[pl.sourceNameColumn] ?? "").toLowerCase()
+          const id = String(r[pl.sourceIdColumn] ?? "").toLowerCase()
+          return name.includes(q) || id.includes(q)
+        })
+      : rows
+    return base.slice(0, 20)
+  }, [rows, query, pl])
+
+  return (
+    <FieldGroup>
+      <h3 className="text-sm font-semibold text-foreground">{pl.label}</h3>
+      <div className="relative flex flex-col gap-2 rounded-lg border bg-muted/30 p-4">
+        <Field>
+          <FieldLabel htmlFor="party-picker">Search {pl.label.toLowerCase()}</FieldLabel>
+          <Input
+            id="party-picker"
+            placeholder={`Type a ${pl.label.toLowerCase()} name or code`}
+            value={query}
+            autoComplete="off"
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setOpenList(true)
+            }}
+            onFocus={() => setOpenList(true)}
+          />
+        </Field>
+
+        {selectedName && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Selected:</span>
+            <Badge variant="secondary">{selectedName}</Badge>
+            {selectedId && <span className="font-mono text-xs text-muted-foreground">#{selectedId}</span>}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="ml-auto"
+              onClick={() => {
+                onChange(pl.idField, "")
+                onChange(pl.nameField, "")
+                setQuery("")
+              }}
+            >
+              Clear
+            </Button>
+          </div>
+        )}
+
+        {openList && query.trim() && (
+          <div className="max-h-56 overflow-y-auto rounded-md border bg-background">
+            {filtered.length === 0 && (
+              <p className="p-3 text-sm text-muted-foreground">No matching {pl.label.toLowerCase()} found.</p>
+            )}
+            {filtered.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                className="flex w-full flex-col items-start gap-0.5 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-muted/60"
+                onClick={() => {
+                  onPick(r)
+                  setQuery("")
+                  setOpenList(false)
+                }}
+              >
+                <span className="font-medium">{r[pl.sourceNameColumn]}</span>
+                <span className="font-mono text-xs text-muted-foreground">{r[pl.sourceIdColumn]}</span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </FieldGroup>

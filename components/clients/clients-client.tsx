@@ -47,10 +47,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Plus, Search, BriefcaseBusiness, Building2, UserRound } from "lucide-react"
+import { MoreHorizontal, Plus, Search, BriefcaseBusiness, Building2, UserRound, ArrowLeft, ArrowRight, Check, GitMerge, Eye, Pencil } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
 import { EntityCombobox, type ComboOption } from "@/components/clients/entity-combobox"
+import { Client360Drawer } from "@/components/clients/client-360-drawer"
 
 export type ClientRow = {
   id: number
@@ -89,6 +90,8 @@ export type ClientRow = {
   pan?: string | null
   state_code?: string | null
   account_manager_id?: number | null
+  payment_terms_days?: number | null
+  credit_limit?: number | null
   row_version?: number
   archived_at?: string | null
   linked_company_name?: string | null
@@ -139,6 +142,13 @@ const COMPANY_FIELDS: Field[] = [
   { key: "postal_code", label: "Postal Code" },
 ]
 
+const BILLING_FIELDS: Field[] = [
+  { key: "payment_terms_days", label: "Payment Terms (days)", type: "number" },
+  { key: "credit_limit", label: "Credit Limit", type: "number" },
+]
+
+const STEPS = ["Account & contact", "Company & tax", "Billing & portal"] as const
+
 function ClientDialog({
   open,
   onOpenChange,
@@ -154,6 +164,7 @@ function ClientDialog({
   const [saving, setSaving] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [dupes, setDupes] = useState<DuplicateMatch[] | null>(null)
+  const [step, setStep] = useState(0)
 
   const seed = useMemo(() => {
     const base: Record<string, string> = {
@@ -166,7 +177,7 @@ function ClientDialog({
       primary_contact_id: client?.primary_contact_id != null ? String(client.primary_contact_id) : "",
       finance_party_id: client?.finance_party_id ?? "",
     }
-    for (const f of [...CONTACT_FIELDS, ...COMPANY_FIELDS]) {
+    for (const f of [...CONTACT_FIELDS, ...COMPANY_FIELDS, ...BILLING_FIELDS]) {
       base[f.key] = (client?.[f.key as keyof ClientRow] as string) ?? ""
     }
     base.notes = client?.notes ?? ""
@@ -239,6 +250,24 @@ function ClientDialog({
     })
   }
 
+  // Validate the current step before advancing. Step 0 owns the required
+  // identity fields; later steps are optional so they never block navigation.
+  function advance(): boolean {
+    if (step === 0) {
+      const errs: Record<string, string> = {}
+      if (!value("client_name").trim()) errs.client_name = "Contact name is required"
+      const email = value("email").trim()
+      if (!email) errs.email = "Email is required"
+      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "Enter a valid email address"
+      if (Object.keys(errs).length > 0) {
+        setFieldErrors(errs)
+        toast.error("Please fix the highlighted fields")
+        return false
+      }
+    }
+    return true
+  }
+
   async function submit(force: boolean) {
     setSaving(true)
     const payload: Record<string, any> = { ...seed, ...form }
@@ -283,6 +312,7 @@ function ClientDialog({
           if (!v) {
             setForm({})
             setFieldErrors({})
+            setStep(0)
           }
           onOpenChange(v)
         }}
@@ -291,16 +321,44 @@ function ClientDialog({
           <DialogHeader>
             <DialogTitle>{client ? "Edit client" : "Add client"}</DialogTitle>
           </DialogHeader>
+
+          {/* Stepper */}
+          <ol className="flex items-center gap-2 text-xs">
+            {STEPS.map((label, i) => (
+              <li key={label} className="flex items-center gap-2">
+                <span
+                  className={
+                    "flex size-5 items-center justify-center rounded-full text-[11px] font-medium " +
+                    (i < step
+                      ? "bg-primary text-primary-foreground"
+                      : i === step
+                        ? "border border-primary text-primary"
+                        : "border border-border text-muted-foreground")
+                  }
+                >
+                  {i < step ? <Check className="size-3" /> : i + 1}
+                </span>
+                <span className={i === step ? "font-medium" : "text-muted-foreground"}>{label}</span>
+                {i < STEPS.length - 1 && <span className="mx-1 h-px w-6 bg-border" />}
+              </li>
+            ))}
+          </ol>
+
           <form
             onSubmit={(e) => {
               e.preventDefault()
               setFieldErrors({})
+              if (step < STEPS.length - 1) {
+                if (!advance()) return
+                setStep((s) => s + 1)
+                return
+              }
               submit(false)
             }}
             className="grid gap-6"
           >
             {/* Step 1 — link to the canonical account + contact masters. */}
-            <section className="grid gap-4 rounded-lg border border-border bg-muted/30 p-4">
+            <section className={(step === 0 ? "" : "hidden ") + "grid gap-4 rounded-lg border border-border bg-muted/30 p-4"}>
               <h3 className="flex items-center gap-2 text-sm font-semibold">
                 <Building2 className="size-4 text-primary" /> Link to account
               </h3>
@@ -334,7 +392,7 @@ function ClientDialog({
               </div>
             </section>
 
-            <section className="grid gap-4">
+            <section className={(step === 0 ? "" : "hidden ") + "grid gap-4"}>
               <h3 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                 <UserRound className="size-4" /> Contact details
               </h3>
@@ -374,7 +432,7 @@ function ClientDialog({
               </div>
             </section>
 
-            <section className="grid gap-4">
+            <section className={(step === 1 ? "" : "hidden ") + "grid gap-4"}>
               <h3 className="text-sm font-semibold text-muted-foreground">Company &amp; tax details</h3>
               <div className="grid gap-4 sm:grid-cols-2">
                 {COMPANY_FIELDS.map((f) => (
@@ -406,7 +464,27 @@ function ClientDialog({
               </div>
             </section>
 
-            <section className="grid gap-4">
+            <section className={(step === 2 ? "" : "hidden ") + "grid gap-4"}>
+              <h3 className="text-sm font-semibold text-muted-foreground">Billing profile</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {BILLING_FIELDS.map((f) => (
+                  <div key={f.key} className="grid gap-2">
+                    <Label htmlFor={f.key}>{f.label}</Label>
+                    <Input
+                      id={f.key}
+                      type={f.type || "text"}
+                      value={value(f.key)}
+                      onChange={(e) => set(f.key, e.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="-mt-1 text-xs text-muted-foreground">
+                Payment terms and credit limit flow into the linked finance party and are used to auto-fill invoices.
+              </p>
+            </section>
+
+            <section className={(step === 2 ? "" : "hidden ") + "grid gap-4"}>
               <h3 className="text-sm font-semibold text-muted-foreground">Portal access</h3>
               <div className="grid gap-4 sm:grid-cols-3">
                 <div className="grid gap-2">
@@ -451,10 +529,25 @@ function ClientDialog({
               </div>
             </section>
 
-            <DialogFooter>
-              <Button type="submit" disabled={saving}>
-                {saving ? "Saving…" : client ? "Update client" : "Save client"}
-              </Button>
+            <DialogFooter className="sm:justify-between">
+              <div>
+                {step > 0 && (
+                  <Button type="button" variant="outline" onClick={() => setStep((s) => s - 1)}>
+                    <ArrowLeft className="size-4" /> Back
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {step < STEPS.length - 1 ? (
+                  <Button type="submit">
+                    Next <ArrowRight className="size-4" />
+                  </Button>
+                ) : (
+                  <Button type="submit" disabled={saving}>
+                    {saving ? "Saving…" : client ? "Update client" : "Save client"}
+                  </Button>
+                )}
+              </div>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -502,11 +595,93 @@ function ClientDialog({
   )
 }
 
+function MergeDialog({
+  source,
+  clients,
+  onOpenChange,
+  onMerged,
+}: {
+  source: ClientRow | null
+  clients: ClientRow[]
+  onOpenChange: (v: boolean) => void
+  onMerged: () => void
+}) {
+  const [targetId, setTargetId] = useState("")
+  const [busy, setBusy] = useState(false)
+
+  const candidates = useMemo(
+    () => clients.filter((c) => c.id !== source?.id && !c.archived_at),
+    [clients, source],
+  )
+
+  async function confirm() {
+    if (!source || !targetId) return
+    setBusy(true)
+    const res = await fetch("/api/clients/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: source.id, target_id: Number(targetId) }),
+    })
+    setBusy(false)
+    const body = await res.json().catch(() => ({}) as any)
+    if (res.ok) {
+      toast.success(`Merged into ${body.target_name}. ${body.invoices_repointed} invoice(s) repointed.`)
+      setTargetId("")
+      onOpenChange(false)
+      onMerged()
+    } else {
+      toast.error(body.error || "Unable to merge clients")
+    }
+  }
+
+  return (
+    <Dialog open={!!source} onOpenChange={(v) => !v && onOpenChange(false)}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Merge client</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <p className="text-sm text-muted-foreground">
+            Merge <span className="font-medium text-foreground">{source?.company_name || source?.client_name}</span>{" "}
+            <span className="font-mono text-xs">{source?.client_code}</span> into another client. Invoices are
+            repointed to the survivor and this record is archived. This cannot be undone automatically.
+          </p>
+          <div className="grid gap-2">
+            <Label>Survivor (keep this client)</Label>
+            <Select value={targetId} onValueChange={(v) => setTargetId((v as string) ?? "")}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select the client to keep" />
+              </SelectTrigger>
+              <SelectContent>
+                {candidates.map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {(c.company_name || c.client_name) + " · " + c.client_code}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={!targetId || busy} onClick={confirm}>
+            {busy ? "Merging…" : "Merge & archive"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function ClientsClient({ canManage }: { canManage: boolean }) {
   const { data, isLoading, mutate } = useSWR<{ clients: ClientRow[] }>("/api/clients", fetcher)
   const [search, setSearch] = useState("")
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<ClientRow | null>(null)
+  const [viewing, setViewing] = useState<ClientRow | null>(null)
+  const [merging, setMerging] = useState<ClientRow | null>(null)
 
   const clients = data?.clients ?? []
   const filtered = useMemo(() => {
@@ -550,13 +725,20 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
             columns={[
               { header: "Client Code", value: (r: ClientRow) => r.client_code },
               { header: "Client Name", value: (r: ClientRow) => `${r.salutation ? r.salutation + " " : ""}${r.client_name}` },
+              { header: "Legal Name", value: (r: ClientRow) => r.legal_name },
+              { header: "Client Type", value: (r: ClientRow) => r.client_type },
               { header: "Email", value: (r: ClientRow) => r.email },
               { header: "Mobile", value: (r: ClientRow) => r.mobile },
               { header: "Company", value: (r: ClientRow) => r.company_name },
+              { header: "Company Code", value: (r: ClientRow) => r.company_code },
               { header: "Website", value: (r: ClientRow) => r.website },
               { header: "GSTIN", value: (r: ClientRow) => r.gst_number },
               { header: "PAN", value: (r: ClientRow) => r.pan },
+              { header: "State Code", value: (r: ClientRow) => r.state_code },
               { header: "Finance Party", value: (r: ClientRow) => r.finance_party_id },
+              { header: "Payment Terms (days)", value: (r: ClientRow) => r.payment_terms_days },
+              { header: "Credit Limit", value: (r: ClientRow) => r.credit_limit },
+              { header: "Account Manager", value: (r: ClientRow) => r.account_manager_name },
               { header: "Category", value: (r: ClientRow) => r.category },
               { header: "Sub Category", value: (r: ClientRow) => r.sub_category },
               { header: "City", value: (r: ClientRow) => r.city },
@@ -623,15 +805,19 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
             {filtered.map((client) => (
               <TableRow key={client.id}>
                 <TableCell>
-                  <div className="flex flex-col">
-                    <span className="font-medium">
+                  <button
+                    type="button"
+                    className="flex flex-col text-left"
+                    onClick={() => setViewing(client)}
+                  >
+                    <span className="font-medium hover:underline">
                       {client.salutation ? `${client.salutation} ` : ""}
                       {client.client_name}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       {client.client_code} · {client.email}
                     </span>
-                  </div>
+                  </button>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   <div className="flex flex-col">
@@ -668,13 +854,19 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
                         <MoreHorizontal className="size-4" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setViewing(client)}>
+                          <Eye className="size-4" /> View 360
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => {
                             setEditing(client)
                             setDialogOpen(true)
                           }}
                         >
-                          Edit client
+                          <Pencil className="size-4" /> Edit client
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setMerging(client)}>
+                          <GitMerge className="size-4" /> Merge client
                         </DropdownMenuItem>
                         <DropdownMenuItem variant="destructive" onClick={() => archiveClient(client)}>
                           Archive client
@@ -697,6 +889,29 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
           toast.success(editing ? "Client updated" : "Client added")
           mutate()
         }}
+      />
+
+      <Client360Drawer
+        client={viewing}
+        open={!!viewing}
+        onOpenChange={(v) => !v && setViewing(null)}
+        canManage={canManage}
+        onEdit={(c) => {
+          setViewing(null)
+          setEditing(c)
+          setDialogOpen(true)
+        }}
+        onMerge={(c) => {
+          setViewing(null)
+          setMerging(c)
+        }}
+      />
+
+      <MergeDialog
+        source={merging}
+        clients={clients}
+        onOpenChange={(v) => !v && setMerging(null)}
+        onMerged={() => mutate()}
       />
     </div>
   )

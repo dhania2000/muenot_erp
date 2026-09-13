@@ -9,7 +9,12 @@ import type { ModuleConfig } from "@/lib/finance-schema"
 import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns } from "@/lib/finance-ensure"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
 import { nextExpenseId, computeExpenseServerFields, validateExpense, findDuplicateExpense } from "@/lib/finance-expenses"
-import { syncGstInputForBill, deleteGstInputForBill } from "@/lib/finance-gst-input"
+import {
+  syncGstInputForBill,
+  deleteGstInputForBill,
+  syncGstInputForExpense,
+  deleteGstInputForExpense,
+} from "@/lib/finance-gst-input"
 import { syncPurchaseBillPosting, reversePurchaseBillPosting } from "@/lib/finance-posting"
 import { computeBillItems, persistBillItems } from "@/lib/purchase-bill-items"
 import type { SupplyType } from "@/lib/sales-invoice-compute"
@@ -84,6 +89,19 @@ const AFTER_WRITE: Record<
     // save retries, so it never blocks bill CRUD.
     await syncPurchaseBillPosting(String(billId), { createdBy: userId })
   },
+  // Phase 7/40 — after an expense is committed, project its eligible input GST
+  // into the SAME centralized GST Input register (idempotent; a zero-GST or
+  // rejected expense removes any record). The user never enters GST Input by
+  // hand. Failure-tolerant so it never blocks expense CRUD.
+  expenses: async ({ finalRow, userId }) => {
+    const expenseId = finalRow[cfgIdColumn("expenses")]
+    if (!expenseId) return
+    try {
+      await syncGstInputForExpense(String(expenseId), { createdBy: userId })
+    } catch (error) {
+      console.log("[v0] syncGstInputForExpense failed:", (error as Error).message)
+    }
+  },
 }
 
 /** Optional per-module side effect that runs when a record is deleted. */
@@ -96,6 +114,12 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
     await reversePurchaseBillPosting(row)
     await deleteGstInputForBill(String(billId))
     await query(`DELETE FROM purchase_bill_items WHERE bill_id = ?`, [billId])
+  },
+  // Unwind the expense's projected ITC record when it is deleted.
+  expenses: async (row) => {
+    const expenseId = row?.expense_id
+    if (!expenseId) return
+    await deleteGstInputForExpense(String(expenseId))
   },
 }
 

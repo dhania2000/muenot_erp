@@ -66,15 +66,10 @@ export async function nextExpenseId(expenseDate?: string | null): Promise<string
   }
 }
 
-/** Expense types that are employee-borne (drive the employee snapshot + advance). */
-export const EMPLOYEE_EXPENSE_TYPES = [
-  "Employee Expense",
-  "Reimbursement",
-  "Petty Cash Expense",
-  "Travel Expense",
-]
-/** Expense types that are vendor-borne (drive the vendor snapshot). */
-export const VENDOR_EXPENSE_TYPES = ["Vendor Expense", "Business Expense", "Other"]
+// Employee-borne / vendor-borne taxonomy lives in a shared, client-safe module
+// so the form config and this engine can never drift apart.
+export { EMPLOYEE_EXPENSE_TYPES, VENDOR_EXPENSE_TYPES } from "@/lib/finance-expense-types"
+import { EMPLOYEE_EXPENSE_TYPES, VENDOR_EXPENSE_TYPES } from "@/lib/finance-expense-types"
 
 function norm(v: any): string {
   return String(v ?? "").trim()

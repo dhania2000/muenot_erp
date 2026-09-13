@@ -1,4 +1,5 @@
-import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill } from "@/lib/finance-calc"
+import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill, computeExpense } from "@/lib/finance-calc"
+import { EMPLOYEE_EXPENSE_TYPES, VENDOR_EXPENSE_TYPES } from "@/lib/finance-expense-types"
 import type { FieldDef, FieldType, ModuleConfig } from "@/lib/finance-schema"
 
 /** Terse field builder. */
@@ -174,6 +175,15 @@ const purchaseBills: ModuleConfig = {
 // ---------------------------------------------------------------------------
 // 2. Expenses
 // ---------------------------------------------------------------------------
+// Employee-borne vs vendor-borne types decide which lookup + snapshot section
+// the dynamic form shows; the exact strings are shared with the server engine.
+const EMP_TYPES: string[] = [...EMPLOYEE_EXPENSE_TYPES]
+const VEN_TYPES: string[] = [...VENDOR_EXPENSE_TYPES]
+const ALL_EXPENSE_TYPES = [...EMP_TYPES, ...VEN_TYPES]
+const APPROVAL_STATUSES = ["Pending", "Approved", "Rejected"]
+const REIMBURSEMENT_STATUSES = ["Not Applicable", "Pending", "Reimbursed"]
+const ITC_STATUSES = ["Not Applicable", "Eligible", "Ineligible"]
+
 const expenses: ModuleConfig = {
   key: "expenses",
   table: "expenses",
@@ -185,68 +195,222 @@ const expenses: ModuleConfig = {
   dateColumn: "expense_date",
   financialYearColumn: "financial_year",
   statusColumn: "approval_status",
-  searchColumns: ["expense_id", "party_name", "expense_category", "expense_head", "description"],
+  searchColumns: [
+    "expense_id", "party_name", "employee_name", "vendor_name", "expense_category",
+    "expense_head", "description", "vendor_invoice_number", "bill_receipt_no",
+    "reference_number", "project_name",
+  ],
+  // Column-backed dropdown filters exposed by the list toolbar (Phase 27).
+  filters: [
+    { type: "select", key: "expense_type", label: "Type", options: ALL_EXPENSE_TYPES },
+    { type: "select", key: "approval_status", label: "Approval", options: APPROVAL_STATUSES },
+    { type: "select", key: "payment_status", label: "Payment", options: PAYMENT_STATUSES },
+    { type: "select", key: "reimbursement_status", label: "Reimbursement", options: REIMBURSEMENT_STATUSES },
+  ],
+  // Multi-source master pickers (Phases 4–10). Selecting a row fills the id +
+  // name fields and copies the mapped snapshot columns into the form. Employee
+  // and Vendor pickers toggle on the chosen expense type (Phase 12).
+  lookups: [
+    {
+      key: "employee",
+      label: "Employee",
+      path: "/api/finance/expenses/lookups?type=employee",
+      sourceIdColumn: "employee_id",
+      sourceNameColumn: "employee_name",
+      sourceSubColumn: "department",
+      idField: "employee_id",
+      nameField: "employee_name",
+      autofill: {
+        department: "department",
+        designation: "designation",
+        employment_type: "employment_type",
+        official_email: "employee_email",
+        mobile: "employee_mobile",
+        reporting_manager: "employee_manager",
+      },
+      visibleWhen: { field: "expense_type", in: EMP_TYPES },
+      required: true,
+    },
+    {
+      key: "vendor",
+      label: "Vendor",
+      path: "/api/finance/expenses/lookups?type=vendor",
+      sourceIdColumn: "party_id",
+      sourceNameColumn: "customer_name",
+      sourceSubColumn: "gstin",
+      idField: "vendor_id",
+      nameField: "vendor_name",
+      autofill: {
+        legal_name: "vendor_legal_name",
+        gstin: "vendor_gstin",
+        gst_registration_type: "gst_registration_type",
+        pan: "vendor_pan",
+        state: "vendor_state",
+        state_code: "vendor_state_code",
+        payment_terms_days: "payment_terms",
+        currency: "currency",
+        tds_section: "tds_section",
+        tds_rate: "tds_rate",
+      },
+      visibleWhen: { field: "expense_type", in: VEN_TYPES },
+      required: true,
+    },
+    {
+      key: "project",
+      label: "Project / Cost centre",
+      path: "/api/finance/expenses/lookups?type=project",
+      sourceIdColumn: "project_id",
+      sourceNameColumn: "project_name",
+      sourceSubColumn: "client_name",
+      idField: "project_id",
+      nameField: "project_name",
+      autofill: { client_name: "client_name", status: "project_status" },
+    },
+    {
+      key: "account",
+      label: "Expense head (Chart of Accounts)",
+      path: "/api/finance/expenses/lookups?type=account",
+      sourceIdColumn: "account_id",
+      sourceNameColumn: "account_name",
+      sourceSubColumn: "account_code",
+      idField: "expense_head_account_id",
+      nameField: "expense_head",
+      autofill: {},
+    },
+    {
+      key: "bank",
+      label: "Bank / Cash account",
+      path: "/api/finance/expenses/lookups?type=bank",
+      sourceIdColumn: "finance_account_id",
+      sourceNameColumn: "account_name",
+      sourceSubColumn: "bank_name",
+      idField: "bank_cash_account_id",
+      nameField: "bank_cash_account_name",
+      autofill: {},
+    },
+  ],
+  uploadPath: "/api/finance/expenses/documents/upload",
+  duplicateCheck: true,
   fields: [
+    // --- Expense details -----------------------------------------------------
+    fld("Expense details", "expense_type", "Expense type", "select", { options: ALL_EXPENSE_TYPES, required: true }),
     fld("Expense details", "expense_date", "Expense date", "date", { required: true }),
-    fld("Expense details", "expense_type", "Expense type", "select", { options: ["Direct", "Indirect", "Capital", "Operational", "Recurring"] }),
-    fld("Expense details", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
-    fld("Expense details", "party_id", "Employee / Vendor ID", "text"),
-    fld("Expense details", "party_name", "Employee / Vendor name", "text", { required: true }),
-    fld("Expense details", "project_id", "Project ID", "text"),
-    fld("Expense details", "project_name", "Project name", "text"),
     fld("Expense details", "expense_category", "Expense category", "text"),
-    fld("Expense details", "expense_head", "Expense head", "text"),
     fld("Expense details", "description", "Description", "textarea"),
     fld("Expense details", "bill_receipt_no", "Bill / Receipt no.", "text"),
-    fld("Payment & tax", "payment_mode", "Payment mode", "select", { options: PAYMENT_MODES, optional: true }),
-    fld("Payment & tax", "bank_cash_account_id", "Bank / Cash account ID", "text"),
-    fld("Payment & tax", "taxable_amount", "Taxable amount", "number"),
-    fld("Payment & tax", "cgst_amount", "CGST amount", "number"),
-    fld("Payment & tax", "sgst_amount", "SGST amount", "number"),
-    fld("Payment & tax", "igst_amount", "IGST amount", "number"),
-    fld("Payment & tax", "tds_applicable", "TDS applicable", "checkbox"),
-    fld("Payment & tax", "tds_section", "TDS section", "text"),
-    fld("Payment & tax", "tds_rate", "TDS rate %", "number"),
-    fld("Payment & tax", "tds_amount", "TDS amount", "number", { computed: true, money: true }),
-    fld("Payment & tax", "gross_amount", "Gross amount", "number", { computed: true, money: true }),
-    fld("Payment & tax", "net_payable", "Net payable", "number", { computed: true, money: true }),
-    fld("Approval & status", "approval_status", "Approval status", "select", { options: ["Pending", "Approved", "Rejected"] }),
-    fld("Approval & status", "approved_by", "Approved by", "text"),
-    fld("Approval & status", "reimbursement_status", "Reimbursement status", "select", { options: ["Not Applicable", "Pending", "Reimbursed"] }),
-    fld("Approval & status", "payment_date", "Payment date", "date"),
-    fld("Approval & status", "payment_reference", "Payment reference", "text"),
-    fld("Approval & status", "gst_credit_eligible", "GST credit eligible", "checkbox"),
-    fld("Approval & status", "cost_centre", "Cost centre", "text"),
-    fld("Approval & status", "notes", "Notes", "textarea"),
+    fld("Expense details", "reference_number", "Reference number", "text"),
+    fld("Expense details", "financial_year", "Financial year", "text", { placeholder: "Auto (2026-27)" }),
+    fld("Expense details", "accounting_period", "Accounting period", "text", { placeholder: "Auto (Apr 2026)" }),
+
+    // --- Employee snapshot (employee-borne types) ----------------------------
+    fld("Employee", "employee_id", "Employee ID", "text", { hidden: true, visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Employee", "employee_name", "Employee name", "text", { required: true, visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Employee", "department", "Department", "text", { visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Employee", "designation", "Designation", "text", { visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Employee", "employment_type", "Employment type", "text", { visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Employee", "employee_email", "Official email", "text", { visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Employee", "employee_mobile", "Mobile", "text", { visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Employee", "employee_manager", "Reporting manager", "text", { visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+
+    // --- Vendor snapshot (vendor-borne types) --------------------------------
+    fld("Vendor", "vendor_id", "Vendor ID", "text", { hidden: true, visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Vendor", "vendor_name", "Vendor name", "text", { required: true, visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Vendor", "vendor_legal_name", "Legal name", "text", { visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Vendor", "vendor_gstin", "GSTIN", "text", { visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Vendor", "gst_registration_type", "GST registration type", "text", { visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Vendor", "vendor_pan", "PAN", "text", { visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Vendor", "vendor_state", "State", "text", { visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Vendor", "vendor_invoice_number", "Vendor invoice no.", "text", { visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Vendor", "payment_terms", "Payment terms (days)", "number", { visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+
+    // --- Project / cost centre (Operations) ----------------------------------
+    fld("Project & cost centre", "project_id", "Project ID", "text", { hidden: true }),
+    fld("Project & cost centre", "project_name", "Project name", "text"),
+    fld("Project & cost centre", "client_name", "Client", "text"),
+    fld("Project & cost centre", "project_status", "Project status", "text", { hidden: true }),
+    fld("Project & cost centre", "cost_centre", "Cost centre", "text"),
+
+    // --- Expense head → Chart of Accounts ------------------------------------
+    fld("Expense head", "expense_head_account_id", "Expense head account ID", "text", { hidden: true }),
+    fld("Expense head", "expense_head", "Expense head", "text"),
+    fld("Expense head", "hsn_sac", "HSN / SAC", "text"),
+
+    // --- Amount & GST --------------------------------------------------------
+    fld("Amount & GST", "quantity", "Quantity", "number", { placeholder: "1" }),
+    fld("Amount & GST", "rate", "Rate", "number"),
+    fld("Amount & GST", "discount", "Discount", "number"),
+    fld("Amount & GST", "taxable_amount", "Taxable amount", "number"),
+    fld("Amount & GST", "gst_applicable", "GST applicable", "checkbox"),
+    fld("Amount & GST", "gst_rate", "GST rate %", "number", { visibleWhen: { field: "gst_applicable", in: ["1"] } }),
+    fld("Amount & GST", "supply_type", "Supply type", "select", { options: SUPPLY_TYPES, optional: true, visibleWhen: { field: "gst_applicable", in: ["1"] } }),
+    fld("Amount & GST", "cess_amount", "Cess amount", "number", { visibleWhen: { field: "gst_applicable", in: ["1"] } }),
+    fld("Amount & GST", "gst_credit_eligible", "GST credit (ITC) eligible", "checkbox", { visibleWhen: { field: "gst_applicable", in: ["1"] } }),
+    fld("Amount & GST", "cgst_amount", "CGST amount", "number", { computed: true, money: true }),
+    fld("Amount & GST", "sgst_amount", "SGST amount", "number", { computed: true, money: true }),
+    fld("Amount & GST", "igst_amount", "IGST amount", "number", { computed: true, money: true }),
+    fld("Amount & GST", "gst_amount", "Total GST", "number", { computed: true, money: true }),
+    fld("Amount & GST", "gross_amount", "Gross amount", "number", { computed: true, money: true }),
+
+    // --- TDS -----------------------------------------------------------------
+    fld("TDS", "tds_applicable", "TDS applicable", "checkbox"),
+    fld("TDS", "tds_section", "TDS section", "text", { visibleWhen: { field: "tds_applicable", in: ["1"] } }),
+    fld("TDS", "tds_rate", "TDS rate %", "number", { visibleWhen: { field: "tds_applicable", in: ["1"] } }),
+    fld("TDS", "tds_amount", "TDS amount", "number", { computed: true, money: true }),
+
+    // --- Advance & adjustment (employee-borne only) --------------------------
+    fld("Advance & adjustment", "advance_amount", "Advance amount", "number", { visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Advance & adjustment", "other_adjustment", "Other adjustment", "number", { visibleWhen: { field: "expense_type", in: EMP_TYPES } }),
+    fld("Advance & adjustment", "advance_adjusted", "Advance adjusted", "number", { computed: true, money: true }),
+    fld("Advance & adjustment", "remaining_advance", "Remaining advance", "number", { computed: true, money: true }),
+    fld("Advance & adjustment", "additional_reimbursement", "Additional reimbursement", "number", { computed: true, money: true }),
+
+    // --- Payment -------------------------------------------------------------
+    fld("Payment", "payment_mode", "Payment mode", "select", { options: PAYMENT_MODES, optional: true }),
+    fld("Payment", "bank_cash_account_id", "Bank / Cash account ID", "text", { hidden: true }),
+    fld("Payment", "bank_cash_account_name", "Bank / Cash account", "text"),
+    fld("Payment", "amount_paid", "Amount paid", "number"),
+    fld("Payment", "payment_date", "Payment date", "date"),
+    fld("Payment", "payment_reference", "Payment reference", "text"),
+    fld("Payment", "net_payable", "Net payable", "number", { computed: true, money: true }),
+    fld("Payment", "outstanding_amount", "Outstanding", "number", { computed: true, money: true }),
+    fld("Payment", "payment_status", "Payment status", "text", { computed: true }),
+    fld("Payment", "itc_status", "ITC status", "text", { hidden: true }),
+
+    // --- Approval & reimbursement --------------------------------------------
+    fld("Approval & reimbursement", "approval_status", "Approval status", "select", { options: APPROVAL_STATUSES }),
+    fld("Approval & reimbursement", "approved_by", "Approved by", "text"),
+    fld("Approval & reimbursement", "reimbursement_status", "Reimbursement status", "select", { options: REIMBURSEMENT_STATUSES }),
+
+    // --- Documents (Phase 22) ------------------------------------------------
+    fld("Documents", "receipt_url", "Receipt", "text", { upload: true, placeholder: "Upload a receipt" }),
+    fld("Documents", "vendor_invoice_url", "Vendor invoice", "text", { upload: true, placeholder: "Upload the vendor invoice", visibleWhen: { field: "expense_type", in: VEN_TYPES } }),
+    fld("Documents", "supporting_docs_url", "Supporting documents", "text", { upload: true, placeholder: "Upload supporting files" }),
+
+    // --- Notes ---------------------------------------------------------------
+    fld("Notes", "notes", "Notes", "textarea"),
   ],
-  compute: (v) => {
-    const taxable = round2(num(v.taxable_amount))
-    const cgst = round2(num(v.cgst_amount)), sgst = round2(num(v.sgst_amount)), igst = round2(num(v.igst_amount))
-    const gross = round2(taxable + cgst + sgst + igst)
-    const tds = v.tds_applicable ? round2((taxable * num(v.tds_rate)) / 100) : 0
-    return {
-      taxable_amount: taxable, cgst_amount: cgst, sgst_amount: sgst, igst_amount: igst,
-      gross_amount: gross, tds_amount: tds, net_payable: round2(gross - tds),
-      financial_year: v.financial_year || financialYearFor(v.expense_date),
-    }
-  },
+  // Client-side mirror of the authoritative server recalculation (Phase 15), so
+  // the "Calculated automatically" box previews the same money the server saves.
+  compute: (v) => computeExpense(v),
   tableColumns: [
     { key: "expense_id", label: "Expense ID", mono: true },
     { key: "expense_date", label: "Date" },
-    { key: "party_name", label: "Payee", sub: "expense_category" },
+    { key: "party_name", label: "Payee", sub: "expense_type" },
+    { key: "expense_head", label: "Expense head", sub: "expense_category" },
     { key: "gross_amount", label: "Gross", align: "right", money: true },
     { key: "net_payable", label: "Net Payable", align: "right", money: true },
+    { key: "outstanding_amount", label: "Outstanding", align: "right", money: true },
+    { key: "payment_status", label: "Payment", badge: PAYMENT_BADGE },
     { key: "approval_status", label: "Approval", badge: { Approved: "default", Pending: "secondary", Rejected: "destructive" } },
-    { key: "reimbursement_status", label: "Reimbursement", badge: { Reimbursed: "default", Pending: "secondary", "Not Applicable": "outline" } },
   ],
   kpis: [
     { label: "Gross Expense", key: "total_gross", money: true, icon: "Receipt" },
     { label: "Net Payable", key: "total_net", money: true, icon: "Coins" },
+    { label: "Outstanding", key: "total_outstanding", money: true, icon: "Wallet" },
     { label: "TDS Deducted", key: "total_tds", money: true, icon: "Landmark" },
-    { label: "Records", key: "total_rows", icon: "FileText" },
   ],
   summarySelect:
-    "COALESCE(SUM(gross_amount),0) total_gross, COALESCE(SUM(net_payable),0) total_net, COALESCE(SUM(tds_amount),0) total_tds, COUNT(*) total_rows",
+    "COALESCE(SUM(gross_amount),0) total_gross, COALESCE(SUM(net_payable),0) total_net, COALESCE(SUM(tds_amount),0) total_tds, COALESCE(SUM(outstanding_amount),0) total_outstanding, COUNT(*) total_rows",
 }
 
 // ---------------------------------------------------------------------------

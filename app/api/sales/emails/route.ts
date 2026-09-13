@@ -29,7 +29,7 @@ export async function GET() {
   const emails = await query(
     `SELECT e.id, e.lead_id, e.to_email, e.to_name, e.subject, e.status,
             e.open_count, e.first_opened_at, e.last_opened_at, e.error_message,
-            e.sent_at, e.thread_id, u.name AS sent_by_name, l.contact_person AS lead_contact
+            e.sent_at, e.thread_id, e.mail_type, u.name AS sent_by_name, l.contact_person AS lead_contact
      FROM sales_emails e
      LEFT JOIN users u ON u.id = e.sent_by
      LEFT JOIN sales_leads l ON l.id = e.lead_id
@@ -273,8 +273,9 @@ export async function POST(request: Request) {
   const result = await query<any>(
     `INSERT INTO sales_emails
        (lead_id, template_id, to_email, to_name, subject, body, tracking_token,
-        status, error_message, sent_by, message_id, in_reply_to, references_header, thread_id, recipient_key, provider_thread_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status, error_message, sent_by, message_id, in_reply_to, references_header,
+        thread_id, recipient_key, provider_thread_id, mail_type, idempotency_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       lead_id || null,
       template_id || null,
@@ -297,6 +298,10 @@ export async function POST(request: Request) {
       // Gmail conversation id — reused by the next follow-up so it lands in the
       // same Gmail thread as this email.
       providerThreadId,
+      // Explicit sender intent (audit/presentation) and the de-duplication key
+      // that makes the idempotency short-circuit above actually work on retries.
+      mailType,
+      idempotencyKey,
     ],
   )
 
@@ -316,5 +321,5 @@ export async function POST(request: Request) {
   if (status === "Failed") {
     return NextResponse.json({ error: errorMessage || "Failed to send email", id: result.insertId }, { status: 502 })
   }
-  return NextResponse.json({ id: result.insertId, status, thread_id: threadId })
+  return NextResponse.json({ id: result.insertId, status, mail_type: mailType, thread_id: threadId })
 }

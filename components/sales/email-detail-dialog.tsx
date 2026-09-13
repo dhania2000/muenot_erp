@@ -11,9 +11,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Eye, MailOpen, Send } from "lucide-react"
+import { CornerUpLeft, Eye, MailOpen, MailPlus, Send } from "lucide-react"
 
 type EmailEvent = {
   id: number
@@ -31,10 +32,12 @@ type ThreadItem = {
   sent_at: string
   to_email: string
   last_opened_at: string | null
+  mail_type: string | null
 }
 
 type EmailDetail = {
   id: number
+  lead_id: number | null
   to_email: string
   to_name: string | null
   subject: string
@@ -47,6 +50,20 @@ type EmailDetail = {
   sent_at: string
   sent_by_name: string | null
   lead_contact: string | null
+  mail_type: string | null
+  thread_id: string | null
+  provider_thread_id: string | null
+  message_id: string | null
+  in_reply_to: string | null
+  references_header: string | null
+}
+
+export type ComposeFromEmail = {
+  mailType: "new" | "followup"
+  toEmail: string
+  toName: string | null
+  leadId: number | null
+  replyToEmailId: number | null
 }
 
 function statusVariant(status: string) {
@@ -55,16 +72,26 @@ function statusVariant(status: string) {
   return "secondary"
 }
 
+function isFollowUp(mailType: string | null | undefined) {
+  return mailType === "followup"
+}
+
 export function EmailDetailDialog({
   emailId,
   onOpenChange,
   currentId,
   onSelect,
+  canSend = false,
+  canManage = false,
+  onCompose,
 }: {
   emailId: number | null
   onOpenChange: (open: boolean) => void
   currentId: number | null
   onSelect: (id: number) => void
+  canSend?: boolean
+  canManage?: boolean
+  onCompose?: (init: ComposeFromEmail) => void
 }) {
   const { data, isLoading } = useSWR<{ email: EmailDetail; events: EmailEvent[]; thread: ThreadItem[] }>(
     emailId ? `/api/sales/emails/${emailId}` : null,
@@ -74,6 +101,28 @@ export function EmailDetailDialog({
   const email = data?.email
   const events = data?.events ?? []
   const thread = data?.thread ?? []
+
+  function followUp() {
+    if (!email || !onCompose) return
+    onCompose({
+      mailType: "followup",
+      toEmail: email.to_email,
+      toName: email.to_name,
+      leadId: email.lead_id,
+      replyToEmailId: email.id,
+    })
+  }
+
+  function newConversation() {
+    if (!email || !onCompose) return
+    onCompose({
+      mailType: "new",
+      toEmail: email.to_email,
+      toName: email.to_name,
+      leadId: email.lead_id,
+      replyToEmailId: null,
+    })
+  }
 
   return (
     <Dialog open={emailId != null} onOpenChange={onOpenChange}>
@@ -93,6 +142,7 @@ export function EmailDetailDialog({
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <Badge variant={statusVariant(email.status)}>{email.status}</Badge>
+              <Badge variant="outline">{isFollowUp(email.mail_type) ? "Follow Up" : "New"}</Badge>
               <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                 <Eye className="size-3.5" />
                 {email.open_count} {email.open_count === 1 ? "open" : "opens"}
@@ -100,6 +150,19 @@ export function EmailDetailDialog({
               <span className="text-muted-foreground">Sent {formatDateTime(email.sent_at)}</span>
               {email.sent_by_name && <span className="text-muted-foreground">by {email.sent_by_name}</span>}
             </div>
+
+            {canSend && onCompose && (
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={followUp}>
+                  <CornerUpLeft data-icon="inline-start" />
+                  Follow up
+                </Button>
+                <Button size="sm" variant="outline" onClick={newConversation}>
+                  <MailPlus data-icon="inline-start" />
+                  New conversation
+                </Button>
+              </div>
+            )}
 
             {email.error_message && (
               <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -148,7 +211,7 @@ export function EmailDetailDialog({
 
               <TabsContent value="thread" className="pt-2">
                 <ul className="flex flex-col gap-2">
-                  {thread.map((item, idx) => (
+                  {thread.map((item) => (
                     <li key={item.id}>
                       <button
                         type="button"
@@ -161,18 +224,16 @@ export function EmailDetailDialog({
                       >
                         <Send className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">
-                            {idx === 0 ? "" : "Re: "}
-                            {item.subject}
-                          </p>
+                          <p className="truncate text-sm font-medium">{item.subject}</p>
                           <p className="text-xs text-muted-foreground">
                             {formatDateTime(item.sent_at)} · {item.open_count}{" "}
                             {item.open_count === 1 ? "open" : "opens"}
                           </p>
                         </div>
-                        <Badge variant={statusVariant(item.status)} className="shrink-0">
-                          {item.status}
-                        </Badge>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <Badge variant="outline">{isFollowUp(item.mail_type) ? "Follow Up" : "Original"}</Badge>
+                          <Badge variant={statusVariant(item.status)}>{item.status}</Badge>
+                        </div>
                       </button>
                     </li>
                   ))}
@@ -190,6 +251,28 @@ export function EmailDetailDialog({
                 </div>
               </TabsContent>
             </Tabs>
+
+            {/* Threading diagnostics — collapsed by default and shown only to
+                managers. Helps debug why a follow-up did or didn't thread. */}
+            {canManage && (
+              <details className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                <summary className="cursor-pointer select-none font-medium text-muted-foreground">
+                  Technical details
+                </summary>
+                <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 break-all">
+                  <dt className="text-muted-foreground">Thread ID</dt>
+                  <dd className="font-mono text-xs">{email.thread_id || "—"}</dd>
+                  <dt className="text-muted-foreground">Provider thread</dt>
+                  <dd className="font-mono text-xs">{email.provider_thread_id || "—"}</dd>
+                  <dt className="text-muted-foreground">Message-ID</dt>
+                  <dd className="font-mono text-xs">{email.message_id || "—"}</dd>
+                  <dt className="text-muted-foreground">In-Reply-To</dt>
+                  <dd className="font-mono text-xs">{email.in_reply_to || "—"}</dd>
+                  <dt className="text-muted-foreground">References</dt>
+                  <dd className="font-mono text-xs">{email.references_header || "—"}</dd>
+                </dl>
+              </details>
+            )}
           </div>
         )}
       </DialogContent>

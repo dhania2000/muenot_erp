@@ -13,7 +13,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const rows = await query<any[]>(
     `SELECT e.id, e.lead_id, e.template_id, e.to_email, e.to_name, e.subject, e.body,
             e.status, e.open_count, e.first_opened_at, e.last_opened_at, e.error_message,
-            e.sent_at, e.thread_id, u.name AS sent_by_name, l.contact_person AS lead_contact
+            e.sent_at, e.thread_id, e.mail_type, e.provider_thread_id, e.message_id,
+            e.in_reply_to, e.references_header, u.name AS sent_by_name, l.contact_person AS lead_contact
      FROM sales_emails e
      LEFT JOIN users u ON u.id = e.sent_by
      LEFT JOIN sales_leads l ON l.id = e.lead_id
@@ -35,7 +36,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   // The full conversation: every email sharing this thread_id, oldest first.
   const thread = email.thread_id
     ? await query(
-        `SELECT id, subject, status, open_count, sent_at, to_email, last_opened_at
+        `SELECT id, subject, status, open_count, sent_at, to_email, last_opened_at, mail_type
          FROM sales_emails
          WHERE thread_id = ?
          ORDER BY sent_at ASC, id ASC`,

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Loader2Icon } from "lucide-react"
+import { CheckCircle2Icon, Loader2Icon } from "lucide-react"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
 import type { EmailTemplateRow } from "@/components/sales/email-templates-client"
 
@@ -38,6 +38,23 @@ type LeadRow = {
 
 type MailType = "new" | "followup"
 
+type ThreadPreview = {
+  found: boolean
+  email?: string
+  error?: string
+  thread?: {
+    latestEmailId: number
+    threadId: string
+    rootSubject: string
+    replySubject: string
+    sentAt: string | null
+    toEmail: string
+    toName: string | null
+    openCount: number
+    providerThreaded: boolean
+  }
+}
+
 type FormState = {
   lead_id: string
   template_id: string
@@ -47,6 +64,21 @@ type FormState = {
   subject: string
   body: string
   attachment: EmailAttachment | null
+}
+
+/**
+ * Optional starting context when the composer is opened from a specific place
+ * (e.g. the email detail dialog's "Follow up" / "New conversation" actions).
+ * A replyToEmailId forces the follow-up to thread into that EXACT email's
+ * conversation — the strongest, least-ambiguous follow-up path (spec 160/162) —
+ * instead of re-discovering one by recipient address.
+ */
+export type ComposeInitial = {
+  mailType?: MailType
+  toEmail?: string
+  toName?: string
+  leadId?: number | null
+  replyToEmailId?: number | null
 }
 
 const EMPTY: FormState = {
@@ -60,18 +92,35 @@ const EMPTY: FormState = {
   attachment: null,
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function formatSentAt(value: string | null | undefined) {
+  if (!value) return "—"
+  const date = new Date(value.replace(" ", "T"))
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 export function ComposeEmailDialog({
   open,
   onOpenChange,
   onSent,
   emailConfigured,
   initialLead,
+  initial,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSent: () => void
   emailConfigured: boolean
   initialLead?: LeadRow | null
+  initial?: ComposeInitial | null
 }) {
   const { data: leadsData } = useSWR<{ leads: LeadRow[] }>(open ? "/api/sales/leads" : null, fetcher)
   const { data: templatesData } = useSWR<{ templates: EmailTemplateRow[] }>(
@@ -82,14 +131,65 @@ export function ComposeEmailDialog({
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // A stable de-duplication key for this compose session. Generated once per
+  // dialog open and reused across double-clicks / retries so the server's
+  // idempotency guard collapses accidental duplicates into a single send.
+  const idempotencyKey = useRef<string>("")
+
   const leads = leadsData?.leads ?? []
   const templates = templatesData?.templates ?? []
 
+  // When opened targeting a specific prior email (from the detail dialog's
+  // "Follow up" action), force that email as the thread anchor so the reply
+  // joins THAT exact conversation rather than the recipient's latest one.
+  const forcedReplyToEmailId = useRef<number | null>(null)
+
   useEffect(() => {
     if (!open) return
-    setForm(initialLead ? { ...EMPTY, lead_id: String(initialLead.id), to_email: initialLead.email || "", to_name: initialLead.contact_person || "" } : EMPTY)
+    if (initial) {
+      setForm({
+        ...EMPTY,
+        mail_type: initial.mailType ?? "new",
+        lead_id: initial.leadId != null ? String(initial.leadId) : "",
+        to_email: initial.toEmail || "",
+        to_name: initial.toName || "",
+      })
+      forcedReplyToEmailId.current = initial.replyToEmailId ?? null
+    } else if (initialLead) {
+      setForm({
+        ...EMPTY,
+        lead_id: String(initialLead.id),
+        to_email: initialLead.email || "",
+        to_name: initialLead.contact_person || "",
+      })
+      forcedReplyToEmailId.current = null
+    } else {
+      setForm(EMPTY)
+      forcedReplyToEmailId.current = null
+    }
     setError(null)
-  }, [open, initialLead])
+    idempotencyKey.current = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  }, [open, initialLead, initial])
+
+  // Debounce the recipient address used for the follow-up thread lookup so we
+  // don't fire a request on every keystroke.
+  const [debouncedEmail, setDebouncedEmail] = useState("")
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedEmail(form.to_email.trim().toLowerCase()), 400)
+    return () => clearTimeout(t)
+  }, [form.to_email])
+
+  const isFollowUp = form.mail_type === "followup"
+  const emailValid = EMAIL_RE.test(debouncedEmail)
+
+  // Resolve the conversation a Follow Up would join, live, as the recipient
+  // changes. Only runs in Follow Up mode with a valid address.
+  const previewKey =
+    open && isFollowUp && emailValid ? `/api/sales/emails/thread-preview?email=${encodeURIComponent(debouncedEmail)}` : null
+  const { data: preview, isLoading: previewLoading } = useSWR<ThreadPreview>(previewKey, fetcher)
+
+  const hasThread = Boolean(isFollowUp && preview?.found && preview.thread)
+  const noThread = isFollowUp && emailValid && !previewLoading && preview != null && !preview.found
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -112,7 +212,9 @@ export function ComposeEmailDialog({
     setForm((prev) => ({
       ...prev,
       template_id: v,
-      subject: tpl ? tpl.subject : prev.subject,
+      // In Follow Up mode the subject is owned by the thread, so a template only
+      // ever changes the body — never the conversation subject.
+      subject: tpl && prev.mail_type === "new" ? tpl.subject : prev.subject,
       body: tpl ? tpl.body : prev.body,
       attachment: tpl
         ? (tpl as any).attachment_pathname
@@ -127,15 +229,34 @@ export function ComposeEmailDialog({
     }))
   }
 
-  const selectedLead = useMemo(
-    () => leads.find((l) => String(l.id) === form.lead_id) || null,
-    [leads, form.lead_id],
-  )
+  const selectedLead = useMemo(() => leads.find((l) => String(l.id) === form.lead_id) || null, [leads, form.lead_id])
+
+  // The subject actually shown/sent. In Follow Up mode the server controls the
+  // thread subject ("Re: <root>"), so we mirror that here read-only to prevent
+  // accidental thread breakage.
+  const effectiveSubject = hasThread ? preview!.thread!.replySubject : form.subject
+
+  // Guard the Send button: block a Follow Up that has nothing to thread into.
+  const sendDisabled =
+    loading ||
+    !emailConfigured ||
+    (isFollowUp && (previewLoading || !hasThread)) ||
+    !form.to_email.trim() ||
+    !form.body.trim() ||
+    (!isFollowUp && !form.subject.trim())
 
   async function submit() {
     setError(null)
-    if (!form.to_email.trim() || !form.subject.trim() || !form.body.trim()) {
-      setError("Recipient, subject, and body are required.")
+    if (!form.to_email.trim() || !form.body.trim()) {
+      setError("Recipient and body are required.")
+      return
+    }
+    if (!isFollowUp && !form.subject.trim()) {
+      setError("Subject is required for a new conversation.")
+      return
+    }
+    if (isFollowUp && !hasThread) {
+      setError("No previous sent conversation found for this recipient. Use New to start the first email.")
       return
     }
     setLoading(true)
@@ -149,9 +270,17 @@ export function ComposeEmailDialog({
           mail_type: form.mail_type,
           to_email: form.to_email.trim(),
           to_name: form.to_name.trim() || null,
-          subject: form.subject,
+          // In Follow Up mode the server rewrites the subject anyway; send the
+          // effective one so history/logs match what the user saw.
+          subject: effectiveSubject,
           body: form.body,
           attachment: form.attachment,
+          // Strongest, unambiguous follow-up path: reply to a SPECIFIC prior
+          // email. The server re-verifies this id, so a stale preview can't send.
+          // A forced id (opened from a specific email) wins over the recipient's
+          // latest thread resolved by the live preview.
+          reply_to_email_id: forcedReplyToEmailId.current ?? (hasThread ? preview!.thread!.latestEmailId : null),
+          idempotency_key: idempotencyKey.current,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -159,7 +288,13 @@ export function ComposeEmailDialog({
         setError(data.error || "Failed to send email.")
         return
       }
-      toast.success("Email sent")
+      toast.success(
+        data.deduped
+          ? "Email already sent"
+          : form.mail_type === "followup"
+            ? "Follow-up sent — threaded into the existing conversation"
+            : "Email sent — new conversation started",
+      )
       onSent()
       onOpenChange(false)
     } catch (err: any) {
@@ -206,11 +341,49 @@ export function ComposeEmailDialog({
               </SelectContent>
             </Select>
             <FieldDescription>
-              {form.mail_type === "followup"
-                ? "Continues the last conversation with this recipient (threaded reply)."
-                : "Starts a brand-new conversation, separate from any earlier emails."}
+              {isFollowUp
+                ? "Replies inside the recipient's most recent sent conversation."
+                : "Starts a brand-new conversation."}
             </FieldDescription>
           </Field>
+
+          {/* Follow Up thread preview: gives the sender confidence about exactly
+              which conversation the reply will join before they send. */}
+          {isFollowUp && emailValid && (
+            <div>
+              {previewLoading ? (
+                <Alert>
+                  <AlertDescription className="flex items-center gap-2">
+                    <Loader2Icon className="size-4 animate-spin" />
+                    Looking up the recipient&apos;s latest conversation…
+                  </AlertDescription>
+                </Alert>
+              ) : hasThread ? (
+                <Alert>
+                  <CheckCircle2Icon className="size-4" />
+                  <AlertDescription>
+                    <div className="font-medium text-foreground">Previous conversation found</div>
+                    <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm">
+                      <dt className="text-muted-foreground">Recipient</dt>
+                      <dd>{preview!.thread!.toEmail}</dd>
+                      <dt className="text-muted-foreground">Last sent</dt>
+                      <dd>{formatSentAt(preview!.thread!.sentAt)}</dd>
+                      <dt className="text-muted-foreground">Subject</dt>
+                      <dd>{preview!.thread!.rootSubject}</dd>
+                      <dt className="text-muted-foreground">Thread</dt>
+                      <dd>{preview!.thread!.providerThreaded ? "Ready (Gmail thread linked)" : "Ready"}</dd>
+                    </dl>
+                  </AlertDescription>
+                </Alert>
+              ) : noThread ? (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    No previous sent conversation found for this recipient. Use New to start the first email.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+            </div>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>
@@ -247,7 +420,9 @@ export function ComposeEmailDialog({
                   ))}
                 </SelectContent>
               </Select>
-              <FieldDescription>Prefills the subject and body.</FieldDescription>
+              <FieldDescription>
+                {isFollowUp ? "Prefills the body only — the thread keeps its subject." : "Prefills the subject and body."}
+              </FieldDescription>
             </Field>
           </div>
 
@@ -277,15 +452,18 @@ export function ComposeEmailDialog({
             <FieldLabel htmlFor="subject">Subject</FieldLabel>
             <Input
               id="subject"
-              value={form.subject}
+              value={effectiveSubject}
               onChange={(e) => update("subject", e.target.value)}
               placeholder="Subject line"
+              readOnly={isFollowUp}
+              disabled={isFollowUp && !hasThread}
+              aria-readonly={isFollowUp}
             />
-            {selectedLead && (
-              <FieldDescription>
-                If a conversation with this lead already exists, the subject will be threaded as a reply.
-              </FieldDescription>
-            )}
+            <FieldDescription>
+              {isFollowUp
+                ? "Thread subject is automatically preserved in Follow Up mode."
+                : "This becomes the subject of the new conversation."}
+            </FieldDescription>
           </Field>
 
           <Field>
@@ -305,10 +483,7 @@ export function ComposeEmailDialog({
 
           <Field>
             <FieldLabel>Attachment</FieldLabel>
-            <EmailAttachmentPicker
-              value={form.attachment}
-              onChange={(attachment) => update("attachment", attachment)}
-            />
+            <EmailAttachmentPicker value={form.attachment} onChange={(attachment) => update("attachment", attachment)} />
             <FieldDescription>Sent along with the email. Prefilled from the selected template.</FieldDescription>
           </Field>
         </FieldGroup>
@@ -317,9 +492,9 @@ export function ComposeEmailDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={loading || !emailConfigured}>
+          <Button onClick={submit} disabled={sendDisabled}>
             {loading && <Loader2Icon className="size-4 animate-spin" data-icon="inline-start" />}
-            Send email
+            {isFollowUp ? "Send follow-up" : "Send email"}
           </Button>
         </DialogFooter>
       </DialogContent>

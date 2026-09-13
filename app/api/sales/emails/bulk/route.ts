@@ -155,8 +155,9 @@ export async function POST(request: Request) {
     await query<any>(
       `INSERT INTO sales_emails
          (lead_id, template_id, to_email, to_name, subject, body, tracking_token,
-          status, error_message, sent_by, message_id, in_reply_to, references_header, thread_id, recipient_key, provider_thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          status, error_message, sent_by, message_id, in_reply_to, references_header,
+          thread_id, recipient_key, provider_thread_id, mail_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         leadId,
         template_id || null,
@@ -174,6 +175,9 @@ export async function POST(request: Request) {
         threadId,
         recipientKey,
         providerThreadId,
+        // Bulk is always a fresh blast — every recipient gets a brand-new
+        // conversation, never a threaded follow-up.
+        "new",
       ],
     )
 

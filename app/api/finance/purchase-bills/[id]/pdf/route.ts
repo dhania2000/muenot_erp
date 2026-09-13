@@ -17,7 +17,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const settings = await getSettings()
   const pdf = buildPurchaseBillPdf(bill, companyFromSettings(settings))
 
-  const filename = `${bill.po_number || "purchase-bill"}.pdf`
+  const filename = `${bill.bill_id || bill.po_number || "purchase-bill"}.pdf`
   const disposition = req.nextUrl.searchParams.get("download") === "1" ? "attachment" : "inline"
   return new NextResponse(new Uint8Array(pdf), {
     status: 200,

@@ -1193,17 +1193,24 @@ export function buildPurchaseBillPdf(
     (Number(bill.igst_amount) || 0) +
     (Number(bill.other_tax_cess) || 0)
 
+  const supplierLines = [
+    bill.vendor_id ? `Vendor ID: ${bill.vendor_id}` : "",
+    bill.bill_number ? `Bill No: ${bill.bill_number}` : "",
+    bill.vendor_pan ? `PAN: ${bill.vendor_pan}` : "",
+    [bill.vendor_state, bill.vendor_state_code].filter(Boolean).join(" · "),
+  ].filter(Boolean)
+
   return buildTaxInvoicePdf({
     title: bill.bill_type ? String(bill.bill_type).toUpperCase() : "PURCHASE BILL",
-    invoiceNo: String(bill.po_number || "—"),
+    invoiceNo: String(bill.bill_id || bill.po_number || "—"),
     invoiceDate: fmtDate(bill.bill_date),
     poNumber: bill.po_number || undefined,
     projectName: bill.project_name || undefined,
     supplier: {
-      name: bill.vendor_name || "—",
-      addressLines: bill.vendor_id ? [`Vendor ID: ${bill.vendor_id}`] : [],
+      name: bill.vendor_legal_name || bill.vendor_name || "—",
+      addressLines: supplierLines,
       taxLabel: "GSTIN",
-      taxNumber: "",
+      taxNumber: bill.vendor_gstin || "",
     },
     buyer: {
       name: company.name,

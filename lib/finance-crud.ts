@@ -6,7 +6,27 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns } from "@/lib/finance-ensure"
+import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
+
+/**
+ * Optional per-module server augmentation. Runs AFTER the pure `compute`, can
+ * touch the database (vendor snapshot, company settings) and its output is
+ * authoritative — it overrides anything the browser sent. Kept here (server
+ * only) rather than in the shared config module so server imports never leak
+ * into the client bundle.
+ */
+const SERVER_AUGMENT: Record<
+  string,
+  (merged: Record<string, any>, opts: { isCreate: boolean }) => Promise<Record<string, any>>
+> = {
+  "purchase-bills": computePurchaseBillServerFields,
+}
+
+/** Optional per-module custom business-key generator (Phase 1: PB-2026-000001). */
+const ID_GENERATORS: Record<string, (record: Record<string, any>) => Promise<string>> = {
+  "purchase-bills": (record) => nextPurchaseBillId(record.bill_date),
+}
 
 /** Column keys a client is allowed to write (everything except computed fields). */
 function inputKeys(cfg: ModuleConfig) {
@@ -50,7 +70,11 @@ export function createFinanceHandlers(moduleKey: string) {
     if (moduleKey === "freelance-invoices") await ensureFreelanceInvoiceColumns()
     if (moduleKey === "fte-invoices") await ensureFteInvoiceColumns()
     if (moduleKey === "customers-vendors") await ensureCustomerVendorGstColumns()
+    if (moduleKey === "purchase-bills") await ensurePurchaseBillColumns()
   }
+
+  const augment = SERVER_AUGMENT[moduleKey]
+  const idGenerator = ID_GENERATORS[moduleKey]
 
   async function GET(req: NextRequest) {
     const session = await getSession()
@@ -100,7 +124,18 @@ export function createFinanceHandlers(moduleKey: string) {
     }
     Object.assign(record, derived)
 
-    if (cfg.manualId) {
+    // Server-authoritative augmentation (vendor snapshot, place-of-supply GST,
+    // due date). Runs on the merged record and overrides browser-sent values.
+    if (augment) {
+      const extra = await augment({ ...body, ...record }, { isCreate: true })
+      for (const k of keys) if (k in extra) record[k] = (extra as any)[k]
+      Object.assign(record, extra)
+    }
+
+    if (idGenerator) {
+      // Custom immutable business key (never client-supplied, concurrency-safe).
+      record[cfg.idColumn] = await idGenerator(record)
+    } else if (cfg.manualId) {
       if (!body[cfg.idColumn]) return NextResponse.json({ error: `${cfg.idColumn} is required` }, { status: 400 })
       record[cfg.idColumn] = body[cfg.idColumn]
     } else if (cfg.idPrefix) {
@@ -151,6 +186,21 @@ export function createFinanceHandlers(moduleKey: string) {
       else if (body[k] !== undefined) update[k] = body[k]
     }
     Object.assign(update, derived)
+
+    // Server-authoritative augmentation on the merged row. The immutable id
+    // column is never included in the update set (skipped above), so the Bill
+    // ID stays frozen across edits.
+    if (augment) {
+      const extra = await augment({ ...merged, ...derived, ...update }, { isCreate: false })
+      for (const k of keys) {
+        if (k === cfg.idColumn && !cfg.manualId) continue
+        if (k in extra) update[k] = (extra as any)[k]
+      }
+      for (const [k, v] of Object.entries(extra)) {
+        if (k === cfg.idColumn) continue
+        update[k] = v
+      }
+    }
 
     const cols = Object.keys(update)
     if (cols.length) {

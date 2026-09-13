@@ -226,6 +226,137 @@ export async function deleteGstInputForBill(billId: string): Promise<void> {
   await query(`DELETE FROM finance_gst_input WHERE source = 'Purchase Bill' AND source_bill_id = ?`, [billId])
 }
 
+/** Expense approval states that must NOT produce an ITC record. */
+const EXCLUDED_EXPENSE_STATUSES = new Set(["Rejected", "Cancelled", "Void"])
+
+/**
+ * Phase 7–13 — project a single Expense into the SAME centralized GST Input
+ * register used by Purchase Bills (source = 'Expense', source_bill_id =
+ * Expense ID). Idempotent: re-running updates the one keyed row so create →
+ * edit → re-post never duplicates a credit, and an expense with no input GST /
+ * in an excluded status removes any previously-created record.
+ *
+ * The claimable input tax is the GST charged on a normal expense, or the
+ * self-assessed RCM tax on an RCM expense (Phase 5) — never both. Eligibility
+ * follows the expense's own GST-credit flag (Phase 6), so a non-creditable
+ * expense still books the tax but claims zero ITC.
+ */
+export async function syncGstInputForExpense(
+  expenseId: string,
+  opts: { createdBy?: number | null } = {},
+): Promise<{ action: "upserted" | "removed"; gstInputId?: string }> {
+  await ensureGstInputSchema()
+
+  const [exp] = (await query<any[]>(`SELECT * FROM expenses WHERE expense_id = ? LIMIT 1`, [expenseId])) as any[]
+  if (!exp) {
+    await query(`DELETE FROM finance_gst_input WHERE source = 'Expense' AND source_bill_id = ?`, [expenseId])
+    return { action: "removed" }
+  }
+
+  const rcm = Boolean(num(exp.rcm_applicable))
+  // RCM tax is self-assessed on the expense; a normal expense carries the GST
+  // charged by the vendor. Only one path contributes input tax.
+  const cgst = rcm ? round2(num(exp.rcm_cgst)) : round2(num(exp.cgst_amount))
+  const sgst = rcm ? round2(num(exp.rcm_sgst)) : round2(num(exp.sgst_amount))
+  const igst = rcm ? round2(num(exp.rcm_igst)) : round2(num(exp.igst_amount))
+  const cess = rcm ? 0 : round2(num(exp.cess_amount))
+  const totalGst = round2(cgst + sgst + igst + cess)
+  const status = String(exp.approval_status || "").trim()
+
+  if (!num(exp.gst_applicable) || totalGst <= 0 || EXCLUDED_EXPENSE_STATUSES.has(status)) {
+    await query(`DELETE FROM finance_gst_input WHERE source = 'Expense' AND source_bill_id = ?`, [expenseId])
+    return { action: "removed" }
+  }
+
+  const eligible = Boolean(num(exp.gst_credit_eligible))
+  const reversal = round2(num(exp.itc_reversal))
+  const ledger = computeItcLedger({ cgst, sgst, igst, cess, eligible, reversalAmount: reversal })
+  const registerStatus = deriveStatus(eligible, false, ledger.reversal, ledger.net)
+
+  const expDate = exp.expense_date ? String(exp.expense_date).slice(0, 10) : null
+  const period = periodOf(expDate)
+  const quarter = quarterOf(expDate)
+  const fy = exp.financial_year || financialYearFor(expDate)
+
+  const [existing] = (await query<any[]>(
+    `SELECT id, gst_input_id FROM finance_gst_input WHERE source = 'Expense' AND source_bill_id = ? LIMIT 1`,
+    [expenseId],
+  )) as any[]
+
+  const gstInputId = existing?.gst_input_id || (await nextRecordId("GIP", { allowCustom: true, digits: 6 }))
+  const payee = exp.vendor_name || exp.employee_name || exp.party_name || ""
+
+  const fields: Record<string, any> = {
+    gst_input_id: gstInputId,
+    source: "Expense",
+    source_bill_id: expenseId,
+    source_bill_ref: exp.expense_id,
+    source_transaction_id: exp.expense_id,
+    bill_number: exp.vendor_invoice_number || exp.bill_receipt_no || null,
+    bill_date: expDate,
+    period,
+    quarter,
+    financial_year: fy || null,
+    vendor_id: exp.vendor_id || null,
+    vendor_name: exp.vendor_name || null,
+    vendor_gstin: exp.vendor_gstin || null,
+    vendor_pan: exp.vendor_pan || null,
+    vendor_state: exp.vendor_state || null,
+    vendor_state_code: exp.vendor_state_code || null,
+    employee_id: exp.employee_id || null,
+    employee_name: exp.employee_name || null,
+    place_of_supply: exp.supply_location || exp.vendor_state || null,
+    supply_type: exp.supply_type || null,
+    hsn_sac: exp.hsn_sac || null,
+    rcm_applicable: rcm ? 1 : 0,
+    taxable_amount: round2(num(rcm ? exp.rcm_taxable_value || exp.taxable_amount : exp.taxable_amount)),
+    gst_rate: round2(num(exp.gst_rate)),
+    cgst_amount: cgst,
+    sgst_amount: sgst,
+    igst_amount: igst,
+    cess_amount: cess,
+    total_gst: totalGst,
+    itc_eligible: eligible ? 1 : 0,
+    itc_section: itcSection(exp),
+    itc_gross: ledger.gross,
+    itc_eligible_amount: ledger.eligible,
+    itc_ineligible_amount: ledger.ineligible,
+    itc_reversal_amount: ledger.reversal,
+    itc_net: ledger.net,
+    itc_cgst: ledger.cgst,
+    itc_sgst: ledger.sgst,
+    itc_igst: ledger.igst,
+    itc_cess: ledger.cess,
+    itc_claimed: 0,
+    status: registerStatus,
+    narration: `Input GST on expense ${exp.expense_id}${payee ? ` — ${payee}` : ""}${rcm ? " (RCM)" : ""}`,
+  }
+
+  if (existing) {
+    const cols = Object.keys(fields)
+    await query(
+      `UPDATE finance_gst_input SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id = ?`,
+      [...cols.map((c) => fields[c]), existing.id],
+    )
+  } else {
+    fields.reconciliation_status = "Unreconciled"
+    fields.created_by = opts.createdBy ?? null
+    const cols = Object.keys(fields)
+    await query(
+      `INSERT INTO finance_gst_input (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`,
+      cols.map((c) => fields[c]),
+    )
+  }
+
+  return { action: "upserted", gstInputId }
+}
+
+/** Remove the ITC record for a deleted expense. */
+export async function deleteGstInputForExpense(expenseId: string): Promise<void> {
+  await ensureGstInputSchema()
+  await query(`DELETE FROM finance_gst_input WHERE source = 'Expense' AND source_bill_id = ?`, [expenseId])
+}
+
 // ---------------------------------------------------------------------------
 // Reads: register list + monthly / quarterly summaries + reconciliation
 // ---------------------------------------------------------------------------
@@ -441,6 +572,107 @@ export async function draftGstr2bFromBills(period: string) {
     )
   }
   return { period, drafted: books.length }
+}
+
+export type TaxException = {
+  expense_id: string
+  expense_date: string | null
+  party: string
+  type: string
+  severity: "error" | "warning"
+  message: string
+}
+
+/**
+ * Phase 37 — surface tax exceptions on the Expense ledger for a period so a
+ * preparer can fix them before filing. Read-only: it never mutates the ledger,
+ * it derives issues from the frozen expense snapshot + the projected GST Input
+ * register (missing GSTIN/PAN, wrong/absent TDS section, ITC vs 2B mismatch,
+ * self-inconsistent tax, and duplicate GST Input keys).
+ */
+export async function detectTaxExceptions(period: string): Promise<TaxException[]> {
+  await ensureGstInputSchema()
+  const from = `${period}-01`
+  const rows = (await query<any[]>(
+    `SELECT * FROM expenses WHERE expense_date >= ? AND expense_date <= LAST_DAY(?)
+      AND COALESCE(approval_status,'') NOT IN ('Rejected','Cancelled')`,
+    [from, from],
+  )) as any[]
+
+  const out: TaxException[] = []
+  const push = (r: any, type: string, severity: "error" | "warning", message: string) =>
+    out.push({
+      expense_id: r.expense_id,
+      expense_date: r.expense_date ? String(r.expense_date).slice(0, 10) : null,
+      party: r.vendor_name || r.employee_name || r.party_name || "—",
+      type,
+      severity,
+      message,
+    })
+
+  for (const r of rows) {
+    const isVendor = !!norm(r.vendor_id) || !!norm(r.vendor_name)
+    const gstApplicable = !!num(r.gst_applicable)
+    const gstTotal = round2(num(r.cgst_amount) + num(r.sgst_amount) + num(r.igst_amount) + num(r.cess_amount))
+
+    // Missing GSTIN on a GST-bearing vendor expense (Phase 37 / 33).
+    if (gstApplicable && gstTotal > 0 && isVendor && !norm(r.vendor_gstin))
+      push(r, "Missing GSTIN", "warning", "Input GST claimed but the vendor GSTIN is blank.")
+
+    // Contradictory tax components (Phase 4) — intra-state must not carry IGST
+    // and inter-state must not carry CGST/SGST.
+    const inter = norm(r.supply_type) === "Inter-State"
+    if (gstApplicable) {
+      if (inter && (num(r.cgst_amount) > 0 || num(r.sgst_amount) > 0))
+        push(r, "Wrong GST", "error", "Inter-State supply carries CGST/SGST instead of IGST.")
+      if (!inter && norm(r.supply_type) === "Intra-State" && num(r.igst_amount) > 0)
+        push(r, "Wrong GST", "error", "Intra-State supply carries IGST instead of CGST/SGST.")
+    }
+
+    // TDS applied without a section, or a TDS-flagged vendor expense with no TDS.
+    if (num(r.tds_applicable) && num(r.tds_amount) > 0 && !norm(r.tds_section))
+      push(r, "Missing TDS Section", "error", "TDS deducted but no statutory section is set.")
+    if (isVendor && norm(r.tds_section) && !num(r.tds_amount))
+      push(r, "Missing TDS", "warning", "A TDS section is set but no TDS was deducted.")
+
+    // Missing PAN where TDS applies (Phase 32) — a 20% higher rate risk.
+    if (num(r.tds_applicable) && num(r.tds_amount) > 0 && isVendor && !norm(r.vendor_pan))
+      push(r, "Missing PAN", "warning", "TDS deducted but the vendor PAN is blank (higher-rate risk).")
+  }
+
+  // ITC vs GSTR-2B mismatch + duplicate GST Input keys (Phase 37 / 14 / 12).
+  const gin = (await query<any[]>(
+    `SELECT source_bill_ref, vendor_name, employee_name, reconciliation_status, source, source_bill_id
+       FROM finance_gst_input WHERE source = 'Expense' AND period = ?`,
+    [period],
+  )) as any[]
+  const seen = new Map<string, number>()
+  for (const g of gin) {
+    if (g.reconciliation_status === "Mismatch")
+      out.push({
+        expense_id: g.source_bill_ref,
+        expense_date: null,
+        party: g.vendor_name || g.employee_name || "—",
+        type: "2B Mismatch",
+        severity: "warning",
+        message: "GST Input tax does not match GSTR-2B for this expense.",
+      })
+    const key = `${g.source}|${g.source_bill_id}`
+    seen.set(key, (seen.get(key) || 0) + 1)
+  }
+  for (const [key, count] of seen) {
+    if (count > 1)
+      out.push({
+        expense_id: key.split("|")[1],
+        expense_date: null,
+        party: "—",
+        type: "Duplicate GST Input",
+        severity: "error",
+        message: `${count} GST Input records share the same source key.`,
+      })
+  }
+
+  return out
 }
 
 /** Mark a set of register rows as claimed / unclaimed in a period. */

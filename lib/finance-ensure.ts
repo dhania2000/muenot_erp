@@ -298,7 +298,9 @@ export async function ensureExpenseColumns() {
   await ensureColumn(t, "tds_base", "DECIMAL(14,2) NOT NULL DEFAULT 0")
   await ensureColumn(t, "tds_entity_type", "VARCHAR(30) DEFAULT NULL")
   await ensureColumn(t, "tds_nature_of_payment", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "tds_threshold_single", "DECIMAL(14,2) NOT NULL DEFAULT 0")
   await ensureColumn(t, "tds_threshold_annual", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "tds_no_pan_rate_applied", "TINYINT(1) NOT NULL DEFAULT 0")
   await ensureColumn(t, "tds_rule_version", "VARCHAR(30) DEFAULT NULL")
 
   // Phase 39 — GST rule versioning (which config produced the rate).
@@ -449,6 +451,18 @@ export async function ensureGstInputSchema() {
     await ensureColumn("finance_tax_rates", "effective_to", "DATE DEFAULT NULL")
     await ensureColumn("finance_tax_rates", "status", "VARCHAR(20) NOT NULL DEFAULT 'Active'")
   }
+
+  // Phase 8–10 — the register is a single centralized table shared by Purchase
+  // Bills AND Expenses. Expenses add an employee side (reimbursements), a frozen
+  // vendor PAN, an HSN/SAC + RCM flag and the source-transaction display id.
+  // The base CREATE above only runs on a fresh DB, so add these for existing
+  // installs where the table already exists.
+  await ensureColumn("finance_gst_input", "source_transaction_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("finance_gst_input", "employee_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("finance_gst_input", "employee_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn("finance_gst_input", "vendor_pan", "VARCHAR(15) DEFAULT NULL")
+  await ensureColumn("finance_gst_input", "hsn_sac", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("finance_gst_input", "rcm_applicable", "TINYINT(1) NOT NULL DEFAULT 0")
 
   gstInputEnsured = true
 }

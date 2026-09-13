@@ -3,6 +3,9 @@ import { createHash } from "crypto"
 import { pool, query } from "@/lib/db"
 import { getSettings } from "@/lib/settings/server"
 import { computeExpense, financialYearFor, accountingPeriodFor, num, round2 } from "@/lib/finance-calc"
+import { resolveGstRate } from "@/lib/finance-masters"
+import { resolveTdsRule, entityTypeForConstitution } from "@/lib/finance-tds-rules"
+import { computeItcLedger } from "@/lib/finance-gst-input"
 
 /**
  * Expenses server engine (Phases 1–34).
@@ -142,6 +145,7 @@ export async function computeExpenseServerFields(
 ): Promise<Record<string, any>> {
   const out: Record<string, any> = {}
   const type = norm(merged.expense_type)
+  let vendorRow: Record<string, any> | null = null
 
   // Fill a snapshot field: always on create, only-blank on update so a posted
   // historical expense keeps its frozen values.
@@ -173,6 +177,7 @@ export async function computeExpenseServerFields(
   // --- Phase 5: vendor snapshot (Finance → Vendors) --------------------------
   if (isVendorType(type)) {
     const vendor = await loadVendor(merged.vendor_id, merged.vendor_name)
+    vendorRow = vendor
     if (vendor) {
       out.vendor_id = vendor.party_id
       out.vendor_name = vendor.customer_name
@@ -230,13 +235,133 @@ export async function computeExpenseServerFields(
     out.bank_cash_account_name = bank.account_name
   }
 
+  // --- Phase 2: centralized GST rate resolution ------------------------------
+  // The rate is NEVER hard-coded: when GST applies and the user has not typed an
+  // explicit rate, resolve it from the central HSN/SAC + tax-slab master and
+  // freeze which configuration applied (Phase 39 versioning).
+  const gstApplicable = !!merged.gst_applicable
+  let effectiveGstRate = num(merged.gst_rate)
+  if (gstApplicable && effectiveGstRate <= 0) {
+    const resolved = await resolveGstRate({ hsnSac: merged.hsn_sac, date: merged.expense_date })
+    if (resolved) {
+      effectiveGstRate = resolved.rate
+      out.gst_rate = resolved.rate
+      out.gst_rate_source = resolved.source
+      out.gst_rule_version = resolved.version
+      if (resolved.cess > 0 && num(merged.cess_amount) === 0) {
+        out.cess_amount = round2((num(merged.taxable_amount) * resolved.cess) / 100)
+      }
+    }
+  }
+
+  // --- Phase 19–25: centralized TDS rule resolution --------------------------
+  // Vendor expenses only (Phase 20 — never apply vendor TDS logic to employee
+  // reimbursements). The rate comes from the effective-dated rule master; a
+  // missing vendor PAN drops to the higher no-PAN rate (Phase 32). A rule's
+  // single + cumulative thresholds gate whether TDS is deducted at all
+  // (Phase 22). Every resolved rule is frozen onto the row (Phase 38/39).
+  let tdsApplicable = !!merged.tds_applicable
+  let effectiveTdsRate = num(merged.tds_rate)
+  const tdsSection = norm(merged.tds_section)
+  if (isVendorType(type) && tdsSection && (tdsApplicable || out.tds_section === undefined)) {
+    const entityType = entityTypeForConstitution(vendorRow?.business_constitution ?? vendorRow?.constitution)
+    const rule = await resolveTdsRule({ section: tdsSection, entityType, date: merged.expense_date })
+    if (rule) {
+      const hasPan = norm(out.vendor_pan ?? merged.vendor_pan).length >= 10
+      const ruleRate = hasPan ? rule.rate : Math.max(rule.rate, rule.rate_no_pan)
+      const base = num(merged.taxable_amount)
+
+      // Cumulative FY spend for this vendor + section, excluding this row.
+      const fy = financialYearFor(merged.expense_date)
+      const [priorRow] = (await query(
+        `SELECT COALESCE(SUM(taxable_amount),0) prior FROM expenses
+           WHERE vendor_id = ? AND tds_section = ? AND financial_year = ?
+             AND (? IS NULL OR expense_id <> ?)`,
+        [out.vendor_id ?? merged.vendor_id ?? null, tdsSection, fy, merged.expense_id ?? null, merged.expense_id ?? null],
+      )) as any[]
+      const cumulative = num(priorRow?.prior) + base
+
+      const overSingle = rule.threshold_single > 0 && base >= rule.threshold_single
+      const overAnnual = rule.threshold_annual > 0 && cumulative >= rule.threshold_annual
+      const noThreshold = rule.threshold_single === 0 && rule.threshold_annual === 0
+      const crosses = noThreshold || overSingle || overAnnual
+
+      tdsApplicable = crosses
+      effectiveTdsRate = crosses ? ruleRate : 0
+      out.tds_applicable = crosses ? 1 : 0
+      out.tds_rate = effectiveTdsRate
+      out.tds_section = rule.section
+      out.tds_nature_of_payment = rule.nature_of_payment
+      out.tds_entity_type = rule.entity_type
+      out.tds_threshold_single = rule.threshold_single
+      out.tds_threshold_annual = rule.threshold_annual
+      out.tds_rule_version = rule.rule_version
+      out.tds_no_pan_rate_applied = hasPan ? 0 : 1
+    }
+  }
+
   // --- Phase 15: authoritative money recalculation ---------------------------
-  const money = computeExpense({ ...merged, ...out })
+  const money = computeExpense({
+    ...merged,
+    ...out,
+    gst_rate: effectiveGstRate,
+    tds_applicable: tdsApplicable,
+    tds_rate: effectiveTdsRate,
+  })
   Object.assign(out, money)
+  out.tds_base = round2(num(out.taxable_amount))
+
+  // --- Phase 5: reverse-charge (RCM) self-assessment -------------------------
+  // On an RCM expense the recipient self-assesses the tax and (when creditable)
+  // claims it back as ITC. Computed independently of the vendor-charged GST so
+  // the two can never be double counted.
+  if (merged.rcm_applicable) {
+    const rcmBase = round2(num(merged.rcm_taxable_value) || num(out.taxable_amount))
+    const interState = norm(merged.supply_type) === "Inter-State"
+    const rcmCgst = interState ? 0 : round2((rcmBase * effectiveGstRate) / 2 / 100)
+    const rcmSgst = interState ? 0 : round2((rcmBase * effectiveGstRate) / 2 / 100)
+    const rcmIgst = interState ? round2((rcmBase * effectiveGstRate) / 100) : 0
+    const rcmTotal = round2(rcmCgst + rcmSgst + rcmIgst)
+    out.rcm_applicable = 1
+    out.rcm_taxable_value = rcmBase
+    out.rcm_cgst = rcmCgst
+    out.rcm_sgst = rcmSgst
+    out.rcm_igst = rcmIgst
+    out.rcm_total = rcmTotal
+    out.rcm_itc = merged.gst_credit_eligible ? rcmTotal : 0
+  } else {
+    out.rcm_applicable = 0
+    out.rcm_taxable_value = 0
+    out.rcm_cgst = 0
+    out.rcm_sgst = 0
+    out.rcm_igst = 0
+    out.rcm_total = 0
+    out.rcm_itc = 0
+  }
+
+  // --- Phase 6: ITC ledger (separately tracked, not auto-claimable) ----------
+  // The input tax is the RCM self-assessed tax on an RCM expense, otherwise the
+  // GST charged. Eligibility follows the expense's own credit flag, and an
+  // optional reversal is netted off — mirroring the central GST Input engine.
+  const itcEligible = !!merged.gst_credit_eligible
+  const ledger = computeItcLedger({
+    cgst: merged.rcm_applicable ? num(out.rcm_cgst) : num(out.cgst_amount),
+    sgst: merged.rcm_applicable ? num(out.rcm_sgst) : num(out.sgst_amount),
+    igst: merged.rcm_applicable ? num(out.rcm_igst) : num(out.igst_amount),
+    cess: merged.rcm_applicable ? 0 : num(out.cess_amount),
+    eligible: itcEligible,
+    reversalAmount: num(merged.itc_reversal),
+  })
+  out.itc_cgst = ledger.cgst
+  out.itc_sgst = ledger.sgst
+  out.itc_igst = ledger.igst
+  out.itc_cess = ledger.cess
+  out.itc_total = ledger.eligible
+  out.itc_reversal = ledger.reversal
+  out.itc_net = ledger.net
 
   // ITC status mirrors the GST-credit eligibility flag (Phase 15/29).
-  const gstTotal = num(out.cgst_amount) + num(out.sgst_amount) + num(out.igst_amount)
-  out.itc_status = !merged.gst_applicable || gstTotal === 0 ? "Not Applicable" : merged.gst_credit_eligible ? "Eligible" : "Ineligible"
+  out.itc_status = ledger.gross === 0 ? "Not Applicable" : itcEligible ? "Eligible" : "Ineligible"
 
   // Financial year + accounting period are always derived server-side.
   out.financial_year = norm(merged.financial_year) || financialYearFor(merged.expense_date)

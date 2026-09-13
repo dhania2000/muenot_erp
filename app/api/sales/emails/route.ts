@@ -8,14 +8,15 @@ import {
   buildRecipientKey,
   ensureEmailTables,
   generateTrackingToken,
-  getLatestThreadIdByEmail,
-  getThreadContext,
+  getLatestSuccessfulEmailByEmail,
+  getLatestThreadByEmailId,
   isEmailConfigured,
   loadAttachment,
   resolveBaseUrl,
   sendEmail,
   withTrackingPixel,
   hydrateDepartmentSMTP,
+  type LatestThread,
 } from "@/lib/email"
 import { renderEmailTemplate } from "@/lib/sales/email-template-engine"
 import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
@@ -45,19 +46,60 @@ export async function POST(request: Request) {
   await ensureEmailTables()
   const body = await request.json()
   const { lead_id, template_id, to_email, to_name, subject, body: content, attachment } = body
-  // "new" starts a fresh conversation; "followup" continues the recipient's latest thread.
-  const mailType = body.mail_type === "followup" ? "followup" : "new"
+  // Mail type is validated strictly: only the two known modes are accepted.
+  // Anything else is rejected rather than silently coerced, so a tampered or
+  // buggy client can never land in an undefined threading state.
+  if (body.mail_type != null && body.mail_type !== "new" && body.mail_type !== "followup") {
+    return NextResponse.json({ error: "Invalid mail type. Use 'new' or 'followup'." }, { status: 400 })
+  }
+  const mailType: "new" | "followup" = body.mail_type === "followup" ? "followup" : "new"
+  // Optional: follow up from a SPECIFIC prior email (strongest, unambiguous path).
+  // The client only supplies the id; the server loads the real thread metadata.
+  const replyToEmailId = Number(body.reply_to_email_id) || null
+  // Idempotency key de-duplicates double-clicks / retries. Fall back to a value
+  // that still guards a single request when the client omits one.
+  const idempotencyKey: string | null =
+    typeof body.idempotency_key === "string" && body.idempotency_key.trim()
+      ? body.idempotency_key.trim().slice(0, 80)
+      : null
   const department = body.department === "hr" || body.department === "finance" ? body.department : "sales"
   await hydrateDepartmentSMTP(department)
 
   if (!to_email || !subject || !content) {
     return NextResponse.json({ error: "Recipient, subject, and body are required" }, { status: 400 })
   }
+  // Reject obvious header-injection attempts in the recipient address.
+  const normalizedTo = String(to_email).trim()
+  if (/[\r\n,;]/.test(normalizedTo) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedTo)) {
+    return NextResponse.json({ error: "Enter a single valid recipient email address." }, { status: 400 })
+  }
   if (!isEmailConfigured(department)) {
     return NextResponse.json(
       { error: "Email is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS in your environment." },
       { status: 400 },
     )
+  }
+
+  // Idempotency short-circuit: if this exact request already produced an email,
+  // return it instead of sending again (double-click / retry protection).
+  if (idempotencyKey) {
+    const existing = await query<any[]>(
+      `SELECT id, status, thread_id, provider_thread_id, message_id, mail_type
+       FROM sales_emails WHERE idempotency_key = ? LIMIT 1`,
+      [idempotencyKey],
+    )
+    if (existing[0]) {
+      const e = existing[0]
+      return NextResponse.json({
+        id: e.id,
+        status: e.status,
+        mail_type: e.mail_type,
+        thread_id: e.thread_id,
+        provider_thread_id: e.provider_thread_id,
+        message_id: e.message_id,
+        deduped: true,
+      })
+    }
   }
 
   // Build template variables from the linked lead (if any).
@@ -85,27 +127,46 @@ export async function POST(request: Request) {
   //              been emailed before, it naturally becomes a new thread.
   const recipientKey = buildRecipientKey(lead_id, to_email)
   let threadId: string
-  let thread = null as Awaited<ReturnType<typeof getThreadContext>>
+  let anchor: LatestThread | null = null
   if (mailType === "followup") {
-    // Identify the recipient by their EMAIL ADDRESS so the follow-up joins the
-    // last email actually sent to that person — regardless of whether the
-    // earlier email (New, bulk, or another follow-up) was linked to a lead or
-    // which lead it was linked to. Keying on the lead-based recipient_key here
-    // is what caused follow-ups to break out into a separate thread whenever the
-    // lead linkage differed between sends.
-    const latest = await getLatestThreadIdByEmail(to_email)
-    threadId = latest ?? buildNewThreadId(recipientKey, token)
-    thread = latest ? await getThreadContext(latest) : null
+    // Resolve the anchor the follow-up must continue. Two trusted, server-side
+    // paths — the client never chooses thread/message/provider ids directly:
+    //   1. reply_to_email_id: follow up from a SPECIFIC prior email (strongest,
+    //      unambiguous — used by "Follow Up" actions on an existing email/thread).
+    //   2. otherwise: the recipient's MOST RECENT successful email, matched by
+    //      email ADDRESS (not lead), ignoring failed sends.
+    anchor = replyToEmailId
+      ? await getLatestThreadByEmailId(replyToEmailId)
+      : await getLatestSuccessfulEmailByEmail(to_email)
+
+    // CRITICAL: a Follow Up must NEVER silently start a new conversation. When
+    // there is no prior successful email to anchor on, block the send with a
+    // clear 409 instead of downgrading to a new thread.
+    if (!anchor) {
+      console.log("[v0][thread] followup blocked — no anchor", { to: to_email, replyToEmailId })
+      return NextResponse.json(
+        {
+          error: `No previous successfully sent conversation was found for ${normalizedTo}. Send a New email first.`,
+          code: "NO_THREAD",
+        },
+        { status: 409 },
+      )
+    }
+    threadId = anchor.threadId
   } else {
+    // New: always a brand-new thread. No prior metadata is looked up or inherited.
     threadId = buildNewThreadId(recipientKey, token)
   }
 
   let renderedSubject = renderEmailTemplate(subject, vars)
-  // If continuing a conversation, normalize the subject to "Re: <root subject>"
-  // so mail clients reliably keep the follow-up in the same thread.
-  if (thread) {
-    renderedSubject = `Re: ${baseSubject(thread.rootSubject)}`
+  // On a follow-up the SERVER controls the thread subject: normalize to
+  // "Re: <root subject>" so the conversation stays intact regardless of whatever
+  // subject the composer submitted. baseSubject() strips existing "Re:" prefixes
+  // so we never produce "Re: Re: Re:".
+  if (anchor) {
+    renderedSubject = `Re: ${baseSubject(anchor.rootSubject)}`
   }
+  const thread = anchor
 
   console.log("[v0][thread] decision", {
     mailType,
@@ -113,7 +174,8 @@ export async function POST(request: Request) {
     recipientKey,
     threadId,
     foundExistingThread: Boolean(thread),
-    thread_inReplyTo: thread?.inReplyTo ?? null,
+    anchorEmailId: thread?.latestEmailId ?? null,
+    thread_inReplyTo: thread?.messageId ?? null,
     thread_references: thread?.references ?? null,
     thread_rootSubject: thread?.rootSubject ?? null,
     thread_providerThreadId: thread?.providerThreadId ?? null,
@@ -123,9 +185,10 @@ export async function POST(request: Request) {
   const baseUrl = resolveBaseUrl(request)
   const htmlWithPixel = withTrackingPixel(renderedBody, baseUrl, token)
 
-  // References chain = every prior message-id in the thread + nothing yet for this one.
+  // Reply headers point at the anchor: In-Reply-To = the latest real Message-ID
+  // in the thread; References = the full prior chain. Empty for a New email.
   const references = thread ? thread.references : ""
-  const inReplyTo = thread ? thread.inReplyTo : ""
+  const inReplyTo = thread ? thread.messageId ?? "" : ""
 
   // X-Entity-Ref-ID controls how Gmail groups messages that share a subject line:
   // Gmail will NOT merge two emails whose values differ, even when the

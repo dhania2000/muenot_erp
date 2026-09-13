@@ -131,8 +131,23 @@ export async function ensureEmailTables() {
   // References headers alone are not enough for Gmail's own web/app view.
   // Reusing it is what keeps follow-ups in the same Gmail thread as the original.
   await ensureColumn("sales_emails", "provider_thread_id", "VARCHAR(190) DEFAULT NULL")
+  // mail_type records the explicit intent the sender chose in the composer:
+  //   'new'      → deliberately started a brand-new conversation
+  //   'followup' → continued the recipient's most recent successful thread
+  // It is presentation/audit metadata only — the server, not this value, is the
+  // authority on which thread an email actually joined. Legacy rows default to
+  // 'new' (we never guess that a historical email was a follow-up).
+  await ensureColumn("sales_emails", "mail_type", "VARCHAR(12) NOT NULL DEFAULT 'new'")
+  // idempotency_key de-duplicates sends: a double-click, browser retry, or
+  // network retry replays the same key, and the unique index makes the second
+  // INSERT fail instead of delivering a duplicate email.
+  await ensureColumn("sales_emails", "idempotency_key", "VARCHAR(80) DEFAULT NULL")
   await ensureIndex("sales_emails", "idx_emails_thread", "thread_id")
   await ensureIndex("sales_emails", "idx_emails_recipient", "recipient_key")
+  await ensureIndex("sales_emails", "idx_emails_to_email", "to_email")
+  await ensureIndex("sales_emails", "idx_emails_sent_at", "sent_at")
+  await ensureIndex("sales_emails", "idx_emails_provider_thread", "provider_thread_id")
+  await ensureUniqueIndex("sales_emails", "uniq_emails_idempotency", "idempotency_key")
 
   // Backfill recipient_key for any legacy rows that predate this column.
   await query(
@@ -222,6 +237,22 @@ async function ensureIndex(table: string, indexName: string, column: string) {
   )
   if (rows.length === 0) {
     await query(`ALTER TABLE \`${table}\` ADD INDEX \`${indexName}\` (\`${column}\`)`)
+  }
+}
+
+/**
+ * Add a UNIQUE index only if it doesn't already exist. Used for idempotency_key
+ * so duplicate sends collide at the database level. NULLs are allowed to repeat
+ * under a MySQL UNIQUE index, so legacy rows without a key are unaffected.
+ */
+async function ensureUniqueIndex(table: string, indexName: string, column: string) {
+  const rows = await query<any[]>(
+    `SELECT 1 FROM information_schema.statistics
+     WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? LIMIT 1`,
+    [table, indexName],
+  )
+  if (rows.length === 0) {
+    await query(`ALTER TABLE \`${table}\` ADD UNIQUE INDEX \`${indexName}\` (\`${column}\`)`)
   }
 }
 
@@ -343,6 +374,98 @@ export async function getThreadContext(threadId: string): Promise<ThreadContext 
     references: messageIds.join(" "),
     rootSubject: rows[0].subject,
     providerThreadId,
+  }
+}
+
+/**
+ * A single, authoritative summary of a recipient's latest anchor email plus the
+ * full context a follow-up needs — resolved in one query so the send API never
+ * has to trust anything the browser sent about a thread.
+ */
+export type LatestThread = {
+  latestEmailId: number
+  threadId: string
+  providerThreadId: string | null
+  /** The real (Gmail-assigned when available) Message-ID of the anchor email. */
+  messageId: string | null
+  /** Root subject of the conversation, used to build "Re: <root>". */
+  rootSubject: string
+  /** Full References chain (every prior Message-ID) for the reply header. */
+  references: string
+  subject: string
+  sentAt: string | null
+  toEmail: string
+  toName: string | null
+  leadId: number | null
+  openCount: number
+}
+
+/**
+ * Resolve the latest SUCCESSFULLY SENT email to an address, together with the
+ * complete thread context a follow-up must reuse. This is the trusted anchor for
+ * a global (recipient-based) Follow Up:
+ *  - identity is the email address (normalized), never the lead — the same
+ *    person may have been emailed under different/absent leads;
+ *  - failed sends are excluded so a follow-up never anchors on an email that
+ *    never went out;
+ *  - ordering is sent_at DESC, id DESC so the MOST RECENT real conversation wins.
+ * Returns null when the address has never been successfully emailed — the caller
+ * MUST then block the follow-up rather than silently starting a new thread.
+ */
+export async function getLatestSuccessfulEmailByEmail(toEmail: string): Promise<LatestThread | null> {
+  const email = (toEmail || "").trim().toLowerCase()
+  if (!email) return null
+  const rows = await query<any[]>(
+    `SELECT id, thread_id, provider_thread_id, message_id, subject, sent_at,
+            to_email, to_name, lead_id, open_count
+     FROM sales_emails
+     WHERE LOWER(to_email) = ? AND thread_id IS NOT NULL AND status <> 'Failed'
+     ORDER BY sent_at DESC, id DESC
+     LIMIT 1`,
+    [email],
+  )
+  const anchor = rows[0]
+  if (!anchor) return null
+  return buildLatestThread(anchor)
+}
+
+/**
+ * Resolve thread context from a SPECIFIC prior email id. This is the strongest,
+ * least-ambiguous follow-up path (spec: "Follow Up from an existing Email
+ * record"): the server loads that email's real thread metadata directly instead
+ * of re-discovering a conversation by address. The email must be a successful
+ * send to be a valid anchor. Returns null when the id is unknown or failed.
+ */
+export async function getLatestThreadByEmailId(emailId: number): Promise<LatestThread | null> {
+  if (!emailId) return null
+  const rows = await query<any[]>(
+    `SELECT id, thread_id, provider_thread_id, message_id, subject, sent_at,
+            to_email, to_name, lead_id, open_count, status
+     FROM sales_emails
+     WHERE id = ? LIMIT 1`,
+    [emailId],
+  )
+  const anchor = rows[0]
+  if (!anchor || anchor.status === "Failed" || !anchor.thread_id) return null
+  return buildLatestThread(anchor)
+}
+
+/** Enrich an anchor row with the full thread References chain + latest message id. */
+async function buildLatestThread(anchor: any): Promise<LatestThread> {
+  const ctx = await getThreadContext(anchor.thread_id)
+  return {
+    latestEmailId: Number(anchor.id),
+    threadId: anchor.thread_id,
+    providerThreadId: ctx?.providerThreadId ?? anchor.provider_thread_id ?? null,
+    messageId: ctx?.inReplyTo ?? anchor.message_id ?? null,
+    rootSubject: ctx?.rootSubject ?? anchor.subject,
+    references: ctx?.references ?? (anchor.message_id ?? ""),
+    subject: anchor.subject,
+    sentAt: anchor.sent_at ? String(anchor.sent_at) : null,
+    toEmail: anchor.to_email,
+    toName: anchor.to_name ?? null,
+    leadId: anchor.lead_id != null ? Number(anchor.lead_id) : null,
+    openCount: Number(anchor.open_count ?? 0),
   }
 }
 

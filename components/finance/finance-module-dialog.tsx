@@ -74,6 +74,10 @@ export function FinanceModuleDialog({
   const [gstinConflicts, setGstinConflicts] = useState<
     { key: string; label: string; current: string; verified: string }[]
   >([])
+  const [ifscState, setIfscState] = useState<{
+    status: "idle" | "loading" | "ok" | "error"
+    message?: string
+  }>({ status: "idle" })
 
   const fieldLabels = useMemo(() => {
     const map: Record<string, string> = {}
@@ -92,6 +96,7 @@ export function FinanceModuleDialog({
     if (!open) return
     setError(null)
     setGstinConflicts([])
+    setIfscState({ status: "idle" })
     const base = emptyForm(cfg)
     if (record) {
       for (const key of Object.keys(base)) {
@@ -105,6 +110,43 @@ export function FinanceModuleDialog({
 
   function update(key: string, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }))
+  }
+
+  /**
+   * Resolve the entered IFSC to a bank name + branch and fill the mapped fields.
+   * Runs when the IFSC field loses focus. Because an IFSC uniquely identifies a
+   * branch, resolved values overwrite whatever is there (an explicit action).
+   */
+  async function lookupIfsc(ifscValue: string) {
+    const icfg = cfg.ifsc
+    if (!icfg) return
+    const normalized = ifscValue.trim().toUpperCase()
+    if (normalized.length !== 11) {
+      setIfscState({ status: "idle" })
+      return
+    }
+    setIfscState({ status: "loading" })
+    try {
+      const res = await fetch(`${icfg.lookupPath}?ifsc=${encodeURIComponent(normalized)}`)
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok || !body.result?.ok) {
+        setIfscState({ status: "error", message: body.result?.message || body.error || "IFSC not found." })
+        return
+      }
+      setForm((prev) => {
+        const next = { ...prev }
+        if (icfg.autofill.bank && body.autofill?.bank) next[icfg.autofill.bank] = body.autofill.bank
+        if (icfg.autofill.branch && body.autofill?.branch) next[icfg.autofill.branch] = body.autofill.branch
+        return next
+      })
+      const d = body.data
+      setIfscState({
+        status: "ok",
+        message: d ? [d.bank, d.branch || d.city].filter(Boolean).join(" — ") : "Bank details filled.",
+      })
+    } catch {
+      setIfscState({ status: "error", message: "Could not reach the IFSC lookup service." })
+    }
   }
 
   /**
@@ -316,7 +358,22 @@ export function FinanceModuleDialog({
                   <h3 className="text-sm font-semibold text-foreground">{section}</h3>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {fields.map((f) => (
-                      <FieldInput key={f.key} field={f} value={form[f.key] ?? ""} onChange={update} />
+                      <FieldInput
+                        key={f.key}
+                        field={f}
+                        value={form[f.key] ?? ""}
+                        onChange={update}
+                        lookup={
+                          cfg.ifsc && f.key === cfg.ifsc.column
+                            ? {
+                                status: ifscState.status,
+                                message: ifscState.message,
+                                onLookup: lookupIfsc,
+                                onReset: () => setIfscState({ status: "idle" }),
+                              }
+                            : undefined
+                        }
+                      />
                     ))}
                   </div>
                 </FieldGroup>
@@ -606,10 +663,17 @@ function FieldInput({
   field,
   value,
   onChange,
+  lookup,
 }: {
   field: FieldDef
   value: string
   onChange: (key: string, value: string) => void
+  lookup?: {
+    status: "idle" | "loading" | "ok" | "error"
+    message?: string
+    onLookup: (value: string) => void
+    onReset: () => void
+  }
 }) {
   const wide = field.type === "textarea"
 
@@ -668,9 +732,31 @@ function FieldInput({
           step={field.type === "number" ? "any" : undefined}
           placeholder={field.placeholder}
           value={value}
-          onChange={(e) => onChange(field.key, e.target.value)}
+          autoCapitalize={lookup ? "characters" : undefined}
+          maxLength={lookup ? 11 : undefined}
+          onChange={(e) => {
+            const v = lookup ? e.target.value.toUpperCase() : e.target.value
+            onChange(field.key, v)
+            lookup?.onReset()
+          }}
+          onBlur={lookup ? () => lookup.onLookup(value) : undefined}
           required={field.required}
         />
+      )}
+      {lookup && (
+        <span
+          className={
+            lookup.status === "error"
+              ? "text-xs text-destructive"
+              : "text-xs text-muted-foreground"
+          }
+        >
+          {lookup.status === "loading"
+            ? "Looking up bank…"
+            : lookup.status === "ok" || lookup.status === "error"
+              ? lookup.message
+              : "Bank name & branch fill in automatically."}
+        </span>
       )}
     </Field>
   )

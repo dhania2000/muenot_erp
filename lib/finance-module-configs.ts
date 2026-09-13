@@ -578,6 +578,11 @@ const customersVendors: ModuleConfig = {
     autofill: { name: "customer_name", legalName: "legal_name", pan: "pan", address: "registered_address", state: "state" },
     statusField: "gst_verification_status",
   },
+  ifsc: {
+    column: "ifsc",
+    lookupPath: "/api/finance/vendors/ifsc-lookup",
+    autofill: { bank: "bank_name", branch: "bank_branch" },
+  },
   fields: [
     fld("Identity", "customer_name", "Vendor name", "text", { required: true }),
     fld("Identity", "legal_name", "Legal name (as registered)", "text"),

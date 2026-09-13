@@ -6,8 +6,9 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns } from "@/lib/finance-ensure"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
+import { nextExpenseId, computeExpenseServerFields, validateExpense, findDuplicateExpense } from "@/lib/finance-expenses"
 import { syncGstInputForBill, deleteGstInputForBill } from "@/lib/finance-gst-input"
 import { syncPurchaseBillPosting, reversePurchaseBillPosting } from "@/lib/finance-posting"
 import { computeBillItems, persistBillItems } from "@/lib/purchase-bill-items"
@@ -25,11 +26,33 @@ const SERVER_AUGMENT: Record<
   (merged: Record<string, any>, opts: { isCreate: boolean }) => Promise<Record<string, any>>
 > = {
   "purchase-bills": computePurchaseBillServerFields,
+  expenses: computeExpenseServerFields,
 }
 
 /** Optional per-module custom business-key generator (Phase 1: PB-2026-000001). */
 const ID_GENERATORS: Record<string, (record: Record<string, any>) => Promise<string>> = {
   "purchase-bills": (record) => nextPurchaseBillId(record.bill_date),
+  expenses: (record) => nextExpenseId(record.expense_date),
+}
+
+/**
+ * Optional per-module hard validation (Phase 25). Runs on the merged record
+ * BEFORE the augment/write; returning a string rejects the request with 400.
+ */
+const VALIDATORS: Record<string, (merged: Record<string, any>) => string | null> = {
+  expenses: validateExpense,
+}
+
+/**
+ * Optional per-module duplicate guard (Phase 24). Runs on create only, after
+ * the augment, unless the client sent `__forceCreate`. A hit returns 409 with a
+ * `duplicate` payload so the form can ask the user to confirm.
+ */
+const DUPLICATE_CHECKS: Record<
+  string,
+  (merged: Record<string, any>) => Promise<{ expense_id: string; reason: string } | null>
+> = {
+  expenses: (merged) => findDuplicateExpense(merged, null),
 }
 
 /**

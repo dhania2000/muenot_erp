@@ -19,10 +19,15 @@ export type FinanceAuditEventType =
   | "sent"
   | "posted"
   | "payment_recorded"
+  | "payment_reversed"
   | "cancelled"
   | "reversed"
   | "deleted"
   | "override"
+  | "submitted"
+  | "approved"
+  | "rejected"
+  | "reopened"
 
 export type FinanceAuditEvent = {
   id: number

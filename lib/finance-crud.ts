@@ -16,6 +16,7 @@ import {
   deleteGstInputForExpense,
 } from "@/lib/finance-gst-input"
 import { syncPurchaseBillPosting, reversePurchaseBillPosting } from "@/lib/finance-posting"
+import { syncExpensePosting, reverseExpensePosting } from "@/lib/finance-expense-posting"
 import { computeBillItems, persistBillItems } from "@/lib/purchase-bill-items"
 import type { SupplyType } from "@/lib/sales-invoice-compute"
 
@@ -101,6 +102,15 @@ const AFTER_WRITE: Record<
     } catch (error) {
       console.log("[v0] syncGstInputForExpense failed:", (error as Error).message)
     }
+    // Project into the Journal + General Ledger. Idempotent and failure-tolerant:
+    // the posting engine only posts an Approved/Posted expense and no-ops for a
+    // draft/pending/rejected one, so editing an already-approved expense keeps
+    // its accrual in sync while a posting error leaves it "Unposted" for retry.
+    try {
+      await syncExpensePosting(String(expenseId), { createdBy: userId })
+    } catch (error) {
+      console.log("[v0] syncExpensePosting failed:", (error as Error).message)
+    }
   },
 }
 
@@ -119,6 +129,13 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
   expenses: async (row) => {
     const expenseId = row?.expense_id
     if (!expenseId) return
+    // Reverse any accounting posting first so the ledger stays balanced, then
+    // unwind the dependent ITC register.
+    try {
+      await reverseExpensePosting(String(expenseId), { createdBy: null })
+    } catch (error) {
+      console.log("[v0] reverseExpensePosting failed:", (error as Error).message)
+    }
     await deleteGstInputForExpense(String(expenseId))
   },
 }

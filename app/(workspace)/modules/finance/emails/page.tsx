@@ -1,2 +1,5 @@
-import { ModuleEmailCenter } from "@/components/module-email-center"
-export default function Page(){return <ModuleEmailCenter module="finance"/>}
+import { FinanceEmailHub } from "@/components/finance/finance-email-hub"
+
+export default function FinanceEmailsPage() {
+  return <FinanceEmailHub />
+}

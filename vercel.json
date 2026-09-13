@@ -9,6 +9,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/finance-emails",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/payment-reminders",
       "schedule": "0 7 * * *"
     }

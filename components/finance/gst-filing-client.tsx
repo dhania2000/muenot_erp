@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileCheck2, Landmark, Download, Layers, Scale } from "lucide-react"
+import { FileCheck2, Landmark, Download, Layers, Scale, GitCompareArrows, History, Lock, ShieldCheck } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 import * as XLSX from "xlsx"
 
@@ -99,14 +99,110 @@ type Summary = {
     net_tax_payable: number
   }
   excluded?: { in_period: number; draft: number; cancelled: number; proforma: number }
-  filing: { filing_id: string; status: string; arn: string | null; filed_at: string | null } | null
+  workflow: {
+    status: string
+    locked: boolean
+    actions: string[]
+    amendment_count: number
+  }
+  nil: { eligible: boolean; reasons: string[] }
+  filing: {
+    filing_id: string
+    status: string
+    return_type?: string
+    arn: string | null
+    filed_at: string | null
+    filed_by_name?: string | null
+    is_nil?: boolean
+    total_itc?: number
+    net_liability?: number
+  } | null
+}
+
+// Reconciliation payloads (Phase 17–19).
+type ReconStatus = "Matched" | "Mismatch" | "Missing" | "Extra" | "Pending"
+type ReconcileData = {
+  output: {
+    period: string
+    filed: boolean
+    status_label: string
+    counts: { matched: number; mismatch: number; missing: number; extra: number; pending: number }
+    totals: { books_taxable: number; books_tax: number; filed_taxable: number; filed_tax: number }
+    rows: {
+      invoice_id: string
+      invoice_number: string
+      client_name: string
+      books_taxable: number | null
+      books_tax: number | null
+      filed_taxable: number | null
+      filed_tax: number | null
+      status: ReconStatus
+    }[]
+  }
+  center: {
+    period: string
+    financial_year: string
+    filed: boolean
+    headline: {
+      sales_taxable: number
+      sales_tax: number
+      itc: number
+      net_liability: number
+      paid: number
+      gstr2b_tax: number
+    }
+    lines: {
+      key: string
+      label: string
+      left_label: string
+      left: number
+      right_label: string
+      right: number
+      status: ReconStatus
+    }[]
+  }
+  amendments: {
+    id: number
+    filing_id: string
+    revision: number
+    previous_status: string
+    previous_arn: string | null
+    previous_total_taxable: number
+    previous_total_tax: number
+    reason: string | null
+    amended_at: string
+  }[]
+}
+
+const WORKFLOW_ACTIONS: Record<string, { label: string; variant?: "default" | "outline" | "secondary" | "destructive" }> = {
+  prepare: { label: "Prepare draft", variant: "outline" },
+  "submit-review": { label: "Submit for review", variant: "outline" },
+  review: { label: "Mark reviewed", variant: "outline" },
+  reopen: { label: "Reopen draft", variant: "secondary" },
+  file: { label: "File GSTR-1", variant: "default" },
+  "file-nil": { label: "File Nil return", variant: "outline" },
+  amend: { label: "Amend return", variant: "secondary" },
+  "mark-payment-pending": { label: "Mark payment pending", variant: "outline" },
+  complete: { label: "Mark completed", variant: "default" },
+}
+
+function statusVariant(status: string): "default" | "outline" | "secondary" | "destructive" {
+  switch (status) {
+    case "Filed":
+    case "Completed":
+      return "default"
+    case "Amended":
+    case "Payment Pending":
+      return "secondary"
+    case "Not Prepared":
+      return "outline"
+    default:
+      return "outline"
+  }
 }
 
 export function GstFilingClient() {
   const [period, setPeriod] = useState(thisMonth())
-  const [arn, setArn] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState("")
 
   const { data, mutate } = useSWR<{ summary: Summary }>(
     `/api/finance/gst-filing?period=${period}`,
@@ -225,27 +321,6 @@ export function GstFilingClient() {
     XLSX.writeFile(wb, `GST_${s.period}.xlsx`)
   }
 
-  async function file() {
-    setBusy(true)
-    setError("")
-    try {
-      const res = await fetch("/api/finance/gst-filing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ period, arn }),
-      })
-      const body = await res.json()
-      if (!res.ok) throw new Error(body.error || "Filing failed")
-      setArn("")
-      mutate()
-      mutateFilings()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
     <main className="flex flex-col gap-6 p-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -273,8 +348,6 @@ export function GstFilingClient() {
           </Button>
         </div>
       </header>
-
-      {error ? <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge variant="outline" className="gap-1 font-normal">
@@ -326,27 +399,23 @@ export function GstFilingClient() {
         />
       </section>
 
+      {s ? (
+        <ReturnWorkflow
+          period={period}
+          summary={s}
+          onChanged={() => {
+            mutate()
+            mutateFilings()
+          }}
+        />
+      ) : null}
+
+      <ReconciliationCenter period={period} />
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">Return for {period}</CardTitle>
-          {s?.filing ? (
-            <Badge variant="default" className="gap-1">
-              <FileCheck2 className="h-3.5 w-3.5" />
-              Filed · {s.filing.filing_id}
-            </Badge>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="ARN (optional)"
-                value={arn}
-                onChange={(e) => setArn(e.target.value)}
-                className="h-9 w-48"
-              />
-              <Button onClick={file} disabled={busy || !s || s.totals.invoice_count === 0}>
-                {busy ? "Filing…" : "File GSTR-1"}
-              </Button>
-            </div>
-          )}
+          <StatusBadge status={s?.workflow.status ?? "Not Prepared"} nil={s?.filing?.is_nil} />
         </CardHeader>
         <CardContent>
           <div className="mb-2 text-sm font-medium">Rate-wise breakup</div>
@@ -737,6 +806,351 @@ function Line({ label, value, strong }: { label: string; value: string; strong?:
       <span className="text-muted-foreground">{label}</span>
       <span className={strong ? "font-semibold" : "font-medium"}>{value}</span>
     </div>
+  )
+}
+
+function StatusBadge({ status, nil }: { status: string; nil?: boolean }) {
+  const isFiled = status === "Filed" || status === "Completed"
+  return (
+    <Badge variant={statusVariant(status)} className="gap-1">
+      {isFiled ? <FileCheck2 className="h-3.5 w-3.5" /> : null}
+      {status}
+      {nil ? " · Nil" : ""}
+    </Badge>
+  )
+}
+
+function ReconStatusBadge({ status }: { status: ReconStatus }) {
+  const map: Record<ReconStatus, { variant: "default" | "outline" | "secondary" | "destructive"; className?: string }> = {
+    Matched: { variant: "outline", className: "border-emerald-500/40 text-emerald-700 dark:text-emerald-400" },
+    Mismatch: { variant: "outline", className: "border-red-500/40 text-red-700 dark:text-red-400" },
+    Missing: { variant: "outline", className: "border-amber-500/40 text-amber-700 dark:text-amber-400" },
+    Extra: { variant: "outline", className: "border-sky-500/40 text-sky-700 dark:text-sky-400" },
+    Pending: { variant: "outline", className: "text-muted-foreground" },
+  }
+  const cfg = map[status]
+  return <Badge variant={cfg.variant} className={cfg.className}>{status}</Badge>
+}
+
+/**
+ * The controlled return lifecycle. Every transition is a server action — the UI
+ * only renders the moves the engine currently permits (summary.workflow.actions),
+ * so filing-lock and amendment rules stay enforced server-side, never bypassed here.
+ */
+function ReturnWorkflow({
+  period,
+  summary,
+  onChanged,
+}: {
+  period: string
+  summary: Summary
+  onChanged: () => void
+}) {
+  const [arn, setArn] = useState("")
+  const [reason, setReason] = useState("")
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState("")
+
+  const wf = summary.workflow
+  const actions = wf.actions ?? []
+  const needsReason = actions.includes("amend")
+  const canFile = actions.includes("file") || actions.includes("file-nil")
+
+  async function run(action: string) {
+    setBusy(action)
+    setError("")
+    try {
+      const payload: Record<string, unknown> = { period }
+      if (action === "file") {
+        payload.action = "file"
+        payload.arn = arn || null
+      } else if (action === "file-nil") {
+        payload.action = "file-nil"
+        payload.arn = arn || null
+      } else if (action === "amend") {
+        if (!reason.trim()) throw new Error("An amendment reason is required")
+        payload.action = "amend"
+        payload.reason = reason.trim()
+        payload.arn = arn || null
+      } else {
+        payload.action = "transition"
+        payload.transition = action
+        if (arn) payload.arn = arn
+        if (reason.trim()) payload.reason = reason.trim()
+      }
+      const res = await fetch("/api/finance/gst-filing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Action failed")
+      setArn("")
+      setReason("")
+      onChanged()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <ShieldCheck className="h-4 w-4" />
+          Return status &amp; workflow
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          {wf.locked ? (
+            <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+              <Lock className="h-3.5 w-3.5" />
+              Period locked
+            </Badge>
+          ) : null}
+          {wf.amendment_count > 0 ? (
+            <Badge variant="secondary" className="font-normal">Rev. {wf.amendment_count}</Badge>
+          ) : null}
+          <StatusBadge status={wf.status} nil={summary.filing?.is_nil} />
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <div>
+            <div className="text-xs text-muted-foreground">Net liability</div>
+            <div className="font-semibold">{currency(summary.liability.net_liability)}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">ITC claimed</div>
+            <div className="font-semibold">{currency(summary.liability.input_gst)}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">Filing ID</div>
+            <div className="font-mono text-xs">{summary.filing?.filing_id ?? "—"}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">ARN</div>
+            <div className="font-mono text-xs">{summary.filing?.arn || "—"}</div>
+          </div>
+        </div>
+
+        {summary.filing?.filed_at ? (
+          <p className="text-xs text-muted-foreground">
+            {summary.filing.is_nil ? "Nil return " : "Return "}
+            filed on {summary.filing.filed_at.slice(0, 10)}
+            {summary.filing.filed_by_name ? ` by ${summary.filing.filed_by_name}` : ""}.
+            {wf.locked ? " Corrections must go through an amendment, which preserves the original snapshot." : ""}
+          </p>
+        ) : null}
+
+        {summary.nil?.eligible && !summary.filing ? (
+          <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+            No taxable outward supplies this period — eligible to file a <span className="font-medium text-foreground">Nil return</span>.
+          </p>
+        ) : null}
+
+        {canFile || needsReason ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="ARN (optional)"
+              value={arn}
+              onChange={(e) => setArn(e.target.value)}
+              className="h-9 w-48"
+            />
+            {needsReason ? (
+              <Input
+                placeholder="Amendment reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                className="h-9 w-64"
+              />
+            ) : null}
+          </div>
+        ) : null}
+
+        {actions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No further actions available for this period.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {actions.map((a) => {
+              const meta = WORKFLOW_ACTIONS[a] ?? { label: a, variant: "outline" as const }
+              const disableFile = (a === "file") && summary.totals.invoice_count === 0
+              return (
+                <Button
+                  key={a}
+                  variant={meta.variant}
+                  size="sm"
+                  disabled={busy !== null || disableFile}
+                  onClick={() => run(a)}
+                >
+                  {busy === a ? "Working…" : meta.label}
+                </Button>
+              )
+            })}
+          </div>
+        )}
+
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * Reconciliation Center (Phase 17–19). Pulls the read-only cross-checks from the
+ * engine: the multi-source period overview, then the invoice-level output match
+ * of Sales Books vs the filed GSTR-1 snapshot, plus the amendment audit trail.
+ */
+function ReconciliationCenter({ period }: { period: string }) {
+  const { data } = useSWR<ReconcileData>(
+    `/api/finance/gst-filing?period=${period}&view=reconcile`,
+    fetcher,
+  )
+  const center = data?.center
+  const output = data?.output
+  const amendments = data?.amendments ?? []
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <GitCompareArrows className="h-4 w-4" />
+          Reconciliation center
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-6">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Reconciliation</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Counterpart</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="text-right">Difference</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!center ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+                    Loading reconciliation…
+                  </TableCell>
+                </TableRow>
+              ) : (
+                center.lines.map((l) => (
+                  <TableRow key={l.key}>
+                    <TableCell className="text-sm font-medium">{l.label}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{l.left_label}</TableCell>
+                    <TableCell className="text-right">{currency(l.left)}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{l.right_label}</TableCell>
+                    <TableCell className="text-right">{currency(l.right)}</TableCell>
+                    <TableCell className="text-right">{currency(Math.abs(l.left - l.right))}</TableCell>
+                    <TableCell><ReconStatusBadge status={l.status} /></TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        <div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-medium">Output GST — Sales Books vs filed GSTR-1</div>
+            {output ? (
+              output.filed ? (
+                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                  <span>Matched <span className="font-medium text-foreground">{output.counts.matched}</span></span>
+                  <span>Mismatch <span className="font-medium text-foreground">{output.counts.mismatch}</span></span>
+                  <span>Missing <span className="font-medium text-foreground">{output.counts.missing}</span></span>
+                  <span>Extra <span className="font-medium text-foreground">{output.counts.extra}</span></span>
+                </div>
+              ) : (
+                <Badge variant="outline" className="font-normal text-muted-foreground">
+                  Not filed — {output.counts.pending} document{output.counts.pending === 1 ? "" : "s"} pending
+                </Badge>
+              )
+            ) : null}
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Client</TableHead>
+                  <TableHead className="text-right">Books taxable</TableHead>
+                  <TableHead className="text-right">Books tax</TableHead>
+                  <TableHead className="text-right">Filed taxable</TableHead>
+                  <TableHead className="text-right">Filed tax</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {!output || output.rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+                      No outward documents to reconcile for this period.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  output.rows.map((r) => (
+                    <TableRow key={r.invoice_id}>
+                      <TableCell className="font-mono text-xs">{r.invoice_number || r.invoice_id}</TableCell>
+                      <TableCell className="text-sm">{r.client_name}</TableCell>
+                      <TableCell className="text-right">{r.books_taxable == null ? "—" : currency(r.books_taxable)}</TableCell>
+                      <TableCell className="text-right">{r.books_tax == null ? "—" : currency(r.books_tax)}</TableCell>
+                      <TableCell className="text-right">{r.filed_taxable == null ? "—" : currency(r.filed_taxable)}</TableCell>
+                      <TableCell className="text-right">{r.filed_tax == null ? "—" : currency(r.filed_tax)}</TableCell>
+                      <TableCell><ReconStatusBadge status={r.status} /></TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+
+        {amendments.length > 0 ? (
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+              <History className="h-4 w-4" />
+              Amendment history
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Revision</TableHead>
+                    <TableHead>Prev. status</TableHead>
+                    <TableHead>Prev. ARN</TableHead>
+                    <TableHead className="text-right">Prev. taxable</TableHead>
+                    <TableHead className="text-right">Prev. tax</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead>When</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {amendments.map((a) => (
+                    <TableRow key={a.id}>
+                      <TableCell>Rev. {a.revision}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{a.previous_status}</TableCell>
+                      <TableCell className="font-mono text-xs">{a.previous_arn || "—"}</TableCell>
+                      <TableCell className="text-right">{currency(a.previous_total_taxable)}</TableCell>
+                      <TableCell className="text-right">{currency(a.previous_total_tax)}</TableCell>
+                      <TableCell className="text-sm">{a.reason || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{a.amended_at?.slice(0, 10)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   )
 }
 

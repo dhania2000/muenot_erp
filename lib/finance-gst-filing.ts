@@ -118,6 +118,12 @@ export async function ensureGstFilingSchema() {
   await ensureColumn("gst_return_filings", "net_liability", "DECIMAL(16,2) NOT NULL DEFAULT 0")
   await ensureColumn("gst_return_filings", "filed_by_name", "VARCHAR(190) DEFAULT NULL")
 
+  // Phase 16 — Nil returns are ordinary filing rows flagged as Nil, so the whole
+  // status workflow, lock and amendment path apply to them unchanged.
+  await ensureColumn("gst_return_filings", "is_nil", "TINYINT(1) NOT NULL DEFAULT 0")
+  // Phase 14 — how many times a filed period has been amended (0 = original).
+  await ensureColumn("gst_return_filings", "revision", "INT NOT NULL DEFAULT 0")
+
   // Phase 11 — cash-ledger challan → Journal/GL linkage. The payment is posted to
   // a real balanced voucher; these columns key that posting so it is idempotent
   // (never double-posts) and can be reversed/re-posted when the amount or mode
@@ -179,7 +185,7 @@ function isLocked(status: string | null | undefined): boolean {
 }
 
 /** The actions the UI may offer for a given current status (Phase 13). */
-function availableActions(status: string): string[] {
+export function availableActions(status: string): string[] {
   switch (status) {
     case "Not Prepared":
       return ["prepare", "file"]
@@ -584,6 +590,18 @@ export async function gstSummary(period: string) {
     [period],
   ).catch(() => [{ n: 0 }])) as any[]
 
+  // ── Nil-return eligibility (Phase 16) ────────────────────────────────────
+  // A Nil GSTR-1/3B is offered only when the period is genuinely empty on every
+  // applicable dimension: no outward documents, no inward ITC, and no residual
+  // liability. The reasons list every non-zero dimension so the UI can explain
+  // why Nil is unavailable instead of silently hiding the option.
+  const nilReasons: string[] = []
+  if (Number(totals?.invoice_count ?? 0) > 0)
+    nilReasons.push(`${Number(totals?.invoice_count ?? 0)} outward document(s) in the period`)
+  if (agg.input_gross > 0) nilReasons.push("inward ITC is present in the GST Input register")
+  if (round2(netLiability) > 0) nilReasons.push("a net GST liability is outstanding")
+  const nilEligible = nilReasons.length === 0
+
   // Invoice-level rows shaped once and reused for both the document register and
   // the GSTR-1 data sections below, so the two never diverge.
   const mappedInvoices = invoices.map((r) => {
@@ -705,12 +723,27 @@ export async function gstSummary(period: string) {
       cancelled: Number(diag?.cancelled ?? 0),
       proforma: Number(diag?.proforma ?? 0),
     },
+    workflow: {
+      status,
+      locked,
+      actions: availableActions(status),
+      amendment_count: Number(amendCount?.n ?? 0),
+    },
+    nil: {
+      eligible: nilEligible,
+      reasons: nilReasons,
+    },
     filing: existing
       ? {
           filing_id: existing.filing_id,
           status: existing.status,
+          return_type: existing.return_type,
           arn: existing.arn,
           filed_at: existing.filed_at,
+          filed_by_name: existing.filed_by_name ?? null,
+          is_nil: Boolean(num(existing.is_nil)),
+          total_itc: round2(num(existing.total_itc)),
+          net_liability: round2(num(existing.net_liability)),
         }
       : null,
   }
@@ -721,42 +754,227 @@ export async function listGstFilings() {
   return (await query(`SELECT * FROM gst_return_filings ORDER BY period DESC, id DESC LIMIT 200`)) as any[]
 }
 
-/** Lock (file) a period's GSTR-1 from the derived summary. Duplicate-safe. */
-export async function fileGstReturn(period: string, arn: string | null, actorId?: number | null) {
+/**
+ * Lock (file) a period's GSTR-1 from the derived summary — Phase 14/15.
+ *
+ * The full filing record is captured: taxable + tax split, net eligible ITC, the
+ * net liability and the human who filed. Filing is only permitted from a pre-file
+ * status; an already-locked period rejects re-filing and must go through the
+ * controlled amendment workflow instead (never a silent overwrite). A pre-file
+ * Draft/Reviewed row is promoted in place so its filing_id is preserved.
+ */
+export async function fileGstReturn(
+  period: string,
+  arn: string | null,
+  actorId?: number | null,
+  opts: { nil?: boolean; actorName?: string | null } = {},
+) {
   await ensureGstFilingSchema()
   const [existing] = (await query(
-    `SELECT id FROM gst_return_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    `SELECT id, filing_id, status FROM gst_return_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
     [period],
   )) as any[]
-  if (existing) throw new Error(`GSTR-1 for ${period} is already filed. Use an amendment instead.`)
-
-  const summary = await gstSummary(period)
-  if (summary.totals.invoice_count === 0) {
-    throw new Error(`No tax documents found for ${period}; nothing to file.`)
+  if (existing && isLocked(existing.status)) {
+    throw new Error(`GSTR-1 for ${period} is already ${existing.status}. Use an amendment instead.`)
   }
 
-  const filingId = await nextRecordId("GST")
-  const fy = financialYearFor(`${period}-01`)
-  await query(
-    `INSERT INTO gst_return_filings
-       (filing_id, return_type, period, financial_year, invoice_count, total_taxable,
-        total_cgst, total_sgst, total_igst, total_cess, total_tax, status, arn, snapshot, filed_at, filed_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`,
-    [
-      filingId, "GSTR-1", period, fy, summary.totals.invoice_count, summary.totals.taxable,
-      summary.totals.cgst, summary.totals.sgst, summary.totals.igst, summary.totals.cess,
-      summary.totals.total_tax, "Filed", arn || null, JSON.stringify(summary), actorId ?? null,
-    ],
-  )
+  const summary = await gstSummary(period)
+  const nil = Boolean(opts.nil)
+  if (!nil && summary.totals.invoice_count === 0) {
+    throw new Error(`No tax documents found for ${period}. File a Nil return instead if the period is empty.`)
+  }
+  if (nil && !summary.nil.eligible) {
+    throw new Error(`${period} is not eligible for a Nil return: ${summary.nil.reasons.join("; ")}.`)
+  }
+
+  const filingId = existing?.filing_id || (await nextRecordId("GST"))
+  const values = filingRowValues(summary, { status: "Filed", arn, nil })
+
+  if (existing) {
+    const cols = Object.keys(values)
+    await query(
+      `UPDATE gst_return_filings SET ${cols.map((c) => `${c}=?`).join(",")},
+         filed_at = NOW(), filed_by = ?, filed_by_name = ?
+        WHERE id = ?`,
+      [...cols.map((c) => values[c]), actorId ?? null, opts.actorName ?? null, existing.id],
+    )
+  } else {
+    const cols = ["filing_id", ...Object.keys(values), "filed_at", "filed_by", "filed_by_name"]
+    await query(
+      `INSERT INTO gst_return_filings (${cols.join(",")})
+       VALUES (?, ${Object.keys(values).map(() => "?").join(",")}, NOW(), ?, ?)`,
+      [filingId, ...Object.keys(values).map((c) => values[c]), actorId ?? null, opts.actorName ?? null],
+    )
+  }
+
   await logFinanceEvent({
     entityType: "gst_filing",
     entityRef: filingId,
     type: "posted",
-    summary: `GSTR-1 filed for ${period}: taxable ${summary.totals.taxable}, tax ${summary.totals.total_tax}`,
+    summary: `GSTR-1${nil ? " (Nil)" : ""} filed for ${period}: taxable ${summary.totals.taxable}, tax ${summary.totals.total_tax}, ITC ${summary.liability.input_gst}, net ${summary.liability.net_liability}`,
     amount: summary.totals.total_tax,
     actorId: actorId ?? null,
   })
-  return { filing_id: filingId, period }
+  return { filing_id: filingId, period, nil }
+}
+
+/** The persisted filing-record columns derived from a summary (Phase 15). */
+function filingRowValues(
+  summary: Awaited<ReturnType<typeof gstSummary>>,
+  opts: { status: string; arn: string | null; nil: boolean },
+): Record<string, any> {
+  return {
+    return_type: "GSTR-1",
+    period: summary.period,
+    financial_year: summary.financial_year,
+    invoice_count: summary.totals.invoice_count,
+    total_taxable: summary.totals.taxable,
+    total_cgst: summary.totals.cgst,
+    total_sgst: summary.totals.sgst,
+    total_igst: summary.totals.igst,
+    total_cess: summary.totals.cess,
+    total_tax: summary.totals.total_tax,
+    total_itc: summary.liability.input_gst,
+    net_liability: summary.liability.net_liability,
+    status: opts.status,
+    is_nil: opts.nil ? 1 : 0,
+    arn: opts.arn || null,
+    snapshot: JSON.stringify(summary),
+  }
+}
+
+/**
+ * Move a period's return through its lifecycle (Phase 13/14). Pre-file actions
+ * (prepare / submit-review / review / reopen) upsert a non-locked filing row and
+ * only flip the status. `file`, `file-nil` and `amend` delegate to their
+ * dedicated engines. The requested action must be legal for the current status.
+ */
+export async function transitionReturnStatus(
+  period: string,
+  action: string,
+  opts: { arn?: string | null; reason?: string | null; actorId?: number | null; actorName?: string | null } = {},
+) {
+  await ensureGstFilingSchema()
+  if (!PERIOD_RE.test(period)) throw new Error("Period must be in YYYY-MM format.")
+
+  const [row] = (await query(
+    `SELECT id, filing_id, status FROM gst_return_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    [period],
+  )) as any[]
+  const current = row ? String(row.status || "Filed") : "Not Prepared"
+  if (!availableActions(current).includes(action)) {
+    throw new Error(`Action "${action}" is not allowed from status "${current}".`)
+  }
+
+  if (action === "file") return fileGstReturn(period, opts.arn ?? null, opts.actorId, { actorName: opts.actorName })
+  if (action === "file-nil")
+    return fileGstReturn(period, opts.arn ?? null, opts.actorId, { nil: true, actorName: opts.actorName })
+  if (action === "amend")
+    return amendGstReturn(period, { reason: opts.reason ?? null, arn: opts.arn ?? null }, opts.actorId, opts.actorName)
+
+  // Pre-file / post-file status-only transitions.
+  const NEXT: Record<string, string> = {
+    prepare: "Draft",
+    "submit-review": "Ready for Review",
+    review: "Reviewed",
+    reopen: "Draft",
+    "mark-payment-pending": "Payment Pending",
+    complete: "Completed",
+  }
+  const target = NEXT[action]
+  if (!target) throw new Error(`Unknown action "${action}".`)
+
+  if (row) {
+    await query(`UPDATE gst_return_filings SET status = ? WHERE id = ?`, [target, row.id])
+  } else {
+    // "prepare" from Not Prepared — materialise a Draft row from the summary.
+    const summary = await gstSummary(period)
+    const filingId = await nextRecordId("GST")
+    const values = filingRowValues(summary, { status: target, arn: null, nil: false })
+    const cols = ["filing_id", ...Object.keys(values)]
+    await query(
+      `INSERT INTO gst_return_filings (${cols.join(",")})
+       VALUES (?, ${Object.keys(values).map(() => "?").join(",")})`,
+      [filingId, ...Object.keys(values).map((c) => values[c])],
+    )
+  }
+
+  await logFinanceEvent({
+    entityType: "gst_filing",
+    entityRef: row?.filing_id || period,
+    type: "updated",
+    summary: `GSTR-1 for ${period}: ${current} → ${target}`,
+    actorId: opts.actorId ?? null,
+  }).catch(() => {})
+  return { period, status: target }
+}
+
+/**
+ * Controlled amendment (Phase 14). The currently-filed snapshot is ARCHIVED into
+ * gst_return_amendments before the freshly-derived figures replace it, so the
+ * original return is always recoverable. The filing row's revision is bumped and
+ * its status set to Amended; the filing_id is retained.
+ */
+export async function amendGstReturn(
+  period: string,
+  opts: { reason?: string | null; arn?: string | null } = {},
+  actorId?: number | null,
+  actorName?: string | null,
+) {
+  await ensureGstFilingSchema()
+  const [row] = (await query(
+    `SELECT * FROM gst_return_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    [period],
+  )) as any[]
+  if (!row) throw new Error(`No filed GSTR-1 exists for ${period} to amend.`)
+  if (!isLocked(row.status)) throw new Error(`GSTR-1 for ${period} is not filed yet; edit the draft instead.`)
+
+  const revision = Number(row.revision ?? 0) + 1
+  await query(
+    `INSERT INTO gst_return_amendments
+       (filing_id, period, revision, previous_status, previous_arn, previous_total_taxable,
+        previous_total_tax, previous_snapshot, reason, amended_by, amended_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,NOW())`,
+    [
+      row.filing_id, period, revision, row.status, row.arn, round2(num(row.total_taxable)),
+      round2(num(row.total_tax)), row.snapshot, opts.reason ?? null, actorId ?? null,
+    ],
+  )
+
+  const summary = await gstSummary(period)
+  const values = filingRowValues(summary, {
+    status: "Amended",
+    arn: opts.arn ?? row.arn ?? null,
+    nil: Boolean(num(row.is_nil)),
+  })
+  const cols = Object.keys(values)
+  await query(
+    `UPDATE gst_return_filings SET ${cols.map((c) => `${c}=?`).join(",")},
+       revision = ?, filed_at = NOW(), filed_by = ?, filed_by_name = ?
+      WHERE id = ?`,
+    [...cols.map((c) => values[c]), revision, actorId ?? null, actorName ?? null, row.id],
+  )
+
+  await logFinanceEvent({
+    entityType: "gst_filing",
+    entityRef: row.filing_id,
+    type: "updated",
+    summary: `GSTR-1 for ${period} amended (rev ${revision})${opts.reason ? `: ${opts.reason}` : ""}`,
+    amount: summary.totals.total_tax,
+    actorId: actorId ?? null,
+  }).catch(() => {})
+  return { filing_id: row.filing_id, period, revision }
+}
+
+/** The amendment audit trail for a period, newest first (Phase 14). */
+export async function listReturnAmendments(period: string) {
+  await ensureGstFilingSchema()
+  return (await query(
+    `SELECT id, filing_id, revision, previous_status, previous_arn, previous_total_taxable,
+            previous_total_tax, reason, amended_by, amended_at
+       FROM gst_return_amendments WHERE period = ? ORDER BY revision DESC, id DESC`,
+    [period],
+  ).catch(() => [])) as any[]
 }
 
 type Gstr1Invoice = {
@@ -840,4 +1058,227 @@ function financialYearFor(dateStr: string) {
   const y = d.getFullYear()
   const start = d.getMonth() >= 3 ? y : y - 1
   return `${start}-${String((start + 1) % 100).padStart(2, "0")}`
+}
+
+// ── Reconciliation (Phase 17–19) ────────────────────────────────────────────
+// The reconciliation surfaces do NOT recompute GST; they cross-check the numbers
+// the existing engines already produce (live sales books, filed GSTR-1 snapshot,
+// the shared GST Input register, GSTR-2B and recorded tax payments) and classify
+// the differences. This keeps a single source of truth per dimension.
+
+const EPS = 1 // ₹1 tolerance to absorb rounding across independent aggregations
+
+type ReconStatus = "Matched" | "Mismatch" | "Missing" | "Extra" | "Pending"
+
+function classifyAmount(a: number, b: number): ReconStatus {
+  if (Math.abs(round2(a) - round2(b)) <= EPS) return "Matched"
+  return "Mismatch"
+}
+
+/**
+ * OUTPUT reconciliation (Phase 19) — live Sales-Invoice GST vs the FILED GSTR-1
+ * snapshot for the period, invoice by invoice. When the period is not yet filed
+ * every live document is reported as "Pending" (nothing to compare against). Once
+ * filed, each document is Matched / Mismatch, plus documents present only in the
+ * books ("Missing" from the filed return, i.e. added after filing) or only in the
+ * snapshot ("Extra", i.e. removed/cancelled after filing).
+ */
+export async function reconcileOutputGst(period: string) {
+  await ensureGstFilingSchema()
+  const summary = await gstSummary(period)
+  const live: Gstr1Invoice[] = summary.invoices || []
+
+  const [filed] = (await query(
+    `SELECT status, snapshot FROM gst_return_filings
+       WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    [period],
+  )) as any[]
+  const isFiled = filed && isLocked(String(filed.status))
+
+  const taxOf = (r: Gstr1Invoice) => round2(num(r.cgst) + num(r.sgst) + num(r.igst) + num(r.cess))
+
+  if (!isFiled) {
+    const rows = live.map((r) => ({
+      invoice_id: r.invoice_id,
+      client_name: r.client_name,
+      books_taxable: round2(num(r.taxable)),
+      books_tax: taxOf(r),
+      filed_taxable: null as number | null,
+      filed_tax: null as number | null,
+      status: "Pending" as ReconStatus,
+    }))
+    return {
+      period,
+      filed: false,
+      status_label: summary.workflow.status,
+      counts: { matched: 0, mismatch: 0, missing: 0, extra: 0, pending: rows.length },
+      totals: {
+        books_taxable: summary.totals.taxable,
+        books_tax: summary.totals.total_tax,
+        filed_taxable: 0,
+        filed_tax: 0,
+      },
+      rows,
+    }
+  }
+
+  let snapshot: any = {}
+  try {
+    snapshot = typeof filed.snapshot === "string" ? JSON.parse(filed.snapshot) : filed.snapshot || {}
+  } catch {
+    snapshot = {}
+  }
+  const filedInvoices: Gstr1Invoice[] = snapshot.invoices || []
+  const filedMap = new Map(filedInvoices.map((r) => [String(r.invoice_id), r]))
+  const liveMap = new Map(live.map((r) => [String(r.invoice_id), r]))
+
+  const rows: any[] = []
+  const counts = { matched: 0, mismatch: 0, missing: 0, extra: 0, pending: 0 }
+
+  for (const r of live) {
+    const f = filedMap.get(String(r.invoice_id))
+    if (!f) {
+      counts.missing += 1
+      rows.push({
+        invoice_id: r.invoice_id, client_name: r.client_name,
+        books_taxable: round2(num(r.taxable)), books_tax: taxOf(r),
+        filed_taxable: null, filed_tax: null, status: "Missing" as ReconStatus,
+      })
+      continue
+    }
+    const status = classifyAmount(num(r.taxable) + taxOf(r), num(f.taxable) + taxOf(f))
+    counts[status === "Matched" ? "matched" : "mismatch"] += 1
+    rows.push({
+      invoice_id: r.invoice_id, invoice_number: r.invoice_number, client_name: r.client_name,
+      books_taxable: round2(num(r.taxable)), books_tax: taxOf(r),
+      filed_taxable: round2(num(f.taxable)), filed_tax: taxOf(f), status,
+    })
+  }
+  for (const f of filedInvoices) {
+    if (liveMap.has(String(f.invoice_id))) continue
+    counts.extra += 1
+    rows.push({
+      invoice_id: f.invoice_id, invoice_number: f.invoice_number, client_name: f.client_name,
+      books_taxable: null, books_tax: null,
+      filed_taxable: round2(num(f.taxable)), filed_tax: taxOf(f), status: "Extra" as ReconStatus,
+    })
+  }
+
+  const filedTotals = snapshot.totals || {}
+  return {
+    period,
+    filed: true,
+    status_label: String(filed.status),
+    counts,
+    totals: {
+      books_taxable: summary.totals.taxable,
+      books_tax: summary.totals.total_tax,
+      filed_taxable: round2(num(filedTotals.taxable)),
+      filed_tax: round2(num(filedTotals.total_tax)),
+    },
+    rows,
+  }
+}
+
+/**
+ * Reconciliation CENTER (Phase 17/18) — a period dashboard that lines up every
+ * GST dimension against the counterpart it must agree with, and flags drift:
+ *
+ *   Output tax   : Sales Books  ⇄  filed GSTR-1
+ *   Output tax   : Sales Books  ⇄  GSTR-3B (auto)
+ *   Input ITC    : GST Input register  ⇄  GSTR-2B
+ *   Net liability: (Output − ITC)  ⇄  Tax payment recorded
+ */
+export async function gstReconciliationCenter(period: string) {
+  await ensureGstFilingSchema()
+  const summary = await gstSummary(period)
+
+  const salesTax = summary.totals.total_tax
+  const salesTaxable = summary.totals.taxable
+
+  // Filed GSTR-1 snapshot (if any).
+  const [filed] = (await query(
+    `SELECT status, total_tax, total_taxable FROM gst_return_filings
+       WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    [period],
+  )) as any[]
+  const isFiled = filed && isLocked(String(filed.status))
+
+  // GST Input register — net eligible ITC already computed inside the summary.
+  const itcRegister = summary.liability.input_gst
+
+  // GSTR-2B totals for the period (independent inward feed).
+  const [g2b] = (await query(
+    `SELECT COALESCE(SUM(total_tax),0) AS tax, COUNT(*) AS n FROM finance_gstr2b WHERE period = ?`,
+    [period],
+  ).catch(() => [{ tax: 0, n: 0 }])) as any[]
+  const g2bTax = round2(num(g2b?.tax))
+
+  // Net liability and any recorded tax payment for the period.
+  const netLiability = summary.liability.net_liability
+  const [pay] = (await query(
+    `SELECT COALESCE(SUM(amount),0) AS paid, COUNT(*) AS n FROM gst_tax_payments WHERE period = ?`,
+    [period],
+  ).catch(() => [{ paid: 0, n: 0 }])) as any[]
+  const paid = round2(num(pay?.paid))
+  const hasPayment = Number(pay?.n ?? 0) > 0
+
+  const lines = [
+    {
+      key: "output_gstr1",
+      label: "Output tax — Sales Books vs GSTR-1",
+      left_label: "Sales Books",
+      left: salesTax,
+      right_label: isFiled ? "Filed GSTR-1" : "GSTR-1 (not filed)",
+      right: isFiled ? round2(num(filed.total_tax)) : 0,
+      status: isFiled ? classifyAmount(salesTax, num(filed.total_tax)) : ("Pending" as ReconStatus),
+    },
+    {
+      key: "output_gstr3b",
+      label: "Output tax — Sales Books vs GSTR-3B",
+      left_label: "Sales Books",
+      left: salesTax,
+      right_label: "GSTR-3B (auto)",
+      right: salesTax,
+      status: "Matched" as ReconStatus,
+    },
+    {
+      key: "itc_2b",
+      label: "Input ITC — Register vs GSTR-2B",
+      left_label: "GST Input register",
+      left: itcRegister,
+      right_label: "GSTR-2B",
+      right: g2bTax,
+      status: Number(g2b?.n ?? 0) === 0 && itcRegister === 0 ? ("Matched" as ReconStatus) : classifyAmount(itcRegister, g2bTax),
+    },
+    {
+      key: "net_payment",
+      label: "Net liability — Payable vs Paid",
+      left_label: "Net payable",
+      left: netLiability,
+      right_label: hasPayment ? "Tax paid" : "No payment recorded",
+      right: paid,
+      status:
+        netLiability <= 0
+          ? ("Matched" as ReconStatus)
+          : hasPayment
+            ? classifyAmount(netLiability, paid)
+            : ("Pending" as ReconStatus),
+    },
+  ]
+
+  return {
+    period,
+    financial_year: summary.financial_year,
+    filed: Boolean(isFiled),
+    headline: {
+      sales_taxable: salesTaxable,
+      sales_tax: salesTax,
+      itc: itcRegister,
+      net_liability: netLiability,
+      paid,
+      gstr2b_tax: g2bTax,
+    },
+    lines,
+  }
 }

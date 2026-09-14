@@ -85,6 +85,36 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ rows })
     }
 
+    if (type === "coa") {
+      // Any active Chart of Accounts head (used as the Bank Transaction account
+      // head — the contra side of the bank/cash movement). Never lets a random
+      // account name be typed by hand: the posting keys off account_id.
+      const rows = (await query(
+        `SELECT account_id, account_code, account_name, account_group, nature
+           FROM chart_of_accounts
+          WHERE (active_status IS NULL OR active_status = 'Active')
+            AND (? = '' OR account_name LIKE ? OR account_code LIKE ? OR account_group LIKE ?)
+          ORDER BY account_group, account_name LIMIT ${LIMIT}`,
+        [search, like, like, like],
+      )) as any[]
+      return NextResponse.json({ rows })
+    }
+
+    if (type === "client") {
+      // Customer parties resolved from the Clients master (Phase 4 — smart party
+      // selection). `client_code` is the stable business id used as party_id.
+      const rows = (await query(
+        `SELECT client_code, client_name, company_name, gst_number, email, mobile, state
+           FROM clients
+          WHERE (? = '' OR client_name LIKE ? OR company_name LIKE ? OR client_code LIKE ? OR gst_number LIKE ?)
+          ORDER BY client_name LIMIT ${LIMIT}`,
+        [search, like, like, like, like],
+      )) as any[]
+      return NextResponse.json({
+        rows: rows.map((r) => ({ ...r, client_code: String(r.client_code ?? "") })),
+      })
+    }
+
     if (type === "bank") {
       // Only active Bank/Cash accounts are selectable (Phase 10).
       const rows = (await query(

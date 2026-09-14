@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/select"
 import { Loader2Icon } from "lucide-react"
 import { inr, financialYearFor } from "@/lib/finance-calc"
+import { monthsForFinancialYear } from "@/lib/finance-module-configs"
 import type { FieldDef, LookupConfig, ModuleConfig, VisibleWhen } from "@/lib/finance-schema"
 
 type FormState = Record<string, string>
@@ -510,6 +511,11 @@ export function FinanceModuleDialog({
                         value={form[f.key] ?? ""}
                         onChange={update}
                         dynamicOptions={f.dynamicOptions ? dynamicOptions[f.key] ?? [] : undefined}
+                        fyMonths={
+                          f.financialYearMonths
+                            ? monthsForFinancialYear(cfg.financialYearColumn ? form[cfg.financialYearColumn] : "")
+                            : undefined
+                        }
                         lookup={
                           cfg.ifsc && f.key === cfg.ifsc.column
                             ? {
@@ -924,6 +930,7 @@ function FieldInput({
   value,
   onChange,
   dynamicOptions,
+  fyMonths,
   lookup,
   uploadPath,
 }: {
@@ -931,6 +938,7 @@ function FieldInput({
   value: string
   onChange: (key: string, value: string) => void
   dynamicOptions?: string[]
+  fyMonths?: string[]
   lookup?: {
     status: "idle" | "loading" | "ok" | "error"
     message?: string
@@ -984,7 +992,11 @@ function FieldInput({
     const emptyValue = "__none__"
     // Dynamic selects use the runtime options; always keep the current value
     // selectable even if it isn't in the supplied list (e.g. an edited record).
-    const baseOptions = field.dynamicOptions ? dynamicOptions ?? [] : field.options ?? []
+    const baseOptions = field.dynamicOptions
+      ? dynamicOptions ?? []
+      : field.financialYearMonths
+        ? fyMonths ?? []
+        : field.options ?? []
     const options =
       value && !baseOptions.includes(value) ? [value, ...baseOptions] : baseOptions
     return (

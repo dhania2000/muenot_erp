@@ -466,6 +466,69 @@ export async function ensureExpenseColumns() {
   expenseEnsured = true
 }
 
+let bankTxnEnsured = false
+
+/**
+ * Self-healing schema for the Bank Transactions upgrade (Foundation phase).
+ *
+ * The base `bank_transactions` table already carries the movement fields (date,
+ * account, type, party, debit/credit, GST/TDS, reconciliation). This adds the
+ * centralized financial period (quarter + accounting period), the smart-party
+ * type, the source-document linkage, the bank-to-bank transfer linkage and the
+ * Journal / General Ledger posting columns — so a posted transaction becomes
+ * the auditable bridge into the existing accounting engine. Runs once/process.
+ */
+export async function ensureBankTransactionColumns() {
+  if (bankTxnEnsured) return
+  const t = "bank_transactions"
+
+  // Centralized financial period (month already exists in the base migration).
+  await ensureColumn(t, "quarter", "VARCHAR(6) DEFAULT NULL")
+  await ensureColumn(t, "accounting_period", "VARCHAR(20) DEFAULT NULL")
+
+  // Smart party selection — which master the party was resolved from so the
+  // form can source the right picker (Customer→Clients, Vendor→Vendors,
+  // Employee→HR) and genuine bank-only rows can be tagged Other/Unknown.
+  await ensureColumn(t, "party_type", "VARCHAR(20) DEFAULT NULL")
+
+  // Source-document linkage (Phase 11/12) — when a transaction settles an
+  // existing finance document these trace it back to its origin.
+  await ensureColumn(t, "source_module", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "source_transaction_id", "VARCHAR(60) DEFAULT NULL")
+
+  // Bank-to-bank transfer linkage (Phase 20/98–100). Both legs of one transfer
+  // share a `transfer_id`; the counter account is the other side of the move.
+  await ensureColumn(t, "transfer_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "counter_account_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "counter_account_name", "VARCHAR(190) DEFAULT NULL")
+
+  // Journal / General Ledger posting linkage. `voucher_no` ties the transaction
+  // to its balanced posting, `posted_amount` makes the sync idempotent, and
+  // `posted_snapshot` freezes the amounts as posted so a later reversal always
+  // unwinds the exact original figures even if the row was edited since.
+  await ensureColumn(t, "voucher_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "reversal_voucher_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "posting_status", "VARCHAR(20) NOT NULL DEFAULT 'Unposted'")
+  await ensureColumn(t, "posted_at", "DATETIME DEFAULT NULL")
+  await ensureColumn(t, "posted_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "posted_snapshot", "LONGTEXT DEFAULT NULL")
+
+  // Search + aggregation performance (Phase 85).
+  const idx = async (name: string, cols: string) => {
+    if (!(await hasIndex(t, name))) await query(`ALTER TABLE ${t} ADD KEY ${name} (${cols})`)
+  }
+  await idx("idx_btx_value_date", "value_date")
+  await idx("idx_btx_reference", "reference_no")
+  await idx("idx_btx_utr", "cheque_utr_reference")
+  await idx("idx_btx_party", "party_id")
+  await idx("idx_btx_account_head", "account_head_id")
+  await idx("idx_btx_bank_account", "bank_cash_account_id")
+  await idx("idx_btx_source", "source_transaction_id")
+  await idx("idx_btx_transfer", "transfer_id")
+
+  bankTxnEnsured = true
+}
+
 let gstInputEnsured = false
 
 /**

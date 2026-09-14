@@ -40,6 +40,13 @@ export type FieldDef = {
   hidden?: boolean
   /** Seed value for new records (used for fixed fields such as party_type). */
   default?: string
+  /**
+   * A select whose options are supplied at runtime by the dialog rather than by
+   * the static `options` list — e.g. the freelancer email choices (official vs
+   * personal) that come from the picked freelancer row. Populated via a lookup's
+   * `optionSources`. The currently stored value is always kept selectable.
+   */
+  dynamicOptions?: boolean
 }
 
 /**
@@ -246,6 +253,13 @@ export type LookupConfig = {
   nameField: string
   /** Map of source column -> this module's field key, filled when empty. */
   autofill: Record<string, string>
+  /**
+   * After a row is picked, populate a `dynamicOptions` select field's choices
+   * from these source columns (deduped, non-empty) and default the field to the
+   * first value. Used to let the user pick between, say, a freelancer's official
+   * and personal email.
+   */
+  optionSources?: { field: string; from: string[] }
   /** Only selectable rows: each rule requires the column value to be in the set. */
   selectableWhen?: { column: string; in: string[] }[]
   /** Only render the picker when this form condition matches. */

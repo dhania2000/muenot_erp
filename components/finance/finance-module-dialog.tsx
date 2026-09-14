@@ -90,6 +90,9 @@ export function FinanceModuleDialog({
   }>({ status: "idle" })
   // Pending duplicate returned by the server (HTTP 409) awaiting confirmation.
   const [dup, setDup] = useState<{ [k: string]: any; reason: string } | null>(null)
+  // Runtime options for `dynamicOptions` selects (e.g. the freelancer's email
+  // choices sourced from the picked freelancer row), keyed by field key.
+  const [dynamicOptions, setDynamicOptions] = useState<Record<string, string[]>>({})
 
   const fieldLabels = useMemo(() => {
     const map: Record<string, string> = {}
@@ -122,6 +125,13 @@ export function FinanceModuleDialog({
       }
     }
     setForm(base)
+    // Seed dynamic-option selects with their stored value so it stays selectable
+    // when editing before the source lookup is re-picked.
+    const dyn: Record<string, string[]> = {}
+    for (const f of cfg.fields) {
+      if (f.dynamicOptions && base[f.key]) dyn[f.key] = [base[f.key]]
+    }
+    setDynamicOptions(dyn)
   }, [open, record, cfg, checkboxKeys])
 
   function update(key: string, value: string) {
@@ -254,6 +264,24 @@ export function FinanceModuleDialog({
    * on save, so this is purely for immediate form feedback.
    */
   function applyLookupPick(l: LookupConfig, row: Record<string, any>) {
+    // Build the runtime options for a dynamicOptions select (e.g. official vs
+    // personal email) from the picked row, deduped and non-empty.
+    let optionField: string | null = null
+    let options: string[] = []
+    if (l.optionSources) {
+      optionField = l.optionSources.field
+      const seen = new Set<string>()
+      for (const col of l.optionSources.from) {
+        const v = row[col]
+        const s = v === null || v === undefined ? "" : String(v).trim()
+        if (s && !seen.has(s)) {
+          seen.add(s)
+          options.push(s)
+        }
+      }
+      setDynamicOptions((prev) => ({ ...prev, [optionField!]: options }))
+    }
+
     setForm((prev) => {
       const next = { ...prev }
       next[l.idField] = row[l.sourceIdColumn] != null ? String(row[l.sourceIdColumn]) : ""
@@ -264,6 +292,8 @@ export function FinanceModuleDialog({
         if (checkboxKeys.has(targetKey)) next[targetKey] = v ? "1" : ""
         else next[targetKey] = v === null || v === undefined ? "" : String(v)
       }
+      // Default the dynamic select to the first available option (official first).
+      if (optionField && optionField in next) next[optionField] = options[0] ?? ""
       return next
     })
   }
@@ -479,6 +509,7 @@ export function FinanceModuleDialog({
                         field={f}
                         value={form[f.key] ?? ""}
                         onChange={update}
+                        dynamicOptions={f.dynamicOptions ? dynamicOptions[f.key] ?? [] : undefined}
                         lookup={
                           cfg.ifsc && f.key === cfg.ifsc.column
                             ? {
@@ -892,12 +923,14 @@ function FieldInput({
   field,
   value,
   onChange,
+  dynamicOptions,
   lookup,
   uploadPath,
 }: {
   field: FieldDef
   value: string
   onChange: (key: string, value: string) => void
+  dynamicOptions?: string[]
   lookup?: {
     status: "idle" | "loading" | "ok" | "error"
     message?: string
@@ -949,6 +982,11 @@ function FieldInput({
   if (field.type === "select") {
     const empty = field.optional
     const emptyValue = "__none__"
+    // Dynamic selects use the runtime options; always keep the current value
+    // selectable even if it isn't in the supplied list (e.g. an edited record).
+    const baseOptions = field.dynamicOptions ? dynamicOptions ?? [] : field.options ?? []
+    const options =
+      value && !baseOptions.includes(value) ? [value, ...baseOptions] : baseOptions
     return (
       <Field>
         <FieldLabel>{field.label}</FieldLabel>
@@ -962,7 +1000,7 @@ function FieldInput({
           <SelectContent>
             <SelectGroup>
               {empty && <SelectItem value={emptyValue}>{field.emptyLabel ?? "—"}</SelectItem>}
-              {(field.options ?? []).map((o) => (
+              {options.map((o) => (
                 <SelectItem key={o} value={o}>
                   {o}
                 </SelectItem>

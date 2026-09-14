@@ -47,9 +47,110 @@ let fteEnsured = false
  */
 export async function ensureFteInvoiceColumns() {
   if (fteEnsured) return
-  await ensureColumn("fte_invoices", "employee_email", "VARCHAR(190) DEFAULT NULL")
-  await ensureColumn("fte_invoices", "invoice_last_sent_at", "DATETIME DEFAULT NULL")
-  await ensureColumn("fte_invoices", "invoice_last_sent_to", "VARCHAR(190) DEFAULT NULL")
+  const t = "fte_invoices"
+  await ensureColumn(t, "employee_email", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "invoice_last_sent_at", "DATETIME DEFAULT NULL")
+  await ensureColumn(t, "invoice_last_sent_to", "VARCHAR(190) DEFAULT NULL")
+
+  // Phase 2/3 — frozen Client snapshot (sourced from the Clients master).
+  await ensureColumn(t, "client_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "client_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "client_legal_name", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn(t, "client_gstin", "VARCHAR(20) DEFAULT NULL")
+  await ensureColumn(t, "client_pan", "VARCHAR(15) DEFAULT NULL")
+  await ensureColumn(t, "billing_address", "TEXT DEFAULT NULL")
+  await ensureColumn(t, "client_state", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn(t, "client_state_code", "VARCHAR(6) DEFAULT NULL")
+  await ensureColumn(t, "client_pin", "VARCHAR(12) DEFAULT NULL")
+  await ensureColumn(t, "currency", "VARCHAR(10) DEFAULT NULL")
+  await ensureColumn(t, "payment_terms", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn(t, "billing_email", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "contact_person", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "client_status", "VARCHAR(40) DEFAULT NULL")
+
+  // Phase 4 — frozen Project snapshot (sourced from Projects/Operations master).
+  await ensureColumn(t, "project_status", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn(t, "project_client_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "project_client_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "cost_centre", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn(t, "billing_terms", "VARCHAR(120) DEFAULT NULL")
+
+  // Phase 5 — Employee billing profile (sourced from HR → Employees).
+  await ensureColumn(t, "billing_role", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn(t, "billing_rate", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "employee_status", "VARCHAR(40) DEFAULT NULL")
+
+  // Phase 8 — internal reference vs client PO (kept separate).
+  await ensureColumn(t, "internal_reference", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn(t, "po_number", "VARCHAR(120) DEFAULT NULL")
+
+  // Phase 9 — centralized financial period.
+  await ensureColumn(t, "quarter", "VARCHAR(6) DEFAULT NULL")
+  await ensureColumn(t, "accounting_period", "VARCHAR(20) DEFAULT NULL")
+
+  // Phase 10/11 — billing period + billable-days model.
+  await ensureColumn(t, "billing_period_start", "DATE DEFAULT NULL")
+  await ensureColumn(t, "billing_period_end", "DATE DEFAULT NULL")
+  await ensureColumn(t, "billable_days", "DECIMAL(6,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "non_billable_days", "DECIMAL(6,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "billable_hours", "DECIMAL(8,2) NOT NULL DEFAULT 0")
+
+  // Phase 14/15 — rate snapshot (frozen when the invoice is finalized).
+  await ensureColumn(t, "rate_source", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn(t, "rate_snapshot", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "billing_basis_snapshot", "VARCHAR(40) DEFAULT NULL")
+
+  // Phase 16 — client billing calculation (kept separate from payroll).
+  await ensureColumn(t, "base_billing", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "billing_overtime", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "billing_bonus", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "other_charges", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "billing_adjustment", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "gross_client_billing", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
+  // Phase 16 — GST / TDS on the client invoice + receivable tracking.
+  await ensureColumn(t, "gst_rate", "DECIMAL(6,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "gst_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "tds_rate", "DECIMAL(6,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "tds_amount", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "net_receivable", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "amount_paid", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "outstanding", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
+  // Phase 17 — employee cost ledger (separate from client billing).
+  await ensureColumn(t, "salary_cost", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "employer_pf", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "employer_esi", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "other_employer_cost", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "employee_cost_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+
+  // Phase 18 — profitability.
+  await ensureColumn(t, "other_allocated_cost", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "gross_margin", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "margin_percent", "DECIMAL(8,2) NOT NULL DEFAULT 0")
+
+  // Phase 10 — billing period type + payment/GST/TDS status facets.
+  await ensureColumn(t, "billing_period_type", "VARCHAR(30) DEFAULT NULL")
+  await ensureColumn(t, "payment_status", "VARCHAR(30) NOT NULL DEFAULT 'Unpaid'")
+  await ensureColumn(t, "gst_status", "VARCHAR(30) DEFAULT NULL")
+  await ensureColumn(t, "tds_status", "VARCHAR(30) DEFAULT NULL")
+
+  // Phase 23 — client contract linkage.
+  await ensureColumn(t, "contract_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "contract_reference", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn(t, "contract_start", "DATE DEFAULT NULL")
+  await ensureColumn(t, "contract_end", "DATE DEFAULT NULL")
+  await ensureColumn(t, "contract_value", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+
+  // Phase 8/28 — search + performance indexes.
+  const idx = async (name: string, cols: string) => {
+    if (!(await hasIndex(t, name))) await query(`ALTER TABLE ${t} ADD KEY ${name} (${cols})`)
+  }
+  await idx("idx_fte_client", "client_id")
+  await idx("idx_fte_project", "project_id")
+  await idx("idx_fte_emp_id", "employee_id")
+  await idx("idx_fte_payment_status", "payment_status")
+
   fteEnsured = true
 }
 

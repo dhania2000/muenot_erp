@@ -99,7 +99,6 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Chart of Accounts", href: "/modules/finance/chart-of-accounts", feature: "finance.view_chart_of_accounts" },
   { label: "Vendors", href: "/modules/finance/customers-vendors", feature: "finance.view_customers_vendors" },
   { label: "GST Filing", href: "/modules/finance/gst-filing", feature: "finance.gst_filing" },
-  { label: "GST Input (ITC)", href: "/modules/finance/gst-input", feature: "finance.gst_filing" },
   { label: "TDS Filing", href: "/modules/finance/tds-filing", feature: "finance.tds_filing" },
   { label: "Journal Entries", href: "/modules/finance/journal-entries", feature: "finance.journal_entries" },
   { label: "General Ledger", href: "/modules/finance/general-ledger", feature: "finance.general_ledger" },

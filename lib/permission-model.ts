@@ -66,6 +66,8 @@ export const GST_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
   { key: "cancel_return", label: "Cancel Return", fallback: "delete", scoped: false, description: "Cancel/void a prepared return." },
   { key: "export_return", label: "Export Return", fallback: "view", scoped: false, description: "Export the return and the CA hand-off package." },
   { key: "reconcile_gst", label: "Reconcile GST", fallback: "update", scoped: false, description: "Run and act on output-GST / GSTR-2B reconciliation." },
+  { key: "manage_itc", label: "Manage ITC", fallback: "update", scoped: false, description: "Manage input tax credit — claim/unclaim and adjust the GST Input / ITC register." },
+  { key: "manage_reversal", label: "Manage ITC Reversal", fallback: "update", scoped: false, description: "Record and manage ITC reversals that feed GSTR-3B and net liability." },
   { key: "manage_filing", label: "Manage Filing", fallback: "delete", scoped: false, description: "Close/lock a period and manage filing configuration." },
   { key: "view_sensitive", label: "View Sensitive Tax Data", fallback: "view", scoped: false, description: "View sensitive tax data such as the audit trail and ARNs." },
 ]

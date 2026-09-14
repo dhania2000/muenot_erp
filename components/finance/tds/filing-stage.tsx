@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { FileCheck2, Landmark, TriangleAlert, Users } from "lucide-react"
-import { currency, thisMonth, DIRECTION_COPY, Stat, type Direction } from "./shared"
+import { currency, thisMonth, DIRECTION_COPY, Stat, StatusBadge, type Direction } from "./shared"
 
 type Summary = {
   period: string
@@ -30,6 +30,10 @@ type DetailRow = {
   base: number
   rate: number
   tds: number
+  paid: number
+  balance: number
+  challan: string
+  pay_status: string
 }
 
 const SOURCE_BADGE: Record<string, "default" | "secondary" | "outline"> = {
@@ -85,6 +89,10 @@ export function FilingStage({ direction }: { direction: Direction }) {
   const detail = data?.detail ?? []
   const filings = filingsData?.filings ?? []
   const panIssues = HAS_PAN[direction] ? detail.filter((r) => r.pan_status !== "Valid") : []
+  const depositApplicable = direction !== "receivable"
+  // Base columns: Document + Party + Section + Base + Rate + TDS + Status (+ optional Source, PAN, Paid, Balance, Challan).
+  const detailColSpan =
+    7 + (HAS_SOURCE[direction] ? 1 : 0) + (HAS_PAN[direction] ? 1 : 0) + (depositApplicable ? 3 : 0)
 
   async function file() {
     setBusy(true)
@@ -219,12 +227,16 @@ export function FilingStage({ direction }: { direction: Direction }) {
                   <TableHead className="text-right">Base</TableHead>
                   <TableHead className="text-right">Rate</TableHead>
                   <TableHead className="text-right">TDS</TableHead>
+                  {depositApplicable ? <TableHead className="text-right">Paid</TableHead> : null}
+                  {depositApplicable ? <TableHead className="text-right">Balance</TableHead> : null}
+                  {depositApplicable ? <TableHead>Challan</TableHead> : null}
+                  <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {detail.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={detailColSpan} className="py-8 text-center text-sm text-muted-foreground">
                       No {copy.partyLabel.toLowerCase()} TDS entries in this period.
                     </TableCell>
                   </TableRow>
@@ -250,6 +262,16 @@ export function FilingStage({ direction }: { direction: Direction }) {
                       <TableCell className="text-right">{currency(r.base)}</TableCell>
                       <TableCell className="text-right">{r.rate}%</TableCell>
                       <TableCell className="text-right font-medium">{currency(r.tds)}</TableCell>
+                      {depositApplicable ? <TableCell className="text-right">{currency(r.paid)}</TableCell> : null}
+                      {depositApplicable ? (
+                        <TableCell className="text-right font-medium">{currency(r.balance)}</TableCell>
+                      ) : null}
+                      {depositApplicable ? (
+                        <TableCell className="font-mono text-xs text-muted-foreground">{r.challan || "—"}</TableCell>
+                      ) : null}
+                      <TableCell>
+                        <StatusBadge status={r.pay_status} />
+                      </TableCell>
                     </TableRow>
                   ))
                 )}

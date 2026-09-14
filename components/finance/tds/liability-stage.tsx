@@ -58,7 +58,8 @@ export function LiabilityStage({ direction, fy }: { direction: Direction; fy: st
   const depositApplicable = data?.deposit_applicable ?? direction !== "receivable"
   // Only show interest / late-fee columns once something has actually accrued.
   const hasCharges = depositApplicable && ((data?.totals.interest ?? 0) > 0 || (data?.totals.late_fee ?? 0) > 0)
-  const colSpan = depositApplicable ? (hasCharges ? 10 : 8) : 3
+  // Columns: Month, Quarter, Base, TDS/Credit (+ Interest, Late fee, Total, Paid, Balance, Due date for deductor) + Status.
+  const colSpan = depositApplicable ? (hasCharges ? 11 : 9) : 4
 
   return (
     <div className="flex flex-col gap-6">
@@ -96,6 +97,7 @@ export function LiabilityStage({ direction, fy }: { direction: Direction; fy: st
                 <TableRow>
                   <TableHead>Month</TableHead>
                   <TableHead>Quarter</TableHead>
+                  <TableHead className="text-right">Base</TableHead>
                   <TableHead className="text-right">{depositApplicable ? "Deducted" : "Credit"}</TableHead>
                   {hasCharges ? <TableHead className="text-right">Interest</TableHead> : null}
                   {hasCharges ? <TableHead className="text-right">Late fee</TableHead> : null}
@@ -118,6 +120,7 @@ export function LiabilityStage({ direction, fy }: { direction: Direction; fy: st
                     <TableRow key={r.period}>
                       <TableCell className="font-medium">{r.period}</TableCell>
                       <TableCell className="text-muted-foreground">{r.quarter}</TableCell>
+                      <TableCell className="text-right">{currency(r.base)}</TableCell>
                       <TableCell className="text-right">{currency(r.deducted)}</TableCell>
                       {hasCharges ? <TableCell className="text-right">{currency(r.interest)}</TableCell> : null}
                       {hasCharges ? <TableCell className="text-right">{currency(r.late_fee)}</TableCell> : null}

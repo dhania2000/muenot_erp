@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { logFinanceEvent } from "@/lib/finance-audit"
 import { tdsSummary, tdsDetail, type TdsDirection } from "@/lib/finance-tds-filing"
+import { listTdsRules, entityTypeForConstitution } from "@/lib/finance-tds-rules"
 import { postLines, type PostingLine } from "@/lib/finance-posting"
 import { ensureExpensePostingAccounts } from "@/lib/finance-accounts"
 import { getSetting } from "@/lib/settings/server"
@@ -940,15 +941,72 @@ function aggregateDeductees(rows: any[]): DeducteeAgg[] {
 
 export type DeducteeMasterRow = {
   party_id: string
+  /** Stable deductee handle shown in the master (party_id, or a name fallback). */
+  deductee_id: string
   party_name: string
   pan: string
   pan_status: "Valid" | "Invalid" | "Missing"
+  /** TDS deductee entity type resolved from the party's constitution / source. */
+  party_type: string
+  /** Resident / Non-Resident, from a §195-family section or the party country. */
+  resident_status: "Resident" | "Non-Resident"
+  /** Nature of payment of the party's primary section, from the rule master. */
+  payment_type: string
   sections: string[]
   base: number
   tds: number
+  /** Effective blended TDS rate for the party (tds ÷ base). */
+  rate: number
   doc_count: number
   quarters: string[]
-  breakup: { section: string; base: number; tds: number; doc_count: number }[]
+  breakup: { section: string; base: number; tds: number; doc_count: number; rate: number }[]
+}
+
+/** Resident status inferred from the party's country of residence. */
+function residentStatusFromCountry(country?: string | null): "Resident" | "Non-Resident" {
+  const c = String(country || "").trim().toLowerCase()
+  if (!c || c === "india" || c === "in" || c === "ind" || c === "bharat") return "Resident"
+  return "Non-Resident"
+}
+
+/**
+ * Section → nature-of-payment lookup from the configurable rule master, so the
+ * deductee master can label each party's payment type without hard-coding it.
+ */
+async function sectionNatureMap(): Promise<Map<string, string>> {
+  const rules = await listTdsRules(false)
+  const m = new Map<string, string>()
+  for (const r of rules) {
+    const key = normSection(r.section)
+    if (!m.has(key)) m.set(key, r.nature_of_payment)
+  }
+  return m
+}
+
+/**
+ * Batch-load the party master (constitution + country) for the deductees in a
+ * direction, so party type / resident status resolve from the SINGLE existing
+ * master (customers_vendors) rather than a duplicated deductee table.
+ */
+async function loadPartyMasters(
+  dir: TdsDirection,
+  ids: string[],
+): Promise<Map<string, { business_constitution: string | null; country: string | null }>> {
+  const map = new Map<string, { business_constitution: string | null; country: string | null }>()
+  const clean = Array.from(new Set(ids.filter((v) => v && v !== "—")))
+  if (clean.length === 0) return map
+  const placeholders = clean.map(() => "?").join(",")
+  const rows = (await query(
+    `SELECT party_id, business_constitution, country FROM customers_vendors WHERE party_id IN (${placeholders})`,
+    clean,
+  ).catch(() => [])) as any[]
+  for (const r of rows) {
+    map.set(String(r.party_id), {
+      business_constitution: r.business_constitution ?? null,
+      country: r.country ?? null,
+    })
+  }
+  return map
 }
 
 export async function deducteeMaster(financialYear: string, direction: TdsDirection) {
@@ -968,12 +1026,17 @@ export async function deducteeMaster(financialYear: string, direction: TdsDirect
     if (!party) {
       party = {
         party_id: String(r.party_id || ""),
+        deductee_id: String(r.party_id || key),
         party_name: r.party_name || "—",
         pan: r.pan || "",
         pan_status: (r.pan_status as DeducteeMasterRow["pan_status"]) || (r.pan ? "Valid" : "Missing"),
+        party_type: "Any",
+        resident_status: "Resident",
+        payment_type: "—",
         sections: [],
         base: 0,
         tds: 0,
+        rate: 0,
         doc_count: 0,
         quarters: [],
         breakup: [],
@@ -996,7 +1059,7 @@ export async function deducteeMaster(financialYear: string, direction: TdsDirect
       bucket.tds = round2(bucket.tds + num(r.tds))
       bucket.doc_count += 1
     } else {
-      party.breakup.push({ section: r.section, base: round2(num(r.base)), tds: round2(num(r.tds)), doc_count: 1 })
+      party.breakup.push({ section: r.section, base: round2(num(r.base)), tds: round2(num(r.tds)), doc_count: 1, rate: 0 })
     }
   }
 
@@ -1005,6 +1068,27 @@ export async function deducteeMaster(financialYear: string, direction: TdsDirect
     d.sections.sort()
     d.quarters.sort()
     d.breakup.sort((a, b) => b.tds - a.tds)
+    for (const b of d.breakup) b.rate = b.base > 0 ? round2((b.tds / b.base) * 100) : 0
+  }
+
+  // Phase 22–23 — resolve deductee details (party type, resident status, payment
+  // type, effective rate) from the SINGLE existing masters + rule master. No
+  // separate deductee table is created; everything is derived.
+  const natureBySection = await sectionNatureMap()
+  const partyMasters = await loadPartyMasters(dir, deductees.map((d) => d.party_id))
+  for (const d of deductees) {
+    d.rate = d.base > 0 ? round2((d.tds / d.base) * 100) : 0
+    const primarySection = d.breakup[0]?.section || d.sections[0] || ""
+    d.payment_type = natureBySection.get(normSection(primarySection)) || "—"
+    const nonResidentSection = d.sections.some((s) => NON_RESIDENT_SECTIONS.has(normSection(s)))
+    const master = partyMasters.get(d.party_id)
+    if (dir === "employee") {
+      // Employee (§192 salary) and freelance payees are individuals by nature.
+      d.party_type = "Individual/HUF"
+    } else {
+      d.party_type = entityTypeForConstitution(master?.business_constitution)
+    }
+    d.resident_status = nonResidentSection ? "Non-Resident" : residentStatusFromCountry(master?.country)
   }
 
   const totals = {

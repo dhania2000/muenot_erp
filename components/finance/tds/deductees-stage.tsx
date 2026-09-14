@@ -11,15 +11,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ChevronDown, ChevronRight, TriangleAlert, Users } from "lucide-react"
 import { currency, DIRECTION_COPY, Stat, type Direction } from "./shared"
 
-type Breakup = { section: string; base: number; tds: number; doc_count: number }
+type Breakup = { section: string; base: number; tds: number; doc_count: number; rate: number }
 type Row = {
   party_id: string
+  deductee_id: string
   party_name: string
   pan: string
   pan_status: "Valid" | "Invalid" | "Missing"
+  party_type: string
+  resident_status: "Resident" | "Non-Resident"
+  payment_type: string
   sections: string[]
   base: number
   tds: number
+  rate: number
   doc_count: number
   quarters: string[]
   breakup: Breakup[]
@@ -49,7 +54,9 @@ export function DeducteesStage({ direction, fy }: { direction: Direction; fy: st
     ? all.filter(
         (r) =>
           r.party_name.toLowerCase().includes(needle) ||
+          r.deductee_id.toLowerCase().includes(needle) ||
           r.pan.toLowerCase().includes(needle) ||
+          r.payment_type.toLowerCase().includes(needle) ||
           r.sections.some((s) => s.toLowerCase().includes(needle)),
       )
     : all
@@ -101,19 +108,21 @@ export function DeducteesStage({ direction, fy }: { direction: Direction; fy: st
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
+                  <TableHead>Deductee ID</TableHead>
                   <TableHead>{label}</TableHead>
                   <TableHead>PAN</TableHead>
-                  <TableHead>Sections</TableHead>
-                  <TableHead>Quarters</TableHead>
-                  <TableHead className="text-right">Docs</TableHead>
-                  <TableHead className="text-right">Base</TableHead>
+                  <TableHead>Party type</TableHead>
+                  <TableHead>Residence</TableHead>
+                  <TableHead>Section</TableHead>
+                  <TableHead>Payment type</TableHead>
+                  <TableHead className="text-right">Rate</TableHead>
                   <TableHead className="text-right">TDS</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
                       No {label.toLowerCase()}s found for this year.
                     </TableCell>
                   </TableRow>
@@ -130,6 +139,7 @@ export function DeducteesStage({ direction, fy }: { direction: Direction; fy: st
                               <span className="sr-only">Toggle breakup</span>
                             </Button>
                           </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">{r.deductee_id || "—"}</TableCell>
                           <TableCell className="font-medium">{r.party_name}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1.5">
@@ -139,23 +149,43 @@ export function DeducteesStage({ direction, fy }: { direction: Direction; fy: st
                               </Badge>
                             </div>
                           </TableCell>
+                          <TableCell className="text-muted-foreground">{r.party_type || "—"}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={r.resident_status === "Non-Resident" ? "secondary" : "outline"}
+                              className="h-4 px-1.5 text-[10px] leading-none"
+                            >
+                              {r.resident_status}
+                            </Badge>
+                          </TableCell>
                           <TableCell className="text-muted-foreground">{r.sections.join(", ") || "—"}</TableCell>
-                          <TableCell className="text-muted-foreground">{r.quarters.join(", ") || "—"}</TableCell>
-                          <TableCell className="text-right">{r.doc_count}</TableCell>
-                          <TableCell className="text-right">{currency(r.base)}</TableCell>
+                          <TableCell className="text-muted-foreground">{r.payment_type || "—"}</TableCell>
+                          <TableCell className="text-right">{r.rate ? `${r.rate}%` : "—"}</TableCell>
                           <TableCell className="text-right font-medium">{currency(r.tds)}</TableCell>
                         </TableRow>
                         {isOpen ? (
                           <TableRow className="bg-muted/40 hover:bg-muted/40">
                             <TableCell />
-                            <TableCell colSpan={7} className="py-2">
+                            <TableCell colSpan={9} className="py-2">
                               <div className="rounded-md border bg-background">
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-xs text-muted-foreground">
+                                  <span>
+                                    Quarters: <span className="text-foreground">{r.quarters.join(", ") || "—"}</span>
+                                  </span>
+                                  <span>
+                                    Documents: <span className="text-foreground">{r.doc_count}</span>
+                                  </span>
+                                  <span>
+                                    Base: <span className="text-foreground">{currency(r.base)}</span>
+                                  </span>
+                                </div>
                                 <Table>
                                   <TableHeader>
                                     <TableRow>
                                       <TableHead>Section</TableHead>
                                       <TableHead className="text-right">Docs</TableHead>
                                       <TableHead className="text-right">Base</TableHead>
+                                      <TableHead className="text-right">Rate</TableHead>
                                       <TableHead className="text-right">TDS</TableHead>
                                     </TableRow>
                                   </TableHeader>
@@ -165,6 +195,7 @@ export function DeducteesStage({ direction, fy }: { direction: Direction; fy: st
                                         <TableCell className="font-medium">{b.section}</TableCell>
                                         <TableCell className="text-right">{b.doc_count}</TableCell>
                                         <TableCell className="text-right">{currency(b.base)}</TableCell>
+                                        <TableCell className="text-right">{b.rate ? `${b.rate}%` : "—"}</TableCell>
                                         <TableCell className="text-right">{currency(b.tds)}</TableCell>
                                       </TableRow>
                                     ))}

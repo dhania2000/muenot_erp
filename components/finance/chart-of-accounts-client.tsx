@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select"
 import {
   BookOpen, Coins, Plus, Pencil, Trash2, ChevronRight, ChevronDown,
-  Lock, Loader2Icon, CornerDownRight, ShieldCheck,
+  Lock, Loader2Icon, CornerDownRight, ShieldCheck, GitMerge, Settings2,
 } from "lucide-react"
 import { inr, inr0, financialYearFor } from "@/lib/finance-calc"
 import {
@@ -36,11 +36,15 @@ import {
   COA_SUB_TYPES_BY_TYPE,
   natureForAccountType,
 } from "@/lib/finance-module-configs"
+import { CoaMappingDialog } from "@/components/finance/coa-mapping-dialog"
+import { CoaMergeDialog } from "@/components/finance/coa-merge-dialog"
 
 type Row = Record<string, any>
 type ApiShape = { rows: Row[]; summary: any }
+type BalancesShape = { balances: Record<string, { net: number; balance: number; balance_type: string }> }
 
 const ENDPOINT = "/api/finance/module/chart-of-accounts"
+const BALANCES_ENDPOINT = "/api/finance/chart-of-accounts/balances"
 
 /** Nature badge colouring — Debit vs Credit are the two natural balance sides. */
 function natureVariant(nature: string): "default" | "secondary" {
@@ -143,10 +147,15 @@ export function ChartOfAccountsClient() {
   const [presetParent, setPresetParent] = useState<Row | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [mappingOpen, setMappingOpen] = useState(false)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeSource, setMergeSource] = useState<Row | null>(null)
 
   const { data, mutate } = useSWR<ApiShape>(ENDPOINT, fetcher)
+  const { data: balanceData, mutate: mutateBalances } = useSWR<BalancesShape>(BALANCES_ENDPOINT, fetcher)
   const rows = data?.rows ?? []
   const summary = data?.summary ?? {}
+  const balances = balanceData?.balances ?? {}
 
   const forest = useMemo(() => buildForest(rows), [rows])
 
@@ -211,10 +220,26 @@ export function ChartOfAccountsClient() {
           <p className="text-sm text-muted-foreground">Finance masters</p>
           <h1 className="text-3xl font-semibold tracking-tight text-balance">Chart of Accounts</h1>
         </div>
-        <Button onClick={openNew}>
-          <Plus data-icon="inline-start" />
-          New account
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={() => setMappingOpen(true)}>
+            <Settings2 data-icon="inline-start" />
+            Account mapping
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setMergeSource(null)
+              setMergeOpen(true)
+            }}
+          >
+            <GitMerge data-icon="inline-start" />
+            Merge accounts
+          </Button>
+          <Button onClick={openNew}>
+            <Plus data-icon="inline-start" />
+            New account
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -285,6 +310,7 @@ export function ChartOfAccountsClient() {
                           <th className="p-2 font-medium">Sub type</th>
                           <th className="p-2 font-medium">Nature</th>
                           <th className="p-2 text-right font-medium">Opening</th>
+                          <th className="p-2 text-right font-medium">Current (GL)</th>
                           <th className="p-2 font-medium">Status</th>
                           <th className="p-2 text-right font-medium">Actions</th>
                         </tr>
@@ -292,7 +318,7 @@ export function ChartOfAccountsClient() {
                       <tbody>
                         {nodes.length === 0 && (
                           <tr>
-                            <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                            <td colSpan={8} className="p-6 text-center text-muted-foreground">
                               No accounts in this group.
                             </td>
                           </tr>
@@ -319,6 +345,18 @@ export function ChartOfAccountsClient() {
                                 <Badge variant={natureVariant(row.nature)}>{row.nature || natureForAccountType(row.account_group)}</Badge>
                               </td>
                               <td className="p-2 text-right tabular-nums">{inr(row.opening_balance)}</td>
+                              <td className="p-2 text-right tabular-nums">
+                                {(() => {
+                                  const bal = balances[String(row.account_id)]
+                                  if (!bal || bal.balance === 0) return <span className="text-muted-foreground">—</span>
+                                  return (
+                                    <span>
+                                      {inr(bal.balance)}{" "}
+                                      <span className="text-xs text-muted-foreground">{bal.balance_type === "Debit" ? "Dr" : "Cr"}</span>
+                                    </span>
+                                  )
+                                })()}
+                              </td>
                               <td className="p-2">
                                 <Badge variant={row.active_status === "Active" ? "default" : "outline"}>
                                   {row.active_status || "Active"}
@@ -332,6 +370,20 @@ export function ChartOfAccountsClient() {
                                   <Button variant="ghost" size="icon" aria-label="Edit" onClick={() => openEdit(row)}>
                                     <Pencil className="size-4" />
                                   </Button>
+                                  {!isSystem && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      aria-label="Merge into another account"
+                                      title="Merge into another account"
+                                      onClick={() => {
+                                        setMergeSource(row)
+                                        setMergeOpen(true)
+                                      }}
+                                    >
+                                      <GitMerge className="size-4" />
+                                    </Button>
+                                  )}
                                   {isSystem ? (
                                     <Button
                                       variant="ghost"
@@ -377,6 +429,20 @@ export function ChartOfAccountsClient() {
         onSaved={() => {
           setDialogOpen(false)
           mutate()
+          mutateBalances()
+        }}
+      />
+
+      <CoaMappingDialog open={mappingOpen} onOpenChange={setMappingOpen} accounts={rows} />
+
+      <CoaMergeDialog
+        open={mergeOpen}
+        onOpenChange={setMergeOpen}
+        accounts={rows}
+        presetSource={mergeSource}
+        onMerged={() => {
+          mutate()
+          mutateBalances()
         }}
       />
     </main>

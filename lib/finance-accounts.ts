@@ -178,6 +178,18 @@ export type ResolvedAccount = {
  */
 export async function resolveAccount(role: AccountRole): Promise<ResolvedAccount> {
   const code = ROLE_DEFAULT_CODE[role]
+
+  // Configuration-based mapping takes precedence over the seeded code default
+  // (lib/finance-account-config.ts). When an admin has mapped this role to an
+  // explicit account, resolve that account directly; otherwise fall through to
+  // the code default so postings always land somewhere sensible.
+  const { getRoleOverrideAccountId } = await import("@/lib/finance-account-config")
+  const overrideId = await getRoleOverrideAccountId(role).catch(() => null)
+  if (overrideId) {
+    const overridden = await resolveAccountById(overrideId)
+    if (overridden) return overridden
+  }
+
   const rows = (await query(
     `SELECT account_id, account_code, account_name, account_group, account_type, nature, active_status
        FROM chart_of_accounts

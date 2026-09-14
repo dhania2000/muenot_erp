@@ -62,6 +62,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "hr",
     label: "HR",
     modules: [
+      // Dashboard rows carry no record-level ownership — only "view" is meaningful.
+      { key: "hr.dashboard", label: "HR Dashboard", group: "hr", aliases: ["dashboard"], scope: { table: "hr_employees" } },
       { key: "hr.employees", label: "Employees", group: "hr", aliases: ["employee"], scope: { table: "hr_employees", addedBy: "created_by" } },
       { key: "hr.documents", label: "Employee Documents", group: "hr", aliases: ["document"], scope: { table: "hr_employee_documents" } },
       { key: "hr.attendance", label: "Attendance", group: "hr", aliases: ["attendance", "regularisation"], scope: { table: "hr_attendance", addedBy: "user_id", ownedBy: "user_id" } },
@@ -82,6 +84,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "sales",
     label: "Sales",
     modules: [
+      { key: "sales.dashboard", label: "Sales Dashboard", group: "sales", aliases: ["dashboard"], scope: { table: "sales_leads" } },
       { key: "sales.leads", label: "Leads", group: "sales", aliases: ["lead"], scope: { table: "sales_leads", addedBy: "created_by", ownedBy: "assigned_to" } },
       { key: "sales.companies", label: "Companies", group: "sales", aliases: ["compan", "account"], scope: { table: "sales_companies", addedBy: "created_by", ownedBy: "assigned_to" } },
       { key: "sales.meetings", label: "Meetings", group: "sales", aliases: ["meeting"], scope: { table: "sales_meetings", addedBy: "added_by" } },
@@ -96,6 +99,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "finance",
     label: "Finance",
     modules: [
+      { key: "finance.dashboard", label: "Finance Dashboard", group: "finance", aliases: ["dashboard"], scope: { table: "finance_records" } },
       // "Sales Invoices" is a Finance sub-module (page lives at /modules/finance/sales-invoices).
       { key: "finance.sales_invoices", label: "Sales Invoices", group: "finance", aliases: ["sales_invoice"], scope: { table: "sales_invoices", addedBy: "created_by" } },
       { key: "finance.purchase_bills", label: "Purchase Bills", group: "finance", aliases: ["purchase", "bill"], scope: { table: "purchase_bills", addedBy: "created_by" } },
@@ -118,6 +122,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "recruitment",
     label: "Recruitment",
     modules: [
+      { key: "recruitment.dashboard", label: "Recruitment Dashboard", group: "recruitment", aliases: ["dashboard"], scope: { table: "recruit_jobs" } },
       { key: "recruitment.requisitions", label: "Job Requisitions", group: "recruitment", aliases: ["requisition", "job", "application"], scope: { table: "recruitment_requisitions", addedBy: "created_by" } },
       { key: "recruitment.candidates", label: "Candidates", group: "recruitment", aliases: ["candidate", "screening", "source", "call"], scope: { table: "recruitment_candidates", addedBy: "created_by", ownedBy: "assigned_to" } },
       { key: "recruitment.interviews", label: "Interviews & Assessments", group: "recruitment", aliases: ["interview", "assessment"], scope: { table: "recruitment_interviews", addedBy: "created_by" } },
@@ -132,6 +137,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "operations",
     label: "Operations",
     modules: [
+      { key: "operations.dashboard", label: "Operations Dashboard", group: "operations", aliases: ["dashboard"], scope: { table: "operations_projects" } },
       { key: "operations.resources", label: "Resources", group: "operations", aliases: ["resource"], scope: { table: "operations_resources", addedBy: "created_by" } },
       { key: "operations.projects", label: "Projects", group: "operations", aliases: ["project"], scope: { table: "operations_projects", addedBy: "created_by", ownedBy: "assigned_to" } },
       { key: "operations.allocations", label: "Allocations", group: "operations", aliases: ["allocation"], scope: { table: "operations_allocations", addedBy: "created_by" } },
@@ -175,6 +181,21 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     modules: [
       { key: "legal.contracts", label: "Contracts", group: "legal", aliases: ["contract"], scope: { table: "legal_contracts", addedBy: "created_by" } },
       { key: "legal.esign", label: "Esign", group: "legal", aliases: ["esign", "sign", "signature"], scope: { table: "legal_esign_requests", addedBy: "created_by" } },
+    ],
+  },
+  {
+    slug: "marketing",
+    label: "Marketing",
+    modules: [
+      { key: "marketing.dashboard", label: "Marketing Dashboard", group: "marketing", aliases: ["dashboard"], scope: { table: "social_posts" } },
+      { key: "marketing.contacts", label: "Contacts", group: "marketing", aliases: ["contact"], scope: { table: "marketing_contacts" } },
+      { key: "marketing.lead_generation", label: "Lead Generation", group: "marketing", aliases: ["lead_generation", "generation", "lead"], scope: { table: "marketing_leads" } },
+      { key: "marketing.journeys", label: "Journeys", group: "marketing", aliases: ["journey"], scope: { table: "marketing_journeys" } },
+      { key: "marketing.planner", label: "Marketing Planner", group: "marketing", aliases: ["planner", "plan"], scope: { table: "marketing_planner" } },
+      // "social"/"email"/"whatsapp" aliases keep the legacy marketing.social.* feature slugs mapped here.
+      { key: "marketing.campaigns", label: "Campaigns", group: "marketing", aliases: ["campaign", "social", "whatsapp"], scope: { table: "social_posts", addedBy: "created_by" } },
+      { key: "marketing.website_analytics", label: "Website Analytics", group: "marketing", aliases: ["website_analytics", "analytics", "website"], scope: { table: "marketing_website_analytics" } },
+      { key: "marketing.library", label: "Library", group: "marketing", aliases: ["library"], scope: { table: "marketing_library" } },
     ],
   },
   {

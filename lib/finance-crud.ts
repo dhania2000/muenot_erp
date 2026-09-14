@@ -11,6 +11,8 @@ import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finan
 import { nextExpenseId, computeExpenseServerFields, validateExpense, findDuplicateExpense } from "@/lib/finance-expenses"
 import { nextBankTransactionId, syncBankTransactionPosting, reverseBankTransactionPosting } from "@/lib/finance-bank-posting"
 import { nextFinanceAccountId, recomputeAccountBalance, recomputeBalancesForBankTxn } from "@/lib/finance-account-master"
+import { guardBankTransactionWrite, guardBankAccountClose } from "@/lib/finance-bank-guards"
+import { logFinanceEvent } from "@/lib/finance-audit"
 import {
   syncGstInputForBill,
   deleteGstInputForBill,
@@ -95,6 +97,20 @@ const DUPLICATE_CHECKS: Record<
 }
 
 /**
+ * Optional per-module ASYNC guard (period lock, cross-record status checks).
+ * Runs on both create and edit AFTER the sync validator and augment, but before
+ * the write. Returning a string rejects the request with 400. Unlike VALIDATORS
+ * these may touch the database (e.g. read another account's status).
+ */
+const ASYNC_GUARDS: Record<
+  string,
+  (merged: Record<string, any>, ctx: { isCreate: boolean; existing: Record<string, any> | null }) => Promise<string | null>
+> = {
+  "bank-transactions": (merged) => guardBankTransactionWrite(merged),
+  "bank-cash": (merged, ctx) => guardBankAccountClose(merged, ctx.existing),
+}
+
+/**
  * Optional per-module side effect that runs AFTER a create/update has been
  * committed to the module's own table. For Purchase Bills this is where the
  * frozen line-item snapshot is persisted (Phase 6/7) and the bill is projected
@@ -103,7 +119,13 @@ const DUPLICATE_CHECKS: Record<
  */
 const AFTER_WRITE: Record<
   string,
-  (ctx: { finalRow: Record<string, any>; body: Record<string, any>; userId: number; isCreate: boolean }) => Promise<void>
+  (ctx: {
+    finalRow: Record<string, any>
+    body: Record<string, any>
+    userId: number
+    isCreate: boolean
+    existing: Record<string, any> | null
+  }) => Promise<void>
 > = {
   "purchase-bills": async ({ finalRow, body, userId }) => {
     const billId = finalRow[cfgIdColumn("purchase-bills")]
@@ -176,9 +198,38 @@ const AFTER_WRITE: Record<
   // from the account's own transactions after every create / edit so an edited
   // opening balance (or a fresh account) immediately reflects the correct book
   // balance and reconciliation difference.
-  "bank-cash": async ({ finalRow }) => {
-    const accountId = finalRow[cfgIdColumn("bank-cash")]
-    if (accountId) await recomputeAccountBalance(String(accountId))
+  "bank-cash": async ({ finalRow, existing, isCreate, userId }) => {
+    const accountId = String(finalRow[cfgIdColumn("bank-cash")] ?? existing?.finance_account_id ?? "").trim()
+    if (!accountId) return
+    await recomputeAccountBalance(accountId)
+
+    // Audit the account lifecycle (create / rename / close / reopen). Read the
+    // committed row so the numeric pk and post-write state are authoritative.
+    const [row] = (await query(
+      `SELECT id, account_name, active_status FROM finance_accounts WHERE finance_account_id = ? LIMIT 1`,
+      [accountId],
+    )) as any[]
+    if (!row) return
+    const base = {
+      entityType: "finance_account",
+      entityPk: Number(row.id),
+      entityRef: accountId,
+      actorId: userId,
+    }
+    if (isCreate) {
+      await logFinanceEvent({ ...base, type: "created", summary: `Account ${accountId} created`, detail: { name: row.account_name } })
+      return
+    }
+    if (!existing) return
+    const oldStatus = String(existing.active_status ?? "")
+    const newStatus = String(row.active_status ?? "")
+    if (oldStatus !== newStatus) {
+      const type = newStatus === "Closed" ? "cancelled" : oldStatus === "Closed" ? "reopened" : "updated"
+      await logFinanceEvent({ ...base, type, summary: `Status changed ${oldStatus || "—"} → ${newStatus || "—"}`, detail: { from: oldStatus, to: newStatus } })
+    }
+    if (String(existing.account_name ?? "") !== String(row.account_name ?? "")) {
+      await logFinanceEvent({ ...base, type: "updated", summary: `Renamed to ${row.account_name}`, detail: { from: existing.account_name, to: row.account_name } })
+    }
   },
 }
 
@@ -284,6 +335,7 @@ export function createFinanceHandlers(moduleKey: string) {
 
   const validate = VALIDATORS[moduleKey]
   const duplicateCheck = DUPLICATE_CHECKS[moduleKey]
+  const asyncGuard = ASYNC_GUARDS[moduleKey]
 
   const augment = SERVER_AUGMENT[moduleKey]
   const idGenerator = ID_GENERATORS[moduleKey]
@@ -391,6 +443,13 @@ export function createFinanceHandlers(moduleKey: string) {
       if (message) return NextResponse.json({ error: message }, { status: 400 })
     }
 
+    // Async guard (period lock, closed-account). May read other rows; runs on
+    // the merged record before the id is minted so a rejection burns nothing.
+    if (asyncGuard) {
+      const message = await asyncGuard({ ...body, ...record }, { isCreate: true, existing: null })
+      if (message) return NextResponse.json({ error: message }, { status: 400 })
+    }
+
     // Duplicate guard (Phase 24). Only on create, and only when the client has
     // not already confirmed with `__forceCreate`. A hit returns 409 so the form
     // can surface the existing record and ask the user to confirm.
@@ -430,7 +489,7 @@ export function createFinanceHandlers(moduleKey: string) {
     )
 
     const afterWrite = AFTER_WRITE[moduleKey]
-    if (afterWrite) await afterWrite({ finalRow: record, body, userId: session.userId, isCreate: true })
+    if (afterWrite) await afterWrite({ finalRow: record, body, userId: session.userId, isCreate: true, existing: null })
 
     // Snapshot the assignee's reporting manager for the second approval stage.
     if (INVOICE_WORKFLOW_MODULES.has(moduleKey)) await snapshotInvoiceManager(moduleKey, record)
@@ -458,6 +517,13 @@ export function createFinanceHandlers(moduleKey: string) {
     // Hard validation (Phase 25) on the merged row before any write.
     if (validate) {
       const message = validate(merged)
+      if (message) return NextResponse.json({ error: message }, { status: 400 })
+    }
+
+    // Async guard (period lock, closed-account, pre-close balance/reconciliation
+    // checks) against the merged row plus its prior committed state.
+    if (asyncGuard) {
+      const message = await asyncGuard(merged, { isCreate: false, existing })
       if (message) return NextResponse.json({ error: message }, { status: 400 })
     }
 
@@ -499,7 +565,7 @@ export function createFinanceHandlers(moduleKey: string) {
       // Re-read the row so the side effect keys off the committed state (the
       // update set only carries changed columns, not the whole bill).
       const [finalRow] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
-      if (finalRow) await afterWrite({ finalRow, body, userId: session.userId, isCreate: false })
+      if (finalRow) await afterWrite({ finalRow, body, userId: session.userId, isCreate: false, existing })
     }
 
     // Re-snapshot the reporting manager in case the assignee changed on edit.

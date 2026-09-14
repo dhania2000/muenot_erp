@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth"
 import { getSettings } from "@/lib/settings/server"
 import { ensureFteInvoiceColumns } from "@/lib/finance-ensure"
 import { buildFteInvoicePdf, companyFromSettings, type InvoiceBank } from "@/lib/finance-invoice-pdf"
+import { canDownloadInvoice } from "@/lib/finance-invoice-workflow"
 
 export const runtime = "nodejs"
 
@@ -36,6 +37,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
   await ensureFteInvoiceColumns()
   const { id } = await ctx.params
+
+  // Approval-gated download: the assignee cannot pull the PDF until they have
+  // approved, and a manager only once the invoice has reached their stage.
+  // Admins (HR/Finance) always pass.
+  if (!(await canDownloadInvoice("fte-invoices", Number(id), session))) {
+    return NextResponse.json({ error: "You cannot download this invoice yet." }, { status: 403 })
+  }
+
   const [inv] = (await query(`SELECT * FROM fte_invoices WHERE id = ? LIMIT 1`, [Number(id)])) as any[]
   if (!inv) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
 

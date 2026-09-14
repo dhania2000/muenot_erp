@@ -17,7 +17,7 @@ import {
 import {
   Plus, FilterX, Pencil, Eye, Trash2, Upload, FileDown, Send, Loader2Icon,
   Receipt, Coins, Wallet, Clock, Landmark, FileText, Users, TrendingUp,
-  Banknote, BookOpen, CreditCard, ArrowLeftRight,
+  Banknote, BookOpen, CreditCard, ArrowLeftRight, Check, X,
 } from "lucide-react"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
@@ -42,6 +42,53 @@ const MONTHS = [
 ]
 
 type Row = Record<string, any>
+
+// Two-stage invoice approval workflow (Freelance + FTE). Mirrors the labels in
+// lib/finance-invoice-workflow.ts. Rows carry a per-user `__caps` object from
+// the server that decides what the current viewer may do with each row.
+const WORKFLOW_MODULE_KEYS = new Set(["freelance-invoices", "fte-invoices"])
+
+const WF = {
+  PENDING_EMPLOYEE: "Pending Employee Approval",
+  PENDING_MANAGER: "Pending Manager Approval",
+  READY: "Ready for Disbursement",
+  REJECTED_EMPLOYEE: "Rejected by Employee",
+  REJECTED_MANAGER: "Rejected by Manager",
+}
+
+type RowCaps = {
+  relation: "full" | "assignee" | "manager" | "none"
+  canView: boolean
+  canDownload: boolean
+  canEmployeeAct: boolean
+  canManagerAct: boolean
+}
+
+function rowCaps(row: Row): RowCaps | null {
+  return (row.__caps as RowCaps) ?? null
+}
+
+function workflowBadgeVariant(status: string): BadgeVariant {
+  switch (status) {
+    case WF.READY:
+      return "default"
+    case WF.REJECTED_EMPLOYEE:
+    case WF.REJECTED_MANAGER:
+      return "destructive"
+    case WF.PENDING_MANAGER:
+      return "secondary"
+    default:
+      return "outline"
+  }
+}
+
+/** Human label for the approval badge. Rejections name who rejected it. */
+function workflowLabel(row: Row): string {
+  const status = row.workflow_status || WF.PENDING_EMPLOYEE
+  if (status === WF.REJECTED_EMPLOYEE) return `Invoice Rejected By ${row.workflow_rejected_by || "Employee"}`
+  if (status === WF.REJECTED_MANAGER) return `Invoice Rejected By ${row.workflow_rejected_by || "Manager"}`
+  return status
+}
 
 function cellValue(col: TableColumn, row: Row) {
   const raw = row[col.key]
@@ -72,6 +119,10 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
   const [editing, setEditing] = useState<Row | null>(null)
   const [viewing, setViewing] = useState<Row | null>(null)
   const [sending, setSending] = useState<Row | null>(null)
+  const [rejecting, setRejecting] = useState<{ row: Row; kind: "employee" | "manager" } | null>(null)
+  const [actingId, setActingId] = useState<number | null>(null)
+
+  const isWorkflow = WORKFLOW_MODULE_KEYS.has(cfg.key)
 
   const queryKey = useMemo(() => {
     const params = new URLSearchParams()
@@ -101,6 +152,25 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
     if (!confirm(`Delete ${row[cfg.idColumn]}? This cannot be undone.`)) return
     await fetch(`/api/finance/module/${cfg.key}?id=${row.id}`, { method: "DELETE" })
     mutate()
+  }
+
+  async function approve(row: Row, kind: "employee" | "manager") {
+    setActingId(row.id)
+    try {
+      const res = await fetch(`/api/finance/module/${cfg.key}/workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: row.id, action: kind === "employee" ? "employee_approve" : "manager_approve" }),
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        alert(json.error || "Could not approve the invoice.")
+        return
+      }
+      mutate()
+    } finally {
+      setActingId(null)
+    }
   }
 
   return (
@@ -226,13 +296,14 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
                       {col.label}
                     </th>
                   ))}
+                  {isWorkflow && <th className="p-2 font-medium">Approval</th>}
                   <th className="p-2 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={cfg.tableColumns.length + 1} className="p-6 text-center text-muted-foreground">
+                    <td colSpan={cfg.tableColumns.length + (isWorkflow ? 2 : 1)} className="p-6 text-center text-muted-foreground">
                       No records match the current filters.
                     </td>
                   </tr>
@@ -244,9 +315,66 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
                         <TableCellContent col={col} row={row} />
                       </td>
                     ))}
+                    {isWorkflow && (
+                      <td className="p-2">
+                        <Badge variant={workflowBadgeVariant(row.workflow_status || WF.PENDING_EMPLOYEE)}>
+                          {workflowLabel(row)}
+                        </Badge>
+                        {(row.workflow_status === WF.REJECTED_EMPLOYEE || row.workflow_status === WF.REJECTED_MANAGER) &&
+                          row.workflow_rejection_reason && (
+                            <div className="mt-1 max-w-[16rem] text-xs text-muted-foreground">
+                              {row.workflow_rejection_reason}
+                            </div>
+                          )}
+                      </td>
+                    )}
                     <td className="p-2">
                       <div className="flex items-center justify-end gap-1">
-                        {cfg.pdfPath && (
+                        {isWorkflow && rowCaps(row)?.canEmployeeAct && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Approve as employee"
+                              disabled={actingId === row.id}
+                              onClick={() => approve(row, "employee")}
+                            >
+                              {actingId === row.id ? <Loader2Icon className="size-4 animate-spin" /> : <Check className="size-4 text-emerald-600" />}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Reject as employee"
+                              disabled={actingId === row.id}
+                              onClick={() => setRejecting({ row, kind: "employee" })}
+                            >
+                              <X className="size-4 text-destructive" />
+                            </Button>
+                          </>
+                        )}
+                        {isWorkflow && rowCaps(row)?.canManagerAct && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Approve as manager"
+                              disabled={actingId === row.id}
+                              onClick={() => approve(row, "manager")}
+                            >
+                              {actingId === row.id ? <Loader2Icon className="size-4 animate-spin" /> : <Check className="size-4 text-emerald-600" />}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Reject as manager"
+                              disabled={actingId === row.id}
+                              onClick={() => setRejecting({ row, kind: "manager" })}
+                            >
+                              <X className="size-4 text-destructive" />
+                            </Button>
+                          </>
+                        )}
+                        {cfg.pdfPath && (!isWorkflow || rowCaps(row)?.canDownload) && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -318,6 +446,18 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
       )}
 
       <DetailDialog cfg={cfg} row={viewing} onClose={() => setViewing(null)} />
+
+      {isWorkflow && (
+        <RejectInvoiceDialog
+          cfg={cfg}
+          target={rejecting}
+          onClose={() => setRejecting(null)}
+          onRejected={() => {
+            setRejecting(null)
+            mutate()
+          }}
+        />
+      )}
 
       {cfg.invoiceActions && (
         <SendInvoiceDialog
@@ -458,6 +598,106 @@ function SendInvoiceDialog({
               <Button onClick={submit} disabled={busy || !to.trim()}>
                 {busy ? <Loader2Icon className="size-4 animate-spin" data-icon="inline-start" /> : <Send data-icon="inline-start" />}
                 {busy ? "Sending..." : "Send invoice"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RejectInvoiceDialog({
+  cfg,
+  target,
+  onClose,
+  onRejected,
+}: {
+  cfg: ModuleConfig
+  target: { row: Row; kind: "employee" | "manager" } | null
+  onClose: () => void
+  onRejected: () => void
+}) {
+  const [reason, setReason] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [lastRowId, setLastRowId] = useState<number | null>(null)
+
+  // Reset the form whenever a different invoice is opened.
+  if (target && target.row.id !== lastRowId) {
+    setLastRowId(target.row.id)
+    setReason("")
+    setError(null)
+    setBusy(false)
+  }
+
+  async function submit() {
+    if (!target) return
+    if (!reason.trim()) {
+      setError("A rejection reason is required.")
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/finance/module/${cfg.key}/workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: target.row.id,
+          action: target.kind === "employee" ? "employee_reject" : "manager_reject",
+          reason: reason.trim(),
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setError(json.error || "Failed to reject the invoice.")
+        return
+      }
+      onRejected()
+    } catch {
+      setError("Network error while rejecting the invoice.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={!!target} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        {target && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Reject invoice</DialogTitle>
+              <DialogDescription>
+                Rejecting <span className="font-mono">{target.row[cfg.idColumn]}</span> as{" "}
+                {target.kind === "employee" ? "employee" : "manager"}. Provide a reason.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              <Field>
+                <FieldLabel htmlFor="reject-reason">Rejection reason</FieldLabel>
+                <Textarea
+                  id="reject-reason"
+                  rows={4}
+                  placeholder="Explain why this invoice is being rejected"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                />
+              </Field>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose} disabled={busy}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={submit} disabled={busy || !reason.trim()}>
+                {busy ? <Loader2Icon className="size-4 animate-spin" data-icon="inline-start" /> : <X data-icon="inline-start" />}
+                {busy ? "Rejecting..." : "Reject invoice"}
               </Button>
             </DialogFooter>
           </>

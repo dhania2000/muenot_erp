@@ -4,6 +4,8 @@ import { getSession } from "@/lib/auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { parseSpreadsheetDate } from "@/lib/excel-import"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
+import { nextBankTransactionId } from "@/lib/finance-bank-posting"
+import { ensureBankTransactionColumns } from "@/lib/finance-ensure"
 
 /**
  * Config-driven bulk importer for a Finance module (e.g. a bank statement
@@ -37,7 +39,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ key: strin
     return NextResponse.json({ error: "Select a bank / cash account before importing" }, { status: 400 })
   }
 
+  // Self-heal the Bank Transactions schema so a statement import never fails on
+  // a missing column, and so imported rows land as unposted/unreconciled drafts.
+  if (key === "bank-transactions") await ensureBankTransactionColumns()
+
   let imported = 0
+  let skipped = 0
   const errors: string[] = []
 
   for (let index = 0; index < rows.length; index++) {
@@ -72,8 +79,39 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ key: strin
     const derived = cfg.compute ? cfg.compute(record) : {}
     Object.assign(record, derived)
 
+    // Statement-line duplicate guard (Phase 27/28/91). A row matching an
+    // existing transaction on the same account, date, amount and reference is
+    // almost certainly a re-uploaded statement line — skip it and report it
+    // rather than silently doubling the register.
+    if (key === "bank-transactions" && record.bank_cash_account_id) {
+      const dup = (await query(
+        `SELECT transaction_id FROM bank_transactions
+           WHERE bank_cash_account_id = ? AND transaction_date = ?
+             AND debit = ? AND credit = ? AND COALESCE(reference_no,'') = ?
+           LIMIT 1`,
+        [
+          record.bank_cash_account_id,
+          record[cfg.dateColumn || "transaction_date"] ?? null,
+          parseAmount(record.debit),
+          parseAmount(record.credit),
+          record.reference_no ?? "",
+        ],
+      )) as any[]
+      if (dup.length) {
+        skipped++
+        errors.push(`Row ${index + 2}: duplicate of ${dup[0].transaction_id} (same account, date, amount & reference) — skipped`)
+        continue
+      }
+    }
+
     if (cfg.statusColumn && !record[cfg.statusColumn]) record[cfg.statusColumn] = "Unreconciled"
-    if (cfg.idPrefix) record[cfg.idColumn] = await nextRecordId(cfg.idPrefix)
+    // FY-scoped business key for bank transactions (BT-2026-000001); other
+    // modules keep the generic prefix sequence.
+    if (key === "bank-transactions") {
+      record[cfg.idColumn] = await nextBankTransactionId(record[cfg.dateColumn || "transaction_date"])
+    } else if (cfg.idPrefix) {
+      record[cfg.idColumn] = await nextRecordId(cfg.idPrefix)
+    }
     record.created_by = session.userId
 
     try {

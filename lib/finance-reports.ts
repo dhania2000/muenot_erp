@@ -193,6 +193,78 @@ export const FINANCE_REPORTS: ReportDef[] = [
       { key: "d90_plus", label: "90d+", align: "right", money: true },
     ],
   },
+  {
+    key: "bank-book",
+    label: "Bank Book",
+    group: "Finance",
+    description: "Day-by-day money in / out per bank & cash account with running turnover (Phase 101).",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT COALESCE(NULLIF(bank_cash_account_name,''),'Unassigned account') AS account,
+             COUNT(*) AS entries,
+             COALESCE(SUM(debit),0) AS money_out,
+             COALESCE(SUM(credit),0) AS money_in,
+             COALESCE(SUM(credit),0) - COALESCE(SUM(debit),0) AS net_movement
+      FROM bank_transactions
+      WHERE 1=1 ${RANGE}
+      GROUP BY account
+      ORDER BY net_movement DESC`,
+    columns: [
+      { key: "account", label: "Account" },
+      { key: "entries", label: "Entries", align: "right" },
+      { key: "money_in", label: "Money In", align: "right", money: true },
+      { key: "money_out", label: "Money Out", align: "right", money: true },
+      { key: "net_movement", label: "Net Movement", align: "right", money: true },
+    ],
+  },
+  {
+    key: "cash-book",
+    label: "Cash Book",
+    group: "Finance",
+    description: "Cash-account receipts and payments only, month by month (Phase 101).",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT DATE_FORMAT(transaction_date, '%Y-%m') AS period,
+             COALESCE(SUM(credit),0) AS receipts,
+             COALESCE(SUM(debit),0) AS payments,
+             COALESCE(SUM(credit),0) - COALESCE(SUM(debit),0) AS net
+      FROM bank_transactions
+      WHERE transaction_date IS NOT NULL
+        AND (COALESCE(account_type,'') = 'Cash' OR bank_cash_account_name LIKE '%Cash%') ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Month" },
+      { key: "receipts", label: "Receipts", align: "right", money: true },
+      { key: "payments", label: "Payments", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+    ],
+  },
+  {
+    key: "bank-reconciliation",
+    label: "Bank Reconciliation",
+    group: "Finance",
+    description: "Reconciled vs unreconciled bank transactions per account, with pending value (Phase 102).",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT COALESCE(NULLIF(bank_cash_account_name,''),'Unassigned account') AS account,
+             COUNT(*) AS total_entries,
+             SUM(CASE WHEN COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') = 'Reconciled' THEN 1 ELSE 0 END) AS reconciled,
+             SUM(CASE WHEN COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') <> 'Reconciled' THEN 1 ELSE 0 END) AS unreconciled,
+             COALESCE(SUM(CASE WHEN COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') <> 'Reconciled'
+                               THEN GREATEST(COALESCE(debit,0), COALESCE(credit,0)) ELSE 0 END),0) AS unreconciled_value
+      FROM bank_transactions
+      WHERE 1=1 ${RANGE}
+      GROUP BY account
+      ORDER BY unreconciled_value DESC`,
+    columns: [
+      { key: "account", label: "Account" },
+      { key: "total_entries", label: "Entries", align: "right" },
+      { key: "reconciled", label: "Reconciled", align: "right" },
+      { key: "unreconciled", label: "Unreconciled", align: "right" },
+      { key: "unreconciled_value", label: "Pending Value", align: "right", money: true },
+    ],
+  },
   // -------------------------------------------------------------------------
   // Sales / CRM
   // -------------------------------------------------------------------------

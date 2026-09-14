@@ -1,4 +1,4 @@
-import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill, computeExpense } from "@/lib/finance-calc"
+import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill, computeExpense, accountingPeriodFor, fiscalQuarterFor } from "@/lib/finance-calc"
 import { EMPLOYEE_EXPENSE_TYPES, VENDOR_EXPENSE_TYPES } from "@/lib/finance-expense-types"
 import type { FieldDef, FieldType, ModuleConfig } from "@/lib/finance-schema"
 
@@ -658,6 +658,20 @@ const freelanceInvoices: ModuleConfig = {
 // ---------------------------------------------------------------------------
 // 5. Bank Transactions
 // ---------------------------------------------------------------------------
+// Transaction types drive the debit/credit meaning and which contra/tax fields
+// are relevant. The Bank/Cash account, parties, account head and project are
+// all resolved from their authoritative masters (never hand-typed), and a
+// posted transaction is projected into the SAME Journal + General Ledger engine
+// used by Purchase Bills — Bank Transactions never own a parallel accounting.
+const BANK_TRANSACTION_TYPES = ["Receipt", "Payment", "Transfer", "Bank Charge", "Interest", "Refund", "Adjustment", "Other"]
+const BANK_VOUCHER_TYPES = ["Bank", "Cash", "Contra", "Journal", "Receipt", "Payment"]
+const BANK_PARTY_TYPES = ["Customer", "Vendor", "Employee", "Other"]
+const BANK_SOURCE_MODULES = ["Sales Invoice", "Purchase Bill", "Expense", "FTE", "Freelance", "Payment", "Journal", "Other"]
+const BANK_RECON_STATUSES = ["Unreconciled", "Pending", "Reconciled"]
+// GST / TDS only make sense on cash movements that carry tax — never on a plain
+// bank-to-bank transfer (Phase 10).
+const BANK_TAX_TYPES = BANK_TRANSACTION_TYPES.filter((t) => t !== "Transfer")
+
 const bankTransactions: ModuleConfig = {
   key: "bank-transactions",
   table: "bank_transactions",
@@ -665,44 +679,159 @@ const bankTransactions: ModuleConfig = {
   subtitle: "Finance management",
   addLabel: "New transaction",
   idColumn: "transaction_id",
-  idPrefix: "BTX",
+  idPrefix: "BT",
   dateColumn: "transaction_date",
   financialYearColumn: "financial_year",
   statusColumn: "reconciliation_status",
-  searchColumns: ["transaction_id", "account_name", "party_name", "reference_no", "narration"],
+  searchColumns: ["transaction_id", "account_name", "party_name", "account_head", "reference_no", "cheque_utr_reference", "source_transaction_id", "narration"],
+  uploadPath: "/api/finance/module/bank-transactions/upload",
+  // Master pickers (Phases 3–6). Bank/Cash from the Finance accounts master
+  // (active only), the party from the right master by party type (Customer →
+  // Clients, Vendor → Vendors, Employee → HR), the account head from the Chart
+  // of Accounts, the project from Operations, and — for a transfer — the second
+  // Bank/Cash account. Selecting a row fills the id + name fields and never lets
+  // a random name be typed.
+  lookups: [
+    {
+      key: "bank_cash",
+      label: "Bank / Cash account",
+      path: "/api/finance/expenses/lookups?type=bank",
+      sourceIdColumn: "finance_account_id",
+      sourceNameColumn: "account_name",
+      sourceSubColumn: "bank_name",
+      idField: "bank_cash_account_id",
+      nameField: "account_name",
+      autofill: {},
+      required: true,
+    },
+    {
+      key: "customer",
+      label: "Customer",
+      path: "/api/finance/expenses/lookups?type=client",
+      sourceIdColumn: "client_code",
+      sourceNameColumn: "client_name",
+      sourceSubColumn: "company_name",
+      idField: "party_id",
+      nameField: "party_name",
+      autofill: {},
+      visibleWhen: { field: "party_type", in: ["Customer"] },
+    },
+    {
+      key: "vendor",
+      label: "Vendor",
+      path: "/api/finance/expenses/lookups?type=vendor",
+      sourceIdColumn: "party_id",
+      sourceNameColumn: "customer_name",
+      sourceSubColumn: "gstin",
+      idField: "party_id",
+      nameField: "party_name",
+      autofill: {},
+      visibleWhen: { field: "party_type", in: ["Vendor"] },
+    },
+    {
+      key: "employee",
+      label: "Employee",
+      path: "/api/finance/expenses/lookups?type=employee",
+      sourceIdColumn: "employee_id",
+      sourceNameColumn: "employee_name",
+      sourceSubColumn: "department",
+      idField: "party_id",
+      nameField: "party_name",
+      autofill: {},
+      visibleWhen: { field: "party_type", in: ["Employee"] },
+    },
+    {
+      key: "account_head",
+      label: "Account head",
+      path: "/api/finance/expenses/lookups?type=coa",
+      sourceIdColumn: "account_id",
+      sourceNameColumn: "account_name",
+      sourceSubColumn: "account_group",
+      idField: "account_head_id",
+      nameField: "account_head",
+      autofill: {},
+      visibleWhen: { field: "transaction_type", in: BANK_TAX_TYPES },
+    },
+    {
+      key: "project",
+      label: "Project",
+      path: "/api/finance/expenses/lookups?type=project",
+      sourceIdColumn: "project_id",
+      sourceNameColumn: "project_name",
+      sourceSubColumn: "client_name",
+      idField: "project_id",
+      nameField: "project_name",
+      autofill: {},
+    },
+    {
+      key: "counter_account",
+      label: "Transfer to / from account",
+      path: "/api/finance/expenses/lookups?type=bank",
+      sourceIdColumn: "finance_account_id",
+      sourceNameColumn: "account_name",
+      sourceSubColumn: "bank_name",
+      idField: "counter_account_id",
+      nameField: "counter_account_name",
+      autofill: {},
+      visibleWhen: { field: "transaction_type", in: ["Transfer"] },
+    },
+  ],
   fields: [
+    // TRANSACTION — the period fields (FY / month / quarter / accounting period)
+    // are all derived server-side from the transaction date (Phases 67/68).
     fld("Transaction", "transaction_date", "Transaction date", "date", { required: true }),
     fld("Transaction", "value_date", "Value date", "date"),
-    fld("Transaction", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
-    fld("Transaction", "bank_cash_account_id", "Bank / Cash account ID", "text"),
-    fld("Transaction", "account_name", "Account name", "text", { required: true }),
-    fld("Transaction", "transaction_type", "Transaction type", "select", { options: ["Receipt", "Payment", "Contra", "Journal"] }),
-    fld("Transaction", "voucher_type", "Voucher type", "select", { options: ["Cash", "Bank", "Journal", "Sales", "Purchase"], optional: true }),
-    fld("Transaction", "reference_no", "Reference no.", "text"),
-    fld("Parties & heads", "party_id", "Party ID", "text"),
-    fld("Parties & heads", "party_name", "Party name", "text"),
-    fld("Parties & heads", "account_head_id", "Account head ID", "text"),
-    fld("Parties & heads", "account_head", "Account head", "text"),
-    fld("Parties & heads", "project_id", "Project ID", "text"),
-    fld("Parties & heads", "project_name", "Project name", "text"),
-    fld("Amounts", "debit", "Debit", "number"),
-    fld("Amounts", "credit", "Credit", "number"),
+    fld("Transaction", "transaction_type", "Transaction type", "select", { options: BANK_TRANSACTION_TYPES, required: true }),
+    fld("Transaction", "voucher_type", "Voucher type", "select", { options: BANK_VOUCHER_TYPES, optional: true, emptyLabel: "Auto" }),
+    fld("Transaction", "reference_no", "Reference no.", "text", { placeholder: "Optional reference" }),
+    fld("Transaction", "financial_year", "Financial year", "text", { placeholder: "Auto from date" }),
+    fld("Transaction", "month", "Month", "select", { options: MONTHS, optional: true, emptyLabel: "Auto from date" }),
+    fld("Transaction", "quarter", "Quarter", "text", { placeholder: "Auto from date" }),
+    fld("Transaction", "accounting_period", "Accounting period", "text", { placeholder: "Auto (Apr-2026)" }),
+    // BANK / CASH — resolved from the Bank & Cash master (active accounts only).
+    fld("Bank / Cash account", "account_name", "Account name", "text", { required: true, placeholder: "Pick from Bank & Cash" }),
+    fld("Bank / Cash account", "bank_cash_account_id", "Bank / Cash account ID", "text", { placeholder: "Auto" }),
+    fld("Bank / Cash account", "counter_account_name", "Transfer counter account", "text", { visibleWhen: { field: "transaction_type", in: ["Transfer"] }, placeholder: "Pick the other account" }),
+    fld("Bank / Cash account", "counter_account_id", "Counter account ID", "text", { visibleWhen: { field: "transaction_type", in: ["Transfer"] }, placeholder: "Auto" }),
+    // PARTY & HEADS — smart party picker + Chart-of-Accounts head + Project.
+    fld("Parties & heads", "party_type", "Party type", "select", { options: BANK_PARTY_TYPES, optional: true, emptyLabel: "Not linked" }),
+    fld("Parties & heads", "party_id", "Party ID", "text", { placeholder: "Auto from master" }),
+    fld("Parties & heads", "party_name", "Party name", "text", { placeholder: "Auto (or type for Other)" }),
+    fld("Parties & heads", "account_head", "Account head", "text", { visibleWhen: { field: "transaction_type", in: BANK_TAX_TYPES }, placeholder: "Pick from Chart of Accounts" }),
+    fld("Parties & heads", "account_head_id", "Account head ID", "text", { visibleWhen: { field: "transaction_type", in: BANK_TAX_TYPES }, placeholder: "Auto" }),
+    fld("Parties & heads", "project_id", "Project ID", "text", { placeholder: "Auto" }),
+    fld("Parties & heads", "project_name", "Project name", "text", { placeholder: "Auto from Project master" }),
+    // AMOUNTS — debit = withdrawal (money out), credit = deposit (money in).
+    // Exactly one is entered; the server rejects both being non-zero.
+    fld("Amounts", "debit", "Debit (withdrawal)", "number"),
+    fld("Amounts", "credit", "Credit (deposit)", "number"),
     fld("Amounts", "amount", "Amount", "number", { computed: true, money: true }),
-    fld("Amounts", "gst_amount", "GST amount", "number"),
-    fld("Amounts", "tds_amount", "TDS amount", "number"),
+    fld("Amounts", "gst_amount", "GST amount", "number", { visibleWhen: { field: "transaction_type", in: BANK_TAX_TYPES } }),
+    fld("Amounts", "tds_amount", "TDS amount", "number", { visibleWhen: { field: "transaction_type", in: BANK_TAX_TYPES } }),
+    // SOURCE — link back to the finance document this movement settles.
+    fld("Source", "source_module", "Source module", "select", { options: BANK_SOURCE_MODULES, optional: true, emptyLabel: "Not linked" }),
+    fld("Source", "source_transaction_id", "Source transaction ID", "text", { placeholder: "e.g. PB-2026-000001" }),
+    // PAYMENT & RECONCILIATION.
     fld("Reconciliation", "payment_mode", "Payment mode", "select", { options: PAYMENT_MODES, optional: true }),
     fld("Reconciliation", "cheque_utr_reference", "Cheque / UTR / reference", "text"),
     fld("Reconciliation", "narration", "Narration", "textarea"),
-    fld("Reconciliation", "reconciliation_status", "Reconciliation status", "select", { options: ["Unreconciled", "Reconciled", "Pending"] }),
+    fld("Reconciliation", "reconciliation_status", "Reconciliation status", "select", { options: BANK_RECON_STATUSES, default: "Unreconciled" }),
     fld("Reconciliation", "reconciliation_date", "Reconciliation date", "date"),
-    fld("Reconciliation", "journal_entry_id", "Journal entry ID", "text"),
-    fld("Reconciliation", "attachment_link", "Attachment / document link", "text"),
+    fld("Reconciliation", "attachment_link", "Attachment / document link", "text", { upload: true }),
+    // POSTING — server-owned, shown read-only in the detail view.
+    fld("Posting", "posting_status", "Posting status", "text", { hidden: true }),
+    fld("Posting", "voucher_no", "Voucher no.", "text", { hidden: true }),
+    fld("Posting", "journal_entry_id", "Journal entry ID", "text", { hidden: true }),
   ],
   compute: (v) => {
     const debit = round2(num(v.debit)), credit = round2(num(v.credit))
+    const date = v.transaction_date
     return {
       debit, credit, amount: round2(credit > 0 ? credit : debit),
-      financial_year: v.financial_year || financialYearFor(v.transaction_date),
+      financial_year: v.financial_year || financialYearFor(date),
+      month: v.month || (date ? MONTHS[new Date(date).getMonth()] : ""),
+      quarter: fiscalQuarterFor(date),
+      accounting_period: accountingPeriodFor(date),
     }
   },
   tableColumns: [
@@ -713,6 +842,7 @@ const bankTransactions: ModuleConfig = {
     { key: "debit", label: "Debit", align: "right", money: true },
     { key: "credit", label: "Credit", align: "right", money: true },
     { key: "reconciliation_status", label: "Reconciliation", badge: { Reconciled: "default", Pending: "secondary", Unreconciled: "outline" } },
+    { key: "posting_status", label: "Posting", badge: { Posted: "default", Unposted: "outline" } },
   ],
   kpis: [
     { label: "Total Debit", key: "total_debit", money: true, icon: "Coins" },

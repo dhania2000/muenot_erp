@@ -247,6 +247,12 @@ function buildWhere(cfg: ModuleConfig, p: URLSearchParams) {
   }
   for (const f of cfg.filters ?? []) {
     if (f.type === "select" && p.get(f.key)) { conditions.push(`x.${f.key} = ?`); args.push(p.get(f.key)) }
+    if (f.type === "number_range") {
+      const min = p.get(f.keyMin)
+      const max = p.get(f.keyMax)
+      if (min !== null && min !== "" && !Number.isNaN(Number(min))) { conditions.push(`x.${f.column} >= ?`); args.push(Number(min)) }
+      if (max !== null && max !== "" && !Number.isNaN(Number(max))) { conditions.push(`x.${f.column} <= ?`); args.push(Number(max)) }
+    }
   }
   if (p.get("search") && cfg.searchColumns.length) {
     conditions.push("(" + cfg.searchColumns.map((c) => `x.${c} LIKE ?`).join(" OR ") + ")")

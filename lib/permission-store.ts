@@ -1,6 +1,7 @@
 import { query } from "./db"
 import {
   PERMISSION_MODULES,
+  getExtendedAction,
   getPermissionModule,
   type PermissionAction,
   type PermissionMatrix,
@@ -32,6 +33,25 @@ export async function ensurePermissionSchema() {
       PRIMARY KEY (id),
       UNIQUE KEY uniq_user_module (user_id, module_key),
       KEY idx_ump_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+
+  // Phase 44 — module-specific extended action grants (e.g. GST file/amend/
+  // reopen). Kept in a SEPARATE table so the base CRUD matrix table is never
+  // altered and existing behaviour is untouched when no extended grants exist.
+  await query(
+    `CREATE TABLE IF NOT EXISTS user_module_action_permissions (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      user_id INT UNSIGNED NOT NULL,
+      module_key VARCHAR(80) NOT NULL,
+      action_key VARCHAR(60) NOT NULL,
+      scope ENUM('none','all','added','owned','both') NOT NULL DEFAULT 'none',
+      granted_by INT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uniq_user_module_action (user_id, module_key, action_key),
+      KEY idx_umap_user (user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
 
@@ -78,6 +98,21 @@ export async function getUserMatrix(userId: number): Promise<PermissionMatrix | 
       delete: r.can_delete,
     }
   }
+
+  // Overlay module-specific extended-action grants (Phase 44).
+  const actionRows = await query<{ module_key: string; action_key: string; scope: PermissionScope }[]>(
+    `SELECT module_key, action_key, scope FROM user_module_action_permissions WHERE user_id = ?`,
+    [userId],
+  )
+  for (const r of actionRows) {
+    if (!matrix[r.module_key]) {
+      matrix[r.module_key] = { add: "none", view: "none", update: "none", delete: "none" }
+    }
+    const mod = matrix[r.module_key]
+    if (!mod.extra) mod.extra = {}
+    mod.extra[r.action_key] = r.scope
+  }
+
   return matrix
 }
 
@@ -93,13 +128,36 @@ export async function setUserMatrix(userId: number, matrix: PermissionMatrix, gr
     rows.push([userId, mod.key, clamp(p.add), clamp(p.view), clamp(p.update), clamp(p.delete), grantedBy])
   }
   await query("DELETE FROM user_module_permissions WHERE user_id = ?", [userId])
-  if (rows.length === 0) return
-  await query(
-    `INSERT INTO user_module_permissions
-       (user_id, module_key, can_add, can_view, can_update, can_delete, granted_by)
-     VALUES ${rows.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ")}`,
-    rows.flat(),
-  )
+  if (rows.length > 0) {
+    await query(
+      `INSERT INTO user_module_permissions
+         (user_id, module_key, can_add, can_view, can_update, can_delete, granted_by)
+       VALUES ${rows.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ")}`,
+      rows.flat(),
+    )
+  }
+
+  // Persist extended-action grants — only for actions actually declared on a
+  // module, so unknown keys from the client are ignored.
+  const actionRows: [number, string, string, string, number][] = []
+  for (const mod of PERMISSION_MODULES) {
+    const p = matrix[mod.key]
+    if (!p?.extra || !mod.extraActions) continue
+    for (const ext of mod.extraActions) {
+      const v = p.extra[ext.key]
+      if (v === undefined) continue
+      actionRows.push([userId, mod.key, ext.key, valid.has(v) ? v : "none", grantedBy])
+    }
+  }
+  await query("DELETE FROM user_module_action_permissions WHERE user_id = ?", [userId])
+  if (actionRows.length > 0) {
+    await query(
+      `INSERT INTO user_module_action_permissions
+         (user_id, module_key, action_key, scope, granted_by)
+       VALUES ${actionRows.map(() => "(?, ?, ?, ?, ?)").join(", ")}`,
+      actionRows.flat(),
+    )
+  }
 }
 
 /**
@@ -121,6 +179,48 @@ export async function getScope(
   const matrix = await getUserMatrix(userId)
   if (!matrix) return "all"
   return matrix[moduleKey]?.[action] ?? "none"
+}
+
+/**
+ * Effective scope for a module-specific EXTENDED action (Phase 44), e.g. GST
+ * "file_return" / "amend_return". Mirrors `getScope`:
+ *   - No configured matrix at all  -> "all" (admins / legacy accounts keep
+ *     working exactly as before).
+ *   - Explicit extended grant set   -> that value wins.
+ *   - Matrix configured but the extended action was never set -> DERIVE from
+ *     the action's declared base-CRUD `fallback` (destructive actions fall
+ *     back to `delete`, so a mere Update never implies File/Pay/Reopen/Amend).
+ *   - Unknown action                -> "none".
+ */
+export async function getActionScope(
+  userId: number,
+  _role: "admin" | "employee",
+  moduleKey: string,
+  actionKey: string,
+): Promise<PermissionScope> {
+  const matrix = await getUserMatrix(userId)
+  if (!matrix) return "all"
+  const modPerm = matrix[moduleKey]
+  const explicit = modPerm?.extra?.[actionKey]
+  if (explicit !== undefined) return explicit
+  const ext = getExtendedAction(moduleKey, actionKey)
+  if (!ext) return "none"
+  return modPerm?.[ext.fallback] ?? "none"
+}
+
+/**
+ * Whether a user is granted a module-specific extended action. GST returns are
+ * period-level org documents with no per-user owner, so any non-"none" scope
+ * means granted; "none" means denied.
+ */
+export async function hasActionGrant(
+  userId: number,
+  role: "admin" | "employee",
+  moduleKey: string,
+  actionKey: string,
+): Promise<boolean> {
+  const scope = await getActionScope(userId, role, moduleKey, actionKey)
+  return scope !== "none"
 }
 
 /**

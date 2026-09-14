@@ -203,7 +203,7 @@ export async function gstSummary(period: string) {
             si.other_tax_cess AS cess_amount,
             si.invoice_total
        FROM sales_invoices si
-       LEFT JOIN clients c ON c.id = si.client_id OR c.client_id = si.client_id
+       LEFT JOIN clients c ON c.id = si.client_id OR c.client_code = si.client_id
       WHERE ${PERIOD_MATCH("si.invoice_date")}
         AND si.invoice_status ${INCLUDED_STATUS}
         AND si.invoice_type <> 'Proforma Invoice'

@@ -26,28 +26,29 @@ const moduleIcons: Record<string, NavItem["icon"]> = {
   marketing: <Megaphone className="size-4" />,
 }
 
+type FeatureChild = { label: string; href?: string; feature?: string; children?: FeatureChild[] }
+
 // Marketing sub-pages shown in the sidebar dropdown. The Marketing module is
-// not (yet) stored in the `modules` table, so it is injected into the sidebar
-// directly below and its children are not permission-gated.
-const MARKETING_CHILDREN: NavChild[] = [
-  { label: "Dashboard", href: "/modules/marketing/dashboard" },
-  { label: "Contacts", href: "/modules/marketing/contacts" },
-  { label: "Lead Generation", href: "/modules/marketing/lead-generation" },
-  { label: "Journeys", href: "/modules/marketing/journeys" },
-  { label: "Marketing Planner", href: "/modules/marketing/planner" },
+// not stored in the `modules` table, so it is injected into the sidebar
+// directly below, but each child is gated by a permission-matrix feature slug
+// (resolved onto the Marketing permission modules) just like every other module.
+const MARKETING_CHILDREN: FeatureChild[] = [
+  { label: "Dashboard", href: "/modules/marketing/dashboard", feature: "marketing.view_dashboard" },
+  { label: "Contacts", href: "/modules/marketing/contacts", feature: "marketing.view_contacts" },
+  { label: "Lead Generation", href: "/modules/marketing/lead-generation", feature: "marketing.view_lead_generation" },
+  { label: "Journeys", href: "/modules/marketing/journeys", feature: "marketing.view_journeys" },
+  { label: "Marketing Planner", href: "/modules/marketing/planner", feature: "marketing.view_planner" },
   {
     label: "Marketing Campaigns",
     children: [
-      { label: "Overview", href: "/modules/marketing/campaigns" },
-      { label: "Email", href: "/modules/marketing/campaigns/email" },
-      { label: "Social", href: "/modules/marketing/campaigns/social" },
+      { label: "Overview", href: "/modules/marketing/campaigns", feature: "marketing.view_campaigns" },
+      { label: "Email", href: "/modules/marketing/campaigns/email", feature: "marketing.view_campaigns" },
+      { label: "Social", href: "/modules/marketing/campaigns/social", feature: "marketing.view_campaigns" },
     ],
   },
-  { label: "Website Analytics", href: "/modules/marketing/website-analytics" },
-  { label: "Library", href: "/modules/marketing/library" },
+  { label: "Website Analytics", href: "/modules/marketing/website-analytics", feature: "marketing.view_website_analytics" },
+  { label: "Library", href: "/modules/marketing/library", feature: "marketing.view_library" },
 ]
-
-type FeatureChild = { label: string; href?: string; feature?: string; children?: FeatureChild[] }
 
 // Sales sub-pages shown in the sidebar dropdown, each gated by a feature slug.
 const HR_CHILDREN: FeatureChild[] = [
@@ -222,15 +223,28 @@ export default async function DashboardLayout({ children }: { children: React.Re
     else navItems.push(whatsappItem)
   }
 
-  // Inject the Marketing module (not stored in the modules table) so the
-  // sidebar always exposes it and its sub-pages.
+  // Inject the Marketing module (not stored in the modules table). Its
+  // sub-pages are permission-gated via the matrix, so build the child list
+  // through the same feature checker used for the DB-backed modules and only
+  // surface Marketing when the user can reach at least one of its pages.
   if (!navItems.some((i) => i.href === "/modules/marketing")) {
-    navItems.push({
-      label: "Marketing",
-      href: "/modules/marketing",
-      icon: <Megaphone className="size-4" />,
-      children: MARKETING_CHILDREN,
-    })
+    const buildMarketingChildren = (nodes: FeatureChild[]): NavChild[] =>
+      nodes.flatMap<NavChild>((c) => {
+        if (c.children && c.children.length > 0) {
+          const sub = buildMarketingChildren(c.children)
+          return sub.length > 0 ? [{ label: c.label, children: sub }] : []
+        }
+        return c.feature && !canAccess(c.feature) ? [] : [{ label: c.label, href: c.href }]
+      })
+    const marketingChildren = buildMarketingChildren(MARKETING_CHILDREN)
+    if (marketingChildren.length > 0) {
+      navItems.push({
+        label: "Marketing",
+        href: "/modules/marketing",
+        icon: <Megaphone className="size-4" />,
+        children: marketingChildren,
+      })
+    }
   }
 
   // Optional custom sidebar link driven by Custom Link Settings.

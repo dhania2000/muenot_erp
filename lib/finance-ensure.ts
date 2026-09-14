@@ -187,6 +187,7 @@ export const SYSTEM_ACCOUNT_CODES = [
   "1450", // TDS Receivable
   "4000", // Sales Revenue
   "2110", "2120", "2130", "2140", // Output CGST / SGST / IGST / Cess (GST Payable)
+  "2160", // GST Payable (Net) — GST payment settlement control head
   "1000", // Bank
   "1010", // Cash
   "5000", // Purchases / Expenses

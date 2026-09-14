@@ -151,6 +151,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "clients",
     label: "Clients",
     modules: [
+      { key: "clients.dashboard", label: "Clients Dashboard", group: "clients", aliases: ["dashboard"], scope: { table: "clients" } },
       { key: "clients.clients", label: "Clients", group: "clients", aliases: ["client"], scope: { table: "clients", addedBy: "created_by", ownedBy: "account_manager_id" } },
     ],
   },
@@ -158,6 +159,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "tickets",
     label: "Tickets",
     modules: [
+      { key: "tickets.dashboard", label: "Tickets Dashboard", group: "tickets", aliases: ["dashboard"], scope: { table: "tickets" } },
       { key: "tickets.tickets", label: "Tickets", group: "tickets", aliases: ["ticket"], scope: { table: "tickets", addedBy: "created_by", ownedBy: "assigned_to" } },
     ],
   },
@@ -165,6 +167,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "products",
     label: "Products",
     modules: [
+      { key: "products.dashboard", label: "Products Dashboard", group: "products", aliases: ["dashboard"], scope: { table: "products" } },
       { key: "products.products", label: "Products", group: "products", aliases: ["product"], scope: { table: "products", addedBy: "created_by" } },
     ],
   },
@@ -172,6 +175,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "orders",
     label: "Orders",
     modules: [
+      { key: "orders.dashboard", label: "Orders Dashboard", group: "orders", aliases: ["dashboard"], scope: { table: "orders" } },
       { key: "orders.orders", label: "Orders", group: "orders", aliases: ["order"], scope: { table: "orders", addedBy: "created_by", ownedBy: "assigned_to" } },
     ],
   },
@@ -179,6 +183,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     slug: "legal",
     label: "Legal",
     modules: [
+      { key: "legal.dashboard", label: "Legal Dashboard", group: "legal", aliases: ["dashboard"], scope: { table: "legal_contracts" } },
       { key: "legal.contracts", label: "Contracts", group: "legal", aliases: ["contract"], scope: { table: "legal_contracts", addedBy: "created_by" } },
       { key: "legal.esign", label: "Esign", group: "legal", aliases: ["esign", "sign", "signature"], scope: { table: "legal_esign_requests", addedBy: "created_by" } },
     ],

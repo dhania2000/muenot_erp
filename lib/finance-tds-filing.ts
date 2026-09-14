@@ -20,7 +20,7 @@ import { logFinanceEvent } from "@/lib/finance-audit"
  * Schema is self-creating + idempotent.
  */
 
-export type TdsDirection = "receivable" | "payable"
+export type TdsDirection = "receivable" | "payable" | "employee"
 
 const num = (v: any) => {
   const n = Number(v)
@@ -28,7 +28,12 @@ const num = (v: any) => {
 }
 const round2 = (n: number) => Math.round((num(n) + Number.EPSILON) * 100) / 100
 
-const normDirection = (d: any): TdsDirection => (String(d) === "payable" ? "payable" : "receivable")
+const normDirection = (d: any): TdsDirection => {
+  const s = String(d)
+  if (s === "payable") return "payable"
+  if (s === "employee") return "employee"
+  return "receivable"
+}
 
 let ensured = false
 
@@ -98,6 +103,40 @@ function periodRange(period: string) {
  */
 async function sectionAggregate(period: string, direction: TdsDirection) {
   const { from, to } = periodRange(period)
+
+  if (direction === "employee") {
+    // Employee-side TDS is deducted on FTE (salaried) invoices and on freelance
+    // invoices. FTE deductions are salary TDS (§192) captured in the flat `tds`
+    // column with no section, so tag them 192 and derive the effective rate;
+    // freelance invoices carry their own statutory section/rate (§194J etc.).
+    // Both feed one payee-side return, aggregated by section.
+    return (await query(
+      `SELECT section,
+              COUNT(*) AS invoice_count,
+              COALESCE(SUM(base),0) AS base,
+              COALESCE(SUM(tds),0) AS tds,
+              COALESCE(AVG(NULLIF(rate,0)),0) AS avg_rate
+         FROM (
+           SELECT '192' AS section,
+                  gross_earnings AS base, tds AS tds,
+                  CASE WHEN gross_earnings > 0 THEN ROUND(tds / gross_earnings * 100, 2) ELSE 0 END AS rate
+             FROM fte_invoices
+            WHERE invoice_date >= ? AND invoice_date <= ?
+              AND COALESCE(tds,0) > 0
+              AND COALESCE(status,'') NOT IN ('Cancelled','Draft','Void')
+           UNION ALL
+           SELECT COALESCE(NULLIF(tds_section,''),'194J') AS section,
+                  gross_amount AS base, tds_amount AS tds, tds_rate AS rate
+             FROM freelance_invoices
+            WHERE invoice_date >= ? AND invoice_date <= ?
+              AND tds_applicable = 1 AND tds_amount > 0
+              AND COALESCE(approval_status,'') NOT IN ('Rejected','Cancelled','Void')
+         ) u
+        GROUP BY section
+        ORDER BY tds DESC`,
+      [from, to, from, to],
+    ).catch(() => [])) as any[]
+  }
 
   if (direction === "payable") {
     // Payable TDS is deducted BOTH on vendor purchase bills and on vendor
@@ -195,6 +234,57 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
   await ensureTdsFilingSchema()
   const dir = normDirection(direction)
   const { from, to } = periodRange(period)
+
+  if (dir === "employee") {
+    // Line-level payee register: one row per FTE invoice and freelance invoice
+    // that carries TDS, each tagged with its source module so a preparer can
+    // trace every rupee back to the invoice it came from.
+    const rows = (await query(
+      `SELECT * FROM (
+         SELECT 'FTE Invoice' AS source, fte_invoice_id AS doc_id, invoice_date AS doc_date, fte_invoice_id AS doc_ref,
+                financial_year,
+                employee_id AS party_id, employee_name AS party_name, employee_name AS party_legal_name,
+                '' AS pan, '' AS gstin,
+                '192' AS section, gross_earnings AS base,
+                CASE WHEN gross_earnings > 0 THEN ROUND(tds / gross_earnings * 100, 2) ELSE 0 END AS rate,
+                tds AS tds, status AS status, invoice_date AS sort_date
+           FROM fte_invoices
+          WHERE invoice_date >= ? AND invoice_date <= ?
+            AND COALESCE(tds,0) > 0
+            AND COALESCE(status,'') NOT IN ('Cancelled','Draft','Void')
+         UNION ALL
+         SELECT 'Freelance Invoice' AS source, freelance_invoice_id AS doc_id, invoice_date AS doc_date,
+                COALESCE(NULLIF(invoice_bill_reference,''), freelance_invoice_id) AS doc_ref,
+                financial_year,
+                freelancer_id AS party_id, freelancer_name AS party_name, freelancer_name AS party_legal_name,
+                '' AS pan, '' AS gstin,
+                COALESCE(NULLIF(tds_section,''),'194J') AS section, gross_amount AS base,
+                tds_rate AS rate, tds_amount AS tds, payment_status AS status, invoice_date AS sort_date
+           FROM freelance_invoices
+          WHERE invoice_date >= ? AND invoice_date <= ?
+            AND tds_applicable = 1 AND tds_amount > 0
+            AND COALESCE(approval_status,'') NOT IN ('Rejected','Cancelled','Void')
+       ) u
+       ORDER BY tds DESC, sort_date ASC`,
+      [from, to, from, to],
+    ).catch(() => [])) as any[]
+    return rows.map((r) => ({
+      source: r.source,
+      doc_id: r.doc_id,
+      doc_date: r.doc_date,
+      doc_ref: r.doc_ref,
+      financial_year: r.financial_year,
+      party_id: r.party_id,
+      party_name: r.party_legal_name || r.party_name || "—",
+      pan: r.pan || "",
+      gstin: r.gstin || "",
+      section: r.section,
+      base: round2(num(r.base)),
+      rate: round2(num(r.rate)),
+      tds: round2(num(r.tds)),
+      status: r.status || "",
+    }))
+  }
 
   if (dir === "payable") {
     // Line-level payable register: one row per vendor purchase bill AND vendor

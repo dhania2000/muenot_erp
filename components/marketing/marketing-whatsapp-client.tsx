@@ -118,7 +118,7 @@ export function MarketingWhatsAppClient() {
             <AgentsTab role={role} />
           </TabsContent>
           <TabsContent value="templates">
-            <TemplatesTab />
+            <TemplatesTab caps={caps} />
           </TabsContent>
           <TabsContent value="campaigns">
             <CampaignsTab caps={caps} />

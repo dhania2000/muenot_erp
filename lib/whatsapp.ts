@@ -765,6 +765,117 @@ export async function getWhatsAppTemplates(
   }
 }
 
+/** Categories Meta accepts when creating a message template. */
+export type TemplateCategory = "UTILITY" | "MARKETING" | "AUTHENTICATION"
+
+/** Fields an employee authors in the ERP to create a new template. */
+export type CreateTemplateInput = {
+  name: string
+  language: string
+  category: TemplateCategory
+  headerText?: string
+  bodyText: string
+  footerText?: string
+  /** Example values for {{1}}, {{2}}, … placeholders found in the body. */
+  bodyExamples?: string[]
+}
+
+const TEMPLATE_NAME_RE = /^[a-z0-9_]{1,512}$/
+const PLACEHOLDER_RE = /\{\{\s*(\d+)\s*\}\}/g
+
+/** Returns the ordered, unique placeholder numbers referenced in a string. */
+export function extractPlaceholders(text: string): number[] {
+  const found = new Set<number>()
+  for (const m of text.matchAll(PLACEHOLDER_RE)) found.add(Number(m[1]))
+  return [...found].sort((a, b) => a - b)
+}
+
+/**
+ * Creates a message template on the connected WABA and submits it to Meta for
+ * review. This is the path that lets an employee author templates directly from
+ * the ERP without ever logging into the Meta Business Manager: Meta receives the
+ * template via the Graph API and returns a PENDING status until it is reviewed.
+ *
+ * Validates the name format and that every {{n}} placeholder in the body has a
+ * matching example (Meta rejects variables without examples), so the employee
+ * gets an immediate, friendly error instead of an opaque Graph rejection.
+ */
+export async function createWhatsAppTemplate(
+  integration: WhatsAppIntegrationRow,
+  input: CreateTemplateInput,
+): Promise<{ ok: boolean; id?: string; status?: string; category?: string; error?: string }> {
+  const token = decryptToken(integration.access_token)
+  if (!token) return { ok: false, error: "Stored access token could not be read." }
+
+  const name = input.name.trim().toLowerCase()
+  if (!TEMPLATE_NAME_RE.test(name)) {
+    return {
+      ok: false,
+      error: "Template name may only contain lowercase letters, numbers and underscores.",
+    }
+  }
+  const body = input.bodyText.trim()
+  if (!body) return { ok: false, error: "The template body is required." }
+
+  const placeholders = extractPlaceholders(body)
+  const examples = (input.bodyExamples ?? []).map((v) => v.trim())
+  if (placeholders.length > 0) {
+    // Placeholders must be a contiguous 1..N run and each needs an example.
+    const expected = placeholders.every((n, i) => n === i + 1)
+    if (!expected) {
+      return { ok: false, error: "Body variables must be numbered sequentially starting at {{1}}." }
+    }
+    if (examples.length < placeholders.length || examples.some((v) => !v)) {
+      return { ok: false, error: "Provide a sample value for every {{n}} variable used in the body." }
+    }
+  }
+
+  const components: Record<string, unknown>[] = []
+  const headerText = input.headerText?.trim()
+  if (headerText) {
+    components.push({ type: "HEADER", format: "TEXT", text: headerText })
+  }
+  const bodyComponent: Record<string, unknown> = { type: "BODY", text: body }
+  if (placeholders.length > 0) {
+    bodyComponent.example = { body_text: [examples.slice(0, placeholders.length)] }
+  }
+  components.push(bodyComponent)
+  const footerText = input.footerText?.trim()
+  if (footerText) {
+    components.push({ type: "FOOTER", text: footerText })
+  }
+
+  const url = `${GRAPH_BASE}/${encodeURIComponent(integration.waba_id)}/message_templates`
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name,
+        language: input.language,
+        category: input.category,
+        components,
+      }),
+      cache: "no-store",
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      id?: string
+      status?: string
+      category?: string
+      error?: { message?: string; type?: string; code?: number; error_subcode?: number }
+    }
+    if (!res.ok || data.error) {
+      return { ok: false, error: parseGraphError(data.error, res.status).message }
+    }
+    return { ok: true, id: data.id, status: data.status, category: data.category }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Webhook security helpers                                            */
 /* ------------------------------------------------------------------ */

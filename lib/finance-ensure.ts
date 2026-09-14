@@ -226,6 +226,16 @@ export async function ensureChartOfAccountsColumns() {
   await ensureColumn(t, "ob_posted_amount", "DECIMAL(18,2) NOT NULL DEFAULT 0")
   await ensureColumn(t, "ob_posted_side", "VARCHAR(10) DEFAULT NULL")
 
+  // Reporting classification OVERRIDES (requirement 71). Each account's Balance
+  // Sheet / Profit & Loss / Cash Flow group is auto-derived from its type, code
+  // and name (see lib/finance-classification.ts); these columns only hold an
+  // explicit override when a user pins a different group. NULL/blank means "use
+  // the auto-derived value", so the statements engine never depends on them
+  // being populated and no second classification system is introduced.
+  await ensureColumn(t, "bs_group", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "pnl_group", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "cashflow_group", "VARCHAR(20) DEFAULT NULL")
+
   // Widen the status column so the Archived lifecycle state (requirement 12) is
   // storable even if the column was originally a narrower ENUM. Best-effort: a
   // column that is already wide enough makes this a harmless no-op.

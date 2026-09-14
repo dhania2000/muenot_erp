@@ -1009,6 +1009,11 @@ const chartOfAccounts: ModuleConfig = {
     fld("Settings", "reconciliation_required", "Reconciliation required", "checkbox"),
     fld("Settings", "effective_from", "Effective from", "date"),
     fld("Settings", "effective_to", "Effective to", "date"),
+    // Reporting-classification overrides (requirement 71). Blank = auto-derive
+    // from the account type/code/name in lib/finance-classification.ts.
+    fld("Classification", "bs_group", "Balance Sheet group", "text", { optional: true, placeholder: "Auto" }),
+    fld("Classification", "pnl_group", "Profit & Loss group", "text", { optional: true, placeholder: "Auto" }),
+    fld("Classification", "cashflow_group", "Cash Flow group", "text", { optional: true, placeholder: "Auto" }),
   ],
   tableColumns: [
     { key: "account_id", label: "Account ID", mono: true },

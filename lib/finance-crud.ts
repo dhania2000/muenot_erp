@@ -6,7 +6,8 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns } from "@/lib/finance-ensure"
+import { guardChartOfAccountWrite, checkAccountDeletable } from "@/lib/finance-coa"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
 import { nextExpenseId, computeExpenseServerFields, validateExpense, findDuplicateExpense } from "@/lib/finance-expenses"
 import { nextBankTransactionId, syncBankTransactionPosting, reverseBankTransactionPosting } from "@/lib/finance-bank-posting"
@@ -108,6 +109,19 @@ const ASYNC_GUARDS: Record<
 > = {
   "bank-transactions": (merged) => guardBankTransactionWrite(merged),
   "bank-cash": (merged, ctx) => guardBankAccountClose(merged, ctx.existing),
+  "chart-of-accounts": (merged, ctx) => guardChartOfAccountWrite(merged, ctx),
+}
+
+/**
+ * Optional per-module delete guard. Runs in DELETE after the row is loaded but
+ * BEFORE it is removed; returning a string rejects with 409 so the client can
+ * surface why (e.g. a Chart of Accounts head still referenced by the ledger).
+ */
+const DELETE_GUARDS: Record<string, (row: Record<string, any>) => Promise<string | null>> = {
+  "chart-of-accounts": async (row) => {
+    const result = await checkAccountDeletable(row)
+    return result.ok ? null : result.reason ?? "This account cannot be deleted."
+  },
 }
 
 /**
@@ -331,6 +345,7 @@ export function createFinanceHandlers(moduleKey: string) {
     if (moduleKey === "purchase-bills") await ensurePurchaseBillColumns()
     if (moduleKey === "expenses") await ensureExpenseColumns()
     if (moduleKey === "bank-transactions") await ensureBankTransactionColumns()
+    if (moduleKey === "chart-of-accounts") await ensureChartOfAccountsColumns()
   }
 
   const validate = VALIDATORS[moduleKey]
@@ -595,6 +610,21 @@ export function createFinanceHandlers(moduleKey: string) {
 
     if (permissionKey && doomed && !(await canActOnRecord(session, permissionKey, "delete", doomed))) {
       return NextResponse.json({ error: "You do not have permission to delete this record." }, { status: 403 })
+    }
+
+    // Dependency guard (e.g. a Chart of Accounts head still referenced by a
+    // child account or the ledger). Load the row if it was not already loaded.
+    const deleteGuard = DELETE_GUARDS[moduleKey]
+    if (deleteGuard) {
+      let subject = doomed
+      if (!subject) {
+        const [row] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
+        subject = row ?? null
+      }
+      if (subject) {
+        const message = await deleteGuard(subject)
+        if (message) return NextResponse.json({ error: message }, { status: 409 })
+      }
     }
 
     await query(`DELETE FROM ${cfg.table} WHERE id = ?`, [id])

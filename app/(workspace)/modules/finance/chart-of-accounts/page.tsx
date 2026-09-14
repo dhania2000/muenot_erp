@@ -1,2 +1,2 @@
-import { FinanceModuleClient } from "@/components/finance/finance-module-client"
-export default function Page() { return <FinanceModuleClient moduleKey="chart-of-accounts" /> }
+import { ChartOfAccountsClient } from "@/components/finance/chart-of-accounts-client"
+export default function Page() { return <ChartOfAccountsClient /> }

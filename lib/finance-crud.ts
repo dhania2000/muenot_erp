@@ -8,6 +8,7 @@ import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
 import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns } from "@/lib/finance-ensure"
 import { guardChartOfAccountWrite, checkAccountDeletable } from "@/lib/finance-coa"
+import { syncOpeningBalancePosting } from "@/lib/finance-opening-balance"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
 import { nextExpenseId, computeExpenseServerFields, validateExpense, findDuplicateExpense } from "@/lib/finance-expenses"
 import { nextBankTransactionId, syncBankTransactionPosting, reverseBankTransactionPosting } from "@/lib/finance-bank-posting"
@@ -141,6 +142,21 @@ const AFTER_WRITE: Record<
     existing: Record<string, any> | null
   }) => Promise<void>
 > = {
+  // Requirements 14/15 — an account's opening balance is projected into a real,
+  // balanced double-entry voucher (Journal + General Ledger) with the contra on
+  // the system "Opening Balance Equity" head. Idempotent and failure-tolerant:
+  // creating with an opening balance posts it, editing the amount/side reverses
+  // and re-posts, clearing it reverses, and a posting error never blocks COA
+  // CRUD (the next save retries).
+  "chart-of-accounts": async ({ finalRow, userId }) => {
+    const accountId = finalRow[cfgIdColumn("chart-of-accounts")]
+    if (!accountId) return
+    try {
+      await syncOpeningBalancePosting(String(accountId), { createdBy: userId })
+    } catch (error) {
+      console.log("[v0] syncOpeningBalancePosting failed:", (error as Error).message)
+    }
+  },
   "purchase-bills": async ({ finalRow, body, userId }) => {
     const billId = finalRow[cfgIdColumn("purchase-bills")]
     if (!billId) return

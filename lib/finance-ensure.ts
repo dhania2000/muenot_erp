@@ -196,6 +196,7 @@ export const SYSTEM_ACCOUNT_CODES = [
   "5100", // General Expenses
   "2200", // Employee Reimbursements Payable
   "1460", // Employee Advances
+  "3900", // Opening Balance Equity (contra head for opening-balance postings)
 ] as const
 
 /**
@@ -215,6 +216,24 @@ export async function ensureChartOfAccountsColumns() {
   await ensureColumn(t, "opening_balance_date", "DATE DEFAULT NULL")
   await ensureColumn(t, "financial_year", "VARCHAR(12) DEFAULT NULL")
   await ensureColumn(t, "is_system", "TINYINT(1) NOT NULL DEFAULT 0")
+
+  // Opening-balance posting state (Phase — requirements 14/15). An opening
+  // balance is projected into a real, balanced Journal + General Ledger voucher
+  // (see lib/finance-opening-balance.ts); these columns key that posting so it
+  // is idempotent (never double-posts) and can be reversed/re-posted cleanly
+  // when the amount or side changes — never a fake number on this table alone.
+  await ensureColumn(t, "ob_voucher_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "ob_posted_amount", "DECIMAL(18,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "ob_posted_side", "VARCHAR(10) DEFAULT NULL")
+
+  // Widen the status column so the Archived lifecycle state (requirement 12) is
+  // storable even if the column was originally a narrower ENUM. Best-effort: a
+  // column that is already wide enough makes this a harmless no-op.
+  try {
+    await query(`ALTER TABLE ${t} MODIFY COLUMN active_status VARCHAR(20) DEFAULT 'Active'`)
+  } catch (error) {
+    console.log("[v0] chart_of_accounts.active_status widen skipped:", (error as Error).message)
+  }
 
   if (!(await hasIndex(t, "idx_coa_parent"))) {
     await query(`ALTER TABLE ${t} ADD KEY idx_coa_parent (parent_account_id)`)

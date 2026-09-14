@@ -53,8 +53,9 @@ export async function guardChartOfAccountWrite(
     ) {
       return "This is a system account. Its account type is locked and cannot be changed."
     }
-    if ((merged.active_status ?? "").toString() === "Inactive") {
-      return "This is a system account and cannot be deactivated — it is required by the posting engine."
+    const status = (merged.active_status ?? "").toString()
+    if (status && status !== "Active") {
+      return "This is a system account and cannot be deactivated or archived — it is required by the posting engine."
     }
   }
 

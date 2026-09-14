@@ -1,4 +1,4 @@
-import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill, computeExpense, computeFteBilling, fteFinancialPeriod } from "@/lib/finance-calc"
+import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill, computeExpense } from "@/lib/finance-calc"
 import { EMPLOYEE_EXPENSE_TYPES, VENDOR_EXPENSE_TYPES } from "@/lib/finance-expense-types"
 import type { FieldDef, FieldType, ModuleConfig } from "@/lib/finance-schema"
 
@@ -414,244 +414,85 @@ const expenses: ModuleConfig = {
 }
 
 // ---------------------------------------------------------------------------
-// 3. FTE Invoices (client billing)
+// 3. FTE Invoices (payroll-style)
 // ---------------------------------------------------------------------------
-// A proper CLIENT-BILLING invoice for a full-time-equivalent resource, NOT a
-// payslip. The Client, Project and Employee are resolved from their masters
-// (Clients / Operations Projects / HR Employees) and frozen onto the invoice by
-// the server (lib/finance-fte). The money model bills the CLIENT (rate ×
-// billable days + extras → GST/TDS → net receivable) and keeps EMPLOYEE COST on
-// a separate ledger that only feeds Gross Margin — payroll deductions (PF/ESI/
-// PT) are never mixed into the client invoice. The FTE Invoice ID
-// (FTE-2026-000001) is server-generated, immutable and never entered by hand.
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-const FTE_BILLING_BASIS = ["Monthly", "Daily", "Working Days", "Hourly", "Fixed Amount", "Custom"]
-const FTE_STATUSES = ["Draft", "Ready", "Sent", "Viewed", "Partially Paid", "Paid", "Overdue", "Cancelled", "Reversed"]
-const FTE_STATUS_BADGE = {
-  Paid: "default",
-  "Partially Paid": "secondary",
-  Sent: "secondary",
-  Viewed: "secondary",
-  Ready: "outline",
-  Draft: "outline",
-  Overdue: "destructive",
-  Cancelled: "destructive",
-  Reversed: "destructive",
-} as const
 
 const fteInvoices: ModuleConfig = {
   key: "fte-invoices",
   table: "fte_invoices",
   label: "FTE Invoices",
-  subtitle: "Client billing",
+  subtitle: "Finance management",
   addLabel: "New FTE invoice",
   idColumn: "fte_invoice_id",
   idPrefix: "FTE",
   trackingId: true,
   invoiceActions: true,
   pdfPath: "/api/finance/fte-invoices",
-  emailField: "billing_email",
+  emailField: "employee_email",
   dateColumn: "invoice_date",
   financialYearColumn: "financial_year",
   statusColumn: "status",
-  duplicateCheck: true,
-  searchColumns: [
-    "fte_invoice_id", "client_id", "client_name", "employee_id", "employee_name",
-    "project_id", "project_name", "contract_reference", "po_number", "internal_reference", "month",
-  ],
-  filters: [
-    { type: "financial_year", key: "financial_year", label: "Financial year" },
-    { type: "month", key: "month", label: "Month" },
-    { type: "select", key: "status", label: "Status", options: FTE_STATUSES },
-    { type: "select", key: "payment_status", label: "Payment", options: ["Unpaid", "Partially Paid", "Paid", "Overdue"] },
-    { type: "select", key: "billing_basis", label: "Billing basis", options: FTE_BILLING_BASIS },
-  ],
-  // Multi-source master pickers (Phases 3/4/5). Each hits the FTE lookup
-  // endpoint which server-filters to ACTIVE records only, then autofills the
-  // frozen snapshot columns; the server re-snapshots authoritatively on save.
-  lookups: [
-    {
-      key: "client",
-      label: "Client",
-      path: "/api/finance/fte-invoices/lookups?type=client",
-      sourceIdColumn: "client_id",
-      sourceNameColumn: "client_name",
-      sourceSubColumn: "client_gstin",
-      idField: "client_id",
-      nameField: "client_name",
-      required: true,
-      selectableWhen: [{ column: "client_status", in: ["Active"] }],
-      autofill: {
-        client_legal_name: "client_legal_name",
-        client_gstin: "client_gstin",
-        client_pan: "client_pan",
-        billing_address: "billing_address",
-        client_state: "client_state",
-        client_state_code: "client_state_code",
-        client_pin: "client_pin",
-        currency: "currency",
-        payment_terms: "payment_terms",
-        billing_email: "billing_email",
-        contact_person: "contact_person",
-        client_status: "client_status",
-      },
-    },
-    {
-      key: "project",
-      label: "Project",
-      path: "/api/finance/fte-invoices/lookups?type=project",
-      sourceIdColumn: "project_id",
-      sourceNameColumn: "project_name",
-      sourceSubColumn: "project_client_name",
-      idField: "project_id",
-      nameField: "project_name",
-      selectableWhen: [{ column: "project_status", in: ["Active"] }],
-      autofill: {
-        project_status: "project_status",
-        project_client_name: "project_client_name",
-      },
-    },
-    {
-      key: "employee",
-      label: "Employee",
-      path: "/api/finance/fte-invoices/lookups?type=employee",
-      sourceIdColumn: "employee_id",
-      sourceNameColumn: "employee_name",
-      sourceSubColumn: "designation",
-      idField: "employee_id",
-      nameField: "employee_name",
-      required: true,
-      selectableWhen: [{ column: "employee_status", in: ["Active"] }],
-      autofill: {
-        department: "department",
-        designation: "designation",
-        employment_type: "employment_type",
-        employee_email: "employee_email",
-        billing_role: "billing_role",
-        employee_status: "employee_status",
-      },
-    },
-  ],
+  searchColumns: ["fte_invoice_id", "employee_name", "department", "designation", "project_name"],
   fields: [
-    // --- Client (frozen snapshot; server-authoritative) ---------------------
-    fld("Client", "client_id", "Client ID", "text", { hidden: true }),
-    fld("Client", "client_name", "Client name", "text", { hidden: true }),
-    fld("Client", "client_legal_name", "Legal name", "text", { hidden: true }),
-    fld("Client", "client_gstin", "GSTIN", "text", { hidden: true }),
-    fld("Client", "client_pan", "PAN", "text", { hidden: true }),
-    fld("Client", "billing_address", "Billing address", "textarea", { hidden: true }),
-    fld("Client", "client_state", "State", "text", { hidden: true }),
-    fld("Client", "client_state_code", "State code", "text", { hidden: true }),
-    fld("Client", "client_pin", "PIN", "text", { hidden: true }),
-    fld("Client", "currency", "Currency", "select", { options: CURRENCIES, optional: true }),
-    fld("Client", "payment_terms", "Payment terms", "text", { placeholder: "30 days" }),
-    fld("Client", "billing_email", "Billing email", "text", { placeholder: "billing@client.com" }),
-    fld("Client", "contact_person", "Contact person", "text"),
-    fld("Client", "client_status", "Client status", "text", { hidden: true }),
-    // --- Project (frozen snapshot) ------------------------------------------
-    fld("Project", "project_id", "Project ID", "text", { hidden: true }),
-    fld("Project", "project_name", "Project name", "text", { hidden: true }),
-    fld("Project", "project_status", "Project status", "text", { hidden: true }),
-    fld("Project", "project_client_name", "Project client", "text", { hidden: true }),
-    fld("Project", "cost_centre", "Cost centre", "text"),
-    fld("Project", "billing_terms", "Billing terms", "text"),
-    // --- Employee & role (identity from HR, rate from FTE rate master) -------
-    fld("Employee & role", "employee_id", "Employee ID", "text", { hidden: true }),
-    fld("Employee & role", "employee_name", "Employee name", "text", { hidden: true }),
-    fld("Employee & role", "department", "Department", "text", { hidden: true }),
-    fld("Employee & role", "designation", "Designation", "text", { hidden: true }),
-    fld("Employee & role", "employment_type", "Employment type", "text", { hidden: true }),
-    fld("Employee & role", "employee_email", "Employee email", "text", { hidden: true }),
-    fld("Employee & role", "employee_status", "Employee status", "text", { hidden: true }),
-    fld("Employee & role", "billing_role", "Billing role", "text", { placeholder: "e.g. Senior Engineer" }),
-    // --- Invoice, period & references ---------------------------------------
-    fld("Invoice & period", "invoice_date", "Invoice date", "date", { required: true }),
-    fld("Invoice & period", "internal_reference", "Internal FTE reference", "text", { placeholder: "Optional internal ref" }),
-    fld("Invoice & period", "po_number", "Client PO number", "text", { placeholder: "Client PO / order no." }),
-    fld("Invoice & period", "financial_year", "Financial year", "text", { computed: true }),
-    fld("Invoice & period", "month", "Month", "select", { options: MONTHS, optional: true }),
-    fld("Invoice & period", "quarter", "Quarter", "text", { computed: true }),
-    fld("Invoice & period", "accounting_period", "Accounting period", "text", { computed: true }),
-    // --- Billing period & attendance (Phases 10–13) -------------------------
-    fld("Billing period", "billing_basis", "Billing basis", "select", { options: FTE_BILLING_BASIS }),
-    fld("Billing period", "billing_period_start", "Period start", "date"),
-    fld("Billing period", "billing_period_end", "Period end", "date"),
-    fld("Billing period", "working_days", "Working days", "number"),
-    fld("Billing period", "paid_days", "Paid days", "number"),
-    fld("Billing period", "leave_days", "Leave days", "number"),
-    fld("Billing period", "holiday_days", "Holiday days", "number"),
-    fld("Billing period", "billable_hours", "Billable hours", "number"),
-    fld("Billing period", "billable_days", "Billable days", "number", { computed: true }),
-    fld("Billing period", "non_billable_days", "Non-billable days", "number", { computed: true }),
-    // --- Client billing amounts (Phases 14–16) ------------------------------
-    fld("Billing amounts", "billing_rate", "Billing rate", "number"),
-    fld("Billing amounts", "billing_overtime", "Overtime charge", "number"),
-    fld("Billing amounts", "billing_bonus", "Bonus / extra", "number"),
-    fld("Billing amounts", "other_charges", "Other billable charges", "number"),
-    fld("Billing amounts", "billing_adjustment", "Approved adjustment (−)", "number"),
-    fld("Billing amounts", "base_billing", "Base billing", "number", { computed: true, money: true }),
-    fld("Billing amounts", "gross_client_billing", "Gross client billing", "number", { computed: true, money: true }),
-    fld("Billing amounts", "gst_rate", "GST rate %", "number"),
-    fld("Billing amounts", "gst_amount", "GST amount", "number", { computed: true, money: true }),
-    fld("Billing amounts", "tds_rate", "TDS rate %", "number"),
-    fld("Billing amounts", "tds_amount", "TDS amount", "number", { computed: true, money: true }),
-    fld("Billing amounts", "net_receivable", "Net receivable", "number", { computed: true, money: true }),
-    fld("Billing amounts", "amount_paid", "Amount received", "number"),
-    fld("Billing amounts", "outstanding", "Outstanding", "number", { computed: true, money: true }),
-    // --- Employee cost & margin (Phases 17–18; separate ledger) -------------
-    fld("Employee cost & margin", "salary_cost", "Salary cost", "number"),
-    fld("Employee cost & margin", "employer_pf", "Employer PF", "number"),
-    fld("Employee cost & margin", "employer_esi", "Employer ESI", "number"),
-    fld("Employee cost & margin", "other_employer_cost", "Other employer cost", "number"),
-    fld("Employee cost & margin", "other_allocated_cost", "Other allocated cost", "number"),
-    fld("Employee cost & margin", "employee_cost_total", "Total employee cost", "number", { computed: true, money: true }),
-    fld("Employee cost & margin", "gross_margin", "Gross margin", "number", { computed: true, money: true }),
-    fld("Employee cost & margin", "margin_percent", "Margin %", "number", { computed: true }),
-    // --- Contract (Phase 23) -------------------------------------------------
-    fld("Contract", "contract_id", "Contract ID", "text"),
-    fld("Contract", "contract_reference", "Contract reference", "text"),
-    fld("Contract", "contract_start", "Contract start", "date"),
-    fld("Contract", "contract_end", "Contract end", "date"),
-    fld("Contract", "contract_value", "Contract value", "number"),
-    // --- Status & payment ----------------------------------------------------
-    fld("Status & payment", "status", "Status", "select", { options: FTE_STATUSES }),
-    fld("Status & payment", "payment_status", "Payment status", "text", { computed: true }),
-    fld("Status & payment", "billing_period_type", "Billing period type", "select", { options: FTE_BILLING_BASIS, optional: true }),
-    fld("Status & payment", "gst_status", "GST status", "text", { hidden: true }),
-    fld("Status & payment", "tds_status", "TDS status", "text", { hidden: true }),
-    fld("Status & payment", "notes", "Notes", "textarea"),
+    fld("Employee & period", "invoice_date", "Invoice date", "date", { required: true }),
+    fld("Employee & period", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+    fld("Employee & period", "month", "Month", "select", { options: MONTHS, optional: true }),
+    fld("Employee & period", "employee_id", "Employee ID", "text"),
+    fld("Employee & period", "employee_name", "Employee name", "text", { required: true }),
+    fld("Employee & period", "employee_email", "Employee email", "text", { placeholder: "name@example.com" }),
+    fld("Employee & period", "employment_type", "Employment type", "select", { options: ["Full-time", "Part-time", "Contract", "Intern"] }),
+    fld("Employee & period", "department", "Department", "text"),
+    fld("Employee & period", "designation", "Designation", "text"),
+    fld("Employee & period", "project_id", "Project ID", "text"),
+    fld("Employee & period", "project_name", "Project name", "text"),
+    fld("Attendance & basis", "billing_basis", "Billing basis", "select", { options: ["Monthly", "Daily", "Hourly"] }),
+    fld("Attendance & basis", "working_days", "Working days", "number"),
+    fld("Attendance & basis", "paid_days", "Paid days", "number"),
+    fld("Attendance & basis", "leave_days", "Leave days", "number"),
+    fld("Attendance & basis", "holiday_days", "Holiday days", "number"),
+    fld("Earnings", "gross_billing", "Gross billing / salary", "number"),
+    fld("Earnings", "overtime_extra", "Overtime / extra", "number"),
+    fld("Earnings", "bonus_incentive", "Bonus / incentive", "number"),
+    fld("Earnings", "other_earnings", "Other earnings", "number"),
+    fld("Earnings", "gross_earnings", "Gross earnings", "number", { computed: true, money: true }),
+    fld("Deductions", "pf_deduction", "PF deduction", "number"),
+    fld("Deductions", "esi_deduction", "ESI deduction", "number"),
+    fld("Deductions", "professional_tax", "Professional tax", "number"),
+    fld("Deductions", "tds", "TDS", "number"),
+    fld("Deductions", "other_deductions", "Other deductions", "number"),
+    fld("Deductions", "total_deductions", "Total deductions", "number", { computed: true, money: true }),
+    fld("Deductions", "net_payable", "Net payable", "number", { computed: true, money: true }),
+    fld("Payment & status", "payment_due_date", "Payment due date", "date"),
+    fld("Payment & status", "payment_date", "Payment date", "date"),
+    fld("Payment & status", "payment_reference", "Payment reference", "text"),
+    fld("Payment & status", "status", "Status", "select", { options: ["Draft", "Approved", "Paid", "On Hold"] }),
+    fld("Payment & status", "notes", "Notes", "textarea"),
   ],
-  // Pure, client-safe live preview. The server re-runs this (plus master
-  // snapshots) authoritatively via computeFteServerFields.
-  compute: (v) => ({
-    ...computeFteBilling(v),
-    ...fteFinancialPeriod(v.invoice_date),
-    payment_status: autoPaymentStatus(
-      round2(num(v.gross_client_billing) + num(v.gst_amount) - num(v.tds_amount)),
-      num(v.amount_paid),
-      v.payment_status,
-    ),
-  }),
+  compute: (v) => {
+    const ge = round2(num(v.gross_billing) + num(v.overtime_extra) + num(v.bonus_incentive) + num(v.other_earnings))
+    const td = round2(num(v.pf_deduction) + num(v.esi_deduction) + num(v.professional_tax) + num(v.tds) + num(v.other_deductions))
+    return {
+      gross_earnings: ge, total_deductions: td, net_payable: round2(ge - td),
+      financial_year: v.financial_year || financialYearFor(v.invoice_date),
+    }
+  },
   tableColumns: [
     { key: "fte_invoice_id", label: "FTE Invoice ID", mono: true },
     { key: "invoice_date", label: "Date" },
-    { key: "client_name", label: "Client", sub: "project_name" },
-    { key: "employee_name", label: "Resource", sub: "billing_role" },
-    { key: "month", label: "Period", sub: "billing_basis" },
-    { key: "gross_client_billing", label: "Gross Billing", align: "right", money: true },
-    { key: "net_receivable", label: "Net Receivable", align: "right", money: true },
-    { key: "outstanding", label: "Outstanding", align: "right", money: true },
-    { key: "status", label: "Status", badge: FTE_STATUS_BADGE as unknown as Record<string, "default" | "secondary" | "destructive" | "outline"> },
+    { key: "employee_name", label: "Employee", sub: "department" },
+    { key: "gross_earnings", label: "Gross", align: "right", money: true },
+    { key: "net_payable", label: "Net Payable", align: "right", money: true },
+    { key: "status", label: "Status", badge: { Paid: "default", Approved: "default", Draft: "secondary", "On Hold": "outline" } },
   ],
   kpis: [
-    { label: "Gross Billing", key: "total_billing", money: true, icon: "Coins" },
-    { label: "Net Receivable", key: "total_receivable", money: true, icon: "Wallet" },
-    { label: "Outstanding", key: "total_outstanding", money: true, icon: "Landmark" },
-    { label: "Gross Margin", key: "total_margin", money: true, icon: "TrendingUp" },
+    { label: "Gross Earnings", key: "total_gross", money: true, icon: "Coins" },
+    { label: "Deductions", key: "total_deductions", money: true, icon: "Landmark" },
+    { label: "Net Payable", key: "total_net", money: true, icon: "Wallet" },
     { label: "Records", key: "total_rows", icon: "Users" },
   ],
   summarySelect:
-    "COALESCE(SUM(gross_client_billing),0) total_billing, COALESCE(SUM(net_receivable),0) total_receivable, COALESCE(SUM(outstanding),0) total_outstanding, COALESCE(SUM(gross_margin),0) total_margin, COUNT(*) total_rows",
+    "COALESCE(SUM(gross_earnings),0) total_gross, COALESCE(SUM(total_deductions),0) total_deductions, COALESCE(SUM(net_payable),0) total_net, COUNT(*) total_rows",
 }
 
 // ---------------------------------------------------------------------------

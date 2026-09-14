@@ -1,9 +1,10 @@
 import "server-only"
 import { pool, query } from "@/lib/db"
 import { getSettings } from "@/lib/settings/server"
-import { computePurchaseBill, addDays, round2 } from "@/lib/finance-calc"
+import { computePurchaseBill, addDays, round2, num, financialYearFor } from "@/lib/finance-calc"
 import { stateCodeFromGstin, resolveSupplyType } from "@/lib/sales-invoice-compute"
 import { computeBillItems } from "@/lib/purchase-bill-items"
+import { resolveTdsRule, entityTypeForConstitution } from "@/lib/finance-tds-rules"
 
 /**
  * Purchase Bill server engine (Phases 1–5).
@@ -157,8 +158,71 @@ export async function computePurchaseBillServerFields(
   // aggregated from the (server-recomputed) lines and override the single-line
   // fields; otherwise the classic single-line compute is used.
   const rawItems = Array.isArray(merged.__items) ? (merged.__items as any[]) : null
-  if (rawItems && rawItems.length > 0) {
-    const { totals } = computeBillItems(rawItems, supplyType)
+  const itemTotals = rawItems && rawItems.length > 0 ? computeBillItems(rawItems, supplyType).totals : null
+
+  // The taxable base that TDS is assessed on — from the item aggregate when line
+  // items exist, otherwise from the single-line compute.
+  const taxableBase = itemTotals
+    ? itemTotals.taxable_amount
+    : num(computePurchaseBill({ ...merged, ...out, supply_type: supplyType }).taxable_amount)
+
+  // --- Centralized TDS rule resolution (parity with Expenses) ----------------
+  // The rate is NEVER hard-coded: when TDS applies and a section is present, the
+  // rate/thresholds come from the effective-dated finance_tds_rules master. A
+  // missing vendor PAN drops to the higher no-PAN rate. The rule's single +
+  // cumulative (FY) thresholds gate whether TDS is deducted at all, and the
+  // resolved rule is frozen onto the bill so a later rate change never rewrites
+  // this document.
+  let tdsApplicable =
+    merged.tds_applicable !== undefined ? !!merged.tds_applicable : !!out.tds_applicable
+  let effectiveTdsRate = num(merged.tds_rate)
+  const tdsSection = String(merged.tds_section ?? out.tds_section ?? "").trim()
+  if (tdsSection && tdsApplicable) {
+    const entityType = entityTypeForConstitution(
+      vendor?.business_constitution ?? vendor?.constitution,
+    )
+    const rule = await resolveTdsRule({ section: tdsSection, entityType, date: merged.bill_date })
+    if (rule) {
+      const hasPan = String(out.vendor_pan ?? merged.vendor_pan ?? "").trim().length >= 10
+      const ruleRate = hasPan ? rule.rate : Math.max(rule.rate, rule.rate_no_pan)
+
+      // Cumulative FY spend for this vendor + section, excluding this bill.
+      const fy = financialYearFor(merged.bill_date)
+      const [priorRow] = (await query(
+        `SELECT COALESCE(SUM(taxable_amount),0) prior FROM purchase_bills
+           WHERE vendor_id = ? AND tds_section = ? AND financial_year = ?
+             AND (? IS NULL OR bill_id <> ?)`,
+        [
+          out.vendor_id ?? merged.vendor_id ?? null,
+          tdsSection,
+          fy,
+          merged.bill_id ?? null,
+          merged.bill_id ?? null,
+        ],
+      )) as any[]
+      const cumulative = num(priorRow?.prior) + taxableBase
+
+      const overSingle = rule.threshold_single > 0 && taxableBase >= rule.threshold_single
+      const overAnnual = rule.threshold_annual > 0 && cumulative >= rule.threshold_annual
+      const noThreshold = rule.threshold_single === 0 && rule.threshold_annual === 0
+      const crosses = noThreshold || overSingle || overAnnual
+
+      tdsApplicable = crosses
+      effectiveTdsRate = crosses ? ruleRate : 0
+      out.tds_applicable = crosses ? 1 : 0
+      out.tds_rate = effectiveTdsRate
+      out.tds_section = rule.section
+      out.tds_nature_of_payment = rule.nature_of_payment
+      out.tds_entity_type = rule.entity_type
+      out.tds_threshold_single = rule.threshold_single
+      out.tds_threshold_annual = rule.threshold_annual
+      out.tds_rule_version = rule.rule_version
+      out.tds_no_pan_rate_applied = hasPan ? 0 : 1
+    }
+  }
+
+  if (itemTotals) {
+    const totals = itemTotals
     const aggregatedInput = {
       ...merged,
       ...out,
@@ -172,6 +236,8 @@ export async function computePurchaseBillServerFields(
       sgst_percent: 0,
       igst_percent: 0,
       other_tax_cess: totals.other_tax_cess,
+      tds_applicable: tdsApplicable,
+      tds_rate: effectiveTdsRate,
     }
     const money = computePurchaseBill(aggregatedInput as Record<string, any>)
     // Trust the item aggregate for the tax split (handles mixed GST rates).
@@ -183,16 +249,24 @@ export async function computePurchaseBillServerFields(
       other_tax_cess: totals.other_tax_cess,
       gross_bill_amount: totals.gross_bill_amount,
     })
-    // Recompute TDS / net / outstanding on the aggregated taxable + gross.
-    const tds = merged.tds_applicable ? round2((totals.taxable_amount * Number(merged.tds_rate || 0)) / 100) : 0
+    // Recompute TDS / net / outstanding on the aggregated taxable + gross using
+    // the centrally resolved rate (never a client-supplied rate).
+    const tds = tdsApplicable ? round2((totals.taxable_amount * effectiveTdsRate) / 100) : 0
     const paid = round2(Number(out.amount_paid ?? merged.amount_paid ?? 0))
     out.tds_base = totals.taxable_amount
     out.tds_amount = tds
     out.net_payable = round2(totals.gross_bill_amount - tds)
     out.outstanding_amount = round2(out.net_payable - paid)
   } else {
-    const money = computePurchaseBill({ ...merged, ...out, supply_type: supplyType })
+    const money = computePurchaseBill({
+      ...merged,
+      ...out,
+      supply_type: supplyType,
+      tds_applicable: tdsApplicable,
+      tds_rate: effectiveTdsRate,
+    })
     Object.assign(out, money)
+    out.tds_base = round2(num(out.taxable_amount))
   }
 
   // --- Phase 38: due date from bill date + vendor payment terms --------------

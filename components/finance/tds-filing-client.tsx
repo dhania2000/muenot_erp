@@ -15,7 +15,7 @@ import { inr0 } from "@/lib/finance-calc"
 const currency = (n: any) => inr0(Number(n) || 0)
 const thisMonth = () => new Date().toISOString().slice(0, 7)
 
-type Direction = "receivable" | "payable"
+type Direction = "receivable" | "payable" | "employee"
 
 type Summary = {
   period: string
@@ -43,6 +43,8 @@ const SOURCE_BADGE: Record<string, "default" | "secondary" | "outline"> = {
   "Purchase Bill": "default",
   Expense: "secondary",
   "Sales Invoice": "outline",
+  "FTE Invoice": "default",
+  "Freelance Invoice": "secondary",
 }
 
 const DIRECTION_COPY: Record<Direction, { label: string; blurb: string; partyLabel: string }> = {
@@ -56,7 +58,17 @@ const DIRECTION_COPY: Record<Direction, { label: string; blurb: string; partyLab
     blurb: "Section-wise TDS you deducted on vendor purchase bills and must deposit with the government.",
     partyLabel: "Vendor",
   },
+  employee: {
+    label: "TDS Payable — Employee (Form 24Q / 26Q)",
+    blurb: "Section-wise TDS you deducted on FTE (§192) and freelance invoices and must deposit with the government.",
+    partyLabel: "Payee",
+  },
 }
+
+/** Directions that carry a per-document source ledger (multiple source tables). */
+const HAS_SOURCE: Record<Direction, boolean> = { receivable: false, payable: true, employee: true }
+/** Directions that expose a vendor PAN snapshot on the detail register. */
+const HAS_PAN: Record<Direction, boolean> = { receivable: false, payable: true, employee: false }
 
 export function TdsFilingClient() {
   const [direction, setDirection] = useState<Direction>("receivable")
@@ -118,6 +130,7 @@ export function TdsFilingClient() {
         <TabsList>
           <TabsTrigger value="receivable">Receivable (from customers)</TabsTrigger>
           <TabsTrigger value="payable">Payable (on vendor bills)</TabsTrigger>
+          <TabsTrigger value="employee">Payable (on employee invoices)</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -126,7 +139,7 @@ export function TdsFilingClient() {
       <div className="grid grid-cols-3 gap-4">
         <Stat label="Documents" value={String(s?.totals.invoice_count ?? 0)} />
         <Stat label="Base amount" value={currency(s?.totals.total_base)} />
-        <Stat label={direction === "payable" ? "TDS deducted (payable)" : "TDS deducted"} value={currency(s?.totals.total_tds)} />
+        <Stat label={direction === "receivable" ? "TDS deducted" : "TDS deducted (payable)"} value={currency(s?.totals.total_tds)} />
       </div>
 
       <Card>
@@ -199,9 +212,9 @@ export function TdsFilingClient() {
             <TableHeader>
               <TableRow>
                 <TableHead>Document</TableHead>
-                {direction === "payable" ? <TableHead>Source</TableHead> : null}
+                {HAS_SOURCE[direction] ? <TableHead>Source</TableHead> : null}
                 <TableHead>{copy.partyLabel}</TableHead>
-                {direction === "payable" ? <TableHead>PAN</TableHead> : null}
+                {HAS_PAN[direction] ? <TableHead>PAN</TableHead> : null}
                 <TableHead>Section</TableHead>
                 <TableHead className="text-right">Base</TableHead>
                 <TableHead className="text-right">Rate</TableHead>

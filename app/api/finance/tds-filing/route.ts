@@ -6,7 +6,10 @@ const FEATURE = "finance.tds_filing"
 
 /** Normalize the query/body direction to a valid TdsDirection. */
 function dirOf(value: unknown): TdsDirection {
-  return String(value) === "payable" ? "payable" : "receivable"
+  const s = String(value)
+  if (s === "payable") return "payable"
+  if (s === "employee") return "employee"
+  return "receivable"
 }
 
 export async function GET(req: NextRequest) {

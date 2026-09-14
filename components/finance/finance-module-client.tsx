@@ -127,6 +127,16 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
       base[f.keyMin] = ""
       base[f.keyMax] = ""
     }
+    // Seed the search / financial-year filters from the URL query so deep links
+    // (e.g. "open this account in the General Ledger") land pre-filtered. Read
+    // once, on the client only, so it never fights the user's later edits.
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search)
+      const search = params.get("search")
+      const fy = params.get("financial_year")
+      if (search) base.search = search
+      if (fy) base.financial_year = fy
+    }
     return base
   }, [selectFilters, rangeFilters])
   const [filters, setFilters] = useState(emptyFilters)

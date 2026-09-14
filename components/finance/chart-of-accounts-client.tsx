@@ -330,7 +330,12 @@ export function ChartOfAccountsClient() {
                               <td className="p-2">
                                 <div className="flex items-center gap-1.5" style={{ paddingLeft: depth * 20 }}>
                                   {depth > 0 && <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground" />}
-                                  <span className="font-medium">{row.account_name}</span>
+                                  <a
+                                    href={`/modules/finance/chart-of-accounts/${encodeURIComponent(String(row.account_id))}`}
+                                    className="font-medium text-primary hover:underline"
+                                  >
+                                    {row.account_name}
+                                  </a>
                                   {isSystem && (
                                     <Badge variant="outline" className="gap-1 text-[10px]">
                                       <ShieldCheck className="size-3" />
@@ -364,6 +369,15 @@ export function ChartOfAccountsClient() {
                               </td>
                               <td className="p-2">
                                 <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label="View ledger & account detail"
+                                    title="View ledger, journal, transactions & balance"
+                                    render={<a href={`/modules/finance/chart-of-accounts/${encodeURIComponent(String(row.account_id))}`} />}
+                                  >
+                                    <BookOpen className="size-4" />
+                                  </Button>
                                   <Button variant="ghost" size="icon" aria-label="Add child account" onClick={() => openChild(row)}>
                                     <Plus className="size-4" />
                                   </Button>

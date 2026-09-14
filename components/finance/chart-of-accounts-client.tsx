@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
@@ -35,7 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  BookOpen, Coins, Plus, Pencil, Trash2, ChevronRight, ChevronDown,
+  BookOpen, Coins, Plus, Pencil, Trash2, ChevronRight, ChevronLeft, ChevronDown,
   Lock, Loader2Icon, CornerDownRight, ShieldCheck, GitMerge, Settings2,
   Download, Upload, SlidersHorizontal, Network, List, CalendarClock,
   Wallet, Landmark, TrendingUp, TrendingDown, CircleCheck,
@@ -228,6 +228,8 @@ export function ChartOfAccountsClient() {
   const [showFilters, setShowFilters] = useState(false)
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
   const [exportingLedger, setExportingLedger] = useState(false)
+  const [flatPageSize, setFlatPageSize] = useState(50)
+  const [flatPage, setFlatPage] = useState(1)
 
   const { data, mutate } = useSWR<ApiShape>(ENDPOINT, fetcher)
   const { data: balanceData, mutate: mutateBalances } = useSWR<BalancesShape>(BALANCES_ENDPOINT, fetcher)
@@ -478,6 +480,174 @@ export function ChartOfAccountsClient() {
       setExportingLedger(false)
     }
   }
+
+  // Flat view: every account matching the active search/filters, flattened
+  // across account types and paged (requirement 111). The tree view keeps the
+  // full hierarchy (bounded master data) while the flat list is the scalable,
+  // paginated surface for a large Chart of Accounts.
+  const flatAll = useMemo(() => {
+    return rows
+      .filter((r) => (filters.type === "All" || String(r.account_group) === filters.type) && matcher(r))
+      .sort(
+        (a, b) =>
+          COA_ACCOUNT_TYPES.indexOf(a.account_group) - COA_ACCOUNT_TYPES.indexOf(b.account_group) ||
+          String(a.account_code ?? "").localeCompare(String(b.account_code ?? "")) ||
+          String(a.account_name ?? "").localeCompare(String(b.account_name ?? "")),
+      )
+  }, [rows, filters, matcher])
+
+  const flatTotalPages = Math.max(Math.ceil(flatAll.length / flatPageSize), 1)
+  const flatSafePage = Math.min(flatPage, flatTotalPages)
+  const flatSlice = flatAll.slice((flatSafePage - 1) * flatPageSize, flatSafePage * flatPageSize)
+
+  // Reset to the first page whenever the result set or page size changes, so a
+  // stale page number can never strand the user on an empty page.
+  useEffect(() => {
+    setFlatPage(1)
+  }, [search, filters, flatPageSize, viewMode])
+
+  function renderAccountRow(row: Row, depth: number) {
+    const isSystem = Number(row.is_system) === 1
+    return (
+      <tr key={row.id} className="border-b hover:bg-muted/40">
+        <td className="p-2">
+          <div className="flex items-center gap-1.5" style={{ paddingLeft: depth * 20 }}>
+            {depth > 0 && <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground" />}
+            <a
+              href={`/modules/finance/chart-of-accounts/${encodeURIComponent(String(row.account_id))}`}
+              className="font-medium text-primary hover:underline"
+            >
+              {row.account_name}
+            </a>
+            {isSystem && (
+              <Badge variant="outline" className="gap-1 text-[10px]">
+                <ShieldCheck className="size-3" />
+                System
+              </Badge>
+            )}
+          </div>
+        </td>
+        <td className="p-2 font-mono text-xs text-muted-foreground">{row.account_id}</td>
+        <td className="p-2 font-mono text-xs">{row.account_code || "—"}</td>
+        <td className="p-2">{row.account_type || "—"}</td>
+        <td className="p-2 align-top">
+          <ClassificationBadges row={row} />
+          {(() => {
+            const roles = rolesByAccount.get(String(row.account_id)) ?? []
+            if (roles.length === 0) return null
+            return (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {roles.map((label) => (
+                  <Badge key={label} variant="secondary" className="text-[10px] font-normal">{label}</Badge>
+                ))}
+              </div>
+            )
+          })()}
+        </td>
+        <td className="p-2">
+          <Badge variant={natureVariant(row.nature)}>{row.nature || natureForAccountType(row.account_group)}</Badge>
+        </td>
+        <td className="p-2 text-right tabular-nums">{inr(row.opening_balance)}</td>
+        <td className="p-2 text-right tabular-nums">
+          {(() => {
+            const bal = balances[String(row.account_id)]
+            if (!bal || bal.balance === 0) return <span className="text-muted-foreground">—</span>
+            return (
+              <span>
+                {inr(bal.balance)}{" "}
+                <span className="text-xs text-muted-foreground">{bal.balance_type === "Debit" ? "Dr" : "Cr"}</span>
+              </span>
+            )
+          })()}
+        </td>
+        <td className="p-2">
+          <Badge variant={row.active_status === "Active" ? "default" : "outline"}>
+            {row.active_status || "Active"}
+          </Badge>
+        </td>
+        <td className="p-2">
+          <div className="flex items-center justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="View ledger & account detail"
+              title="View ledger, journal, transactions & balance"
+              render={<a href={`/modules/finance/chart-of-accounts/${encodeURIComponent(String(row.account_id))}`} />}
+            >
+              <BookOpen className="size-4" />
+            </Button>
+            <Button variant="ghost" size="icon" aria-label="Add child account" onClick={() => openChild(row)}>
+              <Plus className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Opening balances by year"
+              title="Opening balances by financial year"
+              onClick={() => setObYearsAccount(row)}
+            >
+              <CalendarClock className="size-4" />
+            </Button>
+            <Button variant="ghost" size="icon" aria-label="Edit" onClick={() => openEdit(row)}>
+              <Pencil className="size-4" />
+            </Button>
+            {!isSystem && (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Merge into another account"
+                title="Merge into another account"
+                onClick={() => {
+                  setMergeSource(row)
+                  setMergeOpen(true)
+                }}
+              >
+                <GitMerge className="size-4" />
+              </Button>
+            )}
+            {isSystem ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="System account — protected"
+                disabled
+                title="System account — protected from deletion"
+              >
+                <Lock className="size-4 text-muted-foreground" />
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Delete"
+                disabled={deletingId === row.id}
+                onClick={() => remove(row)}
+              >
+                {deletingId === row.id ? <Loader2Icon className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              </Button>
+            )}
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  const tableHead = (
+    <thead>
+      <tr className="border-b text-left text-muted-foreground">
+        <th className="p-2 font-medium">Account</th>
+        <th className="p-2 font-medium">Account ID</th>
+        <th className="p-2 font-medium">Code</th>
+        <th className="p-2 font-medium">Sub type</th>
+        <th className="p-2 font-medium">Reporting</th>
+        <th className="p-2 font-medium">Nature</th>
+        <th className="p-2 text-right font-medium">Opening</th>
+        <th className="p-2 text-right font-medium">Current (GL)</th>
+        <th className="p-2 font-medium">Status</th>
+        <th className="p-2 text-right font-medium">Actions</th>
+      </tr>
+    </thead>
+  )
 
   return (
     <main className="space-y-8 p-6">

@@ -27,8 +27,17 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   BookOpen, Coins, Plus, Pencil, Trash2, ChevronRight, ChevronDown,
   Lock, Loader2Icon, CornerDownRight, ShieldCheck, GitMerge, Settings2,
+  Download, Upload, SlidersHorizontal, Network, List,
 } from "lucide-react"
 import { inr, inr0, financialYearFor } from "@/lib/finance-calc"
 import {
@@ -36,8 +45,10 @@ import {
   COA_SUB_TYPES_BY_TYPE,
   natureForAccountType,
 } from "@/lib/finance-module-configs"
+import { exportRowsToExcel } from "@/lib/excel-export"
 import { CoaMappingDialog } from "@/components/finance/coa-mapping-dialog"
 import { CoaMergeDialog } from "@/components/finance/coa-merge-dialog"
+import { CoaImportDialog } from "@/components/finance/coa-import-dialog"
 
 type Row = Record<string, any>
 type ApiShape = { rows: Row[]; summary: any }
@@ -139,6 +150,29 @@ function emptyForm(): FormState {
   }
 }
 
+const NATURE_FILTERS = ["All", "Debit", "Credit"] as const
+const STATUS_FILTERS = ["All", "Active", "Inactive", "Archived"] as const
+
+type Filters = {
+  type: string
+  subType: string
+  nature: string
+  parent: string
+  status: string
+  minBalance: string
+  maxBalance: string
+}
+
+const EMPTY_FILTERS: Filters = {
+  type: "All",
+  subType: "All",
+  nature: "All",
+  parent: "All",
+  status: "All",
+  minBalance: "",
+  maxBalance: "",
+}
+
 export function ChartOfAccountsClient() {
   const [search, setSearch] = useState("")
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -150,6 +184,11 @@ export function ChartOfAccountsClient() {
   const [mappingOpen, setMappingOpen] = useState(false)
   const [mergeOpen, setMergeOpen] = useState(false)
   const [mergeSource, setMergeSource] = useState<Row | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<"tree" | "flat">("tree")
+  const [showFilters, setShowFilters] = useState(false)
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
+  const [exportingLedger, setExportingLedger] = useState(false)
 
   const { data, mutate } = useSWR<ApiShape>(ENDPOINT, fetcher)
   const { data: balanceData, mutate: mutateBalances } = useSWR<BalancesShape>(BALANCES_ENDPOINT, fetcher)
@@ -159,14 +198,76 @@ export function ChartOfAccountsClient() {
 
   const forest = useMemo(() => buildForest(rows), [rows])
 
+  // account_id → account (for resolving a row's parent name/code in search & filters).
+  const byId = useMemo(() => {
+    const m = new Map<string, Row>()
+    for (const r of rows) m.set(String(r.account_id), r)
+    return m
+  }, [rows])
+
+  // Parent accounts that actually have children — the only useful parent-filter options.
+  const parentOptions = useMemo(() => {
+    const ids = new Set<string>()
+    for (const r of rows) {
+      const p = (r.parent_account_id ?? "").toString().trim()
+      if (p && byId.has(p)) ids.add(p)
+    }
+    return Array.from(ids)
+      .map((id) => byId.get(id)!)
+      .sort((a, b) =>
+        String(a.account_code ?? "").localeCompare(String(b.account_code ?? "")) ||
+        String(a.account_name ?? "").localeCompare(String(b.account_name ?? "")),
+      )
+  }, [rows, byId])
+
+  const subTypeOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of rows) {
+      const t = String(r.account_type ?? "").trim()
+      if (t) set.add(t)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [rows])
+
+  const activeFilterCount = useMemo(
+    () =>
+      (Object.keys(EMPTY_FILTERS) as (keyof Filters)[]).filter(
+        (k) => filters[k] !== EMPTY_FILTERS[k],
+      ).length,
+    [filters],
+  )
+
   const matcher = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return (r: Row) =>
-      !q ||
-      [r.account_name, r.account_code, r.account_type, r.account_id]
-        .map((v) => String(v ?? "").toLowerCase())
-        .some((s) => s.includes(q))
-  }, [search])
+    const min = filters.minBalance.trim() === "" ? null : Number(filters.minBalance)
+    const max = filters.maxBalance.trim() === "" ? null : Number(filters.maxBalance)
+    return (r: Row) => {
+      // Text search — name, code, sub type, id AND the parent account's name/code.
+      if (q) {
+        const parent = byId.get((r.parent_account_id ?? "").toString().trim())
+        const haystack = [
+          r.account_name, r.account_code, r.account_type, r.account_id,
+          parent?.account_name, parent?.account_code,
+        ]
+          .map((v) => String(v ?? "").toLowerCase())
+        if (!haystack.some((s) => s.includes(q))) return false
+      }
+      if (filters.subType !== "All" && String(r.account_type ?? "") !== filters.subType) return false
+      if (filters.nature !== "All") {
+        const nat = String(r.nature || natureForAccountType(r.account_group))
+        if (nat !== filters.nature) return false
+      }
+      if (filters.parent !== "All" && String(r.parent_account_id ?? "") !== filters.parent) return false
+      if (filters.status !== "All" && String(r.active_status || "Active") !== filters.status) return false
+      if (min !== null || max !== null) {
+        const bal = balances[String(r.account_id)]?.balance ?? 0
+        const abs = Math.abs(Number(bal))
+        if (min !== null && abs < min) return false
+        if (max !== null && abs > max) return false
+      }
+      return true
+    }
+  }, [search, filters, byId, balances])
 
   function toggle(type: string) {
     setCollapsed((prev) => {
@@ -213,6 +314,90 @@ export function ChartOfAccountsClient() {
   const totalAccounts = summary.total_rows ?? rows.length
   const totalOpening = summary.total_opening ?? 0
 
+  // --- Exports (Excel) ------------------------------------------------------
+  // All exports read the same live data the page shows; none create a copy.
+  function exportAccounts() {
+    const ordered = [...rows].sort(
+      (a, b) =>
+        COA_ACCOUNT_TYPES.indexOf(a.account_group) - COA_ACCOUNT_TYPES.indexOf(b.account_group) ||
+        String(a.account_code ?? "").localeCompare(String(b.account_code ?? "")),
+    )
+    exportRowsToExcel("chart-of-accounts", ordered, [
+      { header: "Account ID", value: (r) => r.account_id },
+      { header: "Account Code", value: (r) => r.account_code ?? "" },
+      { header: "Account Name", value: (r) => r.account_name },
+      { header: "Account Type", value: (r) => r.account_group },
+      { header: "Sub Type", value: (r) => r.account_type ?? "" },
+      { header: "Nature", value: (r) => r.nature || natureForAccountType(r.account_group) },
+      {
+        header: "Parent Code",
+        value: (r) => byId.get(String(r.parent_account_id ?? ""))?.account_code ?? "",
+      },
+      {
+        header: "Parent Name",
+        value: (r) => byId.get(String(r.parent_account_id ?? ""))?.account_name ?? "",
+      },
+      { header: "Opening Balance", value: (r) => Number(r.opening_balance ?? 0) },
+      { header: "Opening Balance Date", value: (r) => r.opening_balance_date ?? "" },
+      { header: "Financial Year", value: (r) => r.financial_year ?? "" },
+      { header: "Status", value: (r) => r.active_status || "Active" },
+    ])
+  }
+
+  function exportBalances() {
+    const ordered = [...rows].sort(
+      (a, b) =>
+        COA_ACCOUNT_TYPES.indexOf(a.account_group) - COA_ACCOUNT_TYPES.indexOf(b.account_group) ||
+        String(a.account_code ?? "").localeCompare(String(b.account_code ?? "")),
+    )
+    exportRowsToExcel("account-balances", ordered, [
+      { header: "Account ID", value: (r) => r.account_id },
+      { header: "Account Code", value: (r) => r.account_code ?? "" },
+      { header: "Account Name", value: (r) => r.account_name },
+      { header: "Account Type", value: (r) => r.account_group },
+      { header: "Opening Balance", value: (r) => Number(r.opening_balance ?? 0) },
+      { header: "Current Balance", value: (r) => Number(balances[String(r.account_id)]?.balance ?? 0) },
+      {
+        header: "Dr/Cr",
+        value: (r) => balances[String(r.account_id)]?.balance_type ?? natureForAccountType(r.account_group),
+      },
+    ])
+  }
+
+  async function exportLedger() {
+    setExportingLedger(true)
+    try {
+      const res = await fetch("/api/finance/chart-of-accounts/ledger-export")
+      const body = await res.json().catch(() => ({}))
+      const ledgerRows: Row[] = Array.isArray(body?.rows) ? body.rows : []
+      if (ledgerRows.length === 0) {
+        alert("There are no posted ledger entries to export yet.")
+        return
+      }
+      exportRowsToExcel("account-ledgers", ledgerRows, [
+        { header: "Account Code", value: (r) => r.account_code ?? "" },
+        { header: "Account Name", value: (r) => r.account_name ?? "" },
+        { header: "Account Type", value: (r) => r.account_group ?? "" },
+        { header: "Date", value: (r) => r.transaction_date ?? "" },
+        { header: "Voucher No", value: (r) => r.voucher_no ?? "" },
+        { header: "Voucher Type", value: (r) => r.voucher_type ?? "" },
+        { header: "Reference", value: (r) => r.reference_no ?? "" },
+        { header: "Party", value: (r) => r.party_name ?? "" },
+        { header: "Description", value: (r) => r.description ?? "" },
+        { header: "Debit", value: (r) => Number(r.debit ?? 0) },
+        { header: "Credit", value: (r) => Number(r.credit ?? 0) },
+        { header: "Balance", value: (r) => Number(r.balance ?? 0) },
+        { header: "Dr/Cr", value: (r) => r.balance_type ?? "" },
+        { header: "Source", value: (r) => r.source_module ?? "" },
+        { header: "Source Ref", value: (r) => r.source_reference ?? "" },
+      ])
+    } catch {
+      alert("Could not prepare the ledger export. Please try again.")
+    } finally {
+      setExportingLedger(false)
+    }
+  }
+
   return (
     <main className="space-y-8 p-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -235,6 +420,29 @@ export function ChartOfAccountsClient() {
             <GitMerge data-icon="inline-start" />
             Merge accounts
           </Button>
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Upload data-icon="inline-start" />
+            Import
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="outline">
+                  <Download data-icon="inline-start" />
+                  Export
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Export to Excel</DropdownMenuLabel>
+              <DropdownMenuItem onClick={exportAccounts}>Chart of Accounts</DropdownMenuItem>
+              <DropdownMenuItem onClick={exportBalances}>Account balances (trial balance)</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={exportLedger} disabled={exportingLedger}>
+                {exportingLedger ? "Preparing ledger…" : "Account ledgers (all postings)"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button onClick={openNew}>
             <Plus data-icon="inline-start" />
             New account
@@ -264,13 +472,142 @@ export function ChartOfAccountsClient() {
       </div>
 
       <Card>
-        <CardContent className="pt-6">
-          <Input
-            placeholder="Search by name, code or sub type..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-md"
-          />
+        <CardContent className="space-y-4 pt-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Search by name, code, sub type or parent..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="max-w-md flex-1"
+            />
+            <Button
+              variant={showFilters || activeFilterCount > 0 ? "secondary" : "outline"}
+              onClick={() => setShowFilters((v) => !v)}
+            >
+              <SlidersHorizontal data-icon="inline-start" />
+              Filters
+              {activeFilterCount > 0 && (
+                <Badge variant="default" className="ml-1">{activeFilterCount}</Badge>
+              )}
+            </Button>
+            <div className="ml-auto inline-flex overflow-hidden rounded-md border">
+              <Button
+                variant={viewMode === "tree" ? "secondary" : "ghost"}
+                size="sm"
+                className="rounded-none"
+                onClick={() => setViewMode("tree")}
+                aria-pressed={viewMode === "tree"}
+              >
+                <Network data-icon="inline-start" />
+                Hierarchy
+              </Button>
+              <Button
+                variant={viewMode === "flat" ? "secondary" : "ghost"}
+                size="sm"
+                className="rounded-none"
+                onClick={() => setViewMode("flat")}
+                aria-pressed={viewMode === "flat"}
+              >
+                <List data-icon="inline-start" />
+                Flat
+              </Button>
+            </div>
+          </div>
+
+          {showFilters && (
+            <div className="grid grid-cols-1 gap-4 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Account type</label>
+                <Select value={filters.type} onValueChange={(v) => setFilters((f) => ({ ...f, type: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="All">All types</SelectItem>
+                    {COA_ACCOUNT_TYPES.map((t) => (
+                      <SelectItem key={t} value={t}>{t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Sub type</label>
+                <Select value={filters.subType} onValueChange={(v) => setFilters((f) => ({ ...f, subType: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="All">All sub types</SelectItem>
+                    {subTypeOptions.map((t) => (
+                      <SelectItem key={t} value={t}>{t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Nature</label>
+                <Select value={filters.nature} onValueChange={(v) => setFilters((f) => ({ ...f, nature: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {NATURE_FILTERS.map((t) => (
+                      <SelectItem key={t} value={t}>{t === "All" ? "All natures" : t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Parent account</label>
+                <Select value={filters.parent} onValueChange={(v) => setFilters((f) => ({ ...f, parent: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="All">All parents</SelectItem>
+                    {parentOptions.map((p) => (
+                      <SelectItem key={String(p.account_id)} value={String(p.account_id)}>
+                        {p.account_code ? `${p.account_code} · ` : ""}{p.account_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Status</label>
+                <Select value={filters.status} onValueChange={(v) => setFilters((f) => ({ ...f, status: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {STATUS_FILTERS.map((t) => (
+                      <SelectItem key={t} value={t}>{t === "All" ? "All statuses" : t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Balance range (absolute)</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="Min"
+                    value={filters.minBalance}
+                    onChange={(e) => setFilters((f) => ({ ...f, minBalance: e.target.value }))}
+                  />
+                  <span className="text-muted-foreground">–</span>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="Max"
+                    value={filters.maxBalance}
+                    onChange={(e) => setFilters((f) => ({ ...f, maxBalance: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="flex items-end sm:col-span-2 lg:col-span-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setFilters(EMPTY_FILTERS)}
+                  disabled={activeFilterCount === 0}
+                >
+                  Clear all filters
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -281,8 +618,21 @@ export function ChartOfAccountsClient() {
       )}
 
       <div className="space-y-6">
-        {COA_ACCOUNT_TYPES.map((type) => {
-          const nodes = flattenFiltered(forest[type] ?? [], matcher)
+        {COA_ACCOUNT_TYPES.filter((type) => filters.type === "All" || filters.type === type).map((type) => {
+          // Hierarchy view keeps the parent→child tree (children shown when any
+          // descendant matches); flat view lists every matching account of this
+          // type at depth 0, sorted by code then name.
+          const nodes =
+            viewMode === "tree"
+              ? flattenFiltered(forest[type] ?? [], matcher)
+              : rows
+                  .filter((r) => String(r.account_group) === type && matcher(r))
+                  .sort(
+                    (a, b) =>
+                      String(a.account_code ?? "").localeCompare(String(b.account_code ?? "")) ||
+                      String(a.account_name ?? "").localeCompare(String(b.account_name ?? "")),
+                  )
+                  .map((row) => ({ row, depth: 0 }))
           const isCollapsed = collapsed.has(type)
           const nature = natureForAccountType(type)
           return (
@@ -306,6 +656,7 @@ export function ChartOfAccountsClient() {
                       <thead>
                         <tr className="border-b text-left text-muted-foreground">
                           <th className="p-2 font-medium">Account</th>
+                          <th className="p-2 font-medium">Account ID</th>
                           <th className="p-2 font-medium">Code</th>
                           <th className="p-2 font-medium">Sub type</th>
                           <th className="p-2 font-medium">Nature</th>
@@ -344,6 +695,7 @@ export function ChartOfAccountsClient() {
                                   )}
                                 </div>
                               </td>
+                              <td className="p-2 font-mono text-xs text-muted-foreground">{row.account_id}</td>
                               <td className="p-2 font-mono text-xs">{row.account_code || "—"}</td>
                               <td className="p-2">{row.account_type || "—"}</td>
                               <td className="p-2">

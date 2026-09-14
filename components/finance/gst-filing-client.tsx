@@ -10,6 +10,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   FileCheck2,
   Landmark,
   Download,
@@ -224,6 +231,228 @@ function statusVariant(status: string): "default" | "outline" | "secondary" | "d
   }
 }
 
+/**
+ * Phase 35/36 — build the CA-ready GST package workbook. Pure presentation over
+ * the consolidated `gstCaPackage` payload: one sheet per compliance dataset so a
+ * chartered accountant can review the whole period in a single file. It adds no
+ * figures of its own — every cell comes straight from the derived package.
+ */
+function buildCaWorkbook(pkg: any) {
+  const wb = XLSX.utils.book_new()
+  const add = (name: string, aoa: any[][], cols?: number[]) => {
+    if (!aoa.length) return
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+    if (cols) ws["!cols"] = cols.map((wch) => ({ wch }))
+    // Excel caps sheet names at 31 chars and forbids a few characters.
+    XLSX.utils.book_append_sheet(wb, ws, name.replace(/[\\/?*[\]:]/g, " ").slice(0, 31))
+  }
+  const n = (v: any) => (v === null || v === undefined ? 0 : Number(v) || 0)
+
+  const t = pkg.gstr1?.totals ?? {}
+  const l = pkg.liability ?? {}
+  add(
+    "Cover",
+    [
+      ["CA-Ready GST Package"],
+      ["Tax period", pkg.period],
+      ["Financial year", pkg.financial_year],
+      ["Quarter", pkg.quarter],
+      ["Return status", pkg.workflow?.status ?? "—"],
+      ["Filing ID", pkg.filing?.filing_id ?? "—"],
+      ["ARN", pkg.filing?.arn ?? "—"],
+      ["Generated on", new Date(pkg.generated_at ?? Date.now()).toLocaleString()],
+      [],
+      ["OUTPUT (GSTR-1)"],
+      ["Documents", n(t.invoice_count)],
+      ["Taxable value", n(t.taxable)],
+      ["Total tax", n(t.total_tax)],
+      [],
+      ["LIABILITY"],
+      ["Output GST", n(l.output_gst)],
+      ["Input GST (ITC)", n(l.input_gst)],
+      ["RCM liability", n(l.rcm_liability)],
+      ["ITC reversal", n(l.itc_reversal)],
+      ["Net GST liability", n(l.net_liability)],
+      ["Tax paid", n(l.tax_paid)],
+      ["Balance payable", n(l.balance_payable)],
+    ],
+    [30, 22],
+  )
+
+  const g3b = pkg.gstr3b ?? {}
+  add(
+    "GSTR-3B",
+    [
+      ["GSTR-3B (auto-computed)"],
+      ["3.1 Outward taxable supplies", n(g3b.outward?.taxable)],
+      ["Output CGST", n(g3b.outward?.cgst)],
+      ["Output SGST", n(g3b.outward?.sgst)],
+      ["Output IGST", n(g3b.outward?.igst)],
+      ["Output Cess", n(g3b.outward?.cess)],
+      ["Less: credit note tax", n(g3b.outward?.credit_note_tax)],
+      ["Net output tax", n(g3b.outward?.net_output_tax)],
+      ["3.1(d) RCM liability", n(g3b.rcm_liability)],
+      ["ITC — CGST", n(g3b.itc?.cgst)],
+      ["ITC — SGST", n(g3b.itc?.sgst)],
+      ["ITC — IGST", n(g3b.itc?.igst)],
+      ["ITC — Cess", n(g3b.itc?.cess)],
+      ["Less: ITC reversal", n(g3b.itc?.reversal)],
+      ["Net ITC available", n(g3b.itc?.net)],
+      ["Net GST payable", n(g3b.net_tax_payable)],
+    ],
+    [30, 18],
+  )
+
+  const rateWise = pkg.rate_wise ?? pkg.gstr1?.rate_wise ?? []
+  add(
+    "Rate-wise",
+    [
+      ["GST rate (%)", "Taxable", "CGST", "SGST", "IGST", "Cess", "Total GST"],
+      ...rateWise.map((r: any) => [n(r.rate), n(r.taxable), n(r.cgst), n(r.sgst), n(r.igst), n(r.cess), n(r.total_gst)]),
+    ],
+    [12, 16, 14, 14, 14, 14, 14],
+  )
+
+  add(
+    "Supply-wise",
+    [
+      ["Supply type", "Count", "Taxable", "CGST", "SGST", "IGST", "Cess", "Total GST"],
+      ...(pkg.supply_wise ?? []).map((r: any) => [
+        r.label, n(r.count), n(r.taxable), n(r.cgst), n(r.sgst), n(r.igst), n(r.cess), n(r.total_gst),
+      ]),
+    ],
+    [26, 8, 16, 14, 14, 14, 14, 14],
+  )
+
+  add(
+    "Client-wise",
+    [
+      ["Client", "Legal name", "GSTIN", "Invoices", "Taxable", "CGST", "SGST", "IGST", "Cess", "Total GST"],
+      ...(pkg.client_wise ?? []).map((r: any) => [
+        r.client, r.client_legal_name, r.gstin || "Unregistered", n(r.invoices),
+        n(r.taxable), n(r.cgst), n(r.sgst), n(r.igst), n(r.cess), n(r.total_gst),
+      ]),
+    ],
+    [24, 24, 18, 10, 16, 12, 12, 12, 10, 14],
+  )
+
+  add(
+    "Vendor-wise",
+    [
+      ["Vendor", "GSTIN", "Bills", "Taxable", "CGST", "SGST", "IGST", "Cess", "ITC", "Reversal", "Net ITC"],
+      ...(pkg.vendor_wise ?? []).map((r: any) => [
+        r.vendor, r.gstin || "Unregistered", n(r.bills), n(r.taxable), n(r.cgst), n(r.sgst),
+        n(r.igst), n(r.cess), n(r.itc), n(r.reversal), n(r.net_itc),
+      ]),
+    ],
+    [24, 18, 8, 16, 12, 12, 12, 10, 14, 12, 14],
+  )
+
+  add(
+    "GST Input (ITC)",
+    [
+      ["GST Input ID", "Source", "Bill #", "Date", "Vendor", "GSTIN", "Taxable", "Total GST", "Net ITC", "Status", "Reconciliation"],
+      ...(pkg.gst_input ?? []).map((r: any) => [
+        r.gst_input_id, r.source, r.bill_number || r.source_bill_ref, r.bill_date ? String(r.bill_date).slice(0, 10) : "",
+        r.vendor_name || r.employee_name, r.vendor_gstin || "", n(r.taxable_amount), n(r.total_gst),
+        n(r.itc_net), r.status, r.reconciliation_status,
+      ]),
+    ],
+    [16, 14, 16, 12, 24, 18, 14, 14, 14, 14, 16],
+  )
+
+  const tb = pkg.two_b_reconciliation ?? {}
+  add(
+    "2B Reconciliation",
+    [
+      ["Component", "Source", "Amount", "GSTR-3B", "Amount", "Status"],
+      ...((tb.lines ?? []).map((r: any) => [
+        r.label, r.source_label, n(r.source), r.target_label, n(r.target), r.status,
+      ])),
+    ],
+    [24, 20, 16, 20, 16, 12],
+  )
+
+  const rc = pkg.reconciliation_center
+  if (rc?.lines?.length) {
+    add(
+      "Reconciliation Center",
+      [
+        ["Reconciliation", "Source", "Amount", "Counterpart", "Amount", "Difference", "Status"],
+        ...rc.lines.map((r: any) => [
+          r.label, r.left_label, n(r.left), r.right_label, n(r.right), Math.abs(n(r.left) - n(r.right)), r.status,
+        ]),
+      ],
+      [24, 20, 16, 20, 16, 14, 12],
+    )
+  }
+
+  const exRows: any[][] = [["Exception", "Severity", "Count", "Reference", "Detail"]]
+  for (const e of pkg.exceptions ?? []) {
+    if (!e.items?.length) {
+      exRows.push([e.label, e.severity, n(e.count), "", e.description])
+    } else {
+      for (const it of e.items) exRows.push([e.label, e.severity, n(e.count), it.ref, it.detail])
+    }
+  }
+  add("Exceptions", exRows, [26, 10, 8, 20, 40])
+
+  add(
+    "Credit-Debit Notes",
+    [
+      ["Note", "Type", "Date", "Client", "GSTIN", "Original invoice", "Taxable", "Tax", "Liability effect", "Status"],
+      ...(pkg.credit_debit_notes ?? []).map((r: any) => [
+        r.note_id, r.type, r.date ? String(r.date).slice(0, 10) : "", r.client, r.gstin,
+        r.original_invoice || "", n(r.taxable), n(r.tax), n(r.liability_effect), r.status,
+      ]),
+    ],
+    [16, 14, 12, 24, 18, 18, 14, 12, 16, 12],
+  )
+
+  add(
+    "Raw GST Register",
+    [
+      ["Source", "Document", "Number", "Date", "Party", "GSTIN", "PAN", "Supply", "POS", "HSN/SAC",
+       "Taxable", "Rate", "CGST", "SGST", "IGST", "Cess", "Total GST", "ITC", "TDS", "Status", "Reconciliation"],
+      ...(pkg.raw_register ?? []).map((r: any) => [
+        r.source, r.document_id, r.number, r.date ? String(r.date).slice(0, 10) : "", r.party, r.gstin, r.pan,
+        r.supply_type, r.place_of_supply, r.hsn_sac, n(r.taxable), n(r.gst_rate), n(r.cgst), n(r.sgst), n(r.igst),
+        n(r.cess), n(r.total_gst), n(r.itc), n(r.tds), r.status, r.reconciliation,
+      ]),
+    ],
+  )
+
+  if ((pkg.amendments ?? []).length) {
+    add(
+      "Amendments",
+      [
+        ["Revision", "Prev. status", "Prev. ARN", "Prev. taxable", "Prev. tax", "Reason", "When"],
+        ...pkg.amendments.map((a: any) => [
+          a.revision, a.previous_status, a.previous_arn || "", n(a.previous_total_taxable),
+          n(a.previous_total_tax), a.reason || "", a.amended_at ? String(a.amended_at).slice(0, 19).replace("T", " ") : "",
+        ]),
+      ],
+      [10, 16, 18, 16, 14, 30, 20],
+    )
+  }
+
+  if ((pkg.audit ?? []).length) {
+    add(
+      "Audit Trail",
+      [
+        ["When", "Type", "Summary", "User"],
+        ...pkg.audit.map((a: any) => [
+          a.created_at ? String(a.created_at).slice(0, 19).replace("T", " ") : "",
+          a.event_type ?? a.type ?? "", a.summary, a.actor_name ?? a.actorName ?? "",
+        ]),
+      ],
+      [20, 16, 60, 20],
+    )
+  }
+
+  XLSX.writeFile(wb, `GST_CA_Package_${pkg.period}.xlsx`)
+}
+
 export function GstFilingClient() {
   const [period, setPeriod] = useState(thisMonth())
 
@@ -413,6 +642,15 @@ export function GstFilingClient() {
             <Download className="h-4 w-4" />
             Export Excel
           </Button>
+          <Button
+            variant="default"
+            onClick={exportCaPackage}
+            disabled={caBusy || !s}
+            className="gap-2"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            {caBusy ? "Building…" : "CA Package"}
+          </Button>
         </div>
       </header>
 
@@ -481,6 +719,14 @@ export function GstFilingClient() {
 
       <GstComplianceSection period={period} />
 
+      <PeriodCloseAndAudit
+        period={period}
+        onChanged={() => {
+          mutate()
+          mutateFilings()
+        }}
+      />
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">Return for {period}</CardTitle>
@@ -525,9 +771,94 @@ export function GstFilingClient() {
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base">Invoices in {period}</CardTitle>
-          <Badge variant="secondary">{s?.invoices?.length ?? 0} document{(s?.invoices?.length ?? 0) === 1 ? "" : "s"}</Badge>
+        <CardHeader className="flex flex-col gap-3">
+          <div className="flex flex-row items-center justify-between">
+            <CardTitle className="text-base">Invoices in {period}</CardTitle>
+            <Badge variant="secondary">
+              {invFiltersActive
+                ? `${filteredInvoices.length} of ${allInvoices.length}`
+                : `${allInvoices.length}`}{" "}
+              document{(invFiltersActive ? filteredInvoices.length : allInvoices.length) === 1 ? "" : "s"}
+            </Badge>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={invSearch}
+                onChange={(e) => setInvSearch(e.target.value)}
+                placeholder="Search invoice #, client, legal name, GSTIN, project…"
+                className="pl-8"
+                aria-label="Search invoices"
+              />
+            </div>
+            <Select value={invType} onValueChange={(v) => setInvType(v ?? "all")}>
+              <SelectTrigger className="w-[150px]" aria-label="Filter by document type">
+                <SelectValue placeholder="Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All types</SelectItem>
+                {invTypes.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={invGstType} onValueChange={(v) => setInvGstType(v ?? "all")}>
+              <SelectTrigger className="w-[150px]" aria-label="Filter by supply type">
+                <SelectValue placeholder="Supply" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All supply</SelectItem>
+                <SelectItem value="Intra-State">Intra-State</SelectItem>
+                <SelectItem value="Inter-State">Inter-State</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={invRate} onValueChange={(v) => setInvRate(v ?? "all")}>
+              <SelectTrigger className="w-[120px]" aria-label="Filter by GST rate">
+                <SelectValue placeholder="Rate" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All rates</SelectItem>
+                {invRates.map((r) => (
+                  <SelectItem key={r} value={String(r)}>
+                    {r}%
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={invStatus} onValueChange={(v) => setInvStatus(v ?? "all")}>
+              <SelectTrigger className="w-[140px]" aria-label="Filter by status">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {invStatuses.map((st) => (
+                  <SelectItem key={st} value={st}>
+                    {st}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {invFiltersActive ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1"
+                onClick={() => {
+                  setInvSearch("")
+                  setInvType("all")
+                  setInvGstType("all")
+                  setInvStatus("all")
+                  setInvRate("all")
+                }}
+              >
+                <XCircle className="h-4 w-4" />
+                Clear
+              </Button>
+            ) : null}
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -549,15 +880,21 @@ export function GstFilingClient() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {!s || s.invoices.length === 0 ? (
+                {!s || allInvoices.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={12} className="py-8 text-center text-sm text-muted-foreground">
                       <div>No invoices included for this period.</div>
                       {s?.excluded ? <ExclusionHint excluded={s.excluded} /> : null}
                     </TableCell>
                   </TableRow>
+                ) : filteredInvoices.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={12} className="py-8 text-center text-sm text-muted-foreground">
+                      No invoices match the current filters.
+                    </TableCell>
+                  </TableRow>
                 ) : (
-                  s.invoices.map((inv) => (
+                  filteredInvoices.map((inv) => (
                     <TableRow key={inv.invoice_id}>
                       <TableCell>
                         <div className="font-mono text-xs">{inv.invoice_id}</div>
@@ -1968,6 +2305,180 @@ function GstComplianceSection({ period }: { period: string }) {
             )}
           </TabsContent>
         </Tabs>
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * Period close (Phase 40) + audit trail (Phase 32). The close gate reads the
+ * pre-close checklist and only enables "Close period" when every required check
+ * passes and the return is filed — closing posts nothing new (it just marks the
+ * period Completed through the existing lifecycle). The audit trail is the full
+ * Prepared → Reviewed → Filed → Amended → Payment → Reconciliation → Close
+ * history for the period, read from the shared finance audit log.
+ */
+type CloseCheck = { key: string; label: string; passed: boolean; detail: string; required: boolean }
+type CloseData = {
+  period: string
+  financial_year: string | null
+  can_close: boolean
+  already_closed: boolean
+  status: string
+  checks: CloseCheck[]
+}
+type AuditEvent = {
+  id: number
+  event_type: string
+  summary: string
+  amount: number | null
+  actor_name: string | null
+  created_at: string | null
+}
+
+function PeriodCloseAndAudit({ period, onChanged }: { period: string; onChanged: () => void }) {
+  const { data: closeData, mutate: mutateClose } = useSWR<{ close: CloseData }>(
+    `/api/finance/gst-filing?period=${period}&view=close`,
+    fetcher,
+  )
+  const { data: auditData, mutate: mutateAudit } = useSWR<{ audit: AuditEvent[] }>(
+    `/api/finance/gst-filing?period=${period}&view=audit`,
+    fetcher,
+  )
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  const close = closeData?.close
+  const audit = auditData?.audit ?? []
+
+  async function closePeriod() {
+    setBusy(true)
+    setError("")
+    try {
+      const res = await fetch("/api/finance/gst-filing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "close-period", period }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Could not close the period")
+      await Promise.all([mutateClose(), mutateAudit()])
+      onChanged()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <ClipboardCheck className="h-4 w-4" />
+          Period close &amp; audit trail
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          A GST period can only be closed once GSTR-1/3B are ready, ITC is reconciled, RCM and tax liability are
+          checked, payment is settled and every blocking exception is resolved.
+        </p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-6">
+        <div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-medium">Pre-close checklist</div>
+            {close ? (
+              close.already_closed ? (
+                <Badge variant="default" className="gap-1">
+                  <Lock className="h-3.5 w-3.5" /> Period closed
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="font-normal text-muted-foreground">
+                  Status: {close.status}
+                </Badge>
+              )
+            ) : null}
+          </div>
+          {!close ? (
+            <Loading />
+          ) : (
+            <div className="grid gap-2 md:grid-cols-2">
+              {close.checks.map((chk) => (
+                <div
+                  key={chk.key}
+                  className="flex items-start gap-2 rounded-md border px-3 py-2 text-sm"
+                >
+                  {chk.passed ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  ) : (
+                    <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                  )}
+                  <div className="flex flex-col">
+                    <span className="font-medium">{chk.label}</span>
+                    <span className="text-xs text-muted-foreground">{chk.detail}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {close && !close.already_closed ? (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button size="sm" onClick={closePeriod} disabled={busy || !close.can_close} className="gap-1">
+                <Lock className="h-4 w-4" />
+                {busy ? "Closing…" : "Close period"}
+              </Button>
+              {!close.can_close ? (
+                <span className="text-xs text-muted-foreground">
+                  Resolve every required check and file the return to enable closing.
+                </span>
+              ) : null}
+              {error ? <span className="text-xs text-destructive">{error}</span> : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+            <History className="h-4 w-4" />
+            Audit trail
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Event</TableHead>
+                  <TableHead>Summary</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>User</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {audit.length === 0 ? (
+                  <EmptyRow colSpan={5} label="No audit events recorded for this period yet." />
+                ) : (
+                  audit.map((a) => (
+                    <TableRow key={a.id}>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {a.created_at ? a.created_at.slice(0, 19).replace("T", " ") : "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-normal">
+                          {a.event_type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">{a.summary}</TableCell>
+                      <TableCell className="text-right text-sm">
+                        {a.amount ? currency(a.amount) : "—"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{a.actor_name || "System"}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )

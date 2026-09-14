@@ -24,6 +24,25 @@ function billingPeriodOptions(): string[] {
   return out
 }
 const BILLING_PERIODS = billingPeriodOptions()
+
+/**
+ * The twelve "MMM YYYY" months that belong to a financial year label such as
+ * "2026-27", starting from April of the start year through March of the next
+ * (Apr 2026 … Mar 2027). Returns an empty list when the label has no parseable
+ * start year, so the billing-period picker stays empty until an FY is set.
+ */
+export function monthsForFinancialYear(fy?: string | null): string[] {
+  const match = String(fy ?? "").match(/\d{4}/)
+  if (!match) return []
+  const startYear = Number(match[0])
+  const out: string[] = []
+  for (let i = 3; i < 3 + 12; i++) {
+    const monthIdx = i % 12
+    const year = i < 12 ? startYear : startYear + 1
+    out.push(`${MONTH_ABBR[monthIdx]} ${year}`)
+  }
+  return out
+}
 const PAYMENT_MODES = ["Bank Transfer", "Cash", "UPI", "Cheque", "Card", "NEFT", "RTGS"]
 const CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED"]
 const PAYMENT_STATUSES = ["Unpaid", "Partially Paid", "Paid", "Overdue"]

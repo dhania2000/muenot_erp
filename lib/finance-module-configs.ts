@@ -434,6 +434,41 @@ const fteInvoices: ModuleConfig = {
   financialYearColumn: "financial_year",
   statusColumn: "status",
   searchColumns: ["fte_invoice_id", "employee_name", "department", "designation", "project_name"],
+  // Master pickers: Employee is sourced from HR (hr_employees) and Project from
+  // Operations (operations_projects), reusing the shared expense lookups route.
+  // Selecting a row fills the id + name fields and autofills the empty snapshot
+  // columns (department, designation, employment type, email) so the invoice
+  // never duplicates or hand-types master data.
+  lookups: [
+    {
+      key: "employee",
+      label: "Employee",
+      path: "/api/finance/expenses/lookups?type=employee",
+      sourceIdColumn: "employee_id",
+      sourceNameColumn: "employee_name",
+      sourceSubColumn: "department",
+      idField: "employee_id",
+      nameField: "employee_name",
+      autofill: {
+        department: "department",
+        designation: "designation",
+        employment_type: "employment_type",
+        official_email: "employee_email",
+      },
+      required: true,
+    },
+    {
+      key: "project",
+      label: "Project",
+      path: "/api/finance/expenses/lookups?type=project",
+      sourceIdColumn: "project_id",
+      sourceNameColumn: "project_name",
+      sourceSubColumn: "client_name",
+      idField: "project_id",
+      nameField: "project_name",
+      autofill: {},
+    },
+  ],
   fields: [
     fld("Employee & period", "invoice_date", "Invoice date", "date", { required: true }),
     fld("Employee & period", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),

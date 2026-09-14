@@ -1798,8 +1798,9 @@ function GstComplianceSection({ period }: { period: string }) {
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="three_b">
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="three_b" className="gap-1.5">
+          <div className="overflow-x-auto pb-2 [scrollbar-width:thin]">
+          <TabsList className="w-max flex-nowrap">
+            <TabsTrigger value="three_b" className="gap-1.5 whitespace-nowrap">
               <Scale className="h-3.5 w-3.5" /> 3B Reconciliation
             </TabsTrigger>
             <TabsTrigger value="exceptions" className="gap-1.5">
@@ -1831,10 +1832,11 @@ function GstComplianceSection({ period }: { period: string }) {
             <TabsTrigger value="notes" className="gap-1.5">
               <FileMinus2 className="h-3.5 w-3.5" /> Credit/Debit Notes
             </TabsTrigger>
-            <TabsTrigger value="raw" className="gap-1.5">
+            <TabsTrigger value="raw" className="gap-1.5 whitespace-nowrap">
               <Table2 className="h-3.5 w-3.5" /> Raw Register
             </TabsTrigger>
           </TabsList>
+          </div>
 
           {/* Phase 21 — 3B reconciliation */}
           <TabsContent value="three_b" className="mt-4">

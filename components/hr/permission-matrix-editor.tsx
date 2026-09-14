@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
@@ -111,13 +111,27 @@ export function PermissionMatrixEditor({
     () =>
       PERMISSION_GROUPS.flatMap((g) => g.modules).reduce((acc, m) => {
         const p = matrix[m.key]
-        return acc + (p ? PERMISSION_ACTIONS.filter((a) => p[a] !== "none").length : 0)
+        if (!p) return acc
+        const base = PERMISSION_ACTIONS.filter((a) => p[a] !== "none").length
+        const extra = (m.extraActions ?? []).filter((ext) => (p.extra?.[ext.key] ?? "none") !== "none").length
+        return acc + base + extra
       }, 0),
     [matrix],
   )
 
   function setCell(moduleKey: string, action: PermissionAction, scope: PermissionScope) {
     setMatrix((prev) => ({ ...prev, [moduleKey]: { ...prev[moduleKey], [action]: scope } }))
+    setDirty(true)
+  }
+
+  function setExtra(moduleKey: string, actionKey: string, scope: PermissionScope) {
+    setMatrix((prev) => ({
+      ...prev,
+      [moduleKey]: {
+        ...prev[moduleKey],
+        extra: { ...(prev[moduleKey]?.extra ?? {}), [actionKey]: scope },
+      },
+    }))
     setDirty(true)
   }
 
@@ -303,6 +317,7 @@ export function PermissionMatrixEditor({
                     matrix={matrix}
                     onCell={setCell}
                     onRow={setRow}
+                    onExtra={setExtra}
                   />
                 ))}
               </tbody>
@@ -327,11 +342,13 @@ function GroupRows({
   matrix,
   onCell,
   onRow,
+  onExtra,
 }: {
   group: (typeof PERMISSION_GROUPS)[number]
   matrix: PermissionMatrix
   onCell: (moduleKey: string, action: PermissionAction, scope: PermissionScope) => void
   onRow: (moduleKey: string, scope: PermissionScope) => void
+  onExtra: (moduleKey: string, actionKey: string, scope: PermissionScope) => void
 }) {
   return (
     <>
@@ -342,31 +359,83 @@ function GroupRows({
       </tr>
       {group.modules.map((m) => {
         const p = matrix[m.key] ?? { add: "none", view: "none", update: "none", delete: "none" }
+        const extraActions = m.extraActions ?? []
         return (
-          <tr key={m.key} className="border-b last:border-0 hover:bg-muted/30">
-            <td className="px-4 py-2.5">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{m.label}</span>
-                <Select value={"none"} onValueChange={(v) => onRow(m.key, v as PermissionScope)}>
-                  <SelectTrigger className="h-6 w-6 justify-center border-none p-0 text-muted-foreground [&>svg:last-child]:hidden">
-                    <span className="text-xs">···</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PERMISSION_SCOPES.map((s) => (
-                      <SelectItem key={s} value={s} className="text-xs">
-                        Set row → {SCOPE_LABEL[s]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </td>
-            {PERMISSION_ACTIONS.map((a) => (
-              <td key={a} className="px-3 py-2.5">
-                <ScopeSelect value={p[a]} onChange={(v) => onCell(m.key, a, v)} />
+          <Fragment key={m.key}>
+            <tr className={`hover:bg-muted/30 ${extraActions.length ? "" : "border-b last:border-0"}`}>
+              <td className="px-4 py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{m.label}</span>
+                  <Select value={"none"} onValueChange={(v) => onRow(m.key, v as PermissionScope)}>
+                    <SelectTrigger className="h-6 w-6 justify-center border-none p-0 text-muted-foreground [&>svg:last-child]:hidden">
+                      <span className="text-xs">···</span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PERMISSION_SCOPES.map((s) => (
+                        <SelectItem key={s} value={s} className="text-xs">
+                          Set row → {SCOPE_LABEL[s]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </td>
-            ))}
-          </tr>
+              {PERMISSION_ACTIONS.map((a) => (
+                <td key={a} className="px-3 py-2.5">
+                  <ScopeSelect value={p[a]} onChange={(v) => onCell(m.key, a, v)} />
+                </td>
+              ))}
+            </tr>
+            {extraActions.length > 0 && (
+              <tr className="border-b last:border-0 bg-muted/10">
+                <td colSpan={5} className="px-4 pb-3 pt-1">
+                  <div className="flex flex-col gap-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {m.label} — action permissions
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {extraActions.map((ext) => {
+                        const val = p.extra?.[ext.key] ?? "none"
+                        return (
+                          <div
+                            key={ext.key}
+                            className="flex items-center gap-2 rounded-md border bg-background px-2.5 py-1.5"
+                            title={ext.description}
+                          >
+                            <span className="text-xs font-medium">{ext.label}</span>
+                            {ext.scoped ? (
+                              <div className="w-[92px]">
+                                <ScopeSelect value={val} onChange={(v) => onExtra(m.key, ext.key, v)} />
+                              </div>
+                            ) : (
+                              <Select
+                                value={val === "none" ? "none" : "all"}
+                                onValueChange={(v) => onExtra(m.key, ext.key, v as PermissionScope)}
+                              >
+                                <SelectTrigger
+                                  className={`h-7 w-[104px] text-xs ${val !== "none" ? "border-primary/40 text-foreground" : "text-muted-foreground"}`}
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none" className="text-xs">
+                                    Not allowed
+                                  </SelectItem>
+                                  <SelectItem value="all" className="text-xs">
+                                    Allowed
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </Fragment>
         )
       })}
     </>

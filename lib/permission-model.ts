@@ -24,7 +24,63 @@ export type PermissionScope = (typeof PERMISSION_SCOPES)[number]
 export const PERMISSION_ACTIONS = ["add", "view", "update", "delete"] as const
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
 
-export type ModulePermission = Record<PermissionAction, PermissionScope>
+/**
+ * A module-specific EXTENDED action (beyond the four CRUD verbs). Used to give
+ * high-risk workflows their own separately-grantable permission — e.g. GST
+ * Filing separates "File Return", "Record Tax Payment", "Reopen Period" and
+ * "Amend Return" from the generic Add/View/Update/Delete so that plain Update
+ * can never file, pay, reopen or amend a return.
+ *
+ * `fallback` is the base CRUD action an extended grant DERIVES from when an
+ * admin has a permission matrix configured but has not yet set this extended
+ * action explicitly. Destructive/irreversible actions fall back to `delete`
+ * (the strongest base verb) so a mere Update never implies them; preparatory
+ * actions fall back to `update`, and read-only ones to `view`. Once an admin
+ * sets the extended action explicitly, that value wins.
+ *
+ * `scoped` marks whether All/Added/Owned/Both record-scoping is meaningful for
+ * the action. GST returns are period-level, org-wide documents with no
+ * per-user owner, so their extended actions are simple Allowed/None grants.
+ */
+export type ExtendedAction = {
+  key: string
+  label: string
+  fallback: PermissionAction
+  scoped: boolean
+  description?: string
+}
+
+/**
+ * Phase 44 — GST Filing granular action permissions. These live ALONGSIDE the
+ * existing Add/View/Update/Delete for the GST Filing module; they never
+ * replace them. A filed return can only move forward through these gated
+ * actions (reopen/amend/payment), never via a generic Update/Delete.
+ */
+export const GST_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "prepare_return", label: "Prepare Return", fallback: "update", scoped: false, description: "Materialise a draft return from the derived summary." },
+  { key: "review_return", label: "Review Return", fallback: "update", scoped: false, description: "Submit for review and mark a return reviewed." },
+  { key: "file_return", label: "File Return", fallback: "delete", scoped: false, description: "File the return (including Nil returns) with the portal ARN." },
+  { key: "record_payment", label: "Record Tax Payment", fallback: "delete", scoped: false, description: "Record tax paid and move the return through its payment lifecycle." },
+  { key: "reopen_period", label: "Reopen Period", fallback: "delete", scoped: false, description: "Reopen a pre-file return back to Draft." },
+  { key: "amend_return", label: "Amend Return", fallback: "delete", scoped: false, description: "Amend a filed return (archives the prior snapshot)." },
+  { key: "cancel_return", label: "Cancel Return", fallback: "delete", scoped: false, description: "Cancel/void a prepared return." },
+  { key: "export_return", label: "Export Return", fallback: "view", scoped: false, description: "Export the return and the CA hand-off package." },
+  { key: "reconcile_gst", label: "Reconcile GST", fallback: "update", scoped: false, description: "Run and act on output-GST / GSTR-2B reconciliation." },
+  { key: "manage_filing", label: "Manage Filing", fallback: "delete", scoped: false, description: "Close/lock a period and manage filing configuration." },
+  { key: "view_sensitive", label: "View Sensitive Tax Data", fallback: "view", scoped: false, description: "View sensitive tax data such as the audit trail and ARNs." },
+]
+
+export type ModulePermission = {
+  add: PermissionScope
+  view: PermissionScope
+  update: PermissionScope
+  delete: PermissionScope
+  /**
+   * Module-specific extended-action grants, keyed by `ExtendedAction.key`.
+   * Only present for modules that declare `extraActions`.
+   */
+  extra?: Record<string, PermissionScope>
+}
 export type PermissionMatrix = Record<string, ModulePermission>
 
 /** Ownership columns for a module's primary table, used for record-level scoping. */
@@ -45,6 +101,8 @@ export type PermissionModule = {
   /** Keywords used to map legacy feature slugs onto this module. */
   aliases: string[]
   scope: ScopeConfig
+  /** Module-specific extended actions beyond Add/View/Update/Delete. */
+  extraActions?: ExtendedAction[]
 }
 
 export type PermissionGroup = {
@@ -110,7 +168,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "finance.bank_cash", label: "Bank & Cash", group: "finance", aliases: ["bank_cash"], scope: { table: "finance_accounts", addedBy: "created_by" } },
       { key: "finance.chart_of_accounts", label: "Chart of Accounts", group: "finance", aliases: ["chart"], scope: { table: "chart_of_accounts", addedBy: "created_by" } },
       { key: "finance.customers_vendors", label: "Vendors", group: "finance", aliases: ["customer", "vendor"], scope: { table: "customers_vendors", addedBy: "created_by" } },
-      { key: "finance.gst_filing", label: "GST Filing", group: "finance", aliases: ["gst"], scope: { table: "gst_filings" } },
+      { key: "finance.gst_filing", label: "GST Filing", group: "finance", aliases: ["gst"], scope: { table: "gst_filings" }, extraActions: GST_FILING_EXTRA_ACTIONS },
       { key: "finance.tds_filing", label: "TDS Filing", group: "finance", aliases: ["tds"], scope: { table: "tds_filings" } },
       { key: "finance.journal", label: "Journal & Ledger", group: "finance", aliases: ["journal", "ledger"], scope: { table: "finance_records", addedBy: "created_by" } },
       { key: "finance.reports", label: "Financial Reports", group: "finance", aliases: ["financial_report", "report"], scope: { table: "finance_records" } },
@@ -220,6 +278,16 @@ const MODULE_BY_KEY = new Map(PERMISSION_MODULES.map((m) => [m.key, m]))
 
 export function getPermissionModule(key: string): PermissionModule | undefined {
   return MODULE_BY_KEY.get(key)
+}
+
+/** The extended actions declared for a module (empty when none). */
+export function getModuleExtraActions(key: string): ExtendedAction[] {
+  return MODULE_BY_KEY.get(key)?.extraActions ?? []
+}
+
+/** Look up a single extended action definition on a module. */
+export function getExtendedAction(moduleKey: string, actionKey: string): ExtendedAction | undefined {
+  return MODULE_BY_KEY.get(moduleKey)?.extraActions?.find((a) => a.key === actionKey)
 }
 
 /** An empty permission (everything set to "none"). */

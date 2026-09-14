@@ -140,6 +140,11 @@ export type FilterDef =
   | { type: "month"; key: "month"; label: string }
   | { type: "date_from"; key: "date_from" }
   | { type: "date_to"; key: "date_to" }
+  /**
+   * Numeric range on a column (e.g. book balance). Emits `column >= keyMin` and
+   * `column <= keyMax` in the WHERE builder; either bound may be left blank.
+   */
+  | { type: "number_range"; keyMin: string; keyMax: string; column: string; label: string }
 
 export type ModuleConfig = {
   key: string

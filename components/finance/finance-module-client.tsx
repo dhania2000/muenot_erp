@@ -90,10 +90,18 @@ function workflowLabel(row: Row): string {
   return status
 }
 
+/** Mask all but the last 4 characters of a sensitive identifier (account no.). */
+function maskValue(raw: any): string {
+  const s = String(raw).replace(/\s+/g, "")
+  if (s.length <= 4) return s
+  return `${"•".repeat(Math.min(s.length - 4, 8))}${s.slice(-4)}`
+}
+
 function cellValue(col: TableColumn, row: Row) {
   const raw = row[col.key]
   if (col.money) return inr(raw)
   if (raw === null || raw === undefined || raw === "") return "—"
+  if (col.mask) return maskValue(raw)
   return String(raw)
 }
 
@@ -108,11 +116,19 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
     () => (cfg.filters ?? []).filter((f): f is Extract<typeof f, { type: "select" }> => f.type === "select"),
     [cfg.filters],
   )
+  const rangeFilters = useMemo(
+    () => (cfg.filters ?? []).filter((f): f is Extract<typeof f, { type: "number_range" }> => f.type === "number_range"),
+    [cfg.filters],
+  )
   const emptyFilters = useMemo(() => {
     const base: Record<string, string> = { search: "", financial_year: "", month: "", date_from: "", date_to: "" }
     for (const f of selectFilters) base[f.key] = ""
+    for (const f of rangeFilters) {
+      base[f.keyMin] = ""
+      base[f.keyMax] = ""
+    }
     return base
-  }, [selectFilters])
+  }, [selectFilters, rangeFilters])
   const [filters, setFilters] = useState(emptyFilters)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -271,6 +287,27 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
               <option value="">All {f.label.toLowerCase()}</option>
               {f.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
             </select>
+          ))}
+          {rangeFilters.map((f) => (
+            <div key={f.keyMin} className="flex items-center gap-2">
+              <Input
+                type="number"
+                className="w-32"
+                aria-label={`${f.label} minimum`}
+                placeholder={`Min ${f.label.toLowerCase()}`}
+                value={filters[f.keyMin] ?? ""}
+                onChange={(e) => setFilters((prev) => ({ ...prev, [f.keyMin]: e.target.value }))}
+              />
+              <span className="text-xs text-muted-foreground">to</span>
+              <Input
+                type="number"
+                className="w-32"
+                aria-label={`${f.label} maximum`}
+                placeholder={`Max ${f.label.toLowerCase()}`}
+                value={filters[f.keyMax] ?? ""}
+                onChange={(e) => setFilters((prev) => ({ ...prev, [f.keyMax]: e.target.value }))}
+              />
+            </div>
           ))}
           {activeFilterCount > 0 && (
             <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => setFilters(emptyFilters)}>

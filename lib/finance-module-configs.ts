@@ -11,21 +11,6 @@ const UNITS = ["Nos", "Hours", "Days", "Months", "Lot", "Project", "Kg", "Units"
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 /**
- * Chronological "MMM YYYY" month options for a billing-period picker, spanning
- * two years back through three years ahead of today so the current financial
- * year is always covered without hand-editing the list.
- */
-function billingPeriodOptions(): string[] {
-  const startYear = new Date().getFullYear() - 2
-  const out: string[] = []
-  for (let y = startYear; y <= startYear + 5; y++) {
-    for (const m of MONTH_ABBR) out.push(`${m} ${y}`)
-  }
-  return out
-}
-const BILLING_PERIODS = billingPeriodOptions()
-
-/**
  * The twelve "MMM YYYY" months that belong to a financial year label such as
  * "2026-27", starting from April of the start year through March of the next
  * (Apr 2026 … Mar 2027). Returns an empty list when the label has no parseable
@@ -617,7 +602,7 @@ const freelanceInvoices: ModuleConfig = {
   fields: [
     fld("Freelancer & period", "invoice_date", "Invoice date", "date", { required: true }),
     fld("Freelancer & period", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
-    fld("Freelancer & period", "billing_period", "Billing period", "select", { options: BILLING_PERIODS, optional: true, emptyLabel: "Select month" }),
+    fld("Freelancer & period", "billing_period", "Billing period", "select", { financialYearMonths: true, optional: true, emptyLabel: "Select month" }),
     fld("Freelancer & period", "freelancer_id", "Freelancer ID", "text"),
     fld("Freelancer & period", "freelancer_name", "Freelancer name", "text", { required: true }),
     fld("Freelancer & period", "freelancer_email", "Freelancer email", "select", { dynamicOptions: true, optional: true, emptyLabel: "Select email" }),

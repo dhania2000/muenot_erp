@@ -33,6 +33,8 @@ export type AccountRole =
   | "employee_payable"
   | "vendor_payable"
   | "employee_advance"
+  // Opening-balance contra (requirements 14/15 — real opening-balance posting).
+  | "opening_balance_equity"
 
 /** Default account_code for each posting role (matches the migration seed). */
 export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
@@ -59,6 +61,8 @@ export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
   employee_payable: "2200",
   vendor_payable: "2000",
   employee_advance: "1460",
+  // Equity control head that balances every opening-balance voucher.
+  opening_balance_equity: "3900",
 }
 
 /**
@@ -136,7 +140,7 @@ export async function ensureExpensePostingAccounts(): Promise<void> {
 export async function resolveAccountById(accountId: string): Promise<ResolvedAccount | null> {
   if (!accountId) return null
   const rows = (await query(
-    `SELECT account_id, account_code, account_name, account_group, account_type, nature
+    `SELECT account_id, account_code, account_name, account_group, account_type, nature, active_status
        FROM chart_of_accounts
       WHERE account_id = ?
       ORDER BY (active_status = 'Active') DESC, id ASC
@@ -152,6 +156,7 @@ export async function resolveAccountById(accountId: string): Promise<ResolvedAcc
     account_group: row.account_group ?? null,
     account_type: row.account_type ?? null,
     nature: row.nature ?? null,
+    active_status: row.active_status ?? null,
   }
 }
 
@@ -162,6 +167,8 @@ export type ResolvedAccount = {
   account_group: string | null
   account_type: string | null
   nature: string | null
+  /** Lifecycle state — the posting engine refuses new postings unless Active. */
+  active_status: string | null
 }
 
 /**
@@ -172,7 +179,7 @@ export type ResolvedAccount = {
 export async function resolveAccount(role: AccountRole): Promise<ResolvedAccount> {
   const code = ROLE_DEFAULT_CODE[role]
   const rows = (await query(
-    `SELECT account_id, account_code, account_name, account_group, account_type, nature
+    `SELECT account_id, account_code, account_name, account_group, account_type, nature, active_status
        FROM chart_of_accounts
       WHERE account_code = ?
       ORDER BY (active_status = 'Active') DESC, id ASC
@@ -193,6 +200,7 @@ export async function resolveAccount(role: AccountRole): Promise<ResolvedAccount
     account_group: row.account_group ?? null,
     account_type: row.account_type ?? null,
     nature: row.nature ?? null,
+    active_status: row.active_status ?? null,
   }
 }
 

@@ -462,6 +462,20 @@ function AccountDialog({
 
   const subTypes = COA_SUB_TYPES_BY_TYPE[form.account_group] ?? []
 
+  // Immediate duplicate-code detection (case-insensitive) so a colliding code is
+  // flagged before the save round-trip. Mirrors the authoritative server guard
+  // in lib/finance-coa.ts → guardChartOfAccountWrite, which remains the source
+  // of truth; this is purely a faster, inline signal to the user.
+  const codeConflict = useMemo(() => {
+    const code = form.account_code.trim().toLowerCase()
+    if (!code) return false
+    return rows.some(
+      (r) =>
+        String(r.account_code ?? "").trim().toLowerCase() === code &&
+        String(r.id) !== String(record?.id ?? ""),
+    )
+  }, [rows, form.account_code, record])
+
   // Valid parents: same account type, not the record itself or its subtree.
   const parentOptions = useMemo(() => {
     const banned = record?.account_id ? descendantIds(rows, String(record.account_id)) : new Set<string>()
@@ -485,6 +499,10 @@ function AccountDialog({
   async function submit() {
     if (!form.account_name.trim()) {
       setError("Account name is required")
+      return
+    }
+    if (codeConflict) {
+      setError(`Account code "${form.account_code.trim()}" is already in use. Codes must be unique.`)
       return
     }
     setLoading(true)
@@ -561,7 +579,11 @@ function AccountDialog({
                   onChange={(e) => set("account_code", e.target.value)}
                   placeholder="Unique code, e.g. 1200"
                   disabled={isSystem}
+                  aria-invalid={codeConflict}
                 />
+                {codeConflict && (
+                  <p className="text-xs text-destructive">This code is already used by another account. Codes must be unique.</p>
+                )}
               </Field>
               <Field>
                 <FieldLabel>Account type</FieldLabel>
@@ -694,7 +716,7 @@ function AccountDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || codeConflict}>
               {loading && <Loader2Icon data-icon="inline-start" className="animate-spin" />}
               {record ? "Save changes" : "Create account"}
             </Button>

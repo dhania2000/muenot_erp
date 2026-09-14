@@ -29,7 +29,7 @@ const num = (v: any) => {
   return Number.isFinite(n) ? n : 0
 }
 
-type PostingLine = {
+export type PostingLine = {
   role: AccountRole
   debit: number
   credit: number
@@ -189,6 +189,22 @@ export async function postLines(lines: PostingLine[], args: PostArgs): Promise<P
       }
     } else if (!resolved.has(line.role)) {
       resolved.set(line.role, await resolveAccount(line.role))
+    }
+  }
+
+  // Requirement 13: an Inactive/Archived account may never receive a *new*
+  // posting. Reversals are exempt so a document posted while its head was Active
+  // can still be unwound after the head is later deactivated (keeps history
+  // consistent — requirement 20). Only explicit heads are user-selectable and
+  // can be non-active; role control heads are system accounts and stay Active.
+  if (!args.reverse) {
+    for (const account of resolvedById.values()) {
+      const status = String(account.active_status ?? "Active")
+      if (status !== "Active") {
+        throw new Error(
+          `Account ${account.account_name} (${account.account_code ?? account.account_id}) is ${status} and cannot receive new postings. Reactivate it or choose an active account.`,
+        )
+      }
     }
   }
 

@@ -38,6 +38,7 @@ import {
   BookOpen, Coins, Plus, Pencil, Trash2, ChevronRight, ChevronDown,
   Lock, Loader2Icon, CornerDownRight, ShieldCheck, GitMerge, Settings2,
   Download, Upload, SlidersHorizontal, Network, List, CalendarClock,
+  Wallet, Landmark, TrendingUp, TrendingDown, CircleCheck,
 } from "lucide-react"
 import { inr, inr0, financialYearFor } from "@/lib/finance-calc"
 import {
@@ -372,6 +373,28 @@ export function ChartOfAccountsClient() {
   const totalAccounts = summary.total_rows ?? rows.length
   const totalOpening = summary.total_opening ?? 0
 
+  // Dashboard KPIs derived from the same live account list + GL balances the
+  // table renders — never a separate/duplicate source. `active` counts heads
+  // whose lifecycle state is Active (blank defaults to Active), and each group
+  // total is the sum of the accounts' current GL balances (absolute), giving a
+  // trial-balance snapshot per section straight from the ledger.
+  const stats = useMemo(() => {
+    const groupTotal: Record<string, number> = { Asset: 0, Liability: 0, Income: 0, Expense: 0 }
+    const groupCount: Record<string, number> = { Asset: 0, Liability: 0, Income: 0, Expense: 0 }
+    let active = 0
+    for (const r of rows) {
+      const status = String(r.active_status || "Active")
+      if (status === "Active") active += 1
+      const group = String(r.account_group ?? "")
+      if (group in groupTotal) {
+        groupCount[group] += 1
+        const bal = balances[String(r.account_id)]?.balance
+        groupTotal[group] += Math.abs(Number(bal ?? r.opening_balance ?? 0))
+      }
+    }
+    return { active, groupTotal, groupCount }
+  }, [rows, balances])
+
   // --- Exports (Excel) ------------------------------------------------------
   // All exports read the same live data the page shows; none create a copy.
   function exportAccounts() {
@@ -516,6 +539,58 @@ export function ChartOfAccountsClient() {
               <BookOpen className="size-4 text-muted-foreground" />
             </div>
             <span className="text-xl font-semibold tracking-tight">{totalAccounts}</span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex flex-col gap-2 pt-6">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Active Accounts</span>
+              <CircleCheck className="size-4 text-muted-foreground" />
+            </div>
+            <span className="text-xl font-semibold tracking-tight">{stats.active}</span>
+            <span className="text-[11px] text-muted-foreground">
+              {totalAccounts - stats.active} inactive / archived
+            </span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex flex-col gap-2 pt-6">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Assets</span>
+              <Wallet className="size-4 text-muted-foreground" />
+            </div>
+            <span className="text-xl font-semibold tracking-tight">{inr0(stats.groupTotal.Asset)}</span>
+            <span className="text-[11px] text-muted-foreground">{stats.groupCount.Asset} accounts</span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex flex-col gap-2 pt-6">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Liabilities</span>
+              <Landmark className="size-4 text-muted-foreground" />
+            </div>
+            <span className="text-xl font-semibold tracking-tight">{inr0(stats.groupTotal.Liability)}</span>
+            <span className="text-[11px] text-muted-foreground">{stats.groupCount.Liability} accounts</span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex flex-col gap-2 pt-6">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Income</span>
+              <TrendingUp className="size-4 text-muted-foreground" />
+            </div>
+            <span className="text-xl font-semibold tracking-tight">{inr0(stats.groupTotal.Income)}</span>
+            <span className="text-[11px] text-muted-foreground">{stats.groupCount.Income} accounts</span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex flex-col gap-2 pt-6">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Expenses</span>
+              <TrendingDown className="size-4 text-muted-foreground" />
+            </div>
+            <span className="text-xl font-semibold tracking-tight">{inr0(stats.groupTotal.Expense)}</span>
+            <span className="text-[11px] text-muted-foreground">{stats.groupCount.Expense} accounts</span>
           </CardContent>
         </Card>
         <Card>

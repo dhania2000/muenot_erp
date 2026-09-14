@@ -1,4 +1,7 @@
 import { query } from "@/lib/db"
+import { COA_ACCOUNT_TYPES } from "@/lib/finance-module-configs"
+
+const COA_STATUSES = ["Active", "Inactive", "Archived"]
 
 /**
  * Server-side guards for the Chart of Accounts master.
@@ -24,6 +27,36 @@ export async function guardChartOfAccountWrite(
 ): Promise<string | null> {
   const code = (merged.account_code ?? "").toString().trim()
   const existing = ctx.existing
+
+  // 0. Mandatory field + enum validation, enforced on the SERVER so a crafted
+  // API request (or a bypassed form) can never create/edit an account that
+  // skips the required fields or carries an out-of-range type/status
+  // (requirement 114). On edit `merged` already carries the prior committed
+  // values for any field the client omitted, so an unchanged name/type passes.
+  const name = (merged.account_name ?? "").toString().trim()
+  if (!name) return "Account name is required."
+  const group = (merged.account_group ?? "").toString().trim()
+  if (!group) return "Account type is required."
+  if (!(COA_ACCOUNT_TYPES as readonly string[]).includes(group)) {
+    return `Invalid account type "${group}". Choose one of ${COA_ACCOUNT_TYPES.join(", ")}.`
+  }
+  const status = (merged.active_status ?? "").toString().trim()
+  if (status && !COA_STATUSES.includes(status)) {
+    return `Invalid status "${status}". Use ${COA_STATUSES.join(", ")}.`
+  }
+
+  // The Account ID is system-assigned (COA-####) and immutable: it is never
+  // written on edit (the CRUD update set skips the id column) and is generated
+  // server-side on create, so a client can neither forge a new head's id nor
+  // rewrite an existing one to hijack another account's ledger (requirement
+  // 115). Reject any edit that attempts to change it rather than silently
+  // ignoring, so a manipulated payload fails loudly.
+  if (!ctx.isCreate && existing) {
+    const sentId = (merged.account_id ?? "").toString().trim()
+    if (sentId && sentId !== (existing.account_id ?? "").toString()) {
+      return "The Account ID is system-assigned and cannot be changed."
+    }
+  }
 
   // 1. Account code must be unique (case-insensitive) when provided. The code
   // is the stable key the posting engine resolves, so duplicates would make

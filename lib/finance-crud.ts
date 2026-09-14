@@ -392,12 +392,33 @@ export function createFinanceHandlers(moduleKey: string) {
 
     const orderBy = cfg.dateColumn ? `x.${cfg.dateColumn} DESC, x.id DESC` : "x.id DESC"
 
+    // Opt-in server-side pagination (requirement 111). Backwards compatible:
+    // with neither `page` nor `page_size` present the full filtered set is
+    // returned exactly as before. Invoice-workflow modules scope their rows in
+    // JS AFTER this query, so a DB LIMIT/OFFSET would slice the wrong set —
+    // they skip DB pagination and keep their bespoke scoping intact.
+    const params = req.nextUrl.searchParams
+    const wantsPage = params.get("page") !== null || params.get("page_size") !== null
+    const canPaginate = wantsPage && !INVOICE_WORKFLOW_MODULES.has(moduleKey)
+    let pagination: { page: number; pageSize: number; total: number; totalPages: number } | null = null
+    let limitClause = ""
+    if (canPaginate) {
+      const pageSize = Math.min(Math.max(Math.trunc(Number(params.get("page_size")) || 50), 1), 500)
+      const [cnt] = (await query(`SELECT COUNT(*) n FROM ${cfg.table} x ${where}`, args)) as any[]
+      const total = Number(cnt?.n ?? 0)
+      const totalPages = Math.max(Math.ceil(total / pageSize), 1)
+      const page = Math.min(Math.max(Math.trunc(Number(params.get("page")) || 1), 1), totalPages)
+      limitClause = `LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`
+      pagination = { page, pageSize, total, totalPages }
+    }
+
     let rows = (await query(
       `SELECT x.*, u.name AS created_by_name${cfg.extraSelect ? `, ${cfg.extraSelect}` : ""}
          FROM ${cfg.table} x
          LEFT JOIN users u ON u.id = x.created_by
          ${where}
-         ORDER BY ${orderBy}`,
+         ORDER BY ${orderBy}
+         ${limitClause}`,
       args,
     )) as any[]
 

@@ -245,8 +245,16 @@ export async function ensureChartOfAccountsColumns() {
     console.log("[v0] chart_of_accounts.active_status widen skipped:", (error as Error).message)
   }
 
+  // Indexes that keep list/search/filter/hierarchy queries fast on a large
+  // Chart of Accounts (requirements 112/113): Account ID, Code, Name, Type,
+  // Parent ID and Status. The base migration seeds most of these; the two that
+  // large installs commonly lack (parent hierarchy walk + account_group filter)
+  // are self-healed here so an already-provisioned table is upgraded in place.
   if (!(await hasIndex(t, "idx_coa_parent"))) {
     await query(`ALTER TABLE ${t} ADD KEY idx_coa_parent (parent_account_id)`)
+  }
+  if (!(await hasIndex(t, "idx_coa_group"))) {
+    await query(`ALTER TABLE ${t} ADD KEY idx_coa_group (account_group)`)
   }
 
   // Flag the posting-engine control accounts (idempotent). Matched by the stable

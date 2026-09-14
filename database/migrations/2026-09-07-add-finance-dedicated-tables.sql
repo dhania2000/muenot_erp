@@ -329,6 +329,8 @@ CREATE TABLE IF NOT EXISTS chart_of_accounts (
   KEY idx_coa_code (account_code),
   KEY idx_coa_name (account_name),
   KEY idx_coa_type (account_type),
+  KEY idx_coa_group (account_group),
+  KEY idx_coa_parent (parent_account_id),
   KEY idx_coa_active (active_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

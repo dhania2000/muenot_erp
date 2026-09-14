@@ -71,7 +71,11 @@ function periodRange(period: string) {
   return { from, to }
 }
 
-const INCLUDED_STATUS = "('Issued','Sent','Posted')"
+// A tax document belongs in the GST return the moment it leaves Draft. We
+// exclude ONLY Draft (not a real document yet) and Cancelled (voided), so every
+// issued invoice for the period flows into GSTR-1 automatically — including
+// invoices whose GST works out to ₹0 (exempt / nil-rated / unregistered).
+const INCLUDED_STATUS = "NOT IN ('Draft','Cancelled')"
 
 /** Build the GSTR-1 outward-supply summary for a calendar-month period. */
 export async function gstSummary(period: string) {
@@ -90,7 +94,7 @@ export async function gstSummary(period: string) {
         COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN (cgst_amount+sgst_amount+igst_amount+other_tax_cess) ELSE 0 END),0) AS cn_tax
       FROM sales_invoices
      WHERE invoice_date >= ? AND invoice_date <= ?
-       AND invoice_status IN ${INCLUDED_STATUS}
+       AND invoice_status ${INCLUDED_STATUS}
        AND invoice_type <> 'Proforma Invoice'`,
     [from, to],
   ).catch(() => [{}])) as any[]
@@ -105,7 +109,7 @@ export async function gstSummary(period: string) {
        FROM sales_invoice_items it
        JOIN sales_invoices si ON si.id = it.invoice_pk
       WHERE si.invoice_date >= ? AND si.invoice_date <= ?
-        AND si.invoice_status IN ${INCLUDED_STATUS}
+        AND si.invoice_status ${INCLUDED_STATUS}
         AND si.invoice_type NOT IN ('Proforma Invoice','Credit Note')
       GROUP BY it.tax_rate
       ORDER BY it.tax_rate ASC`,
@@ -118,7 +122,7 @@ export async function gstSummary(period: string) {
             COALESCE(SUM(cgst_amount+sgst_amount+igst_amount+other_tax_cess),0) AS tax
        FROM sales_invoices
       WHERE invoice_date >= ? AND invoice_date <= ?
-        AND invoice_status IN ${INCLUDED_STATUS}
+        AND invoice_status ${INCLUDED_STATUS}
         AND invoice_type NOT IN ('Proforma Invoice','Credit Note')
       GROUP BY COALESCE(supply_type,'Intra-State')`,
     [from, to],
@@ -158,6 +162,7 @@ export async function gstSummary(period: string) {
             COALESCE(si.supply_type,'Intra-State') AS supply_type,
             si.invoice_status,
             COALESCE(c.gst_number,'') AS client_gstin,
+            COALESCE(NULLIF(c.legal_name,''), NULLIF(c.company_name,''), si.client_name) AS client_legal_name,
             si.taxable_amount,
             si.cgst_amount,
             si.sgst_amount,
@@ -167,7 +172,7 @@ export async function gstSummary(period: string) {
        FROM sales_invoices si
        LEFT JOIN clients c ON c.id = si.client_id OR c.client_id = si.client_id
       WHERE si.invoice_date >= ? AND si.invoice_date <= ?
-        AND si.invoice_status IN ${INCLUDED_STATUS}
+        AND si.invoice_status ${INCLUDED_STATUS}
         AND si.invoice_type <> 'Proforma Invoice'
       ORDER BY si.invoice_date ASC, si.invoice_id ASC`,
     [from, to],
@@ -205,23 +210,41 @@ export async function gstSummary(period: string) {
       taxable: round2(num(r.taxable)),
       tax: round2(num(r.tax)),
     })),
-    invoices: invoices.map((r) => ({
-      invoice_id: r.invoice_id,
-      invoice_date: r.invoice_date,
-      invoice_type: r.invoice_type,
-      client_name: r.client_name || "—",
-      client_gstin: r.client_gstin || "",
-      project_name: r.project_name || "",
-      place_of_supply: r.place_of_supply || "",
-      supply_type: r.supply_type,
-      status: r.invoice_status,
-      taxable: round2(num(r.taxable_amount)),
-      cgst: round2(num(r.cgst_amount)),
-      sgst: round2(num(r.sgst_amount)),
-      igst: round2(num(r.igst_amount)),
-      cess: round2(num(r.cess_amount)),
-      total: round2(num(r.invoice_total)),
-    })),
+    invoices: invoices.map((r) => {
+      const taxableAmt = round2(num(r.taxable_amount))
+      const cgstAmt = round2(num(r.cgst_amount))
+      const sgstAmt = round2(num(r.sgst_amount))
+      const igstAmt = round2(num(r.igst_amount))
+      const cessAmt = round2(num(r.cess_amount))
+      const taxTotal = round2(cgstAmt + sgstAmt + igstAmt)
+      // Effective GST rate derived from the document's own tax vs taxable value,
+      // so a nil / exempt invoice reports 0% instead of a blank.
+      const gstRate = taxableAmt > 0 ? Math.round((taxTotal / taxableAmt) * 100) : 0
+      const gstin = r.client_gstin || ""
+      return {
+        invoice_id: r.invoice_id,
+        invoice_date: r.invoice_date,
+        invoice_type: r.invoice_type,
+        client_name: r.client_name || "—",
+        client_legal_name: r.client_legal_name || r.client_name || "—",
+        client_gstin: gstin,
+        // GST registration status of the customer for the return.
+        gst_registration: gstin ? "Registered" : "Unregistered",
+        // GST type = the supply split that decides CGST+SGST vs IGST.
+        gst_type: r.supply_type || "Intra-State",
+        gst_rate: gstRate,
+        project_name: r.project_name || "",
+        place_of_supply: r.place_of_supply || "",
+        supply_type: r.supply_type,
+        status: r.invoice_status,
+        taxable: taxableAmt,
+        cgst: cgstAmt,
+        sgst: sgstAmt,
+        igst: igstAmt,
+        cess: cessAmt,
+        total: round2(num(r.invoice_total)),
+      }
+    }),
     excluded: {
       in_period: Number(diag?.in_period ?? 0),
       draft: Number(diag?.draft ?? 0),

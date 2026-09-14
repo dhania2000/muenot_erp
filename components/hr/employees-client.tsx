@@ -197,6 +197,114 @@ function toFormState(employee: Record<string, any> | null): Record<string, strin
   return state;
 }
 
+function ReportingManagerSelect({
+  value,
+  onChange,
+  excludeId,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  excludeId?: any;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(query), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Close the dropdown when clicking outside the control.
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  const sp = new URLSearchParams();
+  if (debounced) sp.set("q", debounced);
+  sp.set("archived", "active");
+  sp.set("sort", "employee_name");
+  sp.set("dir", "asc");
+  sp.set("page", "1");
+  sp.set("pageSize", "10");
+  const { data, isLoading } = useSWR<{ employees: any[] }>(
+    open ? `/api/hr/employees?${sp.toString()}` : null,
+    fetcher,
+    { keepPreviousData: true },
+  );
+  const options = (data?.employees || []).filter((e) => String(e.id) !== String(excludeId));
+
+  return (
+    <div ref={containerRef} className="relative">
+      <Input
+        id="reporting_manager"
+        type="text"
+        value={open ? query : value}
+        placeholder="Search employees…"
+        autoComplete="off"
+        onFocus={() => {
+          setQuery(value);
+          setOpen(true);
+        }}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+      />
+      {open && (
+        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+          {value && (
+            <button
+              type="button"
+              className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                onChange("");
+                setQuery("");
+                setOpen(false);
+              }}
+            >
+              Clear selection
+            </button>
+          )}
+          {isLoading ? (
+            <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Searching…
+            </div>
+          ) : options.length === 0 ? (
+            <div className="px-2 py-3 text-sm text-muted-foreground">No employees found</div>
+          ) : (
+            options.map((emp) => (
+              <button
+                key={emp.id}
+                type="button"
+                className="flex w-full flex-col rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  onChange(emp.employee_name || "");
+                  setOpen(false);
+                }}
+              >
+                <span className="font-medium">{emp.employee_name || "Unnamed"}</span>
+                {(emp.designation || emp.department) && (
+                  <span className="text-xs text-muted-foreground">
+                    {[emp.designation, emp.department].filter(Boolean).join(" · ")}
+                  </span>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EmployeeDialog({
   onSaved,
   employee = null,
@@ -366,6 +474,18 @@ function EmployeeDialog({
                       "Bank name and branch auto-fill from the IFSC code"
                     )}
                   </p>
+                </div>
+              );
+            }
+            if (key === "reporting_manager") {
+              return (
+                <div key={key} className="grid gap-2">
+                  <Label htmlFor={key}>{label}</Label>
+                  <ReportingManagerSelect
+                    value={form[key] || ""}
+                    onChange={(v) => setForm((f) => ({ ...f, [key]: v }))}
+                    excludeId={employee?.id}
+                  />
                 </div>
               );
             }

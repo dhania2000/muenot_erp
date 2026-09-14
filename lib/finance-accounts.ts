@@ -18,6 +18,12 @@ export type AccountRole =
   | "output_sgst"
   | "output_igst"
   | "output_cess"
+  // Net GST settlement control head (Phase 11 — GST payment accounting). The
+  // per-head output accounts (2110–2140) accumulate the tax charged on sales;
+  // this single "GST Payable" head is where a period's net cash payment to the
+  // government is debited against Bank/Cash, so a payment never double-touches
+  // the individual output-tax heads that the sales postings already own.
+  | "gst_payable"
   | "bank"
   | "cash"
   // Purchase-side roles (Phase 33 — purchase bill posting).
@@ -45,6 +51,7 @@ export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
   output_sgst: "2120",
   output_igst: "2130",
   output_cess: "2140",
+  gst_payable: "2160",
   bank: "1000",
   cash: "1010",
   // Purchase-side defaults.
@@ -104,6 +111,14 @@ const EXPENSE_ACCOUNT_SEEDS: CoaSeed[] = [
   { code: "1460", id: "COA-EMP-ADV", name: "Employee Advances", group: "Asset", type: "Current Asset", nature: "Debit" },
 ]
 
+/**
+ * GST payment control head (Phase 11). Seeded on demand the first time a GST
+ * payment is posted; a company that already has a 2160 account keeps its own.
+ */
+const GST_PAYMENT_ACCOUNT_SEEDS: CoaSeed[] = [
+  { code: "2160", id: "COA-GST-PAY", name: "GST Payable (Net)", group: "Liability", type: "Duties & Taxes", nature: "Credit", gst: true },
+]
+
 async function seedAccounts(seeds: CoaSeed[]): Promise<void> {
   for (const a of seeds) {
     await query(
@@ -123,6 +138,14 @@ export async function ensurePurchasePostingAccounts(): Promise<void> {
   if (purchaseAccountsEnsured) return
   await seedAccounts(PURCHASE_ACCOUNT_SEEDS)
   purchaseAccountsEnsured = true
+}
+
+let gstPaymentAccountsEnsured = false
+
+export async function ensureGstPaymentAccounts(): Promise<void> {
+  if (gstPaymentAccountsEnsured) return
+  await seedAccounts(GST_PAYMENT_ACCOUNT_SEEDS)
+  gstPaymentAccountsEnsured = true
 }
 
 let expenseAccountsEnsured = false

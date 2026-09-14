@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FileCheck2, Landmark, Download } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { FileCheck2, Landmark, Download, Layers, Scale } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 import * as XLSX from "xlsx"
 
@@ -66,6 +67,37 @@ type Summary = {
     cess: number
     total: number
   }[]
+  sections: {
+    key: string
+    title: string
+    description: string
+    count: number
+    taxable: number
+    tax: number
+    rows: Summary["invoices"]
+  }[]
+  gstr3b: {
+    outward: {
+      taxable: number
+      cgst: number
+      sgst: number
+      igst: number
+      cess: number
+      credit_note_tax: number
+      net_output_tax: number
+    }
+    rcm_liability: number
+    itc: {
+      eligible: number
+      cgst: number
+      sgst: number
+      igst: number
+      cess: number
+      reversal: number
+      net: number
+    }
+    net_tax_payable: number
+  }
   excluded?: { in_period: number; draft: number; cancelled: number; proforma: number }
   filing: { filing_id: string; status: string; arn: string | null; filed_at: string | null } | null
 }
@@ -161,7 +193,36 @@ export function GstFilingClient() {
       XLSX.utils.book_append_sheet(wb, wsInv, "Invoices")
     }
 
-    XLSX.writeFile(wb, `GSTR-1_${s.period}.xlsx`)
+    const g3bRows = [
+      ["GSTR-3B (auto-computed)"],
+      ["Tax period", s.period],
+      [],
+      ["3.1 Outward supplies"],
+      ["Outward taxable supplies", s.gstr3b.outward.taxable],
+      ["Output CGST", s.gstr3b.outward.cgst],
+      ["Output SGST", s.gstr3b.outward.sgst],
+      ["Output IGST", s.gstr3b.outward.igst],
+      ["Output Cess", s.gstr3b.outward.cess],
+      ["Less: credit note tax", s.gstr3b.outward.credit_note_tax],
+      ["Net output tax", s.gstr3b.outward.net_output_tax],
+      [],
+      ["3.1(d) RCM liability", s.gstr3b.rcm_liability],
+      [],
+      ["4. Eligible ITC"],
+      ["ITC — CGST", s.gstr3b.itc.cgst],
+      ["ITC — SGST", s.gstr3b.itc.sgst],
+      ["ITC — IGST", s.gstr3b.itc.igst],
+      ["ITC — Cess", s.gstr3b.itc.cess],
+      ["Less: ITC reversal", s.gstr3b.itc.reversal],
+      ["Net ITC available", s.gstr3b.itc.net],
+      [],
+      ["Net GST payable", s.gstr3b.net_tax_payable],
+    ]
+    const wsG3b = XLSX.utils.aoa_to_sheet(g3bRows)
+    wsG3b["!cols"] = [{ wch: 30 }, { wch: 18 }]
+    XLSX.utils.book_append_sheet(wb, wsG3b, "GSTR-3B")
+
+    XLSX.writeFile(wb, `GST_${s.period}.xlsx`)
   }
 
   async function file() {
@@ -405,6 +466,160 @@ export function GstFilingClient() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
+            <Layers className="h-4 w-4" />
+            GSTR-1 data sections
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!s || (s.sections?.every((sec) => sec.count === 0) ?? true) ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No outward documents to classify for this period.
+            </p>
+          ) : (
+            <Tabs defaultValue={s.sections[0]?.key}>
+              <TabsList className="flex-wrap">
+                {s.sections.map((sec) => (
+                  <TabsTrigger key={sec.key} value={sec.key} className="gap-1.5">
+                    {sec.title}
+                    <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px]">
+                      {sec.count}
+                    </Badge>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              {s.sections.map((sec) => (
+                <TabsContent key={sec.key} value={sec.key} className="mt-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-muted-foreground">{sec.description}</p>
+                    <div className="flex gap-4 text-sm">
+                      <span className="text-muted-foreground">
+                        Taxable <span className="font-medium text-foreground">{currency(sec.taxable)}</span>
+                      </span>
+                      <span className="text-muted-foreground">
+                        Tax <span className="font-medium text-foreground">{currency(sec.tax)}</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Invoice</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Client</TableHead>
+                          <TableHead>GSTIN</TableHead>
+                          <TableHead>Place of supply</TableHead>
+                          <TableHead className="text-right">GST %</TableHead>
+                          <TableHead className="text-right">Taxable</TableHead>
+                          <TableHead className="text-right">CGST</TableHead>
+                          <TableHead className="text-right">SGST</TableHead>
+                          <TableHead className="text-right">IGST</TableHead>
+                          <TableHead className="text-right">Cess</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sec.rows.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={12} className="py-8 text-center text-sm text-muted-foreground">
+                              No documents in this section.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          sec.rows.map((inv) => (
+                            <TableRow key={inv.invoice_id}>
+                              <TableCell className="font-mono text-xs">{inv.invoice_id}</TableCell>
+                              <TableCell className="whitespace-nowrap text-sm">
+                                {inv.invoice_date ? inv.invoice_date.slice(0, 10) : "—"}
+                              </TableCell>
+                              <TableCell className="text-sm">{inv.client_name}</TableCell>
+                              <TableCell>
+                                {inv.client_gstin ? (
+                                  <span className="font-mono text-xs">{inv.client_gstin}</span>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {inv.place_of_supply || inv.supply_type || "—"}
+                              </TableCell>
+                              <TableCell className="text-right text-sm">{inv.gst_rate}%</TableCell>
+                              <TableCell className="text-right">{currency(inv.taxable)}</TableCell>
+                              <TableCell className="text-right">{currency(inv.cgst)}</TableCell>
+                              <TableCell className="text-right">{currency(inv.sgst)}</TableCell>
+                              <TableCell className="text-right">{currency(inv.igst)}</TableCell>
+                              <TableCell className="text-right">{currency(inv.cess)}</TableCell>
+                              <TableCell className="text-right font-medium">{currency(inv.total)}</TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </TabsContent>
+              ))}
+            </Tabs>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Scale className="h-4 w-4" />
+            GSTR-3B (auto-computed)
+          </CardTitle>
+          <Badge variant="outline" className="font-normal">Derived · no manual entry</Badge>
+        </CardHeader>
+        <CardContent className="grid gap-4 lg:grid-cols-3">
+          <div className="rounded-md border">
+            <div className="border-b bg-muted/40 px-3 py-2 text-sm font-medium">3.1 Outward supplies</div>
+            <div className="flex flex-col divide-y text-sm">
+              <Line label="Outward taxable supplies" value={currency(s?.gstr3b.outward.taxable)} />
+              <Line label="Output CGST" value={currency(s?.gstr3b.outward.cgst)} />
+              <Line label="Output SGST" value={currency(s?.gstr3b.outward.sgst)} />
+              <Line label="Output IGST" value={currency(s?.gstr3b.outward.igst)} />
+              <Line label="Output Cess" value={currency(s?.gstr3b.outward.cess)} />
+              <Line label="Less: credit note tax" value={`(${currency(s?.gstr3b.outward.credit_note_tax)})`} />
+              <Line label="Net output tax" value={currency(s?.gstr3b.outward.net_output_tax)} strong />
+            </div>
+          </div>
+          <div className="rounded-md border">
+            <div className="border-b bg-muted/40 px-3 py-2 text-sm font-medium">3.1(d) RCM liability</div>
+            <div className="flex flex-col divide-y text-sm">
+              <Line label="Inward supplies liable to RCM" value={currency(s?.gstr3b.rcm_liability)} />
+              <div className="px-3 py-2 text-xs text-muted-foreground">
+                Reverse-charge tax self-assessed on Purchase Bills / Expenses. Adds to output liability and is
+                claimable as ITC below.
+              </div>
+            </div>
+          </div>
+          <div className="rounded-md border">
+            <div className="border-b bg-muted/40 px-3 py-2 text-sm font-medium">4. Eligible ITC</div>
+            <div className="flex flex-col divide-y text-sm">
+              <Line label="ITC — CGST" value={currency(s?.gstr3b.itc.cgst)} />
+              <Line label="ITC — SGST" value={currency(s?.gstr3b.itc.sgst)} />
+              <Line label="ITC — IGST" value={currency(s?.gstr3b.itc.igst)} />
+              <Line label="ITC — Cess" value={currency(s?.gstr3b.itc.cess)} />
+              <Line label="Less: ITC reversal" value={`(${currency(s?.gstr3b.itc.reversal)})`} />
+              <Line label="Net ITC available" value={currency(s?.gstr3b.itc.net)} strong />
+            </div>
+          </div>
+          <div className="lg:col-span-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/5 px-4 py-3">
+              <div className="text-sm text-muted-foreground">
+                Net GST payable
+                <span className="ml-2 text-xs">(net output tax + RCM − net ITC)</span>
+              </div>
+              <div className="text-xl font-semibold text-primary">{currency(s?.gstr3b.net_tax_payable)}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
             <Landmark className="h-4 w-4" />
             Filing history
           </CardTitle>
@@ -513,6 +728,15 @@ function Stat({
         {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
       </CardContent>
     </Card>
+  )
+}
+
+function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className={`flex items-center justify-between px-3 py-2${strong ? " bg-muted/30" : ""}`}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className={strong ? "font-semibold" : "font-medium"}>{value}</span>
+    </div>
   )
 }
 

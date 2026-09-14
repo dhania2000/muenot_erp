@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FileCheck2, Landmark, Users } from "lucide-react"
+import { FileCheck2, Landmark, TriangleAlert, Users } from "lucide-react"
 import { currency, thisMonth, DIRECTION_COPY, Stat, type Direction } from "./shared"
 
 type Summary = {
@@ -24,6 +24,8 @@ type DetailRow = {
   doc_date: string
   party_name: string
   pan: string
+  pan_status: "Valid" | "Invalid" | "Missing"
+  no_pan: boolean
   section: string
   base: number
   rate: number
@@ -38,7 +40,31 @@ const SOURCE_BADGE: Record<string, "default" | "secondary" | "outline"> = {
   "Freelance Invoice": "secondary",
 }
 const HAS_SOURCE: Record<Direction, boolean> = { receivable: false, payable: true, employee: true }
-const HAS_PAN: Record<Direction, boolean> = { receivable: false, payable: true, employee: false }
+const HAS_PAN: Record<Direction, boolean> = { receivable: false, payable: true, employee: true }
+
+const PAN_VARIANT: Record<DetailRow["pan_status"], "default" | "destructive" | "outline"> = {
+  Valid: "default",
+  Invalid: "destructive",
+  Missing: "outline",
+}
+
+function PanCell({ pan, status, noPan }: { pan: string; status: DetailRow["pan_status"]; noPan: boolean }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="font-mono text-xs">{pan || "—"}</span>
+      <div className="flex flex-wrap items-center gap-1">
+        <Badge variant={PAN_VARIANT[status]} className="h-4 px-1.5 text-[10px] leading-none">
+          {status}
+        </Badge>
+        {noPan ? (
+          <Badge variant="destructive" className="h-4 px-1.5 text-[10px] leading-none">
+            206AA 20%
+          </Badge>
+        ) : null}
+      </div>
+    </div>
+  )
+}
 
 export function FilingStage({ direction }: { direction: Direction }) {
   const [period, setPeriod] = useState(thisMonth())
@@ -58,6 +84,7 @@ export function FilingStage({ direction }: { direction: Direction }) {
   const s = data?.summary
   const detail = data?.detail ?? []
   const filings = filingsData?.filings ?? []
+  const panIssues = HAS_PAN[direction] ? detail.filter((r) => r.pan_status !== "Valid") : []
 
   async function file() {
     setBusy(true)
@@ -95,6 +122,18 @@ export function FilingStage({ direction }: { direction: Direction }) {
       </div>
 
       {error ? <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
+
+      {panIssues.length > 0 ? (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {panIssues.length} {copy.partyLabel.toLowerCase()}
+            {panIssues.length === 1 ? " has" : "s have"} a missing or invalid PAN. Under section 206AA these deductions
+            attract the higher of the prescribed rate or 20%. Fix the PAN in the party master to avoid short-deduction
+            notices.
+          </span>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Stat label="Documents" value={String(s?.totals.invoice_count ?? 0)} />
@@ -203,7 +242,9 @@ export function FilingStage({ direction }: { direction: Direction }) {
                       ) : null}
                       <TableCell className="font-medium">{r.party_name}</TableCell>
                       {HAS_PAN[direction] ? (
-                        <TableCell className="font-mono text-xs text-muted-foreground">{r.pan || "—"}</TableCell>
+                        <TableCell>
+                          <PanCell pan={r.pan} status={r.pan_status} noPan={r.no_pan} />
+                        </TableCell>
                       ) : null}
                       <TableCell>{r.section}</TableCell>
                       <TableCell className="text-right">{currency(r.base)}</TableCell>

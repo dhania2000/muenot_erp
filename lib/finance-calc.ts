@@ -142,6 +142,115 @@ export function accountingPeriodFor(dateStr?: string | null): string {
   return `${MONTH_SHORT[d.getMonth()]}-${d.getFullYear()}`
 }
 
+const MONTH_LONG = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+]
+
+/**
+ * Fiscal quarter for a date, honouring the configured financial-year start
+ * month. Q1 begins on the FY start month (April by default → Apr–Jun = Q1).
+ */
+export function fiscalQuarterFor(dateStr?: string | null, startMonth: number = fyStartMonth): string {
+  if (!dateStr) return ""
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return ""
+  const offset = ((d.getMonth() - startMonth) + 12) % 12
+  return `Q${Math.floor(offset / 3) + 1}`
+}
+
+/**
+ * Centralized FTE financial period (Phase 9). Given the invoice date, derives
+ * the financial year, month name, fiscal quarter and accounting period from the
+ * single shared FY configuration so every FTE invoice is stamped consistently.
+ */
+export function fteFinancialPeriod(dateStr?: string | null) {
+  const d = dateStr ? new Date(dateStr) : null
+  const valid = d && !Number.isNaN(d.getTime())
+  return {
+    financial_year: financialYearFor(dateStr),
+    month: valid ? MONTH_LONG[d!.getMonth()] : "",
+    quarter: fiscalQuarterFor(dateStr),
+    accounting_period: accountingPeriodFor(dateStr),
+  }
+}
+
+/**
+ * Pure, client-safe FTE client-billing engine (Phases 10–18).
+ *
+ * Shared by the live form preview (config `compute`) and the server-authoritative
+ * recalculation (computeFteServerFields). It models the CLIENT invoice only:
+ *
+ *   Base billing (rate × billable days, or a flat monthly/fixed amount)
+ *   + Overtime + Bonus/Extra + Other billable charges
+ *   - Approved billing adjustment
+ *   = Gross client billing
+ *
+ * GST is added and TDS withheld to reach Net receivable / Outstanding. Employee
+ * payroll cost (salary, employer PF/ESI, other) is tracked SEPARATELY (Phase 17)
+ * and only used to derive Gross margin / Margin % (Phase 18). Employee payroll
+ * deductions (PF/ESI/PT/TDS on salary) are never mixed into client billing.
+ */
+export function computeFteBilling(v: Record<string, any>) {
+  const workingDays = num(v.working_days)
+  const paidDays = num(v.paid_days)
+  const basis = String(v.billing_basis || "")
+
+  // Billable days follow the configured billing policy (Phase 13) but an
+  // explicit, HR-consistent value the user entered always wins.
+  let billableDays = num(v.billable_days)
+  if (billableDays <= 0) {
+    if (basis === "Working Days") billableDays = workingDays
+    else if (basis === "Monthly" || basis === "Fixed Amount") billableDays = paidDays || workingDays
+    else billableDays = paidDays
+  }
+  const nonBillableDays = round2(Math.max(0, workingDays - billableDays))
+
+  const rate = num(v.billing_rate)
+  // Base billing derived from the billing basis + rate (Phase 14). A pre-entered
+  // base_billing (or legacy gross_billing) is the fallback when no rate is set.
+  let base = 0
+  if (rate > 0) {
+    if (basis === "Daily" || basis === "Working Days") base = round2(rate * billableDays)
+    else if (basis === "Hourly") base = round2(rate * num(v.billable_hours || billableDays))
+    else base = round2(rate) // Monthly / Fixed Amount → flat rate
+  }
+  if (base <= 0) base = round2(num(v.base_billing) || num(v.gross_billing))
+
+  const overtime = num(v.billing_overtime)
+  const bonus = num(v.billing_bonus)
+  const other = num(v.other_charges)
+  const adjustment = num(v.billing_adjustment)
+  const gross = round2(base + overtime + bonus + other - adjustment)
+
+  const gstAmount = round2((gross * num(v.gst_rate)) / 100)
+  const tdsAmount = round2((gross * num(v.tds_rate)) / 100)
+  const netReceivable = round2(gross + gstAmount - tdsAmount)
+  const amountPaid = num(v.amount_paid)
+  const outstanding = round2(netReceivable - amountPaid)
+
+  // Employee cost is a separate ledger (Phase 17) — never deducted from billing.
+  const employeeCost = round2(
+    num(v.salary_cost) + num(v.employer_pf) + num(v.employer_esi) + num(v.other_employer_cost),
+  )
+  const grossMargin = round2(gross - employeeCost - num(v.other_allocated_cost))
+  const marginPercent = gross > 0 ? round2((grossMargin / gross) * 100) : 0
+
+  return {
+    billable_days: round2(billableDays),
+    non_billable_days: nonBillableDays,
+    base_billing: round2(base),
+    gross_client_billing: gross,
+    gst_amount: gstAmount,
+    tds_amount: tdsAmount,
+    net_receivable: netReceivable,
+    outstanding,
+    employee_cost_total: employeeCost,
+    gross_margin: grossMargin,
+    margin_percent: marginPercent,
+  }
+}
+
 /**
  * Pure, client-safe Expense money engine (Phase 15).
  *

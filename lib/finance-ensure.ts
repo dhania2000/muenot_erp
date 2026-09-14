@@ -348,6 +348,17 @@ export async function ensurePurchaseBillColumns() {
   await ensureColumn(t, "gst_rate", "DECIMAL(6,2) NOT NULL DEFAULT 0")
   await ensureColumn(t, "tds_base", "DECIMAL(14,2) NOT NULL DEFAULT 0")
 
+  // Centralized TDS rule master resolution — frozen rule snapshot (parity with
+  // Expenses). The rate/section/thresholds are resolved server-side from the
+  // effective-dated finance_tds_rules master and frozen onto the bill so a later
+  // rate change never rewrites a posted document (Phase 9/10 of the TDS module).
+  await ensureColumn(t, "tds_entity_type", "VARCHAR(30) DEFAULT NULL")
+  await ensureColumn(t, "tds_nature_of_payment", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "tds_threshold_single", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "tds_threshold_annual", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "tds_no_pan_rate_applied", "TINYINT(1) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "tds_rule_version", "VARCHAR(30) DEFAULT NULL")
+
   // Phase 4 — accounting heads.
   await ensureColumn(t, "expense_account", "VARCHAR(120) DEFAULT NULL")
   await ensureColumn(t, "payable_account", "VARCHAR(120) DEFAULT NULL")

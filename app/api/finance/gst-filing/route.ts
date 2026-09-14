@@ -11,6 +11,11 @@ import {
   reconcileOutputGst,
   gstReconciliationCenter,
 } from "@/lib/finance-gst-filing"
+import {
+  gstComplianceReport,
+  gstQuarterlyCompliance,
+  gstComplianceFinancialYears,
+} from "@/lib/finance-gst-compliance"
 
 const FEATURE = "finance.gst_filing"
 
@@ -28,6 +33,16 @@ export async function GET(req: NextRequest) {
         listReturnAmendments(period),
       ])
       return NextResponse.json({ output, center, amendments })
+    }
+    if (period && view === "compliance") {
+      return NextResponse.json({ compliance: await gstComplianceReport(period) })
+    }
+    if (view === "quarterly") {
+      const fy = p.get("fy")
+      const years = await gstComplianceFinancialYears()
+      const target = fy || years[0] || null
+      const quarterly = target ? await gstQuarterlyCompliance(target) : null
+      return NextResponse.json({ quarterly, financial_years: years })
     }
     if (period) return NextResponse.json({ summary: await gstSummary(period) })
     return NextResponse.json({ filings: await listGstFilings() })

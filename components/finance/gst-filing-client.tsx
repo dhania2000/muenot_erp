@@ -9,7 +9,25 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileCheck2, Landmark, Download, Layers, Scale, GitCompareArrows, History, Lock, ShieldCheck } from "lucide-react"
+import {
+  FileCheck2,
+  Landmark,
+  Download,
+  Layers,
+  Scale,
+  GitCompareArrows,
+  History,
+  Lock,
+  ShieldCheck,
+  AlertTriangle,
+  Table2,
+  CalendarRange,
+  Users,
+  Truck,
+  Percent,
+  Split,
+  FileMinus2,
+} from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 import * as XLSX from "xlsx"
 
@@ -411,6 +429,8 @@ export function GstFilingClient() {
       ) : null}
 
       <ReconciliationCenter period={period} />
+
+      <GstComplianceSection period={period} />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -1205,5 +1225,724 @@ function RecordPayment({
       </Button>
       {error ? <span className="text-destructive">{error}</span> : null}
     </div>
+  )
+}
+
+// ── GST Compliance (Phases 21–30) ───────────────────────────────────────────
+// Everything below is DERIVED from the same GSTR-1/3B engine and the shared ITC
+// register, so the compliance views can never disagree with the numbers above.
+
+type ComplianceReconStatus = "Matched" | "Mismatch"
+
+type Compliance = {
+  period: string
+  financial_year: string
+  quarter: string
+  monthly: {
+    taxable_outward: number
+    output_gst: number
+    input_gst: number
+    eligible_itc: number
+    itc_reversal: number
+    rcm: number
+    net_liability: number
+    tax_paid: number
+    balance: number
+  }
+  three_b: {
+    gstr2b_present: boolean
+    headline: {
+      gstr1_output: number
+      gstr2b_itc: number
+      itc_register: number
+      rcm: number
+      net_payable: number
+    }
+    lines: {
+      key: string
+      label: string
+      source_label: string
+      source: number
+      target_label: string
+      target: number
+      status: ComplianceReconStatus
+    }[]
+  }
+  exceptions: {
+    key: string
+    label: string
+    description: string
+    severity: "error" | "warning" | "info"
+    count: number
+    items: { ref: string; detail: string }[]
+  }[]
+  exception_total: number
+  raw: {
+    fy: string | null
+    month: string
+    quarter: string
+    source: string
+    document_id: string
+    number: string
+    date: string | null
+    party: string
+    gstin: string
+    pan: string
+    supply_type: string
+    place_of_supply: string
+    hsn_sac: string
+    taxable: number
+    gst_rate: number
+    cgst: number
+    sgst: number
+    igst: number
+    cess: number
+    total_gst: number
+    itc: number
+    tds: number
+    status: string
+    reconciliation: string
+  }[]
+  rate_wise: { rate: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number; total_gst: number }[]
+  supply_wise: {
+    key: string
+    label: string
+    count: number
+    taxable: number
+    cgst: number
+    sgst: number
+    igst: number
+    cess: number
+    total_gst: number
+  }[]
+  client_wise: {
+    client: string
+    client_legal_name: string
+    gstin: string
+    invoices: number
+    taxable: number
+    cgst: number
+    sgst: number
+    igst: number
+    cess: number
+    total_gst: number
+  }[]
+  vendor_wise: {
+    vendor: string
+    gstin: string
+    bills: number
+    taxable: number
+    cgst: number
+    sgst: number
+    igst: number
+    cess: number
+    itc: number
+    reversal: number
+    net_itc: number
+  }[]
+  credit_debit_notes: {
+    note_id: string
+    type: string
+    date: string | null
+    client: string
+    gstin: string
+    original_invoice: string | null
+    taxable: number
+    tax: number
+    total: number
+    liability_effect: number
+    status: string
+  }[]
+}
+
+type Quarterly = {
+  financial_year: string
+  quarters: { quarter: string; output: number; input: number; itc: number; rcm: number; liability: number; paid: number }[]
+  total: { quarter: string; output: number; input: number; itc: number; rcm: number; liability: number; paid: number }
+}
+
+const SEVERITY_STYLE: Record<string, string> = {
+  error: "border-red-500/40 text-red-700 dark:text-red-400",
+  warning: "border-amber-500/40 text-amber-700 dark:text-amber-400",
+  info: "text-muted-foreground",
+}
+
+function ComplianceReconBadge({ status }: { status: ComplianceReconStatus }) {
+  return (
+    <Badge
+      variant="outline"
+      className={
+        status === "Matched"
+          ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
+          : "border-red-500/40 text-red-700 dark:text-red-400"
+      }
+    >
+      {status}
+    </Badge>
+  )
+}
+
+function GstComplianceSection({ period }: { period: string }) {
+  const { data } = useSWR<{ compliance: Compliance }>(
+    `/api/finance/gst-filing?period=${period}&view=compliance`,
+    fetcher,
+  )
+  const [fy, setFy] = useState<string | null>(null)
+  const { data: qData } = useSWR<{ quarterly: Quarterly | null; financial_years: string[] }>(
+    `/api/finance/gst-filing?view=quarterly${fy ? `&fy=${fy}` : ""}`,
+    fetcher,
+  )
+
+  const c = data?.compliance
+  const quarterly = qData?.quarterly
+  const years = qData?.financial_years ?? []
+  const activeFy = fy ?? quarterly?.financial_year ?? c?.financial_year ?? "—"
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <ShieldCheck className="h-4 w-4" />
+          GST compliance
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          3B reconciliation, exceptions, summaries and the raw register — all derived from the same GSTR-1 engine and
+          ITC register, so nothing is entered twice.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue="three_b">
+          <TabsList className="flex-wrap">
+            <TabsTrigger value="three_b" className="gap-1.5">
+              <Scale className="h-3.5 w-3.5" /> 3B Reconciliation
+            </TabsTrigger>
+            <TabsTrigger value="exceptions" className="gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5" /> Exceptions
+              {c && c.exception_total > 0 ? (
+                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px]">
+                  {c.exception_total}
+                </Badge>
+              ) : null}
+            </TabsTrigger>
+            <TabsTrigger value="monthly" className="gap-1.5">
+              <CalendarRange className="h-3.5 w-3.5" /> Monthly
+            </TabsTrigger>
+            <TabsTrigger value="quarterly" className="gap-1.5">
+              <CalendarRange className="h-3.5 w-3.5" /> Quarterly
+            </TabsTrigger>
+            <TabsTrigger value="client" className="gap-1.5">
+              <Users className="h-3.5 w-3.5" /> Client-wise
+            </TabsTrigger>
+            <TabsTrigger value="vendor" className="gap-1.5">
+              <Truck className="h-3.5 w-3.5" /> Vendor-wise
+            </TabsTrigger>
+            <TabsTrigger value="rate" className="gap-1.5">
+              <Percent className="h-3.5 w-3.5" /> Rate-wise
+            </TabsTrigger>
+            <TabsTrigger value="supply" className="gap-1.5">
+              <Split className="h-3.5 w-3.5" /> Supply-wise
+            </TabsTrigger>
+            <TabsTrigger value="notes" className="gap-1.5">
+              <FileMinus2 className="h-3.5 w-3.5" /> Credit/Debit Notes
+            </TabsTrigger>
+            <TabsTrigger value="raw" className="gap-1.5">
+              <Table2 className="h-3.5 w-3.5" /> Raw Register
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Phase 21 — 3B reconciliation */}
+          <TabsContent value="three_b" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                  <MiniStat label="GSTR-1 output" value={currency(c.three_b.headline.gstr1_output)} />
+                  <MiniStat
+                    label={c.three_b.gstr2b_present ? "GSTR-2B ITC" : "ITC register"}
+                    value={currency(c.three_b.gstr2b_present ? c.three_b.headline.gstr2b_itc : c.three_b.headline.itc_register)}
+                  />
+                  <MiniStat label="RCM" value={currency(c.three_b.headline.rcm)} />
+                  <MiniStat label="Net payable" value={currency(c.three_b.headline.net_payable)} emphasis />
+                  <MiniStat
+                    label="Overall"
+                    value={c.three_b.lines.every((l) => l.status === "Matched") ? "Matched" : "Review"}
+                  />
+                </div>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Component</TableHead>
+                        <TableHead>Source</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                        <TableHead>GSTR-3B</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                        <TableHead className="text-right">Difference</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {c.three_b.lines.map((l) => (
+                        <TableRow key={l.key}>
+                          <TableCell className="text-sm font-medium">{l.label}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{l.source_label}</TableCell>
+                          <TableCell className="text-right">{currency(l.source)}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{l.target_label}</TableCell>
+                          <TableCell className="text-right">{currency(l.target)}</TableCell>
+                          <TableCell className="text-right">{currency(Math.abs(l.source - l.target))}</TableCell>
+                          <TableCell><ComplianceReconBadge status={l.status} /></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                {!c.three_b.gstr2b_present ? (
+                  <p className="text-xs text-muted-foreground">
+                    No GSTR-2B staged for this period — the ITC line compares the GST Input register against GSTR-3B
+                    instead.
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 22 — exception centre */}
+          <TabsContent value="exceptions" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {c.exceptions.map((e) => (
+                  <div key={e.key} className="rounded-md border">
+                    <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        {e.count > 0 ? <AlertTriangle className={`h-3.5 w-3.5 ${e.severity === "error" ? "text-red-600" : e.severity === "warning" ? "text-amber-600" : "text-muted-foreground"}`} /> : <FileCheck2 className="h-3.5 w-3.5 text-emerald-600" />}
+                        {e.label}
+                      </div>
+                      <Badge variant="outline" className={e.count > 0 ? SEVERITY_STYLE[e.severity] : "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"}>
+                        {e.count > 0 ? e.count : "Clean"}
+                      </Badge>
+                    </div>
+                    <div className="px-3 py-2">
+                      <p className="text-xs text-muted-foreground">{e.description}</p>
+                      {e.items.length > 0 ? (
+                        <ul className="mt-2 flex flex-col gap-1">
+                          {e.items.slice(0, 5).map((it, i) => (
+                            <li key={i} className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-mono">{it.ref}</span>
+                              <span className="text-muted-foreground">{it.detail}</span>
+                            </li>
+                          ))}
+                          {e.items.length > 5 ? (
+                            <li className="text-xs text-muted-foreground">+ {e.items.length - 5} more…</li>
+                          ) : null}
+                        </ul>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 24 — monthly summary */}
+          <TabsContent value="monthly" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+                <MiniStat label="Taxable outward" value={currency(c.monthly.taxable_outward)} />
+                <MiniStat label="Output GST" value={currency(c.monthly.output_gst)} />
+                <MiniStat label="Input GST" value={currency(c.monthly.input_gst)} />
+                <MiniStat label="Eligible ITC" value={currency(c.monthly.eligible_itc)} />
+                <MiniStat label="ITC reversal" value={currency(c.monthly.itc_reversal)} />
+                <MiniStat label="RCM" value={currency(c.monthly.rcm)} />
+                <MiniStat label="Net liability" value={currency(c.monthly.net_liability)} emphasis />
+                <MiniStat label="Tax paid" value={currency(c.monthly.tax_paid)} />
+                <MiniStat label="Balance" value={currency(c.monthly.balance)} emphasis />
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 25 — quarterly summary */}
+          <TabsContent value="quarterly" className="mt-4">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="text-sm text-muted-foreground">Financial year</span>
+              {years.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {years.map((y) => (
+                    <Button
+                      key={y}
+                      size="sm"
+                      variant={y === activeFy ? "default" : "outline"}
+                      onClick={() => setFy(y)}
+                    >
+                      {y}
+                    </Button>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-sm font-medium">{activeFy}</span>
+              )}
+            </div>
+            {!quarterly ? (
+              <Loading />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Quarter</TableHead>
+                      <TableHead className="text-right">Output</TableHead>
+                      <TableHead className="text-right">Input</TableHead>
+                      <TableHead className="text-right">ITC</TableHead>
+                      <TableHead className="text-right">RCM</TableHead>
+                      <TableHead className="text-right">Liability</TableHead>
+                      <TableHead className="text-right">Paid</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {quarterly.quarters.map((q) => (
+                      <TableRow key={q.quarter}>
+                        <TableCell className="font-medium">{q.quarter}</TableCell>
+                        <TableCell className="text-right">{currency(q.output)}</TableCell>
+                        <TableCell className="text-right">{currency(q.input)}</TableCell>
+                        <TableCell className="text-right">{currency(q.itc)}</TableCell>
+                        <TableCell className="text-right">{currency(q.rcm)}</TableCell>
+                        <TableCell className="text-right">{currency(q.liability)}</TableCell>
+                        <TableCell className="text-right">{currency(q.paid)}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="bg-muted/40 font-medium">
+                      <TableCell>{quarterly.total.quarter}</TableCell>
+                      <TableCell className="text-right">{currency(quarterly.total.output)}</TableCell>
+                      <TableCell className="text-right">{currency(quarterly.total.input)}</TableCell>
+                      <TableCell className="text-right">{currency(quarterly.total.itc)}</TableCell>
+                      <TableCell className="text-right">{currency(quarterly.total.rcm)}</TableCell>
+                      <TableCell className="text-right">{currency(quarterly.total.liability)}</TableCell>
+                      <TableCell className="text-right">{currency(quarterly.total.paid)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 26 — client-wise output */}
+          <TabsContent value="client" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Client</TableHead>
+                      <TableHead>GSTIN</TableHead>
+                      <TableHead className="text-right">Invoices</TableHead>
+                      <TableHead className="text-right">Taxable</TableHead>
+                      <TableHead className="text-right">CGST</TableHead>
+                      <TableHead className="text-right">SGST</TableHead>
+                      <TableHead className="text-right">IGST</TableHead>
+                      <TableHead className="text-right">Cess</TableHead>
+                      <TableHead className="text-right">Total GST</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {c.client_wise.length === 0 ? (
+                      <EmptyRow colSpan={9} label="No outward supplies for this period." />
+                    ) : (
+                      c.client_wise.map((r, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="text-sm">{r.client}</TableCell>
+                          <TableCell>
+                            {r.gstin ? <span className="font-mono text-xs">{r.gstin}</span> : <Badge variant="outline" className="text-xs">Unregistered</Badge>}
+                          </TableCell>
+                          <TableCell className="text-right">{r.invoices}</TableCell>
+                          <TableCell className="text-right">{currency(r.taxable)}</TableCell>
+                          <TableCell className="text-right">{currency(r.cgst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.sgst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.igst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.cess)}</TableCell>
+                          <TableCell className="text-right font-medium">{currency(r.total_gst)}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 27 — vendor-wise input */}
+          <TabsContent value="vendor" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>GSTIN</TableHead>
+                      <TableHead className="text-right">Bills</TableHead>
+                      <TableHead className="text-right">Taxable</TableHead>
+                      <TableHead className="text-right">CGST</TableHead>
+                      <TableHead className="text-right">SGST</TableHead>
+                      <TableHead className="text-right">IGST</TableHead>
+                      <TableHead className="text-right">Cess</TableHead>
+                      <TableHead className="text-right">ITC</TableHead>
+                      <TableHead className="text-right">Reversal</TableHead>
+                      <TableHead className="text-right">Net ITC</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {c.vendor_wise.length === 0 ? (
+                      <EmptyRow colSpan={11} label="No input tax credit for this period." />
+                    ) : (
+                      c.vendor_wise.map((r, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="text-sm">{r.vendor}</TableCell>
+                          <TableCell>
+                            {r.gstin ? <span className="font-mono text-xs">{r.gstin}</span> : <Badge variant="outline" className="text-xs">Unregistered</Badge>}
+                          </TableCell>
+                          <TableCell className="text-right">{r.bills}</TableCell>
+                          <TableCell className="text-right">{currency(r.taxable)}</TableCell>
+                          <TableCell className="text-right">{currency(r.cgst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.sgst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.igst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.cess)}</TableCell>
+                          <TableCell className="text-right">{currency(r.itc)}</TableCell>
+                          <TableCell className="text-right">{currency(r.reversal)}</TableCell>
+                          <TableCell className="text-right font-medium">{currency(r.net_itc)}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 28 — rate-wise */}
+          <TabsContent value="rate" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>GST rate</TableHead>
+                      <TableHead className="text-right">Taxable</TableHead>
+                      <TableHead className="text-right">CGST</TableHead>
+                      <TableHead className="text-right">SGST</TableHead>
+                      <TableHead className="text-right">IGST</TableHead>
+                      <TableHead className="text-right">Cess</TableHead>
+                      <TableHead className="text-right">Total GST</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {c.rate_wise.length === 0 ? (
+                      <EmptyRow colSpan={7} label="No taxable supplies for this period." />
+                    ) : (
+                      c.rate_wise.map((r) => (
+                        <TableRow key={r.rate}>
+                          <TableCell>{r.rate}%</TableCell>
+                          <TableCell className="text-right">{currency(r.taxable)}</TableCell>
+                          <TableCell className="text-right">{currency(r.cgst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.sgst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.igst)}</TableCell>
+                          <TableCell className="text-right">{currency(r.cess)}</TableCell>
+                          <TableCell className="text-right font-medium">{currency(r.total_gst)}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 29 — supply-wise */}
+          <TabsContent value="supply" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Supply type</TableHead>
+                      <TableHead className="text-right">Documents</TableHead>
+                      <TableHead className="text-right">Taxable</TableHead>
+                      <TableHead className="text-right">CGST</TableHead>
+                      <TableHead className="text-right">SGST</TableHead>
+                      <TableHead className="text-right">IGST</TableHead>
+                      <TableHead className="text-right">Cess</TableHead>
+                      <TableHead className="text-right">Total GST</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {c.supply_wise.map((r) => (
+                      <TableRow key={r.key}>
+                        <TableCell className="text-sm font-medium">{r.label}</TableCell>
+                        <TableCell className="text-right">{r.count}</TableCell>
+                        <TableCell className="text-right">{currency(r.taxable)}</TableCell>
+                        <TableCell className="text-right">{currency(r.cgst)}</TableCell>
+                        <TableCell className="text-right">{currency(r.sgst)}</TableCell>
+                        <TableCell className="text-right">{currency(r.igst)}</TableCell>
+                        <TableCell className="text-right">{currency(r.cess)}</TableCell>
+                        <TableCell className="text-right font-medium">{currency(r.total_gst)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 30 — credit / debit notes */}
+          <TabsContent value="notes" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Note</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Client</TableHead>
+                      <TableHead>Original invoice</TableHead>
+                      <TableHead className="text-right">Taxable</TableHead>
+                      <TableHead className="text-right">Tax</TableHead>
+                      <TableHead className="text-right">Liability effect</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {c.credit_debit_notes.length === 0 ? (
+                      <EmptyRow colSpan={8} label="No credit or debit notes in this period." />
+                    ) : (
+                      c.credit_debit_notes.map((n) => (
+                        <TableRow key={n.note_id}>
+                          <TableCell className="font-mono text-xs">{n.note_id}</TableCell>
+                          <TableCell><NoteTypeBadge type={n.type} /></TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{n.date ? n.date.slice(0, 10) : "—"}</TableCell>
+                          <TableCell className="text-sm">{n.client}</TableCell>
+                          <TableCell className="font-mono text-xs">{n.original_invoice || "—"}</TableCell>
+                          <TableCell className="text-right">{currency(n.taxable)}</TableCell>
+                          <TableCell className="text-right">{currency(n.tax)}</TableCell>
+                          <TableCell className={`text-right font-medium ${n.liability_effect < 0 ? "text-red-600 dark:text-red-400" : ""}`}>
+                            {n.liability_effect < 0 ? `(${currency(Math.abs(n.liability_effect))})` : currency(n.liability_effect)}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Notes adjust the return through their source linkage — a Credit Note reduces and a Debit Note
+                  increases the period&apos;s output liability. The original invoice is never edited.
+                </p>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Phase 23 — raw register */}
+          <TabsContent value="raw" className="mt-4">
+            {!c ? (
+              <Loading />
+            ) : (
+              <div className="max-h-[520px] overflow-auto rounded-md border">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-background">
+                    <TableRow>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Document</TableHead>
+                      <TableHead>Number</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Party</TableHead>
+                      <TableHead>GSTIN</TableHead>
+                      <TableHead>PAN</TableHead>
+                      <TableHead>Supply</TableHead>
+                      <TableHead>POS</TableHead>
+                      <TableHead>HSN/SAC</TableHead>
+                      <TableHead className="text-right">Taxable</TableHead>
+                      <TableHead className="text-right">Rate</TableHead>
+                      <TableHead className="text-right">CGST</TableHead>
+                      <TableHead className="text-right">SGST</TableHead>
+                      <TableHead className="text-right">IGST</TableHead>
+                      <TableHead className="text-right">Cess</TableHead>
+                      <TableHead className="text-right">Total GST</TableHead>
+                      <TableHead className="text-right">ITC</TableHead>
+                      <TableHead className="text-right">TDS</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Reconciliation</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {c.raw.length === 0 ? (
+                      <EmptyRow colSpan={21} label="No transactions for this period." />
+                    ) : (
+                      c.raw.map((r, i) => (
+                        <TableRow key={`${r.document_id}-${i}`}>
+                          <TableCell className="whitespace-nowrap text-xs">{r.source}</TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs">{r.document_id}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{r.number}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{r.date ? r.date.slice(0, 10) : "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{r.party}</TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs">{r.gstin || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs">{r.pan || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{r.supply_type}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{r.place_of_supply || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{r.hsn_sac || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs">{currency(r.taxable)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs">{r.gst_rate}%</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs">{currency(r.cgst)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs">{currency(r.sgst)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs">{currency(r.igst)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs">{currency(r.cess)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs font-medium">{currency(r.total_gst)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs">{r.itc ? currency(r.itc) : "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right text-xs">{r.tds ? currency(r.tds) : "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{r.status}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{r.reconciliation}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  )
+}
+
+function MiniStat({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
+  return (
+    <div className={`rounded-md border p-3 ${emphasis ? "border-primary/40 bg-primary/5" : ""}`}>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={`text-lg font-semibold ${emphasis ? "text-primary" : ""}`}>{value}</div>
+    </div>
+  )
+}
+
+function Loading() {
+  return <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>
+}
+
+function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
+  return (
+    <TableRow>
+      <TableCell colSpan={colSpan} className="py-8 text-center text-sm text-muted-foreground">
+        {label}
+      </TableCell>
+    </TableRow>
   )
 }

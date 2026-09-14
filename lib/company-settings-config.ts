@@ -161,6 +161,23 @@ const rawSections: Omit<SettingSection, "module" | "submodule">[] = [
     ],
   },
   {
+    id: "tds_deductor",
+    label: "TDS Deductor",
+    icon: "Landmark",
+    description:
+      "Statutory deductor identity used across every TDS record, challan, return and certificate. TAN and PAN are inherited automatically — records never hand-type them.",
+    fields: [
+      { key: "tds.deductor_tan", label: "TAN", type: "text", placeholder: "MUMD12345E", help: "10-char Tax Deduction Account Number." },
+      { key: "tds.deductor_pan", label: "Deductor PAN", type: "text", placeholder: "AAAAA0000A" },
+      { key: "tds.deductor_name", label: "Deductor Name", type: "text", full: true, placeholder: "Legal name as per TAN" },
+      { key: "tds.deductor_type", label: "Deductor Type", type: "select", options: ["Company", "Other than Company"], default: "Company" },
+      { key: "tds.deductor_branch", label: "Branch / Division", type: "text", placeholder: "Head Office" },
+      { key: "tds.responsible_name", label: "Responsible Person", type: "text", placeholder: "Name of person responsible for deduction" },
+      { key: "tds.responsible_designation", label: "Responsible Designation", type: "text", placeholder: "Director / Finance Head" },
+      { key: "tds.responsible_pan", label: "Responsible Person PAN", type: "text", placeholder: "AAAAA0000A" },
+    ],
+  },
+  {
     id: "contract",
     label: "Contract Settings",
     icon: "FileSignature",
@@ -534,6 +551,7 @@ export const SECTION_TAXONOMY: Record<string, { module: string; submodule: strin
   profile: { module: "System", submodule: "Profile Defaults" },
   finance: { module: "Finance", submodule: "Invoicing" },
   tax: { module: "Finance", submodule: "Tax" },
+  tds_deductor: { module: "Finance", submodule: "Tax" },
   payment: { module: "Finance", submodule: "Payments" },
   purchase: { module: "Finance", submodule: "Purchases" },
   lead: { module: "Sales", submodule: "Leads" },

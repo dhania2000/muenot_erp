@@ -37,6 +37,18 @@ const normDirection = (d: any): TdsDirection => {
 
 let ensured = false
 
+/** Add a column to a source table if it is missing (idempotent, self-healing). */
+async function ensureColumn(table: string, column: string, ddl: string) {
+  const rows = (await query<any[]>(
+    `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  ).catch(() => [])) as any[]
+  if (rows.length === 0) {
+    await query(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`).catch(() => {})
+  }
+}
+
 export async function ensureTdsFilingSchema() {
   if (ensured) return
   await query(
@@ -81,6 +93,14 @@ export async function ensureTdsFilingSchema() {
        WHERE table_schema = DATABASE() AND table_name = 'tds_filings' AND index_name = 'uq_tds_period_dir' LIMIT 1`,
   )) as any[]
   if (newIdx.length === 0) await query(`ALTER TABLE tds_filings ADD UNIQUE KEY uq_tds_period_dir (period, direction)`)
+
+  // Deductee PAN snapshots frozen on the source document, mirroring the
+  // vendor_pan snapshot already carried on purchase bills / expenses. FTE and
+  // freelance invoices had no PAN column, so the payee-side return could never
+  // report a valid PAN. These are captured at invoice entry (see the FTE /
+  // Freelance module configs) and read back into the deductee ledger.
+  await ensureColumn("fte_invoices", "employee_pan", "VARCHAR(10) DEFAULT NULL")
+  await ensureColumn("freelance_invoices", "freelancer_pan", "VARCHAR(10) DEFAULT NULL")
 
   ensured = true
 }
@@ -244,7 +264,7 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
          SELECT 'FTE Invoice' AS source, fte_invoice_id AS doc_id, invoice_date AS doc_date, fte_invoice_id AS doc_ref,
                 financial_year,
                 employee_id AS party_id, employee_name AS party_name, employee_name AS party_legal_name,
-                '' AS pan, '' AS gstin,
+                UPPER(TRIM(COALESCE(employee_pan,''))) AS pan, '' AS gstin,
                 '192' AS section, gross_earnings AS base,
                 CASE WHEN gross_earnings > 0 THEN ROUND(tds / gross_earnings * 100, 2) ELSE 0 END AS rate,
                 tds AS tds, status AS status, invoice_date AS sort_date
@@ -257,7 +277,7 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
                 COALESCE(NULLIF(invoice_bill_reference,''), freelance_invoice_id) AS doc_ref,
                 financial_year,
                 freelancer_id AS party_id, freelancer_name AS party_name, freelancer_name AS party_legal_name,
-                '' AS pan, '' AS gstin,
+                UPPER(TRIM(COALESCE(freelancer_pan,''))) AS pan, '' AS gstin,
                 COALESCE(NULLIF(tds_section,''),'194J') AS section, gross_amount AS base,
                 tds_rate AS rate, tds_amount AS tds, payment_status AS status, invoice_date AS sort_date
            FROM freelance_invoices

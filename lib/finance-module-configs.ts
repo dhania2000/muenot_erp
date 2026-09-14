@@ -496,6 +496,7 @@ const fteInvoices: ModuleConfig = {
     fld("Employee & period", "employee_id", "Employee ID", "text"),
     fld("Employee & period", "employee_name", "Employee name", "text", { required: true }),
     fld("Employee & period", "employee_email", "Employee email", "text", { placeholder: "name@example.com" }),
+    fld("Employee & period", "employee_pan", "Employee PAN", "text", { placeholder: "AAAAA0000A", optional: true, help: "Used on the 24Q payee return; missing/invalid PAN triggers the higher §206AA rate." }),
     fld("Employee & period", "employment_type", "Employment type", "select", { options: ["Full-time", "Part-time", "Contract", "Intern"] }),
     fld("Employee & period", "department", "Department", "text"),
     fld("Employee & period", "designation", "Designation", "text"),
@@ -530,6 +531,7 @@ const fteInvoices: ModuleConfig = {
     return {
       gross_earnings: ge, total_deductions: td, net_payable: round2(ge - td),
       financial_year: v.financial_year || financialYearFor(v.invoice_date),
+      employee_pan: String(v.employee_pan || "").replace(/\s+/g, "").toUpperCase(),
     }
   },
   tableColumns: [
@@ -606,6 +608,7 @@ const freelanceInvoices: ModuleConfig = {
     fld("Freelancer & period", "freelancer_id", "Freelancer ID", "text"),
     fld("Freelancer & period", "freelancer_name", "Freelancer name", "text", { required: true }),
     fld("Freelancer & period", "freelancer_email", "Freelancer email", "select", { dynamicOptions: true, optional: true, emptyLabel: "Select email" }),
+    fld("Freelancer & period", "freelancer_pan", "Freelancer PAN", "text", { placeholder: "AAAAA0000A", optional: true, help: "Used on the 26Q/27Q return; missing/invalid PAN triggers the higher §206AA rate." }),
     fld("Freelancer & period", "project_id", "Project ID", "text"),
     fld("Freelancer & period", "project_name", "Project name", "text"),
     fld("Freelancer & period", "work_description", "Work description", "textarea"),
@@ -634,6 +637,7 @@ const freelanceInvoices: ModuleConfig = {
     return {
       gross_amount: gross, tds_amount: tds, net_payable: round2(gross - tds + num(v.other_adjustment)),
       financial_year: v.financial_year || financialYearFor(v.invoice_date),
+      freelancer_pan: String(v.freelancer_pan || "").replace(/\s+/g, "").toUpperCase(),
     }
   },
   tableColumns: [

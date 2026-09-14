@@ -14,7 +14,16 @@ import { currency, thisMonth, DIRECTION_COPY, Stat, StatusBadge, type Direction 
 type Summary = {
   period: string
   totals: { invoice_count: number; total_base: number; total_tds: number }
-  sections: { section: string; invoice_count: number; base: number; tds: number; avg_rate: number }[]
+  sections: {
+    section: string
+    invoice_count: number
+    base: number
+    tds: number
+    avg_rate: number
+    paid: number
+    balance: number
+    status: string
+  }[]
   filing: { filing_id: string; status: string; challan_no: string | null; filed_at: string | null } | null
 }
 type DetailRow = {
@@ -182,12 +191,14 @@ export function FilingStage({ direction }: { direction: Direction }) {
                 <TableHead className="text-right">Base</TableHead>
                 <TableHead className="text-right">Avg rate</TableHead>
                 <TableHead className="text-right">TDS</TableHead>
+                {depositApplicable ? <TableHead className="text-right">Paid</TableHead> : null}
+                {depositApplicable ? <TableHead className="text-right">Balance</TableHead> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
               {!s || s.sections.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={depositApplicable ? 7 : 5} className="py-8 text-center text-sm text-muted-foreground">
                     No TDS entries in this period.
                   </TableCell>
                 </TableRow>
@@ -199,6 +210,10 @@ export function FilingStage({ direction }: { direction: Direction }) {
                     <TableCell className="text-right">{currency(r.base)}</TableCell>
                     <TableCell className="text-right">{r.avg_rate}%</TableCell>
                     <TableCell className="text-right font-medium">{currency(r.tds)}</TableCell>
+                    {depositApplicable ? <TableCell className="text-right">{currency(r.paid)}</TableCell> : null}
+                    {depositApplicable ? (
+                      <TableCell className="text-right font-medium">{currency(r.balance)}</TableCell>
+                    ) : null}
                   </TableRow>
                 ))
               )}

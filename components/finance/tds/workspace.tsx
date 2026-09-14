@@ -2,14 +2,16 @@
 
 import { useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows } from "lucide-react"
+import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent } from "lucide-react"
 import { currentFy, FyPicker, isDeductor, type Direction } from "./shared"
+import { DeductorBanner } from "./deductor-banner"
 import { FilingStage } from "./filing-stage"
 import { LiabilityStage } from "./liability-stage"
 import { ChallansStage } from "./challans-stage"
 import { ReturnsStage } from "./returns-stage"
 import { CertificatesStage } from "./certificates-stage"
 import { ReconciliationStage } from "./reconciliation-stage"
+import { ReferenceStage } from "./reference-stage"
 
 const DIRECTIONS: { value: Direction; label: string }[] = [
   { value: "payable", label: "Payable · Vendors" },
@@ -17,7 +19,7 @@ const DIRECTIONS: { value: Direction; label: string }[] = [
   { value: "receivable", label: "Receivable · 26AS" },
 ]
 
-type StageId = "filing" | "liability" | "challans" | "returns" | "certificates" | "reconciliation"
+type StageId = "filing" | "liability" | "challans" | "returns" | "certificates" | "reconciliation" | "rules"
 
 const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?: boolean }[] = [
   { id: "filing", label: "Filing", icon: FileText },
@@ -26,6 +28,7 @@ const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?
   { id: "returns", label: "Returns", icon: ScrollText, deductorOnly: true },
   { id: "certificates", label: "Certificates", icon: Award, deductorOnly: true },
   { id: "reconciliation", label: "Reconciliation", icon: GitCompareArrows },
+  { id: "rules", label: "Rule master", icon: Percent },
 ]
 
 export function TdsWorkspace() {
@@ -46,6 +49,7 @@ export function TdsWorkspace() {
 
   return (
     <div className="flex flex-col gap-6">
+      <DeductorBanner />
       <div className="flex flex-wrap items-end justify-between gap-4">
         <Tabs value={direction} onValueChange={(v) => pickDirection(v as Direction)}>
           <TabsList>
@@ -93,6 +97,9 @@ export function TdsWorkspace() {
         ) : null}
         <TabsContent value="reconciliation">
           <ReconciliationStage direction={direction} fy={fy} />
+        </TabsContent>
+        <TabsContent value="rules">
+          <ReferenceStage />
         </TabsContent>
       </Tabs>
     </div>

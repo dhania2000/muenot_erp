@@ -282,7 +282,7 @@ export function ChallansStage({ direction, fy }: { direction: Direction; fy: str
                             </TableCell>
                           </TableRow>
                         ) : null}
-                      </>
+                      </Fragment>
                     )
                   })
                 )}

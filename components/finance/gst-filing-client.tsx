@@ -39,8 +39,10 @@ import {
   Search,
   ClipboardCheck,
   FileSpreadsheet,
+  Wallet,
 } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
+import { GstInputClient } from "@/components/finance/gst-input-client"
 import * as XLSX from "xlsx"
 
 const currency = (n: any) => inr0(Number(n) || 0)
@@ -453,8 +455,17 @@ function buildCaWorkbook(pkg: any) {
   XLSX.writeFile(wb, `GST_CA_Package_${pkg.period}.xlsx`)
 }
 
-export function GstFilingClient() {
+const COMPLIANCE_TAB_VALUES = [
+  "overview", "gstr1", "gstr3b", "gst_input", "gstr2b", "rcm",
+  "itc_reversal", "output", "liability", "payment", "reconciliation",
+  "exceptions", "history",
+] as const
+
+export function GstFilingClient({ initialTab }: { initialTab?: string }) {
   const [period, setPeriod] = useState(thisMonth())
+  const [tab, setTab] = useState<string>(() =>
+    initialTab && (COMPLIANCE_TAB_VALUES as readonly string[]).includes(initialTab) ? initialTab : "overview",
+  )
 
   // Phase 33/34 — advanced filters + search over the outward document register.
   const [invSearch, setInvSearch] = useState("")
@@ -654,6 +665,26 @@ export function GstFilingClient() {
         </div>
       </header>
 
+      <Tabs value={tab} onValueChange={setTab} className="flex flex-col gap-6">
+        <div className="overflow-x-auto pb-1 [scrollbar-width:thin]">
+          <TabsList className="w-max flex-nowrap">
+            <TabsTrigger value="overview" className="gap-1.5 whitespace-nowrap"><ClipboardCheck className="h-3.5 w-3.5" /> Overview</TabsTrigger>
+            <TabsTrigger value="gstr1" className="gap-1.5 whitespace-nowrap"><FileCheck2 className="h-3.5 w-3.5" /> GSTR-1</TabsTrigger>
+            <TabsTrigger value="gstr3b" className="gap-1.5 whitespace-nowrap"><Scale className="h-3.5 w-3.5" /> GSTR-3B</TabsTrigger>
+            <TabsTrigger value="gst_input" className="gap-1.5 whitespace-nowrap"><Layers className="h-3.5 w-3.5" /> GST Input / ITC</TabsTrigger>
+            <TabsTrigger value="gstr2b" className="gap-1.5 whitespace-nowrap"><GitCompareArrows className="h-3.5 w-3.5" /> GSTR-2B Reconciliation</TabsTrigger>
+            <TabsTrigger value="rcm" className="gap-1.5 whitespace-nowrap"><Truck className="h-3.5 w-3.5" /> RCM</TabsTrigger>
+            <TabsTrigger value="itc_reversal" className="gap-1.5 whitespace-nowrap"><FileMinus2 className="h-3.5 w-3.5" /> ITC Reversal</TabsTrigger>
+            <TabsTrigger value="output" className="gap-1.5 whitespace-nowrap"><Percent className="h-3.5 w-3.5" /> Output GST</TabsTrigger>
+            <TabsTrigger value="liability" className="gap-1.5 whitespace-nowrap"><Landmark className="h-3.5 w-3.5" /> Tax Liability</TabsTrigger>
+            <TabsTrigger value="payment" className="gap-1.5 whitespace-nowrap"><Wallet className="h-3.5 w-3.5" /> GST Payment</TabsTrigger>
+            <TabsTrigger value="reconciliation" className="gap-1.5 whitespace-nowrap"><ShieldCheck className="h-3.5 w-3.5" /> Reconciliation</TabsTrigger>
+            <TabsTrigger value="exceptions" className="gap-1.5 whitespace-nowrap"><AlertTriangle className="h-3.5 w-3.5" /> Tax Exceptions</TabsTrigger>
+            <TabsTrigger value="history" className="gap-1.5 whitespace-nowrap"><History className="h-3.5 w-3.5" /> Filing History</TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent value="overview" className="mt-0 flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge variant="outline" className="gap-1 font-normal">
           Tax period <span className="font-medium text-foreground">{s?.period ?? period}</span>
@@ -681,6 +712,19 @@ export function GstFilingClient() {
       </section>
 
       <section className="flex flex-col gap-2">
+        <div className="text-sm font-medium">GST liability at a glance</div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat label="Output GST" value={currency(s?.liability.output_gst)} hint="net of credit notes" />
+          <Stat label="Input GST (ITC)" value={currency(s?.liability.input_gst)} hint="net eligible credit" />
+          <Stat label="RCM liability" value={currency(s?.liability.rcm_liability)} hint="reverse charge" />
+          <Stat label="ITC reversal" value={currency(s?.liability.itc_reversal)} hint="credit reversed" />
+          <Stat label="Net GST liability" value={currency(s?.liability.net_liability)} hint="output + RCM − ITC" emphasis />
+        </div>
+      </section>
+        </TabsContent>
+
+        <TabsContent value="liability" className="mt-0 flex flex-col gap-6">
+      <section className="flex flex-col gap-2">
         <div className="text-sm font-medium">GST liability</div>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat label="Output GST" value={currency(s?.liability.output_gst)} hint="net of credit notes" />
@@ -697,13 +741,7 @@ export function GstFilingClient() {
             emphasis
           />
         </div>
-        <RecordPayment
-          period={period}
-          current={s?.liability.tax_paid ?? 0}
-          onSaved={() => mutate()}
-        />
       </section>
-
       {s ? (
         <ReturnWorkflow
           period={period}
@@ -714,19 +752,58 @@ export function GstFilingClient() {
           }}
         />
       ) : null}
+        </TabsContent>
 
-      <ReconciliationCenter period={period} />
-
-      <GstComplianceSection period={period} />
-
-      <PeriodCloseAndAudit
+        <TabsContent value="payment" className="mt-0 flex flex-col gap-6">
+      <section className="flex flex-col gap-2">
+        <div className="text-sm font-medium">GST payment</div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+          <Stat label="Net GST liability" value={currency(s?.liability.net_liability)} hint="output + RCM − ITC" />
+          <Stat label="Tax paid" value={currency(s?.liability.tax_paid)} hint="cash-ledger challan" />
+          <Stat
+            label="Balance payable"
+            value={currency(s?.liability.balance_payable)}
+            hint={(s?.liability.balance_payable ?? 0) <= 0 ? "credit carried forward" : "still payable"}
+            emphasis
+          />
+        </div>
+      </section>
+      <RecordPayment
         period={period}
-        onChanged={() => {
-          mutate()
-          mutateFilings()
-        }}
+        current={s?.liability.tax_paid ?? 0}
+        onSaved={() => mutate()}
       />
+        </TabsContent>
 
+        <TabsContent value="gstr2b" className="mt-0 flex flex-col gap-6">
+      <ReconciliationCenter period={period} />
+        </TabsContent>
+
+        <TabsContent value="reconciliation" className="mt-0 flex flex-col gap-6">
+      <GstComplianceSection period={period} />
+        </TabsContent>
+
+        <TabsContent value="exceptions" className="mt-0 flex flex-col gap-6">
+      <GstComplianceSection period={period} mode="exceptions" />
+        </TabsContent>
+
+        <TabsContent value="output" className="mt-0 flex flex-col gap-6">
+      <OutputGstView summary={s} />
+        </TabsContent>
+
+        <TabsContent value="rcm" className="mt-0 flex flex-col gap-6">
+      <RcmView summary={s} />
+        </TabsContent>
+
+        <TabsContent value="itc_reversal" className="mt-0 flex flex-col gap-6">
+      <ItcReversalView summary={s} />
+        </TabsContent>
+
+        <TabsContent value="gst_input" className="mt-0">
+      <GstInputClient />
+        </TabsContent>
+
+        <TabsContent value="gstr1" className="mt-0 flex flex-col gap-6">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">Return for {period}</CardTitle>
@@ -1038,6 +1115,9 @@ export function GstFilingClient() {
         </CardContent>
       </Card>
 
+        </TabsContent>
+
+        <TabsContent value="gstr3b" className="mt-0 flex flex-col gap-6">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
@@ -1092,6 +1172,9 @@ export function GstFilingClient() {
         </CardContent>
       </Card>
 
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-0 flex flex-col gap-6">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -1136,6 +1219,15 @@ export function GstFilingClient() {
           </Table>
         </CardContent>
       </Card>
+      <PeriodCloseAndAudit
+        period={period}
+        onChanged={() => {
+          mutate()
+          mutateFilings()
+        }}
+      />
+        </TabsContent>
+      </Tabs>
     </main>
   )
 }
@@ -2483,6 +2575,157 @@ function PeriodCloseAndAudit({ period, onChanged }: { period: string; onChanged:
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function OutputGstView({ summary: s }: { summary?: Summary }) {
+  return (
+    <>
+      <section className="flex flex-col gap-2">
+        <div className="text-sm font-medium">Output GST</div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat label="Taxable outward" value={currency(s?.gstr3b.outward.taxable)} />
+          <Stat label="Output GST" value={currency(s?.liability.output_gst)} hint="net of credit notes" emphasis />
+          <Stat label="Credit note tax" value={currency(s?.gstr3b.outward.credit_note_tax)} hint="reduces output" />
+          <Stat label="Net output tax" value={currency(s?.gstr3b.outward.net_output_tax)} />
+        </div>
+      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Percent className="h-4 w-4" />
+            Output tax breakup
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border">
+            <div className="flex flex-col divide-y text-sm">
+              <Line label="Output CGST" value={currency(s?.gstr3b.outward.cgst)} />
+              <Line label="Output SGST" value={currency(s?.gstr3b.outward.sgst)} />
+              <Line label="Output IGST" value={currency(s?.gstr3b.outward.igst)} />
+              <Line label="Output Cess" value={currency(s?.gstr3b.outward.cess)} />
+              <Line label="Less: credit note tax" value={`(${currency(s?.gstr3b.outward.credit_note_tax)})`} />
+              <Line label="Net output tax" value={currency(s?.gstr3b.outward.net_output_tax)} strong />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Rate-wise output</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>GST rate</TableHead>
+                <TableHead className="text-right">Taxable</TableHead>
+                <TableHead className="text-right">CGST</TableHead>
+                <TableHead className="text-right">SGST</TableHead>
+                <TableHead className="text-right">IGST</TableHead>
+                <TableHead className="text-right">Cess</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!s || s.rate_wise.length === 0 ? (
+                <EmptyRow colSpan={6} label="No taxable outward supplies in this period." />
+              ) : (
+                s.rate_wise.map((r) => (
+                  <TableRow key={r.rate}>
+                    <TableCell>{r.rate}%</TableCell>
+                    <TableCell className="text-right">{currency(r.taxable)}</TableCell>
+                    <TableCell className="text-right">{currency(r.cgst)}</TableCell>
+                    <TableCell className="text-right">{currency(r.sgst)}</TableCell>
+                    <TableCell className="text-right">{currency(r.igst)}</TableCell>
+                    <TableCell className="text-right">{currency(r.cess)}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </>
+  )
+}
+
+function RcmView({ summary: s }: { summary?: Summary }) {
+  return (
+    <>
+      <section className="flex flex-col gap-2">
+        <div className="text-sm font-medium">Reverse charge (RCM)</div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+          <Stat label="RCM liability" value={currency(s?.gstr3b.rcm_liability)} hint="self-assessed output" emphasis />
+          <Stat label="Added to output" value={currency(s?.liability.rcm_liability)} hint="3.1(d)" />
+          <Stat label="Net GST liability" value={currency(s?.liability.net_liability)} hint="incl. RCM" />
+        </div>
+      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Truck className="h-4 w-4" />
+            How RCM flows
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
+          <p>
+            Reverse-charge tax is self-assessed on purchase bills and expenses from unregistered or notified suppliers.
+            It is added to your output liability under GSTR-3B 3.1(d) and, where eligible, claimed back as input tax
+            credit in the GST Input / ITC register.
+          </p>
+          <div className="rounded-md border">
+            <div className="flex flex-col divide-y">
+              <Line label="RCM liability (added to output)" value={currency(s?.gstr3b.rcm_liability)} />
+              <Line label="RCM ITC (claimable, subject to eligibility)" value={currency(s?.gstr3b.rcm_liability)} />
+            </div>
+          </div>
+          <p className="text-xs">
+            Open the <span className="font-medium text-foreground">GST Input / ITC</span> tab to review and claim the
+            reverse-charge credit line by line.
+          </p>
+        </CardContent>
+      </Card>
+    </>
+  )
+}
+
+function ItcReversalView({ summary: s }: { summary?: Summary }) {
+  return (
+    <>
+      <section className="flex flex-col gap-2">
+        <div className="text-sm font-medium">ITC reversal</div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat label="Eligible ITC" value={currency(s?.gstr3b.itc.eligible)} />
+          <Stat label="ITC reversal" value={currency(s?.gstr3b.itc.reversal)} hint="credit reversed" emphasis />
+          <Stat label="Net ITC available" value={currency(s?.gstr3b.itc.net)} />
+          <Stat label="Input GST claimed" value={currency(s?.liability.input_gst)} />
+        </div>
+      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <FileMinus2 className="h-4 w-4" />
+            ITC reversal breakup
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border">
+            <div className="flex flex-col divide-y text-sm">
+              <Line label="ITC — CGST" value={currency(s?.gstr3b.itc.cgst)} />
+              <Line label="ITC — SGST" value={currency(s?.gstr3b.itc.sgst)} />
+              <Line label="ITC — IGST" value={currency(s?.gstr3b.itc.igst)} />
+              <Line label="ITC — Cess" value={currency(s?.gstr3b.itc.cess)} />
+              <Line label="Less: ITC reversal" value={`(${currency(s?.gstr3b.itc.reversal)})`} />
+              <Line label="Net ITC available" value={currency(s?.gstr3b.itc.net)} strong />
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Reversals are driven from the GST Input / ITC register (ineligible credit, non-payment within 180 days,
+            common-credit rules). Manage individual reversals from the GST Input / ITC tab.
+          </p>
+        </CardContent>
+      </Card>
+    </>
   )
 }
 

@@ -21,6 +21,13 @@ import { syncExpensePosting, reverseExpensePosting } from "@/lib/finance-expense
 import { computeBillItems, persistBillItems } from "@/lib/purchase-bill-items"
 import type { SupplyType } from "@/lib/sales-invoice-compute"
 import { INVOICE_WORKFLOW_MODULES, scopeAndAnnotateInvoices, snapshotInvoiceManager } from "@/lib/finance-invoice-workflow"
+import {
+  FINANCE_PERMISSION_KEYS,
+  scopeWhereForModule,
+  mergeScopeIntoWhere,
+  canActOnRecord,
+  canCreateInModule,
+} from "@/lib/permission-enforce"
 
 /**
  * Optional per-module server augmentation. Runs AFTER the pure `compute`, can
@@ -236,6 +243,9 @@ export function createFinanceHandlers(moduleKey: string) {
   const cfg = FINANCE_MODULE_CONFIGS[moduleKey]
   if (!cfg) throw new Error(`Unknown finance module: ${moduleKey}`)
   const keys = inputKeys(cfg)
+  // Permission-catalog module this CRUD area maps to, for record-level scoping.
+  // Undefined for modules with no ownership dimension (read-only ledgers etc.).
+  const permissionKey = FINANCE_PERMISSION_KEYS[moduleKey]
 
   // Modules with invoice actions carry a few extra columns (recipient email +
   // send tracking) that aren't in the base migration. Self-heal them once.

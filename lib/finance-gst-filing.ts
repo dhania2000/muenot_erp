@@ -68,8 +68,15 @@ function periodRange(period: string) {
   const from = `${period}-01`
   const last = new Date(y, m, 0).getDate()
   const to = `${period}-${String(last).padStart(2, "0")}`
-  return { from, to }
+  // y/m drive the actual row matching (see PERIOD_MATCH). We match on the
+  // YEAR()/MONTH() of invoice_date — exactly like the Sales Invoice list — so
+  // the GST module always agrees with the invoices the user can see, no matter
+  // how invoice_date is physically stored (DATE, DATETIME, or ISO string).
+  return { from, to, y, m }
 }
+
+// Format-agnostic month match used by every period-scoped GST query.
+const PERIOD_MATCH = (col: string) => `YEAR(${col}) = ? AND MONTH(${col}) = ?`
 
 // A tax document belongs in the GST return the moment it leaves Draft. We
 // exclude ONLY Draft (not a real document yet) and Cancelled (voided), so every
@@ -80,7 +87,7 @@ const INCLUDED_STATUS = "NOT IN ('Draft','Cancelled')"
 /** Build the GSTR-1 outward-supply summary for a calendar-month period. */
 export async function gstSummary(period: string) {
   await ensureGstFilingSchema()
-  const { from, to } = periodRange(period)
+  const { from, to, y, m } = periodRange(period)
 
   const [totals] = (await query(
     `SELECT
@@ -93,10 +100,10 @@ export async function gstSummary(period: string) {
         COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN taxable_amount ELSE 0 END),0) AS cn_taxable,
         COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN (cgst_amount+sgst_amount+igst_amount+other_tax_cess) ELSE 0 END),0) AS cn_tax
       FROM sales_invoices
-     WHERE invoice_date >= ? AND invoice_date <= ?
+     WHERE ${PERIOD_MATCH("invoice_date")}
        AND invoice_status ${INCLUDED_STATUS}
        AND invoice_type <> 'Proforma Invoice'`,
-    [from, to],
+    [y, m],
   ).catch(() => [{}])) as any[]
 
   const rateWise = (await query(
@@ -108,12 +115,12 @@ export async function gstSummary(period: string) {
             COALESCE(SUM(it.cess_amount),0) AS cess
        FROM sales_invoice_items it
        JOIN sales_invoices si ON si.id = it.invoice_pk
-      WHERE si.invoice_date >= ? AND si.invoice_date <= ?
+      WHERE ${PERIOD_MATCH("si.invoice_date")}
         AND si.invoice_status ${INCLUDED_STATUS}
         AND si.invoice_type NOT IN ('Proforma Invoice','Credit Note')
       GROUP BY it.tax_rate
       ORDER BY it.tax_rate ASC`,
-    [from, to],
+    [y, m],
   ).catch(() => [])) as any[]
 
   const supply = (await query(
@@ -121,11 +128,11 @@ export async function gstSummary(period: string) {
             COALESCE(SUM(taxable_amount),0) AS taxable,
             COALESCE(SUM(cgst_amount+sgst_amount+igst_amount+other_tax_cess),0) AS tax
        FROM sales_invoices
-      WHERE invoice_date >= ? AND invoice_date <= ?
+      WHERE ${PERIOD_MATCH("invoice_date")}
         AND invoice_status ${INCLUDED_STATUS}
         AND invoice_type NOT IN ('Proforma Invoice','Credit Note')
       GROUP BY COALESCE(supply_type,'Intra-State')`,
-    [from, to],
+    [y, m],
   ).catch(() => [])) as any[]
 
   // Diagnostics: invoices that fall in the period but are excluded from the
@@ -138,8 +145,8 @@ export async function gstSummary(period: string) {
         COALESCE(SUM(CASE WHEN invoice_status = 'Cancelled' THEN 1 ELSE 0 END),0) AS cancelled,
         COALESCE(SUM(CASE WHEN invoice_type = 'Proforma Invoice' THEN 1 ELSE 0 END),0) AS proforma
       FROM sales_invoices
-     WHERE invoice_date >= ? AND invoice_date <= ?`,
-    [from, to],
+     WHERE ${PERIOD_MATCH("invoice_date")}`,
+    [y, m],
   ).catch(() => [{}])) as any[]
 
   const taxable = round2(num(totals?.taxable))
@@ -171,11 +178,11 @@ export async function gstSummary(period: string) {
             si.invoice_total
        FROM sales_invoices si
        LEFT JOIN clients c ON c.id = si.client_id OR c.client_id = si.client_id
-      WHERE si.invoice_date >= ? AND si.invoice_date <= ?
+      WHERE ${PERIOD_MATCH("si.invoice_date")}
         AND si.invoice_status ${INCLUDED_STATUS}
         AND si.invoice_type <> 'Proforma Invoice'
       ORDER BY si.invoice_date ASC, si.invoice_id ASC`,
-    [from, to],
+    [y, m],
   ).catch(() => [])) as any[]
 
   const [existing] = (await query(

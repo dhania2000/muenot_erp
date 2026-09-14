@@ -154,6 +154,34 @@ function flattenFiltered(nodes: TreeNode[], match: (r: Row) => boolean): TreeNod
   return out
 }
 
+type FlatNode = { row: Row; depth: number; hasChildren: boolean }
+
+/**
+ * Flatten a filtered forest into hierarchy rows while honouring a per-parent
+ * collapse set. A parent is emitted whenever it matches or has a matching
+ * descendant; its (matching) descendants follow unless the parent is collapsed.
+ * `hasChildren` reflects whether there are matching children to reveal, so the
+ * toggle only appears when it actually does something. Collapse is honoured only
+ * when nothing is narrowing the list (`honorCollapse`) — an active search/filter
+ * force-expands so a match can never hide behind a collapsed parent.
+ */
+function flattenTree(
+  nodes: TreeNode[],
+  match: (r: Row) => boolean,
+  opts: { collapsed: Set<string>; honorCollapse: boolean },
+): FlatNode[] {
+  const out: FlatNode[] = []
+  for (const node of nodes) {
+    const keptChildren = flattenTree(node.children, match, opts)
+    if (match(node.row) || keptChildren.length) {
+      out.push({ row: node.row, depth: node.depth, hasChildren: keptChildren.length > 0 })
+      const collapsedHere = opts.honorCollapse && opts.collapsed.has(String(node.row.account_id))
+      if (!collapsedHere) out.push(...keptChildren)
+    }
+  }
+  return out
+}
+
 const SETTINGS_CHECKBOXES: { key: string; label: string }[] = [
   { key: "gst_applicable", label: "GST applicable" },
   { key: "tds_applicable", label: "TDS applicable" },
@@ -214,6 +242,7 @@ const EMPTY_FILTERS: Filters = {
 export function ChartOfAccountsClient() {
   const [search, setSearch] = useState("")
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Row | null>(null)
   const [presetParent, setPresetParent] = useState<Row | null>(null)
@@ -337,6 +366,24 @@ export function ChartOfAccountsClient() {
       else next.add(type)
       return next
     })
+  }
+
+  // Per-parent collapse in the hierarchy view. Collapsing a node hides its
+  // whole subtree; expand/collapse-all operate on every parent that has
+  // children (parentOptions already tracks exactly those heads).
+  function toggleNode(id: string) {
+    setCollapsedNodes((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  function expandAll() {
+    setCollapsedNodes(new Set())
+  }
+  function collapseAll() {
+    setCollapsedNodes(new Set(parentOptions.map((p) => String(p.account_id))))
   }
 
   function openNew() {
@@ -815,6 +862,29 @@ export function ChartOfAccountsClient() {
                 Flat
               </Button>
             </div>
+            {viewMode === "tree" && (
+              <div className="inline-flex overflow-hidden rounded-md border">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-none"
+                  onClick={expandAll}
+                  disabled={collapsedNodes.size === 0}
+                >
+                  <ChevronDown data-icon="inline-start" />
+                  Expand all
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-none"
+                  onClick={collapseAll}
+                >
+                  <ChevronRight data-icon="inline-start" />
+                  Collapse all
+                </Button>
+              </div>
+            )}
           </div>
 
           {showFilters && (
@@ -922,12 +992,14 @@ export function ChartOfAccountsClient() {
 
       <div className="space-y-6">
         {COA_ACCOUNT_TYPES.filter((type) => filters.type === "All" || filters.type === type).map((type) => {
-          // Hierarchy view keeps the parent→child tree (children shown when any
-          // descendant matches); flat view lists every matching account of this
-          // type at depth 0, sorted by code then name.
-          const nodes =
+          // Hierarchy view keeps the parent→child tree with per-parent collapse
+          // (force-expanded while a search/filter is active so matches stay
+          // visible); flat view lists every matching account of this type at
+          // depth 0, sorted by code then name.
+          const honorCollapse = search.trim() === "" && activeFilterCount === 0
+          const nodes: FlatNode[] =
             viewMode === "tree"
-              ? flattenFiltered(forest[type] ?? [], matcher)
+              ? flattenTree(forest[type] ?? [], matcher, { collapsed: collapsedNodes, honorCollapse })
               : rows
                   .filter((r) => String(r.account_group) === type && matcher(r))
                   .sort(
@@ -935,7 +1007,11 @@ export function ChartOfAccountsClient() {
                       String(a.account_code ?? "").localeCompare(String(b.account_code ?? "")) ||
                       String(a.account_name ?? "").localeCompare(String(b.account_name ?? "")),
                   )
-                  .map((row) => ({ row, depth: 0 }))
+                  .map((row) => ({ row, depth: 0, hasChildren: false }))
+          // Header count is the full matching set for this type, independent of
+          // which parents happen to be collapsed, so the badge never jumps.
+          const matchCount =
+            viewMode === "tree" ? flattenFiltered(forest[type] ?? [], matcher).length : nodes.length
           const isCollapsed = collapsed.has(type)
           const nature = natureForAccountType(type)
           return (
@@ -950,7 +1026,7 @@ export function ChartOfAccountsClient() {
                   {isCollapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
                   <span className="text-sm font-semibold">{type}</span>
                   <Badge variant={natureVariant(nature)} className="ml-1">{nature}</Badge>
-                  <Badge variant="secondary" className="ml-auto">{nodes.length} accounts</Badge>
+                  <Badge variant="secondary" className="ml-auto">{matchCount} accounts</Badge>
                 </button>
 
                 {!isCollapsed && (
@@ -978,13 +1054,35 @@ export function ChartOfAccountsClient() {
                             </td>
                           </tr>
                         )}
-                        {nodes.map(({ row, depth }) => {
+                        {nodes.map(({ row, depth, hasChildren }) => {
                           const isSystem = Number(row.is_system) === 1
                           return (
                             <tr key={row.id} className="border-b hover:bg-muted/40">
                               <td className="p-2">
                                 <div className="flex items-center gap-1.5" style={{ paddingLeft: depth * 20 }}>
-                                  {depth > 0 && <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground" />}
+                                  {viewMode === "tree" && hasChildren ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleNode(String(row.account_id))}
+                                      aria-expanded={!honorCollapse || !collapsedNodes.has(String(row.account_id))}
+                                      aria-label={
+                                        collapsedNodes.has(String(row.account_id))
+                                          ? `Expand child accounts of ${row.account_name}`
+                                          : `Collapse child accounts of ${row.account_name}`
+                                      }
+                                      className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    >
+                                      {honorCollapse && collapsedNodes.has(String(row.account_id)) ? (
+                                        <ChevronRight className="size-3.5" />
+                                      ) : (
+                                        <ChevronDown className="size-3.5" />
+                                      )}
+                                    </button>
+                                  ) : depth > 0 ? (
+                                    <CornerDownRight className="size-3.5 shrink-0 text-muted-foreground" />
+                                  ) : (
+                                    <span className="inline-block size-4 shrink-0" />
+                                  )}
                                   <a
                                     href={`/modules/finance/chart-of-accounts/${encodeURIComponent(String(row.account_id))}`}
                                     className="font-medium text-primary hover:underline"

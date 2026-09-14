@@ -938,6 +938,35 @@ const bankCash: ModuleConfig = {
 // ---------------------------------------------------------------------------
 // 7. Chart of Accounts (master data)
 // ---------------------------------------------------------------------------
+// The five top-level account types map to the existing `account_group` column
+// (kept singular — the posting engine's isDebitNature() keys off "asset" /
+// "expense"). The finer classification maps to the existing `account_type`
+// column, which the Journal / General Ledger snapshot, so both stay backward
+// compatible with every downstream link.
+export const COA_ACCOUNT_TYPES = ["Asset", "Liability", "Equity", "Income", "Expense"] as const
+
+// Sub-types offered per account type. The first group of each list is the most
+// common; legacy seed values (singular "Current Asset", "Duties & Taxes", …)
+// are appended so an existing row's stored sub-type always stays selectable.
+export const COA_SUB_TYPES_BY_TYPE: Record<string, string[]> = {
+  Asset: ["Current Assets", "Fixed Assets", "Bank", "Cash", "Receivables", "Current Asset", "Fixed Asset"],
+  Liability: ["Current Liabilities", "Long Term Liabilities", "Payables", "Taxes", "Current Liability", "Duties & Taxes"],
+  Equity: ["Equity"],
+  Income: ["Revenue", "Other Income", "Direct Income", "Indirect Income"],
+  Expense: ["Operating Expenses", "Cost of Sales", "Other Expenses", "Taxes", "Direct Expense", "Indirect Expense"],
+}
+
+/** Flat, de-duplicated union of every sub-type (used by the select fallback). */
+export const COA_SUB_TYPES = Array.from(
+  new Set(Object.values(COA_SUB_TYPES_BY_TYPE).flat()),
+)
+
+/** An account's natural balance side is fixed by its top-level type. */
+export function natureForAccountType(accountGroup: string | null | undefined): "Debit" | "Credit" {
+  const g = (accountGroup || "").toLowerCase()
+  return g === "asset" || g === "expense" ? "Debit" : "Credit"
+}
+
 const chartOfAccounts: ModuleConfig = {
   key: "chart-of-accounts",
   table: "chart_of_accounts",
@@ -947,31 +976,45 @@ const chartOfAccounts: ModuleConfig = {
   idColumn: "account_id",
   idPrefix: "COA",
   statusColumn: "active_status",
-  searchColumns: ["account_id", "account_code", "account_name", "account_type"],
+  financialYearColumn: "financial_year",
+  searchColumns: ["account_id", "account_code", "account_name", "account_type", "account_group"],
+  // Nature + opening-balance side follow the account type automatically, and the
+  // financial year is derived from the opening-balance date when left blank, so
+  // none of these are ever hand-entered.
+  compute: (r) => {
+    const nature = natureForAccountType(r.account_group)
+    const out: Record<string, any> = { nature, opening_balance_type: nature }
+    const obDate = (r.opening_balance_date ?? "").toString().trim()
+    const fy = (r.financial_year ?? "").toString().trim()
+    if (obDate && !fy) out.financial_year = financialYearFor(obDate)
+    return out
+  },
   fields: [
-    fld("Account", "account_code", "Account code", "text"),
     fld("Account", "account_name", "Account name", "text", { required: true }),
-    fld("Account", "account_group", "Account group", "select", { options: ["Asset", "Liability", "Equity", "Income", "Expense"] }),
-    fld("Account", "account_type", "Account type", "text"),
-    fld("Account", "parent_account_id", "Parent account ID", "text"),
-    fld("Account", "nature", "Nature", "select", { options: ["Debit", "Credit"] }),
+    fld("Account", "account_code", "Account code", "text", { placeholder: "Unique code, e.g. 1200" }),
+    fld("Account", "account_group", "Account type", "select", { options: [...COA_ACCOUNT_TYPES], required: true }),
+    fld("Account", "account_type", "Sub type", "select", { options: COA_SUB_TYPES, optional: true }),
+    fld("Account", "parent_account_id", "Parent account", "text", { optional: true }),
+    fld("Account", "nature", "Nature", "select", { options: ["Debit", "Credit"], computed: true }),
+    fld("Account", "remarks", "Description", "textarea", { optional: true }),
     fld("Balances", "opening_balance", "Opening balance", "number"),
-    fld("Balances", "opening_balance_type", "Opening balance type", "select", { options: ["Debit", "Credit"] }),
+    fld("Balances", "opening_balance_type", "Opening balance type", "select", { options: ["Debit", "Credit"], computed: true }),
+    fld("Balances", "opening_balance_date", "Opening balance date", "date", { optional: true }),
+    fld("Balances", "financial_year", "Financial year", "text", { optional: true, placeholder: "Auto from opening date" }),
+    fld("Settings", "active_status", "Status", "select", { options: ["Active", "Inactive"] }),
     fld("Settings", "gst_applicable", "GST applicable", "checkbox"),
     fld("Settings", "tds_applicable", "TDS applicable", "checkbox"),
     fld("Settings", "tax_category", "Tax category", "text"),
     fld("Settings", "bank_cash_account", "Bank / Cash account", "checkbox"),
     fld("Settings", "reconciliation_required", "Reconciliation required", "checkbox"),
-    fld("Settings", "active_status", "Active status", "select", { options: ["Active", "Inactive"] }),
     fld("Settings", "effective_from", "Effective from", "date"),
     fld("Settings", "effective_to", "Effective to", "date"),
-    fld("Settings", "remarks", "Remarks", "textarea"),
   ],
   tableColumns: [
     { key: "account_id", label: "Account ID", mono: true },
     { key: "account_code", label: "Code" },
     { key: "account_name", label: "Account", sub: "account_group" },
-    { key: "account_type", label: "Type" },
+    { key: "account_type", label: "Sub type" },
     { key: "nature", label: "Nature" },
     { key: "active_status", label: "Status", badge: { Active: "default", Inactive: "outline" } },
   ],

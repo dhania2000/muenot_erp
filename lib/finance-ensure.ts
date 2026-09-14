@@ -173,6 +173,64 @@ export async function ensureFteInvoiceColumns() {
   fteEnsured = true
 }
 
+let coaEnsured = false
+
+/**
+ * System-account codes the posting engine resolves by `account_code`
+ * (lib/finance-accounts.ts → ROLE_DEFAULT_CODE and the seed migrations). These
+ * back Journal / Ledger postings for Sales, Purchase, GST, TDS, Bank, Cash and
+ * the payable/receivable control heads, so they are flagged `is_system = 1` and
+ * protected from destructive edits/deletes in the CRUD factory.
+ */
+export const SYSTEM_ACCOUNT_CODES = [
+  "1200", // Accounts Receivable
+  "1450", // TDS Receivable
+  "4000", // Sales Revenue
+  "2110", "2120", "2130", "2140", // Output CGST / SGST / IGST / Cess (GST Payable)
+  "1000", // Bank
+  "1010", // Cash
+  "5000", // Purchases / Expenses
+  "1410", "1420", "1430", "1440", // Input CGST / SGST / IGST / Cess (GST Input)
+  "2000", // Accounts Payable
+  "2150", // TDS Payable
+  "5100", // General Expenses
+  "2200", // Employee Reimbursements Payable
+  "1460", // Employee Advances
+] as const
+
+/**
+ * Self-healing schema for the Chart of Accounts master upgrade.
+ *
+ * Adds the account hierarchy / posting-configuration columns the upgraded
+ * master needs (opening-balance date, financial year, and the `is_system`
+ * protection flag) without disturbing the columns every downstream link
+ * (Journal, General Ledger, Purchase Bills, Sales Invoices, Expenses, Bank &
+ * Cash, GST, TDS, Reports) already resolves by `account_id` / `account_code`.
+ * Then flags the posting-engine control accounts so they cannot be renamed,
+ * recoded, deactivated or deleted from the UI.
+ */
+export async function ensureChartOfAccountsColumns() {
+  if (coaEnsured) return
+  const t = "chart_of_accounts"
+  await ensureColumn(t, "opening_balance_date", "DATE DEFAULT NULL")
+  await ensureColumn(t, "financial_year", "VARCHAR(12) DEFAULT NULL")
+  await ensureColumn(t, "is_system", "TINYINT(1) NOT NULL DEFAULT 0")
+
+  if (!(await hasIndex(t, "idx_coa_parent"))) {
+    await query(`ALTER TABLE ${t} ADD KEY idx_coa_parent (parent_account_id)`)
+  }
+
+  // Flag the posting-engine control accounts (idempotent). Matched by the stable
+  // account_code so a company's own re-seeded account with the same code is
+  // protected too.
+  const placeholders = SYSTEM_ACCOUNT_CODES.map(() => "?").join(",")
+  await query(
+    `UPDATE ${t} SET is_system = 1 WHERE account_code IN (${placeholders})`,
+    [...SYSTEM_ACCOUNT_CODES],
+  )
+  coaEnsured = true
+}
+
 let cvEnsured = false
 
 /**

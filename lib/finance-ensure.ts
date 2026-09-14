@@ -35,7 +35,25 @@ export async function ensureFreelanceInvoiceColumns() {
   await ensureColumn("freelance_invoices", "freelancer_email", "VARCHAR(190) DEFAULT NULL")
   await ensureColumn("freelance_invoices", "invoice_last_sent_at", "DATETIME DEFAULT NULL")
   await ensureColumn("freelance_invoices", "invoice_last_sent_to", "VARCHAR(190) DEFAULT NULL")
+  await ensureInvoiceWorkflowColumns("freelance_invoices")
   ensured = true
+}
+
+/**
+ * Shared self-healing schema for the two-stage invoice approval workflow
+ * (Phase — employee then reporting-manager sign-off). The assigned employee
+ * approves/rejects first, then their reporting manager; `workflow_manager_id`
+ * is snapshotted from HR so per-user visibility never depends on a live join.
+ * Applied to both Freelance and FTE invoices.
+ */
+export async function ensureInvoiceWorkflowColumns(table: string) {
+  await ensureColumn(table, "workflow_status", "VARCHAR(40) NOT NULL DEFAULT 'Pending Employee Approval'")
+  await ensureColumn(table, "workflow_manager_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(table, "workflow_manager_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(table, "workflow_rejected_by", "VARCHAR(20) DEFAULT NULL")
+  await ensureColumn(table, "workflow_rejection_reason", "TEXT DEFAULT NULL")
+  await ensureColumn(table, "employee_approved_at", "DATETIME DEFAULT NULL")
+  await ensureColumn(table, "manager_approved_at", "DATETIME DEFAULT NULL")
 }
 
 let fteEnsured = false
@@ -51,6 +69,7 @@ export async function ensureFteInvoiceColumns() {
   await ensureColumn(t, "employee_email", "VARCHAR(190) DEFAULT NULL")
   await ensureColumn(t, "invoice_last_sent_at", "DATETIME DEFAULT NULL")
   await ensureColumn(t, "invoice_last_sent_to", "VARCHAR(190) DEFAULT NULL")
+  await ensureInvoiceWorkflowColumns(t)
 
   // Phase 2/3 — frozen Client snapshot (sourced from the Clients master).
   await ensureColumn(t, "client_id", "VARCHAR(40) DEFAULT NULL")

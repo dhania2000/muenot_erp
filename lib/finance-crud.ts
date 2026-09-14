@@ -19,6 +19,7 @@ import { syncPurchaseBillPosting, reversePurchaseBillPosting } from "@/lib/finan
 import { syncExpensePosting, reverseExpensePosting } from "@/lib/finance-expense-posting"
 import { computeBillItems, persistBillItems } from "@/lib/purchase-bill-items"
 import type { SupplyType } from "@/lib/sales-invoice-compute"
+import { INVOICE_WORKFLOW_MODULES, scopeAndAnnotateInvoices, snapshotInvoiceManager } from "@/lib/finance-invoice-workflow"
 
 /**
  * Optional per-module server augmentation. Runs AFTER the pure `compute`, can

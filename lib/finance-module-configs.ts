@@ -548,6 +548,37 @@ const freelanceInvoices: ModuleConfig = {
   financialYearColumn: "financial_year",
   statusColumn: "payment_status",
   searchColumns: ["freelance_invoice_id", "freelancer_name", "project_name", "work_description"],
+  // Master pickers: Freelancer is sourced from HR (hr_employees) and Project
+  // from Operations (operations_projects), reusing the shared expense lookups
+  // route. Selecting a row fills the id + name fields and autofills the email
+  // snapshot so the invoice never duplicates or hand-types master data.
+  lookups: [
+    {
+      key: "freelancer",
+      label: "Freelancer",
+      path: "/api/finance/expenses/lookups?type=employee",
+      sourceIdColumn: "employee_id",
+      sourceNameColumn: "employee_name",
+      sourceSubColumn: "department",
+      idField: "freelancer_id",
+      nameField: "freelancer_name",
+      autofill: {
+        official_email: "freelancer_email",
+      },
+      required: true,
+    },
+    {
+      key: "project",
+      label: "Project",
+      path: "/api/finance/expenses/lookups?type=project",
+      sourceIdColumn: "project_id",
+      sourceNameColumn: "project_name",
+      sourceSubColumn: "client_name",
+      idField: "project_id",
+      nameField: "project_name",
+      autofill: {},
+    },
+  ],
   fields: [
     fld("Freelancer & period", "invoice_date", "Invoice date", "date", { required: true }),
     fld("Freelancer & period", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),

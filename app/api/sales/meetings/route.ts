@@ -8,6 +8,7 @@ import {
   MeetingValidationError,
   type MeetingListFilters,
 } from "@/lib/sales/meeting-service"
+import { canCreateInModule } from "@/lib/permission-enforce"
 
 export async function GET(request: Request) {
   const session = await requireFeature("sales.view_meetings")
@@ -39,6 +40,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await requireFeature("sales.manage_meetings")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  if (!(await canCreateInModule(session, "sales.meetings"))) {
+    return NextResponse.json({ error: "You do not have permission to add meetings." }, { status: 403 })
+  }
 
   const body = await request.json()
   if (!body.meeting_date) {

@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
+import { scopeWhereForModule, mergeScopeIntoWhere, canCreateInModule } from "@/lib/permission-enforce"
 
 const tables = { resources: "operations_resources", projects: "operations_projects", allocations: "operations_allocations", quality: "operations_quality_reviews", issues: "operations_issues" } as const
+
+// Maps each writable kind to its permission-matrix key so record scope + create
+// guards use the same rules configured in the Employees permission UI.
+const permissionKeys: Record<Kind, string> = { resources: "operations.resources", projects: "operations.projects", allocations: "operations.allocations", quality: "operations.quality", issues: "operations.issues" }
 
 type Kind = keyof typeof tables
 function kind(value: string | null): Kind | null { return value && value in tables ? value as Kind : null }
@@ -11,7 +16,12 @@ export async function GET(request: Request) {
   const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const url = new URL(request.url); const selected = kind(url.searchParams.get("kind"))
   try {
-    if (selected) { const rows = await query<any[]>(`SELECT * FROM ${tables[selected]} ORDER BY created_at DESC`); return NextResponse.json({ kind: selected, rows }) }
+    if (selected) {
+      const scoped = await scopeWhereForModule(session, permissionKeys[selected], "view", tables[selected])
+      const { where, args } = mergeScopeIntoWhere("", [], scoped)
+      const rows = await query<any[]>(`SELECT * FROM ${tables[selected]} ${where} ORDER BY created_at DESC`, args)
+      return NextResponse.json({ kind: selected, rows })
+    }
     const summaryRows = await query<any[]>(`SELECT (SELECT COUNT(*) FROM operations_resources WHERE status='Active') active_resources, (SELECT COUNT(*) FROM operations_projects WHERE status='Active') active_projects, (SELECT COUNT(*) FROM operations_allocations WHERE status='Active') active_allocations, (SELECT COUNT(*) FROM operations_issues WHERE status IN ('Open','In Progress')) open_issues`)
     return NextResponse.json({ summary: summaryRows[0] })
   } catch { return NextResponse.json({ error: "Failed to load operations data" }, { status: 500 }) }
@@ -20,6 +30,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const body = await request.json(); const selected = kind(body.kind); if (!selected) return NextResponse.json({ error: "Invalid record type" }, { status: 400 })
+  if (!(await canCreateInModule(session, permissionKeys[selected]))) return NextResponse.json({ error: "You do not have permission to create this record." }, { status: 403 })
   const allowed: Record<Kind, string[]> = {
     resources:["employee_id","resource_name","resource_type","department","designation","skill_category","primary_skills","secondary_skills","skill_set","capacity_hours","employment_status","joining_date","exit_date","current_location","work_mode","availability_status","cost_rate","rate_type","reporting_manager","personal_email","official_email","contact_mobile","vendor_agency","shift","status","notes","remarks"],
     projects:["project_name","client_id","client_name","service_vertical","project_type","project_manager","operations_manager","manager_name","start_date","end_date","status","billing_model","required_resources","allocated_resources","resources_deficiency","sla_target","sla_due_date","priority","shift","work_mode","client_poc","client_email","client_contact","description","remarks"],

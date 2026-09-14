@@ -6,6 +6,7 @@ import {
   listQuotations,
   type QuotationInput,
 } from "@/lib/sales/quotation-service"
+import { canCreateInModule } from "@/lib/permission-enforce"
 
 export async function GET(request: Request) {
   const session = await requireFeature("sales.view_quotations")
@@ -28,6 +29,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await requireFeature("sales.manage_quotations")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  if (!(await canCreateInModule(session, "sales.quotations"))) {
+    return NextResponse.json({ error: "You do not have permission to add quotations." }, { status: 403 })
+  }
 
   const body = (await request.json()) as QuotationInput
   if (!body.company_name) {

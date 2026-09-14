@@ -5,6 +5,13 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { RECRUITMENT_MODULE_CONFIGS } from "@/lib/recruitment-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
+import {
+  RECRUITMENT_PERMISSION_KEYS,
+  scopeWhereForModule,
+  mergeScopeIntoWhere,
+  canActOnRecord,
+  canCreateInModule,
+} from "@/lib/permission-enforce"
 
 /**
  * Config-driven CRUD factory for the Recruitment modules. Mirrors
@@ -48,12 +55,21 @@ export function createRecruitmentHandlers(moduleKey: string) {
   const cfg = RECRUITMENT_MODULE_CONFIGS[moduleKey]
   if (!cfg) throw new Error(`Unknown recruitment module: ${moduleKey}`)
   const keys = inputKeys(cfg)
+  const permissionKey = RECRUITMENT_PERMISSION_KEYS[moduleKey]
 
   async function GET(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
+    let { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
+    // Record-level permission scope: an employee configured with "added"/"owned"
+    // only sees the rows they created/own.
+    if (permissionKey) {
+      const scoped = await scopeWhereForModule(session, permissionKey, "view", cfg.table, "x")
+      const merged = mergeScopeIntoWhere(where, args, scoped)
+      where = merged.where
+      args = merged.args
+    }
     const orderBy = cfg.dateColumn ? `x.${cfg.dateColumn} DESC, x.id DESC` : "x.id DESC"
 
     const rows = await query(
@@ -84,6 +100,10 @@ export function createRecruitmentHandlers(moduleKey: string) {
   async function POST(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+    if (permissionKey && !(await canCreateInModule(session, permissionKey))) {
+      return NextResponse.json({ error: "You do not have permission to create this record." }, { status: 403 })
+    }
 
     const body = await req.json()
     const derived = cfg.compute ? cfg.compute(body) : {}
@@ -125,6 +145,10 @@ export function createRecruitmentHandlers(moduleKey: string) {
     const [existing] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
     if (!existing) return NextResponse.json({ error: "Record not found" }, { status: 404 })
 
+    if (permissionKey && !(await canActOnRecord(session, permissionKey, "update", existing))) {
+      return NextResponse.json({ error: "You do not have permission to update this record." }, { status: 403 })
+    }
+
     const merged = { ...existing, ...body }
     const derived = cfg.compute ? cfg.compute(merged) : {}
 
@@ -152,6 +176,13 @@ export function createRecruitmentHandlers(moduleKey: string) {
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     const id = Number(req.nextUrl.searchParams.get("id"))
     if (!id) return NextResponse.json({ error: "Record id is required" }, { status: 400 })
+    if (permissionKey) {
+      const [existing] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
+      if (!existing) return NextResponse.json({ error: "Record not found" }, { status: 404 })
+      if (!(await canActOnRecord(session, permissionKey, "delete", existing))) {
+        return NextResponse.json({ error: "You do not have permission to delete this record." }, { status: 403 })
+      }
+    }
     await query(`DELETE FROM ${cfg.table} WHERE id = ?`, [id])
     return NextResponse.json({ ok: true })
   }

@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { recordAudit } from "@/lib/sales/lead-lifecycle"
+import { scopeWhereForModule, mergeScopeIntoWhere, canCreateInModule } from "@/lib/permission-enforce"
 import {
   ensureClientTables,
   findClientDuplicates,
@@ -36,6 +37,11 @@ export async function GET(request: Request) {
   const url = new URL(request.url)
   const includeArchived = url.searchParams.get("includeArchived") === "1"
 
+  // Record-level scope by the clients matrix (owned = account_manager_id).
+  const scoped = await scopeWhereForModule(session, "clients.clients", "view", "clients", "c")
+  const baseWhere = includeArchived ? "" : "WHERE c.archived_at IS NULL"
+  const { where, args } = mergeScopeIntoWhere(baseWhere, [], scoped)
+
   const clients = await query(
     `SELECT c.*,
             sc.company_code, sc.company_name AS linked_company_name,
@@ -45,8 +51,9 @@ export async function GET(request: Request) {
        LEFT JOIN sales_companies sc ON sc.id = c.company_id
        LEFT JOIN customers_vendors cv ON cv.party_id = c.finance_party_id
        LEFT JOIN users am ON am.id = c.account_manager_id
-       ${includeArchived ? "" : "WHERE c.archived_at IS NULL"}
+       ${where}
        ORDER BY c.created_at DESC`,
+    args,
   )
   return NextResponse.json({ clients })
 }

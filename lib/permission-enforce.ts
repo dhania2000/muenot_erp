@@ -1,7 +1,12 @@
 import "server-only"
 import { query } from "./db"
 import { getScope } from "./permission-store"
-import { getPermissionModule, type PermissionAction, type PermissionScope } from "./permission-model"
+import {
+  getPermissionModule,
+  PERMISSION_MODULES,
+  type PermissionAction,
+  type PermissionScope,
+} from "./permission-model"
 import type { SessionPayload } from "./auth"
 
 /**
@@ -75,6 +80,74 @@ async function tableColumns(table: string): Promise<Set<string>> {
   return set
 }
 
+async function tableExists(table: string): Promise<boolean> {
+  const rows = await query<{ n: number }[]>(
+    `SELECT COUNT(*) AS n FROM information_schema.TABLES
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+    [table],
+  )
+  return (rows[0]?.n ?? 0) > 0
+}
+
+/**
+ * Ownership columns for a few module tables are user-id foreign keys that hold
+ * the assignee. They didn't always exist, and a missing "owned" column makes
+ * that scope deny every row. This best-effort, run-once self-heal adds the
+ * declared owner/creator columns (as nullable user-id ints) to any table that
+ * is missing them — mirroring the ALTER pattern used elsewhere (clients-db).
+ * It only ever touches the specific columns named in the permission catalog,
+ * never invents new ones, and swallows errors (e.g. no ALTER privilege) so an
+ * unhealable schema simply falls back to the existing deny behaviour.
+ */
+let ownerColumnsEnsured: Promise<void> | null = null
+
+/** Owner/creator columns we are willing to auto-create as user-id ints. */
+const AUTO_OWNER_COLUMNS = new Set([
+  "created_by",
+  "added_by",
+  "assigned_to",
+  "account_manager_id",
+  "owner_id",
+  "user_id",
+])
+
+async function ensureOwnerColumnsOnce(): Promise<void> {
+  // Collect the distinct (table, column) pairs the catalog wants to scope on.
+  const wanted = new Map<string, Set<string>>()
+  for (const m of PERMISSION_MODULES) {
+    for (const col of [m.scope.addedBy, m.scope.ownedBy]) {
+      if (!col || !AUTO_OWNER_COLUMNS.has(col)) continue
+      if (!wanted.has(m.scope.table)) wanted.set(m.scope.table, new Set())
+      wanted.get(m.scope.table)!.add(col)
+    }
+  }
+
+  for (const [table, cols] of wanted) {
+    try {
+      if (!(await tableExists(table))) continue
+      const existing = await tableColumns(table)
+      const missing = [...cols].filter((c) => !existing.has(c))
+      if (missing.length === 0) continue
+      for (const col of missing) {
+        try {
+          await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${col}\` INT UNSIGNED DEFAULT NULL`)
+          existing.add(col)
+        } catch {
+          // ignore — column may already exist under a race, or ALTER denied.
+        }
+      }
+      columnCache.set(table, existing)
+    } catch {
+      // ignore per-table failures; scoping falls back to deny for this table.
+    }
+  }
+}
+
+function ensureOwnerColumns(): Promise<void> {
+  if (!ownerColumnsEnsured) ownerColumnsEnsured = ensureOwnerColumnsOnce()
+  return ownerColumnsEnsured
+}
+
 export type ScopeSql = { scope: PermissionScope; sql: string; params: number[] }
 
 /**
@@ -100,6 +173,7 @@ export async function scopeWhereForModule(
   if (NON_RESTRICTED.includes(scope)) return null
   if (scope === "none") return { scope, sql: "1=0", params: [] }
 
+  await ensureOwnerColumns()
   const cols = await tableColumns(table)
   const q = alias ? `${alias}.` : ""
   const added = mod.scope.addedBy && cols.has(mod.scope.addedBy) ? `${q}${mod.scope.addedBy}` : null

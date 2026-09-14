@@ -55,7 +55,7 @@ async function ensureColumn(table: string, column: string, definition: string) {
 }
 
 export type TdsQuarter = "Q1" | "Q2" | "Q3" | "Q4"
-export type TdsReturnForm = "24Q" | "26Q"
+export type TdsReturnForm = "24Q" | "26Q" | "27Q" | "27EQ"
 
 const normDirection = (d: any): TdsDirection => {
   const s = String(d)
@@ -69,9 +69,56 @@ export function isDeductorDirection(direction: TdsDirection) {
   return direction === "payable" || direction === "employee"
 }
 
-/** The statutory return form for a deductor direction. */
+/**
+ * Sections whose payee is a non-resident → reported on Form 27Q instead of 26Q.
+ * A deductee lands here purely by the statutory section entered on its source
+ * document (e.g. §195 payment to a non-resident contractor), so no separate
+ * "resident/non-resident" flag is needed to route the return.
+ */
+const NON_RESIDENT_SECTIONS = new Set([
+  "195", "194E", "194LB", "194LBA", "194LBB", "194LBC", "194LC", "194LD", "196A", "196B", "196C", "196D",
+])
+
+/** Normalise a section token for classification ("194 J" → "194J"). */
+function normSection(section: unknown): string {
+  return String(section || "").toUpperCase().replace(/\s+/g, "")
+}
+
+/**
+ * Map a statutory section to the return form it belongs on:
+ *  - §192 salary (employee direction) → 24Q
+ *  - 206C* collection-at-source       → 27EQ (TCS, kept out of TDS returns)
+ *  - non-resident sections            → 27Q
+ *  - everything else                  → 26Q
+ */
+export function formForSection(section: string, direction: TdsDirection): TdsReturnForm {
+  const s = normSection(section)
+  if (direction === "employee" && s === "192") return "24Q"
+  if (s.startsWith("206C")) return "27EQ"
+  if (NON_RESIDENT_SECTIONS.has(s)) return "27Q"
+  return direction === "employee" ? "24Q" : "26Q"
+}
+
+/** The statutory return forms a deductor direction can file. */
+export function applicableForms(direction: TdsDirection): TdsReturnForm[] {
+  return direction === "employee" ? ["24Q", "27Q"] : ["26Q", "27Q", "27EQ"]
+}
+
+/** The default (primary) return form for a deductor direction. */
 export function returnFormFor(direction: TdsDirection): TdsReturnForm {
   return direction === "employee" ? "24Q" : "26Q"
+}
+
+/**
+ * Whether a detail row's section belongs on the requested return form. The
+ * "primary" form for a direction (24Q / 26Q) sweeps up everything that is not
+ * carved out to a non-resident (27Q) or TCS (27EQ) form, so no deduction is
+ * ever silently dropped from filing.
+ */
+function rowMatchesForm(section: string, direction: TdsDirection, formType: TdsReturnForm): boolean {
+  const f = formForSection(section, direction)
+  if (formType === "27Q" || formType === "27EQ") return f === formType
+  return f !== "27Q" && f !== "27EQ"
 }
 
 /** Financial year label ("2024-25") for a YYYY-MM period. */
@@ -229,6 +276,35 @@ export async function ensureTdsComplianceSchema() {
   await ensureColumn("tds_challans", "posted_mode", "VARCHAR(10) DEFAULT NULL")
   await ensureColumn("tds_challans", "posting_status", "VARCHAR(20) NOT NULL DEFAULT 'Unposted'")
 
+  // Phase 16 — the physical deposit reference: which bank the challan was paid
+  // through and its transaction/UTR reference. These are statutory challan
+  // attributes (shown on the return) that older DBs never captured.
+  await ensureColumn("tds_challans", "bank_name", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn("tds_challans", "payment_ref", "VARCHAR(80) DEFAULT NULL")
+
+  // Phase 17 — challan allocation. A single challan settles many deductee lines;
+  // NSDL returns require each challan to be mapped to the deductee rows it
+  // covers. We persist that mapping so a challan's deposit can be split across
+  // deductees + sections, which in turn lets a 26Q / 27Q / 27EQ return read back
+  // exactly how much of each challan belongs to it.
+  await query(
+    `CREATE TABLE IF NOT EXISTS tds_challan_allocations (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      challan_id VARCHAR(40) NOT NULL,
+      direction VARCHAR(12) NOT NULL,
+      period VARCHAR(7) NOT NULL,
+      party_id VARCHAR(60) DEFAULT NULL,
+      party_name VARCHAR(190) DEFAULT NULL,
+      section VARCHAR(20) DEFAULT NULL,
+      form_type VARCHAR(8) DEFAULT NULL,
+      amount DECIMAL(16,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_alloc_challan (challan_id),
+      KEY idx_alloc_period (period, direction),
+      KEY idx_alloc_form (form_type)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+
   ensured = true
 }
 
@@ -298,6 +374,8 @@ export type TdsChallan = {
   late_fee: number
   total_amount: number
   payment_mode: string | null
+  bank_name: string | null
+  payment_ref: string | null
   status: string
   note: string | null
 }
@@ -318,6 +396,8 @@ function mapChallan(r: any): TdsChallan {
     late_fee: round2(num(r.late_fee)),
     total_amount: round2(num(r.total_amount)),
     payment_mode: r.payment_mode ?? null,
+    bank_name: r.bank_name ?? null,
+    payment_ref: r.payment_ref ?? null,
     status: r.status,
     note: r.note ?? null,
   }
@@ -345,6 +425,8 @@ export async function createChallan(input: {
   interest?: number
   lateFee?: number
   paymentMode?: string | null
+  bankName?: string | null
+  paymentRef?: string | null
   note?: string | null
   actorId?: number | null
 }): Promise<{ challan_id: string; voucher_no: string | null }> {
@@ -365,12 +447,12 @@ export async function createChallan(input: {
   await query(
     `INSERT INTO tds_challans
        (challan_id, direction, period, quarter, financial_year, bsr_code, challan_no, payment_date,
-        tds_amount, interest, late_fee, total_amount, payment_mode, status, note, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        tds_amount, interest, late_fee, total_amount, payment_mode, bank_name, payment_ref, status, note, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       challanId, dir, input.period, quarter, fy, input.bsrCode || null, input.challanNo || null,
       input.paymentDate || null, tds, interest, lateFee, total, input.paymentMode || null,
-      "Deposited", input.note || null, input.actorId ?? null,
+      input.bankName || null, input.paymentRef || null, "Deposited", input.note || null, input.actorId ?? null,
     ],
   )
 

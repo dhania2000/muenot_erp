@@ -517,13 +517,13 @@ export function AppShell({
     <div className="fixed inset-0 flex overflow-hidden">
       <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex items-center px-5 py-5">
-          <div className="flex items-center px-1 py-1">
+          <div className="flex items-center rounded-lg bg-white px-3 py-2 shadow-sm">
             {logoUrl ? (
               // Company logo from settings can be any host, so use a plain <img>.
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl || "/placeholder.svg"} alt={brandName || "Logo"} className="h-6 w-auto max-w-[160px] object-contain" />
+              <img src={logoUrl || "/placeholder.svg"} alt={brandName || "Logo"} className="h-8 w-auto max-w-[180px] object-contain" />
             ) : (
-              <Image src="/muenot-logo-transparent.png" alt={brandName || "Muenot"} width={112} height={25} className="h-5 w-auto object-contain" priority />
+              <Image src="/muenot-logo-transparent.png" alt={brandName || "Muenot"} width={150} height={34} className="h-8 w-auto object-contain" priority />
             )}
           </div>
         </div>

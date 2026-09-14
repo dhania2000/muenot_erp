@@ -3,6 +3,8 @@ import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { logFinanceEvent } from "@/lib/finance-audit"
 import { tdsSummary, tdsDetail, type TdsDirection } from "@/lib/finance-tds-filing"
+import { postLines, type PostingLine } from "@/lib/finance-posting"
+import { ensureExpensePostingAccounts } from "@/lib/finance-accounts"
 
 /**
  * TDS downstream compliance engine (server-only).
@@ -39,6 +41,18 @@ const round2 = (n: number) => Math.round((num(n) + Number.EPSILON) * 100) / 100
 
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/
 const FY_RE = /^\d{4}-\d{2}$/
+
+// MySQL has no "ADD COLUMN IF NOT EXISTS", so probe information_schema first.
+async function ensureColumn(table: string, column: string, definition: string) {
+  const rows = (await query(
+    `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  ).catch(() => [])) as any[]
+  if (rows.length === 0) {
+    await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`).catch(() => {})
+  }
+}
 
 export type TdsQuarter = "Q1" | "Q2" | "Q3" | "Q4"
 export type TdsReturnForm = "24Q" | "26Q"
@@ -205,7 +219,64 @@ export async function ensureTdsComplianceSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
 
+  // Phase 19–20 — challan → Bank/Journal/GL linkage. A deposited challan posts a
+  // real balanced voucher (Dr TDS Payable / Cr Bank·Cash), exactly like the GST
+  // cash-ledger payment. These columns key that posting so it can be shown on
+  // the register and reversed when the challan is deleted. Added in place on
+  // older DBs that created tds_challans before this phase.
+  await ensureColumn("tds_challans", "voucher_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("tds_challans", "posted_amount", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+  await ensureColumn("tds_challans", "posted_mode", "VARCHAR(10) DEFAULT NULL")
+  await ensureColumn("tds_challans", "posting_status", "VARCHAR(20) NOT NULL DEFAULT 'Unposted'")
+
   ensured = true
+}
+
+// ---------------------------------------------------------------------------
+// Challan → Journal/GL posting bridge (Phase 19–20).
+//
+// Depositing a challan settles the TDS Payable liability that the purchase-bill
+// / expense / invoice postings accrued (Cr TDS Payable, code 2150) and moves
+// cash out of the bank. Interest and late fee are period costs. The double
+// entry, posted through the SAME engine every other document uses:
+//
+//   Dr TDS Payable        tds_amount
+//   Dr General Expenses   interest + late_fee     (only when > 0)
+//      Cr Bank / Cash     total_amount
+//
+// Receivable TDS never reaches here — challans only exist for deductor
+// directions (guarded in createChallan).
+// ---------------------------------------------------------------------------
+
+function challanMode(paymentMode: string | null | undefined): "bank" | "cash" {
+  return String(paymentMode || "").toLowerCase().includes("cash") ? "cash" : "bank"
+}
+
+function challanDepositLines(tds: number, interest: number, lateFee: number, mode: "bank" | "cash"): PostingLine[] {
+  const t = round2(tds)
+  const cost = round2(num(interest) + num(lateFee))
+  const total = round2(t + cost)
+  const lines: PostingLine[] = []
+  if (t > 0) lines.push({ role: "tds_payable", debit: t, credit: 0, tds: t })
+  if (cost > 0) lines.push({ role: "expense", debit: cost, credit: 0 })
+  lines.push({ role: mode === "cash" ? "cash" : "bank", debit: 0, credit: total })
+  return lines
+}
+
+function challanPostArgs(
+  fields: { challanId: string; period: string; financialYear: string | null; paymentDate: string | null },
+  narration: string,
+) {
+  return {
+    entityType: "tds_challan",
+    entityId: 0,
+    entityRef: fields.challanId,
+    date: fields.paymentDate ? String(fields.paymentDate).slice(0, 10) : new Date().toISOString().slice(0, 10),
+    financialYear: fields.financialYear ?? fyOfPeriod(fields.period),
+    voucherType: "Payment",
+    narration,
+    sourceModule: "TDS Filing",
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +347,7 @@ export async function createChallan(input: {
   paymentMode?: string | null
   note?: string | null
   actorId?: number | null
-}): Promise<{ challan_id: string }> {
+}): Promise<{ challan_id: string; voucher_no: string | null }> {
   await ensureTdsComplianceSchema()
   const dir = normDirection(input.direction)
   if (!isDeductorDirection(dir)) throw new Error("Challans only apply to TDS you deposit (payable / employee).")
@@ -302,21 +373,74 @@ export async function createChallan(input: {
       "Deposited", input.note || null, input.actorId ?? null,
     ],
   )
+
+  // Auto-post the deposit to Bank → Journal → GL (Phase 19–20). A posting
+  // failure never blocks the challan record — it is left Unposted for retry.
+  let voucherNo: string | null = null
+  const mode = challanMode(input.paymentMode)
+  try {
+    await ensureExpensePostingAccounts()
+    const result = await postLines(
+      challanDepositLines(tds, interest, lateFee, mode),
+      {
+        ...challanPostArgs(
+          { challanId, period: input.period, financialYear: fy, paymentDate: input.paymentDate ?? null },
+          `TDS challan ${challanId} deposit for ${input.period} (${mode === "cash" ? "Cash" : "Bank"})`,
+        ),
+        createdBy: input.actorId ?? null,
+      },
+    )
+    voucherNo = result.voucherNo
+    await query(
+      `UPDATE tds_challans SET voucher_no = ?, posted_amount = ?, posted_mode = ?, posting_status = 'Posted' WHERE challan_id = ?`,
+      [voucherNo, total, mode, challanId],
+    )
+  } catch (error) {
+    console.log("[v0] tds challan posting failed for", challanId, (error as Error)?.message)
+    await query(`UPDATE tds_challans SET posting_status = 'Unposted' WHERE challan_id = ?`, [challanId]).catch(() => {})
+  }
+
   await logFinanceEvent({
     entityType: "tds_challan",
     entityRef: challanId,
     type: "payment_recorded",
-    summary: `TDS challan ${challanId} (${dir}) for ${input.period}: ${total}`,
+    summary: `TDS challan ${challanId} (${dir}) for ${input.period}: ${total}${voucherNo ? ` → ${voucherNo}` : ""}`,
     amount: total,
     actorId: input.actorId ?? null,
   })
-  return { challan_id: challanId }
+  return { challan_id: challanId, voucher_no: voucherNo }
 }
 
 export async function deleteChallan(challanId: string, actorId?: number | null) {
   await ensureTdsComplianceSchema()
   const [row] = (await query(`SELECT * FROM tds_challans WHERE challan_id = ? LIMIT 1`, [challanId])) as any[]
   if (!row) throw new Error("Challan not found.")
+
+  // Unwind the Bank/Journal/GL posting before deleting the challan (Phase 19–20).
+  if (row.voucher_no) {
+    try {
+      const mode = String(row.posted_mode || "") === "cash" ? "cash" : challanMode(row.payment_mode)
+      await postLines(
+        challanDepositLines(num(row.tds_amount), num(row.interest), num(row.late_fee), mode),
+        {
+          ...challanPostArgs(
+            {
+              challanId,
+              period: row.period,
+              financialYear: row.financial_year ?? null,
+              paymentDate: row.payment_date ?? null,
+            },
+            `Reversal of TDS challan ${challanId}`,
+          ),
+          reverse: true,
+          createdBy: actorId ?? null,
+        },
+      )
+    } catch (error) {
+      console.log("[v0] tds challan reversal failed for", challanId, (error as Error)?.message)
+    }
+  }
+
   await query(`DELETE FROM tds_challans WHERE challan_id = ?`, [challanId])
   await logFinanceEvent({
     entityType: "tds_challan",

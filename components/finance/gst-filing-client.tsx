@@ -27,6 +27,11 @@ import {
   Percent,
   Split,
   FileMinus2,
+  CheckCircle2,
+  XCircle,
+  Search,
+  ClipboardCheck,
+  FileSpreadsheet,
 } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 import * as XLSX from "xlsx"
@@ -222,6 +227,14 @@ function statusVariant(status: string): "default" | "outline" | "secondary" | "d
 export function GstFilingClient() {
   const [period, setPeriod] = useState(thisMonth())
 
+  // Phase 33/34 — advanced filters + search over the outward document register.
+  const [invSearch, setInvSearch] = useState("")
+  const [invType, setInvType] = useState("all")
+  const [invGstType, setInvGstType] = useState("all")
+  const [invStatus, setInvStatus] = useState("all")
+  const [invRate, setInvRate] = useState("all")
+  const [caBusy, setCaBusy] = useState(false)
+
   const { data, mutate } = useSWR<{ summary: Summary }>(
     `/api/finance/gst-filing?period=${period}`,
     fetcher,
@@ -232,6 +245,42 @@ export function GstFilingClient() {
   )
   const s = data?.summary
   const filings = filingsData?.filings ?? []
+
+  const allInvoices = s?.invoices ?? []
+  const invRates = Array.from(new Set(allInvoices.map((i) => i.gst_rate))).sort((a, b) => a - b)
+  const invTypes = Array.from(new Set(allInvoices.map((i) => i.invoice_type)))
+  const invStatuses = Array.from(new Set(allInvoices.map((i) => i.status)))
+  const filteredInvoices = allInvoices.filter((inv) => {
+    if (invType !== "all" && inv.invoice_type !== invType) return false
+    if (invGstType !== "all" && inv.gst_type !== invGstType) return false
+    if (invStatus !== "all" && inv.status !== invStatus) return false
+    if (invRate !== "all" && String(inv.gst_rate) !== invRate) return false
+    const q = invSearch.trim().toLowerCase()
+    if (q) {
+      const hay = [inv.invoice_id, inv.client_name, inv.client_legal_name, inv.client_gstin, inv.project_name]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      if (!hay.includes(q)) return false
+    }
+    return true
+  })
+  const invFiltersActive =
+    invSearch.trim() !== "" || invType !== "all" || invGstType !== "all" || invStatus !== "all" || invRate !== "all"
+
+  async function exportCaPackage() {
+    setCaBusy(true)
+    try {
+      const res = await fetch(`/api/finance/gst-filing?period=${period}&view=ca-package`)
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Failed to build CA package")
+      buildCaWorkbook(body.package)
+    } catch (e) {
+      console.log("[v0] CA package export failed:", (e as Error).message)
+    } finally {
+      setCaBusy(false)
+    }
+  }
 
   function exportExcel() {
     if (!s) return

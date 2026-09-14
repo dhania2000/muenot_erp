@@ -16,6 +16,12 @@ import {
   gstQuarterlyCompliance,
   gstComplianceFinancialYears,
 } from "@/lib/finance-gst-compliance"
+import {
+  gstPeriodCloseChecklist,
+  closeGstPeriod,
+  gstFilingAuditTrail,
+  gstCaPackage,
+} from "@/lib/finance-gst-automation"
 
 const FEATURE = "finance.gst_filing"
 
@@ -36,6 +42,15 @@ export async function GET(req: NextRequest) {
     }
     if (period && view === "compliance") {
       return NextResponse.json({ compliance: await gstComplianceReport(period) })
+    }
+    if (period && view === "close") {
+      return NextResponse.json({ close: await gstPeriodCloseChecklist(period) })
+    }
+    if (period && view === "audit") {
+      return NextResponse.json({ audit: await gstFilingAuditTrail(period) })
+    }
+    if (period && view === "ca-package") {
+      return NextResponse.json({ package: await gstCaPackage(period) })
     }
     if (view === "quarterly") {
       const fy = p.get("fy")
@@ -65,6 +80,13 @@ export async function POST(req: NextRequest) {
       const result = await transitionReturnStatus(period, String(body.transition || ""), {
         arn: body.arn ?? null,
         reason: body.reason ?? null,
+        actorId: session.userId,
+        actorName: session.name ?? null,
+      })
+      return NextResponse.json({ ok: true, ...result })
+    }
+    if (body.action === "close-period") {
+      const result = await closeGstPeriod(period, {
         actorId: session.userId,
         actorName: session.name ?? null,
       })

@@ -104,9 +104,13 @@ export async function setUserMatrix(userId: number, matrix: PermissionMatrix, gr
 
 /**
  * The effective scope for a user on a module/action.
- * Admins always get "all". If the user has no configured matrix, returns
- * "all" so record-level scoping is a no-op until an admin sets permissions
- * (module/page visibility is still governed by the legacy feature grants).
+ *
+ * The matrix is enforced for EVERY role, admins included — an admin who has a
+ * permission matrix configured is scoped by it exactly like an employee. Only
+ * when a user (of any role) has NO configured matrix at all do we fall back to
+ * "all", so accounts that were never given an explicit matrix keep working and
+ * record-level scoping stays a no-op for them (page/menu visibility is still
+ * governed by the legacy feature grants).
  */
 export async function getScope(
   userId: number,
@@ -114,7 +118,6 @@ export async function getScope(
   moduleKey: string,
   action: PermissionAction,
 ): Promise<PermissionScope> {
-  if (role === "admin") return "all"
   const matrix = await getUserMatrix(userId)
   if (!matrix) return "all"
   return matrix[moduleKey]?.[action] ?? "none"

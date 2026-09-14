@@ -16,6 +16,14 @@ import {
 import { postSalesInvoice } from "@/lib/finance-posting"
 import { logFinanceEvent, getFinanceEvents } from "@/lib/finance-audit"
 import { runSourceChecks } from "@/lib/sales-invoice-sources"
+import {
+  scopeWhereForModule,
+  mergeScopeIntoWhere,
+  canActOnRecord,
+  canCreateInModule,
+} from "@/lib/permission-enforce"
+
+const SALES_INVOICE_PERMISSION_KEY = "finance.sales_invoices"
 
 // Invoice types that must never post real AR/revenue to the ledger.
 const NON_POSTING_TYPES = new Set(["Proforma Invoice"])
@@ -259,6 +267,9 @@ export async function GET(req: NextRequest) {
     const pk = Number(idParam)
     const [inv] = (await query(`SELECT * FROM sales_invoices WHERE id = ? LIMIT 1`, [pk])) as any[]
     if (!inv) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
+    if (!(await canActOnRecord(session, SALES_INVOICE_PERMISSION_KEY, "view", inv))) {
+      return NextResponse.json({ error: "You do not have permission to view this invoice." }, { status: 403 })
+    }
     const items = await loadItems(inv.id)
     const sourceChain = await resolveSourceChain(inv)
     if (p.get("include") === "ledger") {
@@ -336,6 +347,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!(await canCreateInModule(session, SALES_INVOICE_PERMISSION_KEY))) {
+    return NextResponse.json({ error: "You do not have permission to create invoices." }, { status: 403 })
+  }
   await ensureSalesInvoiceSchema()
 
   const body = await req.json()
@@ -521,6 +535,9 @@ export async function PATCH(req: NextRequest) {
 
   const [existing] = (await query("SELECT * FROM sales_invoices WHERE id = ?", [id])) as any[]
   if (!existing) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
+  if (!(await canActOnRecord(session, SALES_INVOICE_PERMISSION_KEY, "update", existing))) {
+    return NextResponse.json({ error: "You do not have permission to update this invoice." }, { status: 403 })
+  }
 
   const status = String(existing.invoice_status || "Draft")
   const settings = await getSettings()
@@ -740,8 +757,11 @@ export async function DELETE(req: NextRequest) {
 
   // Only Draft invoices may be hard-deleted; anything posted/issued must be
   // reversed with a credit note to preserve the audit trail.
-  const [existing] = (await query("SELECT invoice_status FROM sales_invoices WHERE id = ?", [id])) as any[]
+  const [existing] = (await query("SELECT id, invoice_status, created_by FROM sales_invoices WHERE id = ?", [id])) as any[]
   if (!existing) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
+  if (!(await canActOnRecord(session, SALES_INVOICE_PERMISSION_KEY, "delete", existing))) {
+    return NextResponse.json({ error: "You do not have permission to delete this invoice." }, { status: 403 })
+  }
   if (String(existing.invoice_status || "Draft") !== "Draft") {
     return NextResponse.json({ error: "Only Draft invoices can be deleted. Issue a credit note instead." }, { status: 409 })
   }

@@ -269,7 +269,20 @@ export function createFinanceHandlers(moduleKey: string) {
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     await ensureSchema()
-    const { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
+    let { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
+
+    // Record-level permission scope (Add/View/Update/Delete × none/all/added/
+    // owned/both). Non-workflow finance modules apply it directly to the list +
+    // summary queries so an employee configured with e.g. "added" only sees the
+    // rows they created. Invoice-workflow modules keep their bespoke two-stage
+    // approval scoping below instead.
+    if (permissionKey && !INVOICE_WORKFLOW_MODULES.has(moduleKey)) {
+      const scoped = await scopeWhereForModule(session, permissionKey, "view", cfg.table, "x")
+      const merged = mergeScopeIntoWhere(where, args, scoped)
+      where = merged.where
+      args = merged.args
+    }
+
     const orderBy = cfg.dateColumn ? `x.${cfg.dateColumn} DESC, x.id DESC` : "x.id DESC"
 
     let rows = (await query(
@@ -323,6 +336,10 @@ export function createFinanceHandlers(moduleKey: string) {
   async function POST(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+    if (permissionKey && !(await canCreateInModule(session, permissionKey))) {
+      return NextResponse.json({ error: "You do not have permission to create this record." }, { status: 403 })
+    }
 
     await ensureSchema()
     const body = await req.json()
@@ -408,6 +425,10 @@ export function createFinanceHandlers(moduleKey: string) {
     const [existing] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
     if (!existing) return NextResponse.json({ error: "Record not found" }, { status: 404 })
 
+    if (permissionKey && !(await canActOnRecord(session, permissionKey, "update", existing))) {
+      return NextResponse.json({ error: "You do not have permission to update this record." }, { status: 403 })
+    }
+
     const merged = { ...existing, ...body }
 
     // Hard validation (Phase 25) on the merged row before any write.
@@ -472,13 +493,18 @@ export function createFinanceHandlers(moduleKey: string) {
     const id = Number(req.nextUrl.searchParams.get("id"))
     if (!id) return NextResponse.json({ error: "Record id is required" }, { status: 400 })
 
-    // Capture the row before deletion so module side effects can unwind
-    // dependent records (line items, ITC register) keyed off its business id.
+    // Enforce the delete scope on the specific row. We may need the row for the
+    // permission check and/or the side effect, so load it once when either
+    // needs it.
     const afterDelete = AFTER_DELETE[moduleKey]
     let doomed: Record<string, any> | null = null
-    if (typeof afterDelete === "function") {
+    if (permissionKey || typeof afterDelete === "function") {
       const [row] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
       doomed = row ?? null
+    }
+
+    if (permissionKey && doomed && !(await canActOnRecord(session, permissionKey, "delete", doomed))) {
+      return NextResponse.json({ error: "You do not have permission to delete this record." }, { status: 403 })
     }
 
     await query(`DELETE FROM ${cfg.table} WHERE id = ?`, [id])

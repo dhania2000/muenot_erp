@@ -894,13 +894,16 @@ const bankCash: ModuleConfig = {
     fld("Account", "currency", "Currency", "select", { options: CURRENCIES }),
     fld("Balances", "opening_balance", "Opening balance", "number"),
     fld("Balances", "opening_balance_date", "Opening balance date", "date"),
-    fld("Balances", "current_book_balance", "Current book balance", "number"),
+    // Server-authoritative: recomputed from this account's bank transactions as
+    // Opening + Credits − Debits (see lib/finance-account-master). Shown as a
+    // read-only computed figure, never hand-keyed.
+    fld("Balances", "current_book_balance", "Current book balance", "number", { computed: true, money: true }),
     fld("Balances", "bank_statement_balance", "Bank statement balance", "number"),
     fld("Balances", "difference", "Difference", "number", { computed: true, money: true }),
     fld("Status", "reconciliation_status", "Reconciliation status", "select", { options: ["Reconciled", "Unreconciled", "Pending"] }),
     fld("Status", "last_reconciliation_date", "Last reconciliation date", "date"),
     fld("Status", "primary_account", "Primary account", "checkbox"),
-    fld("Status", "active_status", "Active status", "select", { options: ["Active", "Inactive"] }),
+    fld("Status", "active_status", "Active status", "select", { options: ["Active", "Inactive", "Closed"] }),
     fld("Status", "remarks", "Remarks", "textarea"),
   ],
   compute: (v) => ({ difference: round2(num(v.bank_statement_balance) - num(v.current_book_balance)) }),
@@ -908,10 +911,11 @@ const bankCash: ModuleConfig = {
     { key: "finance_account_id", label: "Account ID", mono: true },
     { key: "account_name", label: "Account", sub: "bank_name" },
     { key: "account_type", label: "Type" },
+    { key: "account_number", label: "Account no.", mono: true, mask: true },
     { key: "current_book_balance", label: "Book Balance", align: "right", money: true },
     { key: "bank_statement_balance", label: "Statement", align: "right", money: true },
     { key: "reconciliation_status", label: "Reconciliation", badge: { Reconciled: "default", Pending: "secondary", Unreconciled: "outline" } },
-    { key: "active_status", label: "Status", badge: { Active: "default", Inactive: "outline" } },
+    { key: "active_status", label: "Status", badge: { Active: "default", Inactive: "outline", Closed: "destructive" } },
   ],
   kpis: [
     { label: "Book Balance", key: "total_book", money: true, icon: "Wallet" },

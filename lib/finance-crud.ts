@@ -10,6 +10,7 @@ import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerV
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
 import { nextExpenseId, computeExpenseServerFields, validateExpense, findDuplicateExpense } from "@/lib/finance-expenses"
 import { nextBankTransactionId, syncBankTransactionPosting, reverseBankTransactionPosting } from "@/lib/finance-bank-posting"
+import { nextFinanceAccountId, recomputeAccountBalance, recomputeBalancesForBankTxn } from "@/lib/finance-account-master"
 import {
   syncGstInputForBill,
   deleteGstInputForBill,
@@ -51,6 +52,9 @@ const ID_GENERATORS: Record<string, (record: Record<string, any>) => Promise<str
   // FY-scoped, concurrency-safe Bank Transaction id (BT-2026-000001). Never the
   // generic MAX+1 prefix — see lib/finance-bank-posting.nextBankTransactionId.
   "bank-transactions": (record) => nextBankTransactionId(record.transaction_date),
+  // Per-type Bank & Cash account id (BANK-0001 / CASH-0001 / WALLET-0001 /
+  // UPI-0001). Existing ACC- ids are immutable and never rewritten.
+  "bank-cash": (record) => nextFinanceAccountId(record.account_type),
 }
 
 /**
@@ -164,6 +168,17 @@ const AFTER_WRITE: Record<
     } catch (error) {
       console.log("[v0] syncBankTransactionPosting failed:", (error as Error).message)
     }
+    // Keep the affected accounts' authoritative Book Balance live after any
+    // create / edit. Recomputes from the committed row's account(s).
+    await recomputeBalancesForBankTxn(finalRow)
+  },
+  // A Bank & Cash account's Book Balance is server-authoritative — recompute it
+  // from the account's own transactions after every create / edit so an edited
+  // opening balance (or a fresh account) immediately reflects the correct book
+  // balance and reconciliation difference.
+  "bank-cash": async ({ finalRow }) => {
+    const accountId = finalRow[cfgIdColumn("bank-cash")]
+    if (accountId) await recomputeAccountBalance(String(accountId))
   },
 }
 
@@ -200,6 +215,9 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
     } catch (error) {
       console.log("[v0] reverseBankTransactionPosting failed:", (error as Error).message)
     }
+    // The row is already gone; recompute the affected accounts so their Book
+    // Balance no longer counts the deleted movement.
+    await recomputeBalancesForBankTxn(row)
   },
 }
 

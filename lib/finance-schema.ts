@@ -98,6 +98,11 @@ export type TableColumn = {
   sub?: string
   /** Render as a Badge, mapping value -> variant. */
   badge?: Record<string, BadgeVariant>
+  /**
+   * Mask all but the last 4 characters of the value (e.g. account numbers) so
+   * sensitive identifiers are not shown in full in the list.
+   */
+  mask?: boolean
 }
 
 export type Kpi = { label: string; key: string; money?: boolean; icon?: string }

@@ -35,7 +35,11 @@ type Summary = {
     invoice_date: string | null
     invoice_type: string
     client_name: string
+    client_legal_name: string
     client_gstin: string
+    gst_registration: string
+    gst_type: string
+    gst_rate: number
     project_name: string
     place_of_supply: string
     supply_type: string
@@ -110,18 +114,19 @@ export function GstFilingClient() {
 
     if (s.invoices?.length) {
       const invHeader = [
-        "Invoice #", "Date", "Type", "Client", "Client GSTIN", "Place of supply",
-        "Supply type", "Status", "Taxable", "CGST", "SGST", "IGST", "Cess", "Total",
+        "Invoice #", "Date", "Type", "Client", "Legal name", "Client GSTIN", "GST registration",
+        "GST type", "GST %", "Place of supply", "Status", "Taxable", "CGST", "SGST", "IGST", "Cess", "Total",
       ]
       const invRows = s.invoices.map((r) => [
         r.invoice_id, r.invoice_date ? r.invoice_date.slice(0, 10) : "", r.invoice_type,
-        r.client_name, r.client_gstin || "Unregistered", r.place_of_supply, r.supply_type,
-        r.status, r.taxable, r.cgst, r.sgst, r.igst, r.cess, r.total,
+        r.client_name, r.client_legal_name, r.client_gstin || "Unregistered", r.gst_registration,
+        r.gst_type, `${r.gst_rate}%`, r.place_of_supply, r.status,
+        r.taxable, r.cgst, r.sgst, r.igst, r.cess, r.total,
       ])
       const wsInv = XLSX.utils.aoa_to_sheet([invHeader, ...invRows])
       wsInv["!cols"] = [
-        { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 24 }, { wch: 18 }, { wch: 18 },
-        { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 },
+        { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 24 }, { wch: 24 }, { wch: 18 }, { wch: 14 },
+        { wch: 12 }, { wch: 8 }, { wch: 18 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 },
       ]
       XLSX.utils.book_append_sheet(wb, wsInv, "Invoices")
     }
@@ -156,7 +161,7 @@ export function GstFilingClient() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">GST Filing</h1>
           <p className="text-sm text-muted-foreground">
-            GSTR-1 outward-supply summary derived from posted sales invoices.
+            GSTR-1 outward-supply summary auto-derived from every non-Draft sales invoice in the period.
           </p>
         </div>
         <div className="flex items-end gap-2">
@@ -259,8 +264,10 @@ export function GstFilingClient() {
                 <TableRow>
                   <TableHead>Invoice</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Client</TableHead>
+                  <TableHead>Client / Legal name</TableHead>
                   <TableHead>Client GSTIN</TableHead>
+                  <TableHead>GST type</TableHead>
+                  <TableHead className="text-right">GST %</TableHead>
                   <TableHead>Place of supply</TableHead>
                   <TableHead className="text-right">Taxable</TableHead>
                   <TableHead className="text-right">CGST</TableHead>
@@ -272,7 +279,7 @@ export function GstFilingClient() {
               <TableBody>
                 {!s || s.invoices.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="py-8 text-center text-sm text-muted-foreground">
                       <div>No invoices included for this period.</div>
                       {s?.excluded ? <ExclusionHint excluded={s.excluded} /> : null}
                     </TableCell>
@@ -289,6 +296,9 @@ export function GstFilingClient() {
                       </TableCell>
                       <TableCell>
                         <div className="text-sm">{inv.client_name}</div>
+                        {inv.client_legal_name && inv.client_legal_name !== inv.client_name ? (
+                          <div className="text-xs text-muted-foreground">{inv.client_legal_name}</div>
+                        ) : null}
                         {inv.project_name ? (
                           <div className="text-xs text-muted-foreground">{inv.project_name}</div>
                         ) : null}
@@ -300,6 +310,8 @@ export function GstFilingClient() {
                           <Badge variant="outline" className="text-xs">Unregistered</Badge>
                         )}
                       </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{inv.gst_type}</TableCell>
+                      <TableCell className="text-right text-sm">{inv.gst_rate}%</TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {inv.place_of_supply || inv.supply_type}
                       </TableCell>
@@ -384,8 +396,8 @@ function ExclusionHint({
   return (
     <div className="mt-2 text-xs">
       {excluded.in_period} invoice{excluded.in_period === 1 ? "" : "s"} dated in this period
-      {parts.length ? ` — ${parts.join(", ")}` : ""}. Only Issued / Sent / Posted tax invoices appear in GSTR-1, so
-      set the invoice status to Issued to include it.
+      {parts.length ? ` — ${parts.join(", ")}` : ""}. Every invoice that is not Draft or Cancelled appears in GSTR-1
+      automatically (even with ₹0 GST), so move a Draft invoice out of Draft to include it.
     </div>
   )
 }

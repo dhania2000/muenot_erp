@@ -6,9 +6,10 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns } from "@/lib/finance-ensure"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
 import { nextExpenseId, computeExpenseServerFields, validateExpense, findDuplicateExpense } from "@/lib/finance-expenses"
+import { nextBankTransactionId, syncBankTransactionPosting, reverseBankTransactionPosting } from "@/lib/finance-bank-posting"
 import {
   syncGstInputForBill,
   deleteGstInputForBill,
@@ -40,6 +41,25 @@ const SERVER_AUGMENT: Record<
 const ID_GENERATORS: Record<string, (record: Record<string, any>) => Promise<string>> = {
   "purchase-bills": (record) => nextPurchaseBillId(record.bill_date),
   expenses: (record) => nextExpenseId(record.expense_date),
+  // FY-scoped, concurrency-safe Bank Transaction id (BT-2026-000001). Never the
+  // generic MAX+1 prefix — see lib/finance-bank-posting.nextBankTransactionId.
+  "bank-transactions": (record) => nextBankTransactionId(record.transaction_date),
+}
+
+/**
+ * Guard a bank transaction's debit/credit before it is written (Phase 8/9). A
+ * movement carries exactly one side — entering both debit and credit by hand
+ * would create an unbalanced, meaningless row — and a manual entry needs an
+ * amount. Imported statement rows bypass this (they come through the importer,
+ * not the CRUD POST) so a raw uncategorised line can still land as a draft.
+ */
+function validateBankTransaction(merged: Record<string, any>): string | null {
+  const debit = Number(merged.debit) || 0
+  const credit = Number(merged.credit) || 0
+  if (debit > 0 && credit > 0) return "A bank transaction can carry either a debit or a credit — not both."
+  if (debit < 0 || credit < 0) return "Debit and credit amounts cannot be negative."
+  if (debit === 0 && credit === 0) return "Enter a debit (withdrawal) or a credit (deposit) amount."
+  return null
 }
 
 /**
@@ -48,6 +68,7 @@ const ID_GENERATORS: Record<string, (record: Record<string, any>) => Promise<str
  */
 const VALIDATORS: Record<string, (merged: Record<string, any>) => string | null> = {
   expenses: validateExpense,
+  "bank-transactions": validateBankTransaction,
 }
 
 /**
@@ -113,6 +134,30 @@ const AFTER_WRITE: Record<
       console.log("[v0] syncExpensePosting failed:", (error as Error).message)
     }
   },
+  // A committed Bank Transaction is projected into the SAME Journal + General
+  // Ledger engine as every other finance document (Phases 14–17). Posting is
+  // idempotent and failure-tolerant: a row with no resolvable contra (e.g. a
+  // freshly imported statement line) stays "Unposted" for later classification,
+  // an amount change reverses-and-reposts, and a posting error never blocks the
+  // CRUD write. Both legs of a bank-to-bank transfer share one `transfer_id`
+  // for traceability (Phases 20/98–100); the balanced transfer journal already
+  // covers both accounts, so only this row posts — never a duplicate.
+  "bank-transactions": async ({ finalRow, userId }) => {
+    const txnId = finalRow[cfgIdColumn("bank-transactions")]
+    if (!txnId) return
+    if (String(finalRow.transaction_type) === "Transfer" && !finalRow.transfer_id) {
+      await query(
+        `UPDATE bank_transactions SET transfer_id = ?
+           WHERE transaction_id = ? AND (transfer_id IS NULL OR transfer_id = '')`,
+        [`TRF-${txnId}`, txnId],
+      ).catch(() => {})
+    }
+    try {
+      await syncBankTransactionPosting(String(txnId), { createdBy: userId })
+    } catch (error) {
+      console.log("[v0] syncBankTransactionPosting failed:", (error as Error).message)
+    }
+  },
 }
 
 /** Optional per-module side effect that runs when a record is deleted. */
@@ -138,6 +183,16 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
       console.log("[v0] reverseExpensePosting failed:", (error as Error).message)
     }
     await deleteGstInputForExpense(String(expenseId))
+  },
+  // Reverse the transaction's Journal + General Ledger posting before the row
+  // leaves so the ledger stays balanced (the reversal unwinds the frozen
+  // `posted_snapshot`, never the possibly-edited live amounts).
+  "bank-transactions": async (row) => {
+    try {
+      await reverseBankTransactionPosting(row)
+    } catch (error) {
+      console.log("[v0] reverseBankTransactionPosting failed:", (error as Error).message)
+    }
   },
 }
 
@@ -190,6 +245,7 @@ export function createFinanceHandlers(moduleKey: string) {
     if (moduleKey === "customers-vendors") await ensureCustomerVendorGstColumns()
     if (moduleKey === "purchase-bills") await ensurePurchaseBillColumns()
     if (moduleKey === "expenses") await ensureExpenseColumns()
+    if (moduleKey === "bank-transactions") await ensureBankTransactionColumns()
   }
 
   const validate = VALIDATORS[moduleKey]

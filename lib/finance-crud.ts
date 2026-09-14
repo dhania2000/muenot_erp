@@ -206,18 +206,41 @@ export function createFinanceHandlers(moduleKey: string) {
     const { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
     const orderBy = cfg.dateColumn ? `x.${cfg.dateColumn} DESC, x.id DESC` : "x.id DESC"
 
-    const rows = await query(
+    let rows = (await query(
       `SELECT x.*, u.name AS created_by_name${cfg.extraSelect ? `, ${cfg.extraSelect}` : ""}
          FROM ${cfg.table} x
          LEFT JOIN users u ON u.id = x.created_by
          ${where}
          ORDER BY ${orderBy}`,
       args,
-    )
+    )) as any[]
+
+    // Two-stage approval scoping: a regular employee only ever sees invoices
+    // where they are the assignee or the assignee's reporting manager, and each
+    // surviving row is annotated with its per-user capabilities (`__caps`).
+    // Admins (HR / Finance) keep every row with full access.
+    let summaryWhere = where
+    let summaryArgs = args
+    if (INVOICE_WORKFLOW_MODULES.has(moduleKey)) {
+      const scoped = await scopeAndAnnotateInvoices(moduleKey, rows, session)
+      rows = scoped.rows
+      if (!scoped.fullAccess) {
+        // Recompute the KPI summary over only the rows this viewer may see so
+        // the totals never leak aggregate data about other employees' invoices.
+        const ids = rows.map((r) => r.id)
+        if (ids.length === 0) {
+          summaryWhere = "WHERE 1 = 0"
+          summaryArgs = []
+        } else {
+          summaryWhere = `WHERE x.id IN (${ids.map(() => "?").join(",")})`
+          summaryArgs = ids
+        }
+      }
+    }
 
     const [summary] = (await query(
-      `SELECT ${cfg.summarySelect} FROM ${cfg.table} x ${where}`,
-      args,
+      `SELECT ${cfg.summarySelect} FROM ${cfg.table} x ${summaryWhere}`,
+      summaryArgs,
     )) as any[]
 
     const financialYears = cfg.financialYearColumn
@@ -302,6 +325,9 @@ export function createFinanceHandlers(moduleKey: string) {
     const afterWrite = AFTER_WRITE[moduleKey]
     if (afterWrite) await afterWrite({ finalRow: record, body, userId: session.userId, isCreate: true })
 
+    // Snapshot the assignee's reporting manager for the second approval stage.
+    if (INVOICE_WORKFLOW_MODULES.has(moduleKey)) await snapshotInvoiceManager(moduleKey, record)
+
     return NextResponse.json({ ok: true, id: record[cfg.idColumn] }, { status: 201 })
   }
 
@@ -363,6 +389,12 @@ export function createFinanceHandlers(moduleKey: string) {
       // update set only carries changed columns, not the whole bill).
       const [finalRow] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
       if (finalRow) await afterWrite({ finalRow, body, userId: session.userId, isCreate: false })
+    }
+
+    // Re-snapshot the reporting manager in case the assignee changed on edit.
+    if (INVOICE_WORKFLOW_MODULES.has(moduleKey)) {
+      const [finalRow] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
+      if (finalRow) await snapshotInvoiceManager(moduleKey, finalRow)
     }
 
     return NextResponse.json({ ok: true })

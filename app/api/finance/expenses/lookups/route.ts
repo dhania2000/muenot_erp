@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     if (type === "employee") {
       const rows = (await query(
         `SELECT employee_id, employee_name, department, designation, employment_type,
-                official_email, mobile, reporting_manager
+                official_email, personal_email, mobile, reporting_manager
            FROM hr_employees
           WHERE (? = '' OR employee_name LIKE ? OR employee_id LIKE ? OR department LIKE ?)
           ORDER BY employee_name LIMIT ${LIMIT}`,

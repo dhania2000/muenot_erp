@@ -47,6 +47,12 @@ export type FieldDef = {
    * `optionSources`. The currently stored value is always kept selectable.
    */
   dynamicOptions?: boolean
+  /**
+   * Select whose choices are the twelve months of the record's financial year
+   * (e.g. Apr 2026 … Mar 2027 for FY 2026-27), derived at render time from the
+   * form's `financialYearColumn` value. The stored value stays selectable.
+   */
+  financialYearMonths?: boolean
 }
 
 /**

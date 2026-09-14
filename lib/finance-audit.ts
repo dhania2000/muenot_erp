@@ -110,6 +110,46 @@ export async function getFinanceEvents(entityType: string, entityPk: number): Pr
   }
 }
 
+/**
+ * Full audit history for a set of entity references, newest first. GST filing
+ * events are keyed by string refs (filing_id, the period, `TAX-PAID:<period>`,
+ * `RECON:<period>`, `CLOSE:<period>`) rather than a numeric pk, so the GST
+ * screens read their trail through this ref-based lookup.
+ */
+export async function getFinanceEventsByRefs(
+  entityType: string,
+  refs: string[],
+): Promise<FinanceAuditEvent[]> {
+  const unique = Array.from(new Set(refs.filter((r) => r != null && r !== "")))
+  if (unique.length === 0) return []
+  try {
+    const rows = (await query(
+      `SELECT e.*, u.name AS actor_display
+         FROM finance_audit_events e
+         LEFT JOIN users u ON u.id = e.actor_id
+        WHERE e.entity_type = ? AND e.entity_ref IN (${unique.map(() => "?").join(",")})
+        ORDER BY e.created_at DESC, e.id DESC`,
+      [entityType, ...unique],
+    )) as any[]
+    return rows.map((r) => ({
+      id: Number(r.id),
+      entity_type: r.entity_type,
+      entity_pk: r.entity_pk != null ? Number(r.entity_pk) : null,
+      entity_ref: r.entity_ref ?? null,
+      event_type: r.event_type,
+      summary: r.summary,
+      detail: parseDetail(r.detail),
+      amount: r.amount != null ? Number(r.amount) : null,
+      voucher_no: r.voucher_no ?? null,
+      actor_id: r.actor_id != null ? Number(r.actor_id) : null,
+      actor_name: r.actor_name || r.actor_display || null,
+      created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+    }))
+  } catch {
+    return []
+  }
+}
+
 function parseDetail(value: unknown): Record<string, unknown> | null {
   if (!value) return null
   if (typeof value === "object") return value as Record<string, unknown>

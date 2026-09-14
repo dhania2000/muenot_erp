@@ -3,6 +3,7 @@
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { inr, inr0 } from "@/lib/finance-calc"
+import { exportRowsToExcel } from "@/lib/excel-export"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,11 +13,51 @@ import type { BadgeVariant } from "@/lib/finance-schema"
 import {
   ArrowLeft, Loader2Icon, Pencil, BookOpen, ShieldCheck, Coins, Scale,
   ArrowLeftRight, TrendingUp, TrendingDown, ReceiptText, CornerDownRight,
-  FileText, ExternalLink, Landmark,
+  FileText, ExternalLink, Landmark, Download,
 } from "lucide-react"
 
 type Row = Record<string, any>
 type Side = "Debit" | "Credit"
+
+/**
+ * Map a General Ledger line's originating module to the route + search that
+ * opens the source document. Every posting carries `source_module` from the
+ * engine that wrote it (Purchase Bills, Sales Invoices, Expenses, Bank & Cash,
+ * Payments, GST, TDS, Journal), so a ledger row can jump straight back to where
+ * it came from — no parallel bookkeeping, just a link into the existing module.
+ */
+function sourceRoute(sourceModule?: string): string | null {
+  const s = String(sourceModule ?? "").toLowerCase()
+  if (!s) return null
+  if (s.includes("purchase")) return "/modules/finance/purchase-bills"
+  if (s.includes("credit note")) return "/modules/finance/credit-notes"
+  if (s.includes("freelance")) return "/modules/finance/freelance-invoices"
+  if (s.includes("fte")) return "/modules/finance/fte-invoices"
+  if (s.includes("sales") || s.includes("invoice")) return "/modules/finance/sales-invoices"
+  if (s.includes("expense")) return "/modules/finance/expenses"
+  if (s.includes("bank") || s.includes("cash")) return "/modules/finance/bank-transactions"
+  if (s.includes("payment") || s.includes("receipt")) return "/modules/finance/payments"
+  if (s.includes("gst")) return "/modules/finance/gst-filing"
+  if (s.includes("tds")) return "/modules/finance/tds-filing"
+  if (s.includes("journal") || s.includes("opening")) return "/modules/finance/journal-entries"
+  return null
+}
+
+/** A ledger line's source as a link into its originating module, or plain text. */
+function SourceCell({ line }: { line: Row }) {
+  const label = String(line.source_module || "").trim()
+  const ref = String(line.source_reference || "").trim()
+  const route = sourceRoute(label)
+  const text = [label, ref].filter(Boolean).join(" · ") || "—"
+  if (!route) return <span className="text-muted-foreground">{text}</span>
+  const href = ref ? `${route}?search=${encodeURIComponent(ref)}` : route
+  return (
+    <a href={href} className="inline-flex items-center gap-1 text-primary hover:underline">
+      {text}
+      <ExternalLink className="size-3 shrink-0" />
+    </a>
+  )
+}
 
 type Account360 = {
   account: Row
@@ -128,6 +169,14 @@ export function AccountDetailClient({ accountId }: { accountId: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
+            disabled={ledger.length === 0}
+            onClick={() => exportAccountLedger(a, ledger)}
+          >
+            <Download data-icon="inline-start" />
+            Export ledger
+          </Button>
+          <Button
+            variant="outline"
             render={<a href={`/modules/finance/general-ledger?search=${encodeURIComponent(a.account_id)}`} />}
           >
             <BookOpen data-icon="inline-start" />
@@ -228,18 +277,30 @@ export function AccountDetailClient({ accountId }: { accountId: string }) {
           )}
         </TabsContent>
 
-        {/* Ledger — the account's own GL lines with running balance. */}
+        {/* Ledger — the account's own GL lines with running balance, each row
+            linking back to the source document and its journal voucher. */}
         <TabsContent value="ledger">
           <DataTable
             empty="No posted ledger entries for this account yet."
-            head={["Ledger", "Date", "Voucher", "Particulars", "Reference", "Debit", "Credit", "Balance"]}
-            align={[, , , , , "right", "right", "right"]}
+            head={["Ledger", "Date", "Voucher", "Particulars", "Source", "Journal", "Debit", "Credit", "Balance"]}
+            align={[, , , , , , "right", "right", "right"]}
             rows={ledger.map((l) => [
               <span key="id" className="font-mono text-xs">{l.ledger_id}</span>,
               fmtDate(l.transaction_date),
               l.voucher_type || l.voucher_no || "—",
-              l.party_name || l.description || l.source_module || "—",
-              l.reference_no || l.source_reference || "—",
+              l.party_name || l.description || "—",
+              <SourceCell key="src" line={l} />,
+              l.journal_entry_id ? (
+                <a
+                  key="je"
+                  href={`/modules/finance/journal-entries?search=${encodeURIComponent(String(l.journal_entry_id))}`}
+                  className="font-mono text-xs text-primary hover:underline"
+                >
+                  {l.journal_entry_id}
+                </a>
+              ) : (
+                <span key="je" className="text-muted-foreground">—</span>
+              ),
               Number(l.debit) ? inr(l.debit) : "—",
               Number(l.credit) ? inr(l.credit) : "—",
               balanceCell(Number(l.balance), (l.balance_type as Side) || stats.nature),

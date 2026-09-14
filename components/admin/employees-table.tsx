@@ -22,6 +22,7 @@ import { MoreHorizontal, Plus, ShieldCheck } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { InviteEmployeeDialog } from "@/components/admin/invite-employee-dialog"
 import { PermissionsDialog } from "@/components/admin/permissions-dialog"
+import { ResetPasswordDialog } from "@/components/admin/reset-password-dialog"
 import type { ModuleRow, FeatureRow } from "@/lib/permissions"
 
 export type EmployeeRow = {
@@ -48,6 +49,7 @@ export function EmployeesTable({
   const [employees, setEmployees] = useState(initialEmployees)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [permissionsTarget, setPermissionsTarget] = useState<EmployeeRow | null>(null)
+  const [resetTarget, setResetTarget] = useState<EmployeeRow | null>(null)
 
   function upsertEmployee(employee: EmployeeRow) {
     setEmployees((prev) => [employee, ...prev.filter((e) => e.id !== employee.id)])
@@ -142,6 +144,9 @@ export function EmployeesTable({
                         <DropdownMenuItem onClick={() => setPermissionsTarget(employee)}>
                           Manage permissions
                         </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setResetTarget(employee)}>
+                          Reset password
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => toggleStatus(employee)}>
                           {employee.status === "active" ? "Deactivate" : "Activate"}
                         </DropdownMenuItem>
@@ -175,6 +180,13 @@ export function EmployeesTable({
         modules={modules}
         onOpenChange={(open) => {
           if (!open) setPermissionsTarget(null)
+        }}
+      />
+
+      <ResetPasswordDialog
+        employee={resetTarget}
+        onOpenChange={(open) => {
+          if (!open) setResetTarget(null)
         }}
       />
     </div>

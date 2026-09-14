@@ -72,6 +72,21 @@ export const GST_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
   { key: "view_sensitive", label: "View Sensitive Tax Data", fallback: "view", scoped: false, description: "View sensitive tax data such as the audit trail and ARNs." },
 ]
 
+/**
+ * TDS Filing granular action permissions — the compliance chain that follows
+ * deduction (liability → challan → return → certificate → reconciliation).
+ * Like the GST set, these live ALONGSIDE Add/View/Update/Delete and gate the
+ * high-risk, largely irreversible statutory steps so a plain Update can never
+ * file a return, record a government deposit, or issue a certificate.
+ */
+export const TDS_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "file_return", label: "File TDS Return", fallback: "delete", scoped: false, description: "File a monthly filing or a quarterly 24Q/26Q return." },
+  { key: "record_challan", label: "Record Challan", fallback: "delete", scoped: false, description: "Record a government TDS challan / deposit against a period." },
+  { key: "issue_certificate", label: "Issue Certificate", fallback: "delete", scoped: false, description: "Generate and issue Form 16 / 16A certificates to deductees." },
+  { key: "reconcile_tds", label: "Reconcile TDS", fallback: "update", scoped: false, description: "Run the deducted / deposited / reported three-way reconciliation." },
+  { key: "export_return", label: "Export TDS Return", fallback: "view", scoped: false, description: "Export the return, challan register and certificate hand-off pack." },
+]
+
 export type ModulePermission = {
   add: PermissionScope
   view: PermissionScope
@@ -171,7 +186,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "finance.chart_of_accounts", label: "Chart of Accounts", group: "finance", aliases: ["chart"], scope: { table: "chart_of_accounts", addedBy: "created_by" } },
       { key: "finance.customers_vendors", label: "Vendors", group: "finance", aliases: ["customer", "vendor"], scope: { table: "customers_vendors", addedBy: "created_by" } },
       { key: "finance.gst_filing", label: "GST Filing", group: "finance", aliases: ["gst"], scope: { table: "gst_filings" }, extraActions: GST_FILING_EXTRA_ACTIONS },
-      { key: "finance.tds_filing", label: "TDS Filing", group: "finance", aliases: ["tds"], scope: { table: "tds_filings" } },
+      { key: "finance.tds_filing", label: "TDS Filing", group: "finance", aliases: ["tds"], scope: { table: "tds_filings" }, extraActions: TDS_FILING_EXTRA_ACTIONS },
       { key: "finance.journal", label: "Journal & Ledger", group: "finance", aliases: ["journal", "ledger"], scope: { table: "finance_records", addedBy: "created_by" } },
       { key: "finance.reports", label: "Financial Reports", group: "finance", aliases: ["financial_report", "report"], scope: { table: "finance_records" } },
       { key: "finance.email_templates", label: "Finance Email Templates", group: "finance", aliases: ["email_template"], scope: { table: "finance_email_templates" } },

@@ -8,6 +8,7 @@ import {
   diffEmployee,
   fieldLabel,
 } from "@/lib/hr-employee-events"
+import { canActOnRecord } from "@/lib/permission-enforce"
 
 const ALLOWED = new Set([
   "employee_name","gender","dob","personal_email","official_email","mobile","alternate_mobile","address","city","state","country","postal_code","emergency_contact_name","emergency_contact_phone","emergency_contact_relation","relative_name","relative_relationship","relative_primary_phone","relative_alternate_phone","relative_email","relative_address","department","designation","reporting_manager","employment_type","joining_date","probation_end_date","confirmation_date","employment_status","onboarding_status","work_location","work_mode","shift","employee_grade","document_status","agreement_status","consent_status","compliance_status","it_access_status","asset_status","training_status","performance_status","notice_period","notice_period_status","exit_status","exit_date","exit_reason","skills","notes","bank_account_holder_name","bank_name","bank_account_number","bank_ifsc_code","bank_branch","bank_account_type","bank_swift_code","bank_pan_number","bank_upi_id","photo_url",
@@ -28,6 +29,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const existingRows = await query<any[]>("SELECT * FROM hr_employees WHERE id = ? LIMIT 1", [id])
   const existing = existingRows[0]
   if (!existing) return NextResponse.json({ error: "Employee not found" }, { status: 404 })
+
+  // Record-level scope: an employee with "added"/"owned" update rights may only
+  // edit rows they created/own. Admins / unconfigured users pass through.
+  if (!(await canActOnRecord(session, "hr.employees", "update", existing))) {
+    return NextResponse.json({ error: "You do not have permission to update this employee." }, { status: 403 })
+  }
 
   const next: Record<string, unknown> = {}
   for (const key of fields) next[key] = body[key] === "" ? null : body[key]

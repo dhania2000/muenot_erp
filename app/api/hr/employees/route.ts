@@ -4,6 +4,7 @@ import { requireFeature } from "@/lib/api-auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { ensureEmployeeEventsSchema, logEmployeeEvent } from "@/lib/hr-employee-events"
 import { initializeEmployeeBalances } from "@/lib/hr-leave"
+import { scopeWhereForModule, canCreateInModule } from "@/lib/permission-enforce"
 
 // Columns that can be written via create/update.
 const ALLOWED = new Set([
@@ -91,6 +92,15 @@ export async function GET(request: Request) {
     args.push(joiningTo)
   }
 
+  // Record-level permission scope (Add/View/Update/Delete × none/all/added/
+  // owned/both). An employee configured with e.g. "added" only sees the
+  // employee records they created; admins / unconfigured users are unscoped.
+  const scoped = await scopeWhereForModule(session, "hr.employees", "view", "hr_employees")
+  if (scoped) {
+    where.push(scoped.sql)
+    args.push(...scoped.params)
+  }
+
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
 
   // Sorting.
@@ -144,6 +154,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await requireFeature("hr.manage_employees")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  if (!(await canCreateInModule(session, "hr.employees"))) {
+    return NextResponse.json({ error: "You do not have permission to create employees." }, { status: 403 })
+  }
+
   await ensureEmployeeEventsSchema()
   const body = await request.json()
   if (!body.employee_name) return NextResponse.json({ error: "Employee name is required" }, { status: 400 })

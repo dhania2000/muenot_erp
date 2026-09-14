@@ -6,6 +6,7 @@ import {
   listOnboarding,
   onboardingErrorStatus,
 } from "@/lib/sales/onboarding-service"
+import { canCreateInModule } from "@/lib/permission-enforce"
 
 /** GET /api/sales/onboarding — filtered list of onboarding records. */
 export async function GET(request: Request) {
@@ -36,6 +37,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await requireFeature("sales.manage_onboarding")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  if (!(await canCreateInModule(session, "sales.onboarding"))) {
+    return NextResponse.json({ error: "You do not have permission to add onboarding records." }, { status: 403 })
+  }
 
   const body = await request.json().catch(() => ({}))
   try {

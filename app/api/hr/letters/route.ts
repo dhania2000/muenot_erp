@@ -5,6 +5,7 @@ import { userHasFeature } from "@/lib/permissions"
 import { ensureLetterTables } from "@/lib/hr-letters-db"
 import { generateLetter, type GenerateLetterInput } from "@/lib/hr-letters-generate"
 import type { LetterSource, LetterStatus } from "@/lib/hr-letters-shared"
+import { scopeWhereForModule, canCreateInModule } from "@/lib/permission-enforce"
 
 const FEATURE = "hr.view_letters"
 
@@ -59,6 +60,13 @@ export async function GET(request: NextRequest) {
   // Superseded/older versions are hidden by default; ?history=all shows them.
   if (sp.get("history") === "all") where.shift()
 
+  // Record-level permission scope (letters created by the user, etc.).
+  const scoped = await scopeWhereForModule(session, "hr.letters", "view", "hr_letters", "l")
+  if (scoped) {
+    where.push(scoped.sql)
+    args.push(...scoped.params)
+  }
+
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
   const letters = await query<any[]>(
     `SELECT l.id, l.letter_number, l.reference_no, l.employee_id, l.template_id, l.template_version,
@@ -83,6 +91,9 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   if (!(await userHasFeature(session.userId, session.role, FEATURE))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
+  if (!(await canCreateInModule(session, "hr.letters"))) {
+    return NextResponse.json({ error: "You do not have permission to generate letters." }, { status: 403 })
   }
 
   const body = await request.json().catch(() => ({}))

@@ -13,6 +13,7 @@ import {
   OFFBOARDING_STATUSES,
 } from "@/lib/hr-offboarding"
 import { emitHrEmailEvent } from "@/lib/hr-email-automation"
+import { scopeWhereForModule, canCreateInModule, canActOnRecord } from "@/lib/permission-enforce"
 
 // Columns a client may patch inline from the list (kept minimal; the rich
 // workflow actions live in the [id] route).
@@ -88,6 +89,13 @@ export async function GET(request: NextRequest) {
     where.push("o.status IN ('Cancelled','Withdrawn')")
   }
 
+  // Record-level permission scope on the offboarding case owner.
+  const scoped = await scopeWhereForModule(session, "hr.offboarding", "view", "hr_offboarding", "o")
+  if (scoped) {
+    where.push(scoped.sql)
+    params.push(...scoped.params)
+  }
+
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
 
   const clearanceSummary = `
@@ -158,6 +166,9 @@ async function getMetrics() {
 export async function POST(request: NextRequest) {
   const session = await requireFeature("hr.manage_offboarding")
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
+  if (!(await canCreateInModule(session, "hr.offboarding"))) {
+    return NextResponse.json({ error: "You do not have permission to initiate offboarding." }, { status: 403 })
+  }
   await ensureOffboardingSchema()
 
   const body = await request.json()
@@ -284,6 +295,10 @@ export async function PATCH(request: NextRequest) {
   const rows = await query<any[]>("SELECT * FROM hr_offboarding WHERE id = ? LIMIT 1", [body.id])
   const current = rows[0]
   if (!current) return NextResponse.json({ error: "Not found" }, { status: 404 })
+
+  if (!(await canActOnRecord(session, "hr.offboarding", "update", current))) {
+    return NextResponse.json({ error: "You do not have permission to update this offboarding case." }, { status: 403 })
+  }
 
   await query(
     `UPDATE hr_offboarding SET ${updates.map((f) => `${f} = ?`).join(", ")} WHERE id = ?`,

@@ -7,6 +7,7 @@ import {
   ContractError,
   type ListFilters,
 } from "@/lib/sales/contract-service"
+import { canCreateInModule } from "@/lib/permission-enforce"
 
 export async function GET(request: Request) {
   const session = await requireFeature("sales.view_contracts")
@@ -34,6 +35,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await requireFeature("sales.manage_contracts")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  if (!(await canCreateInModule(session, "sales.contracts"))) {
+    return NextResponse.json({ error: "You do not have permission to add contracts." }, { status: 403 })
+  }
 
   const body = await request.json().catch(() => ({}))
   try {

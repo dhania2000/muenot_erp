@@ -566,6 +566,21 @@ async function depositByPeriod(direction: TdsDirection, financialYear: string) {
   return map
 }
 
+/** Per-period challan charges: TDS deposited, interest, late fee and total paid. */
+async function challanChargesByPeriod(direction: TdsDirection, financialYear: string) {
+  const challans = await listChallans(direction, financialYear)
+  const map: Record<string, { tds: number; interest: number; late_fee: number; total: number }> = {}
+  for (const c of challans) {
+    const e = map[c.period] || { tds: 0, interest: 0, late_fee: 0, total: 0 }
+    e.tds = round2(e.tds + c.tds_amount)
+    e.interest = round2(e.interest + c.interest)
+    e.late_fee = round2(e.late_fee + c.late_fee)
+    e.total = round2(e.total + c.total_amount)
+    map[c.period] = e
+  }
+  return map
+}
+
 // ---------------------------------------------------------------------------
 // Phase 17 — challan allocation
 //
@@ -760,11 +775,28 @@ export async function clearChallanAllocations(challanId: string, actorId?: numbe
 export type TdsLiabilityRow = {
   period: string
   quarter: TdsQuarter
+  base: number
   deducted: number
+  interest: number
+  late_fee: number
+  total_liability: number
   deposited: number
+  paid: number
   balance: number
   due_date: string
   status: string
+}
+
+export type TdsQuarterSummaryRow = {
+  quarter: TdsQuarter
+  base: number
+  tds: number
+  payments: number
+  balance: number
+  return_form: TdsReturnForm | null
+  return_id: string | null
+  return_status: string
+  return_due_date: string
 }
 
 function liabilityStatus(direction: TdsDirection, deducted: number, deposited: number): string {
@@ -778,31 +810,80 @@ function liabilityStatus(direction: TdsDirection, deducted: number, deposited: n
 export async function tdsLiability(financialYear: string, direction: TdsDirection) {
   await ensureTdsComplianceSchema()
   const dir = normDirection(direction)
+  const deductor = isDeductorDirection(dir)
   const months = monthsOfFy(financialYear)
-  const deposits = isDeductorDirection(dir) ? await depositByPeriod(dir, financialYear) : {}
+  const charges = deductor ? await challanChargesByPeriod(dir, financialYear) : {}
 
   const rows: TdsLiabilityRow[] = []
   for (const period of months) {
     const summary = await tdsSummary(period, dir)
+    const base = round2(summary.totals.total_base)
     const deducted = round2(summary.totals.total_tds)
-    const deposited = round2(deposits[period] || 0)
+    const c = charges[period] || { tds: 0, interest: 0, late_fee: 0, total: 0 }
+    const interest = round2(c.interest)
+    const lateFee = round2(c.late_fee)
+    const deposited = round2(c.tds)
+    // Total liability = tax deducted + statutory interest (234E/201) + late fee.
+    const totalLiability = round2(deducted + interest + lateFee)
+    const paid = round2(c.total)
     rows.push({
       period,
       quarter: quarterOfPeriod(period),
+      base,
       deducted,
+      interest,
+      late_fee: lateFee,
+      total_liability: totalLiability,
       deposited,
-      balance: round2(deducted - deposited),
+      paid,
+      balance: round2(totalLiability - paid),
       due_date: depositDueDate(period),
       status: liabilityStatus(dir, deducted, deposited),
     })
   }
 
   const totals = {
+    base: round2(rows.reduce((s, r) => s + r.base, 0)),
     deducted: round2(rows.reduce((s, r) => s + r.deducted, 0)),
+    interest: round2(rows.reduce((s, r) => s + r.interest, 0)),
+    late_fee: round2(rows.reduce((s, r) => s + r.late_fee, 0)),
+    total_liability: round2(rows.reduce((s, r) => s + r.total_liability, 0)),
     deposited: round2(rows.reduce((s, r) => s + r.deposited, 0)),
+    paid: round2(rows.reduce((s, r) => s + r.paid, 0)),
     balance: round2(rows.reduce((s, r) => s + r.balance, 0)),
   }
-  return { financial_year: financialYear, direction: dir, deposit_applicable: isDeductorDirection(dir), rows, totals }
+
+  // Phase 27 — quarterly rollup with each quarter's statutory return status.
+  const returns = deductor ? await listTdsReturns(dir) : []
+  const quarters: TdsQuarter[] = ["Q1", "Q2", "Q3", "Q4"]
+  const quarterly: TdsQuarterSummaryRow[] = quarters.map((q) => {
+    const qRows = rows.filter((r) => r.quarter === q)
+    const base = round2(qRows.reduce((s, r) => s + r.base, 0))
+    const tds = round2(qRows.reduce((s, r) => s + r.deducted, 0))
+    const payments = round2(qRows.reduce((s, r) => s + r.paid, 0))
+    const totalLiability = round2(qRows.reduce((s, r) => s + r.total_liability, 0))
+    const ret = returns.find((r) => r.quarter === q && r.financial_year === financialYear)
+    return {
+      quarter: q,
+      base,
+      tds,
+      payments,
+      balance: round2(totalLiability - payments),
+      return_form: deductor ? returnFormFor(dir) : null,
+      return_id: ret?.return_id ?? null,
+      return_status: ret ? ret.status : deductor ? (tds > 0 ? "Not filed" : "Nil") : "Credit",
+      return_due_date: returnDueDate(q, financialYear),
+    }
+  })
+
+  return {
+    financial_year: financialYear,
+    direction: dir,
+    deposit_applicable: deductor,
+    rows,
+    totals,
+    quarterly,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -849,6 +930,91 @@ function aggregateDeductees(rows: any[]): DeducteeAgg[] {
     }
   }
   return Array.from(map.values()).sort((a, b) => b.tds - a.tds)
+}
+
+// ---------------------------------------------------------------------------
+// Deductee master (Phase 22-23) — one derived record per party for the whole
+// financial year, with its section-wise breakup. Fully derived from the source
+// ledgers via tdsDetail; no separate deductee table is maintained.
+// ---------------------------------------------------------------------------
+
+export type DeducteeMasterRow = {
+  party_id: string
+  party_name: string
+  pan: string
+  pan_status: "Valid" | "Invalid" | "Missing"
+  sections: string[]
+  base: number
+  tds: number
+  doc_count: number
+  quarters: string[]
+  breakup: { section: string; base: number; tds: number; doc_count: number }[]
+}
+
+export async function deducteeMaster(financialYear: string, direction: TdsDirection) {
+  await ensureTdsComplianceSchema()
+  const dir = normDirection(direction)
+  if (!FY_RE.test(financialYear)) throw new Error("Financial year must be in YYYY-YY format.")
+
+  const months = monthsOfFy(financialYear)
+  let rows: any[] = []
+  for (const p of months) rows = rows.concat(await tdsDetail(p, dir))
+
+  const map = new Map<string, DeducteeMasterRow>()
+  for (const r of rows) {
+    const key = String(r.party_id || r.party_name || "—")
+    const quarter = quarterOfPeriod(String(r.doc_date).slice(0, 7))
+    let party = map.get(key)
+    if (!party) {
+      party = {
+        party_id: String(r.party_id || ""),
+        party_name: r.party_name || "—",
+        pan: r.pan || "",
+        pan_status: (r.pan_status as DeducteeMasterRow["pan_status"]) || (r.pan ? "Valid" : "Missing"),
+        sections: [],
+        base: 0,
+        tds: 0,
+        doc_count: 0,
+        quarters: [],
+        breakup: [],
+      }
+      map.set(key, party)
+    }
+    if (!party.pan && r.pan) {
+      party.pan = r.pan
+      party.pan_status = (r.pan_status as DeducteeMasterRow["pan_status"]) || "Valid"
+    }
+    party.base = round2(party.base + num(r.base))
+    party.tds = round2(party.tds + num(r.tds))
+    party.doc_count += 1
+    if (r.section && !party.sections.includes(r.section)) party.sections.push(r.section)
+    if (quarter && !party.quarters.includes(quarter)) party.quarters.push(quarter)
+
+    const bucket = party.breakup.find((b) => b.section === r.section)
+    if (bucket) {
+      bucket.base = round2(bucket.base + num(r.base))
+      bucket.tds = round2(bucket.tds + num(r.tds))
+      bucket.doc_count += 1
+    } else {
+      party.breakup.push({ section: r.section, base: round2(num(r.base)), tds: round2(num(r.tds)), doc_count: 1 })
+    }
+  }
+
+  const deductees = Array.from(map.values()).sort((a, b) => b.tds - a.tds)
+  for (const d of deductees) {
+    d.sections.sort()
+    d.quarters.sort()
+    d.breakup.sort((a, b) => b.tds - a.tds)
+  }
+
+  const totals = {
+    party_count: deductees.length,
+    base: round2(deductees.reduce((s, d) => s + d.base, 0)),
+    tds: round2(deductees.reduce((s, d) => s + d.tds, 0)),
+    pan_issues: deductees.filter((d) => d.pan_status !== "Valid").length,
+  }
+
+  return { financial_year: financialYear, direction: dir, deductees, totals }
 }
 
 export async function prepareTdsReturn(quarter: TdsQuarter, financialYear: string, direction: TdsDirection) {

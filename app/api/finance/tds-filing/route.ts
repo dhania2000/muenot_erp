@@ -20,8 +20,8 @@ export async function GET(req: NextRequest) {
   try {
     if (period) {
       const [summary, detail] = await Promise.all([
-        tdsSummary(period, direction),
-        tdsDetail(period, direction),
+        tdsSummary(period, direction, { coverage: true }),
+        tdsDetail(period, direction, { coverage: true }),
       ])
       return NextResponse.json({ summary, detail })
     }

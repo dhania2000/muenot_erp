@@ -2,10 +2,11 @@
 
 import { useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent } from "lucide-react"
+import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent, Users } from "lucide-react"
 import { currentFy, FyPicker, isDeductor, type Direction } from "./shared"
 import { DeductorBanner } from "./deductor-banner"
 import { FilingStage } from "./filing-stage"
+import { DeducteesStage } from "./deductees-stage"
 import { LiabilityStage } from "./liability-stage"
 import { ChallansStage } from "./challans-stage"
 import { ReturnsStage } from "./returns-stage"
@@ -19,10 +20,19 @@ const DIRECTIONS: { value: Direction; label: string }[] = [
   { value: "receivable", label: "Receivable · 26AS" },
 ]
 
-type StageId = "filing" | "liability" | "challans" | "returns" | "certificates" | "reconciliation" | "rules"
+type StageId =
+  | "filing"
+  | "deductees"
+  | "liability"
+  | "challans"
+  | "returns"
+  | "certificates"
+  | "reconciliation"
+  | "rules"
 
 const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?: boolean }[] = [
   { id: "filing", label: "Filing", icon: FileText },
+  { id: "deductees", label: "Deductees", icon: Users },
   { id: "liability", label: "Liability", icon: Scale },
   { id: "challans", label: "Challans", icon: Receipt, deductorOnly: true },
   { id: "returns", label: "Returns", icon: ScrollText, deductorOnly: true },
@@ -78,6 +88,9 @@ export function TdsWorkspace() {
 
         <TabsContent value="filing">
           <FilingStage direction={direction} />
+        </TabsContent>
+        <TabsContent value="deductees">
+          <DeducteesStage direction={direction} fy={fy} />
         </TabsContent>
         <TabsContent value="liability">
           <LiabilityStage direction={direction} fy={fy} />

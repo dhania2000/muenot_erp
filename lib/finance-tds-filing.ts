@@ -210,8 +210,64 @@ async function sectionAggregate(period: string, direction: TdsDirection) {
   ).catch(() => [])) as any[]
 }
 
+/**
+ * Challan coverage for a period + deductor direction (Phase 24/25): how much of
+ * each section / payee has actually been deposited with the government.
+ *
+ * It prefers explicit challan → deductee allocations (the NSDL-style mapping
+ * maintained in the Challans stage) when they exist. When a month's challan has
+ * not yet been line-allocated it falls back to distributing that month's
+ * deposited TDS across sections / payees pro-rata to their deducted TDS, so a
+ * "Paid" / "Balance" figure is always meaningful. Reads the compliance tables
+ * directly (guarded) to avoid a circular import with the compliance engine.
+ */
+async function periodCoverage(period: string, dir: TdsDirection) {
+  const challans = (await query(
+    `SELECT challan_id, challan_no, tds_amount
+       FROM tds_challans WHERE direction = ? AND period = ?`,
+    [dir, period],
+  ).catch(() => [])) as any[]
+  const depositedTds = round2(challans.reduce((s, c) => s + num(c.tds_amount), 0))
+  const challanLabel = challans.map((c) => c.challan_no || c.challan_id).filter(Boolean).join(", ")
+
+  const allocRows = (await query(
+    `SELECT section, party_id, party_name, challan_id, amount
+       FROM tds_challan_allocations WHERE direction = ? AND period = ?`,
+    [dir, period],
+  ).catch(() => [])) as any[]
+  const hasAlloc = allocRows.length > 0
+
+  const bySection = new Map<string, number>()
+  const byParty = new Map<string, { amount: number; challans: Set<string> }>()
+  for (const a of allocRows) {
+    const sec = String(a.section || "")
+    bySection.set(sec, round2((bySection.get(sec) || 0) + num(a.amount)))
+    const key = `${a.party_id || a.party_name || "—"}::${sec}`
+    const e = byParty.get(key) || { amount: 0, challans: new Set<string>() }
+    e.amount = round2(e.amount + num(a.amount))
+    if (a.challan_id) e.challans.add(String(a.challan_id))
+    byParty.set(key, e)
+  }
+  return { depositedTds, challanLabel, hasAlloc, bySection, byParty }
+}
+
+/** Deposit status of a deducted line given how much of it has been paid. */
+export function tdsPayStatus(dir: TdsDirection, tds: number, paid: number, docStatus = ""): string {
+  if (dir === "receivable") return "Credit"
+  if (tds <= 0) return docStatus || "—"
+  if (paid >= tds - 0.01) return "Paid"
+  if (paid > 0) return "Partial"
+  return "Pending"
+}
+
+export type TdsSummaryOpts = { coverage?: boolean }
+
 /** Section-wise TDS summary for a calendar-month period and direction. */
-export async function tdsSummary(period: string, direction: TdsDirection = "receivable") {
+export async function tdsSummary(
+  period: string,
+  direction: TdsDirection = "receivable",
+  opts: TdsSummaryOpts = {},
+) {
   await ensureTdsFilingSchema()
   const dir = normDirection(direction)
   const { from, to } = periodRange(period)
@@ -220,6 +276,32 @@ export async function tdsSummary(period: string, direction: TdsDirection = "rece
   const totalBase = round2(sections.reduce((s, r) => s + num(r.base), 0))
   const totalTds = round2(sections.reduce((s, r) => s + num(r.tds), 0))
   const invoiceCount = sections.reduce((s, r) => s + Number(r.invoice_count || 0), 0)
+
+  const coverage = opts.coverage && dir !== "receivable" ? await periodCoverage(period, dir) : null
+
+  const sectionsOut = sections.map((r) => {
+    const tds = round2(num(r.tds))
+    let paid = 0
+    if (coverage) {
+      paid = coverage.hasAlloc
+        ? coverage.bySection.get(r.section) || 0
+        : totalTds > 0
+          ? round2(coverage.depositedTds * (tds / totalTds))
+          : 0
+    }
+    return {
+      section: r.section,
+      invoice_count: Number(r.invoice_count || 0),
+      base: round2(num(r.base)),
+      tds,
+      avg_rate: round2(num(r.avg_rate)),
+      paid: round2(paid),
+      balance: round2(tds - paid),
+      status: tdsPayStatus(dir, tds, round2(paid)),
+    }
+  })
+
+  const totalPaid = round2(sectionsOut.reduce((s, r) => s + r.paid, 0))
 
   const [existing] = (await query(`SELECT * FROM tds_filings WHERE period = ? AND direction = ? LIMIT 1`, [
     period,
@@ -230,14 +312,14 @@ export async function tdsSummary(period: string, direction: TdsDirection = "rece
     period,
     direction: dir,
     range: { from, to },
-    totals: { invoice_count: invoiceCount, total_base: totalBase, total_tds: totalTds },
-    sections: sections.map((r) => ({
-      section: r.section,
-      invoice_count: Number(r.invoice_count || 0),
-      base: round2(num(r.base)),
-      tds: round2(num(r.tds)),
-      avg_rate: round2(num(r.avg_rate)),
-    })),
+    totals: {
+      invoice_count: invoiceCount,
+      total_base: totalBase,
+      total_tds: totalTds,
+      total_paid: totalPaid,
+      total_balance: round2(totalTds - totalPaid),
+    },
+    sections: sectionsOut,
     filing: existing
       ? { filing_id: existing.filing_id, status: existing.status, challan_no: existing.challan_no, filed_at: existing.filed_at }
       : null,
@@ -251,10 +333,15 @@ export async function tdsSummary(period: string, direction: TdsDirection = "rece
  * bill (payable) or invoice (receivable) it came from. Payable rows carry the
  * vendor PAN/GSTIN snapshot frozen on the purchase bill (Phase 47).
  */
-export async function tdsDetail(period: string, direction: TdsDirection = "receivable") {
+export async function tdsDetail(
+  period: string,
+  direction: TdsDirection = "receivable",
+  opts: TdsSummaryOpts = {},
+) {
   await ensureTdsFilingSchema()
   const dir = normDirection(direction)
   const { from, to } = periodRange(period)
+  let out: any[] = []
 
   if (dir === "employee") {
     // Line-level payee register: one row per FTE invoice and freelance invoice
@@ -289,7 +376,7 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
        ORDER BY tds DESC, sort_date ASC`,
       [from, to, from, to],
     ).catch(() => [])) as any[]
-    return rows.map((r) => {
+    out = rows.map((r) => {
       const pan = normalizePan(r.pan)
       return {
         source: r.source,
@@ -347,7 +434,7 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
        ORDER BY tds DESC, sort_date ASC`,
       [from, to, from, to],
     ).catch(() => [])) as any[]
-    return rows.map((r) => {
+    out = rows.map((r) => {
       const pan = normalizePan(r.pan)
       return {
         source: r.source,
@@ -384,7 +471,7 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
       ORDER BY tds_amount DESC, invoice_date ASC`,
     [from, to],
   ).catch(() => [])) as any[]
-  return rows.map((r) => ({
+  out = rows.map((r) => ({
     source: "Sales Invoice",
     doc_id: r.doc_id,
     doc_date: r.doc_date,
@@ -402,6 +489,57 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
     tds: round2(num(r.tds)),
     status: r.status || "",
   }))
+
+  return enrichDetailCoverage(out, period, dir, opts)
+}
+
+/**
+ * Adds per-document Paid / Balance / Challan / deposit-Status (Phase 24) to
+ * payee-wise detail rows. Paid is derived from challan → deductee allocations
+ * for the period when present, otherwise distributed pro-rata to each line's
+ * deducted TDS. Receivable lines carry no deposit obligation, so they report a
+ * "Credit" status with zero balance owed.
+ */
+async function enrichDetailCoverage(
+  out: any[],
+  period: string,
+  dir: TdsDirection,
+  opts: TdsSummaryOpts,
+) {
+  if (!opts.coverage || dir === "receivable") {
+    return out.map((r) => ({
+      ...r,
+      paid: 0,
+      balance: dir === "receivable" ? 0 : round2(num(r.tds)),
+      challan: "",
+      pay_status: tdsPayStatus(dir, round2(num(r.tds)), 0, r.status),
+    }))
+  }
+
+  const coverage = await periodCoverage(period, dir)
+  const totalTds = round2(out.reduce((s, r) => s + num(r.tds), 0))
+  const groupTds = new Map<string, number>()
+  for (const r of out) {
+    const key = `${r.party_id || r.party_name || "—"}::${r.section}`
+    groupTds.set(key, round2((groupTds.get(key) || 0) + num(r.tds)))
+  }
+
+  return out.map((r) => {
+    const tds = round2(num(r.tds))
+    const key = `${r.party_id || r.party_name || "—"}::${r.section}`
+    let paid = 0
+    let challan = ""
+    if (coverage.hasAlloc) {
+      const e = coverage.byParty.get(key)
+      const gTds = groupTds.get(key) || 0
+      paid = e && gTds > 0 ? round2(e.amount * (tds / gTds)) : 0
+      challan = e && e.challans.size ? Array.from(e.challans).join(", ") : ""
+    } else {
+      paid = totalTds > 0 ? round2(coverage.depositedTds * (tds / totalTds)) : 0
+      challan = paid > 0 ? coverage.challanLabel : ""
+    }
+    return { ...r, paid, balance: round2(tds - paid), challan, pay_status: tdsPayStatus(dir, tds, paid, r.status) }
+  })
 }
 
 export async function listTdsFilings(direction?: TdsDirection) {

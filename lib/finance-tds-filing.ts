@@ -1,6 +1,7 @@
 import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { logFinanceEvent } from "@/lib/finance-audit"
+import { normalizePan, panStatus, requiresNoPanRate } from "@/lib/pan"
 
 /**
  * TDS filing engine (server-only) — Phase 3 (receivable) + purchase extension
@@ -288,22 +289,27 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
        ORDER BY tds DESC, sort_date ASC`,
       [from, to, from, to],
     ).catch(() => [])) as any[]
-    return rows.map((r) => ({
-      source: r.source,
-      doc_id: r.doc_id,
-      doc_date: r.doc_date,
-      doc_ref: r.doc_ref,
-      financial_year: r.financial_year,
-      party_id: r.party_id,
-      party_name: r.party_legal_name || r.party_name || "—",
-      pan: r.pan || "",
-      gstin: r.gstin || "",
-      section: r.section,
-      base: round2(num(r.base)),
-      rate: round2(num(r.rate)),
-      tds: round2(num(r.tds)),
-      status: r.status || "",
-    }))
+    return rows.map((r) => {
+      const pan = normalizePan(r.pan)
+      return {
+        source: r.source,
+        doc_id: r.doc_id,
+        doc_date: r.doc_date,
+        doc_ref: r.doc_ref,
+        financial_year: r.financial_year,
+        party_id: r.party_id,
+        party_name: r.party_legal_name || r.party_name || "—",
+        pan,
+        pan_status: panStatus(pan),
+        no_pan: requiresNoPanRate(pan),
+        gstin: r.gstin || "",
+        section: r.section,
+        base: round2(num(r.base)),
+        rate: round2(num(r.rate)),
+        tds: round2(num(r.tds)),
+        status: r.status || "",
+      }
+    })
   }
 
   if (dir === "payable") {
@@ -341,22 +347,27 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
        ORDER BY tds DESC, sort_date ASC`,
       [from, to, from, to],
     ).catch(() => [])) as any[]
-    return rows.map((r) => ({
-      source: r.source,
-      doc_id: r.doc_id,
-      doc_date: r.doc_date,
-      doc_ref: r.doc_ref,
-      financial_year: r.financial_year,
-      party_id: r.party_id,
-      party_name: r.party_legal_name || r.party_name || "—",
-      pan: r.pan || "",
-      gstin: r.gstin || "",
-      section: r.section,
-      base: round2(num(r.base)),
-      rate: round2(num(r.rate)),
-      tds: round2(num(r.tds)),
-      status: r.status || "",
-    }))
+    return rows.map((r) => {
+      const pan = normalizePan(r.pan)
+      return {
+        source: r.source,
+        doc_id: r.doc_id,
+        doc_date: r.doc_date,
+        doc_ref: r.doc_ref,
+        financial_year: r.financial_year,
+        party_id: r.party_id,
+        party_name: r.party_legal_name || r.party_name || "—",
+        pan,
+        pan_status: panStatus(pan),
+        no_pan: requiresNoPanRate(pan),
+        gstin: r.gstin || "",
+        section: r.section,
+        base: round2(num(r.base)),
+        rate: round2(num(r.rate)),
+        tds: round2(num(r.tds)),
+        status: r.status || "",
+      }
+    })
   }
 
   const rows = (await query(
@@ -382,6 +393,8 @@ export async function tdsDetail(period: string, direction: TdsDirection = "recei
     party_id: r.party_id,
     party_name: r.party_name || "—",
     pan: "",
+    pan_status: "Missing" as const,
+    no_pan: false,
     gstin: "",
     section: r.section,
     base: round2(num(r.base)),

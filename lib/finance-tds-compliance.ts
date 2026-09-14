@@ -5,6 +5,30 @@ import { logFinanceEvent } from "@/lib/finance-audit"
 import { tdsSummary, tdsDetail, type TdsDirection } from "@/lib/finance-tds-filing"
 import { postLines, type PostingLine } from "@/lib/finance-posting"
 import { ensureExpensePostingAccounts } from "@/lib/finance-accounts"
+import { getSetting } from "@/lib/settings/server"
+import { normalizePan } from "@/lib/pan"
+
+export type DeductorIdentity = { tan: string; pan: string; name: string; address: string }
+
+/**
+ * The deductor's statutory identity, read from company_settings. This is the
+ * single source of truth stamped onto every return and certificate — it is
+ * never captured per-transaction.
+ */
+export async function getDeductorIdentity(): Promise<DeductorIdentity> {
+  const [tan, pan, name, company] = await Promise.all([
+    getSetting("tds.deductor_tan"),
+    getSetting("tds.deductor_pan"),
+    getSetting("tds.deductor_name"),
+    getSetting("company.name"),
+  ])
+  return {
+    tan: String(tan || "").trim().toUpperCase(),
+    pan: normalizePan(pan),
+    name: String(name || company || "").trim(),
+    address: "",
+  }
+}
 
 /**
  * TDS downstream compliance engine (server-only).
@@ -543,6 +567,193 @@ async function depositByPeriod(direction: TdsDirection, financialYear: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 17 — challan allocation
+//
+// A single challan settles many deductee lines. NSDL returns (26Q/24Q/27Q)
+// require every deductee row to point at the challan that deposited its tax.
+// We map a challan onto the deductee/section rows of its own tax period, so a
+// challan can never be over-allocated and the return reads back exactly how
+// much of each challan belongs to it.
+// ---------------------------------------------------------------------------
+
+export type TdsAllocation = {
+  id: number
+  challan_id: string
+  period: string
+  party_id: string | null
+  party_name: string | null
+  section: string | null
+  amount: number
+}
+
+function mapAllocation(r: any): TdsAllocation {
+  return {
+    id: Number(r.id),
+    challan_id: r.challan_id,
+    period: r.period,
+    party_id: r.party_id ?? null,
+    party_name: r.party_name ?? null,
+    section: r.section ?? null,
+    amount: round2(num(r.amount)),
+  }
+}
+
+export async function listChallanAllocations(challanId: string): Promise<TdsAllocation[]> {
+  await ensureTdsComplianceSchema()
+  const rows = (await query(
+    `SELECT * FROM tds_challan_allocations WHERE challan_id = ? ORDER BY id ASC`,
+    [challanId],
+  ).catch(() => [])) as any[]
+  return rows.map(mapAllocation)
+}
+
+/**
+ * The unallocated headroom of a challan: its TDS amount minus everything it has
+ * already been mapped to.
+ */
+export async function challanAllocatable(challanId: string): Promise<{
+  challan_id: string
+  tds_amount: number
+  allocated: number
+  unallocated: number
+}> {
+  await ensureTdsComplianceSchema()
+  const [c] = (await query(`SELECT * FROM tds_challans WHERE challan_id = ? LIMIT 1`, [challanId])) as any[]
+  if (!c) throw new Error("Challan not found.")
+  const [{ total = 0 } = {}] = (await query(
+    `SELECT COALESCE(SUM(amount),0) AS total FROM tds_challan_allocations WHERE challan_id = ?`,
+    [challanId],
+  ).catch(() => [{ total: 0 }])) as any[]
+  const tds = round2(num(c.tds_amount))
+  const allocated = round2(num(total))
+  return { challan_id: challanId, tds_amount: tds, allocated, unallocated: round2(tds - allocated) }
+}
+
+/**
+ * The open deductee/section rows for a challan's tax period, each carrying how
+ * much of that row is still unmatched by any challan. This drives the
+ * allocation UI and the auto-allocate pass.
+ */
+export async function allocationCandidates(challanId: string) {
+  await ensureTdsComplianceSchema()
+  const [c] = (await query(`SELECT * FROM tds_challans WHERE challan_id = ? LIMIT 1`, [challanId])) as any[]
+  if (!c) throw new Error("Challan not found.")
+  const dir = normDirection(c.direction) as TdsDirection
+  const detail = await tdsDetail(c.period, dir)
+
+  const byRow = new Map<string, { party_id: string; party_name: string; section: string; tds: number }>()
+  for (const r of detail) {
+    const key = `${r.party_id || r.party_name || "—"}::${r.section}`
+    const prev = byRow.get(key)
+    if (prev) prev.tds = round2(prev.tds + num(r.tds))
+    else
+      byRow.set(key, {
+        party_id: String(r.party_id || ""),
+        party_name: r.party_name || "—",
+        section: String(r.section),
+        tds: round2(num(r.tds)),
+      })
+  }
+
+  // How much of each row is already covered by ANY challan of this period.
+  const existing = (await query(
+    `SELECT party_id, party_name, section, COALESCE(SUM(amount),0) AS allocated
+       FROM tds_challan_allocations WHERE direction = ? AND period = ?
+       GROUP BY party_id, party_name, section`,
+    [dir, c.period],
+  ).catch(() => [])) as any[]
+  const coveredBy = new Map<string, number>()
+  for (const e of existing) {
+    const key = `${e.party_id || e.party_name || "—"}::${e.section}`
+    coveredBy.set(key, round2(num(e.allocated)))
+  }
+
+  return Array.from(byRow.entries()).map(([key, row]) => {
+    const covered = coveredBy.get(key) || 0
+    return { ...row, covered: round2(covered), open: round2(Math.max(0, row.tds - covered)) }
+  })
+}
+
+export async function allocateChallan(input: {
+  challanId: string
+  lines: { party_id?: string | null; party_name?: string | null; section?: string | null; amount: number }[]
+  actorId?: number | null
+}) {
+  await ensureTdsComplianceSchema()
+  const [c] = (await query(`SELECT * FROM tds_challans WHERE challan_id = ? LIMIT 1`, [input.challanId])) as any[]
+  if (!c) throw new Error("Challan not found.")
+  const dir = normDirection(c.direction)
+  const formType = returnFormFor(dir as TdsDirection)
+
+  const lines = input.lines.map((l) => ({ ...l, amount: round2(l.amount) })).filter((l) => l.amount > 0)
+  if (lines.length === 0) throw new Error("Nothing to allocate.")
+
+  const requested = round2(lines.reduce((s, l) => s + l.amount, 0))
+  const head = await challanAllocatable(input.challanId)
+  if (requested > head.unallocated + 0.01) {
+    throw new Error(
+      `Allocation ${requested.toFixed(2)} exceeds the challan's unallocated balance ${head.unallocated.toFixed(2)}.`,
+    )
+  }
+
+  for (const l of lines) {
+    await query(
+      `INSERT INTO tds_challan_allocations
+         (challan_id, direction, period, party_id, party_name, section, form_type, amount)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [input.challanId, dir, c.period, l.party_id || null, l.party_name || null, l.section || null, formType, l.amount],
+    )
+  }
+
+  await logFinanceEvent({
+    entityType: "tds_challan",
+    entityRef: input.challanId,
+    type: "allocated",
+    summary: `Allocated ${requested.toFixed(2)} of challan ${input.challanId} across ${lines.length} deductee line(s)`,
+    amount: requested,
+    actorId: input.actorId ?? null,
+  })
+  return { ok: true, allocated: requested }
+}
+
+/**
+ * Greedily map a challan's unallocated balance onto its period's open deductee
+ * rows, largest first. Lets a user allocate a full challan in one click.
+ */
+export async function autoAllocateChallan(challanId: string, actorId?: number | null) {
+  const head = await challanAllocatable(challanId)
+  if (head.unallocated <= 0) return { ok: true, allocated: 0 }
+  const candidates = (await allocationCandidates(challanId))
+    .filter((r) => r.open > 0)
+    .sort((a, b) => b.open - a.open)
+
+  let remaining = head.unallocated
+  const lines: { party_id: string; party_name: string; section: string; amount: number }[] = []
+  for (const r of candidates) {
+    if (remaining <= 0) break
+    const take = round2(Math.min(remaining, r.open))
+    if (take <= 0) continue
+    lines.push({ party_id: r.party_id, party_name: r.party_name, section: r.section, amount: take })
+    remaining = round2(remaining - take)
+  }
+  if (lines.length === 0) return { ok: true, allocated: 0 }
+  return allocateChallan({ challanId, lines, actorId })
+}
+
+export async function clearChallanAllocations(challanId: string, actorId?: number | null) {
+  await ensureTdsComplianceSchema()
+  await query(`DELETE FROM tds_challan_allocations WHERE challan_id = ?`, [challanId])
+  await logFinanceEvent({
+    entityType: "tds_challan",
+    entityRef: challanId,
+    type: "allocation_cleared",
+    summary: `Cleared challan ${challanId} allocations`,
+    actorId: actorId ?? null,
+  })
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
 // Liability register
 // ---------------------------------------------------------------------------
 
@@ -676,9 +887,12 @@ export async function prepareTdsReturn(quarter: TdsQuarter, financialYear: strin
     [formType, quarter, financialYear],
   )) as any[]
 
+  const deductor = await getDeductorIdentity()
+
   return {
     form_type: formType,
     direction: dir,
+    deductor,
     quarter,
     financial_year: financialYear,
     months,
@@ -821,6 +1035,7 @@ export async function previewCertificates(opts: {
   }
 
   const quarter = opts.formType === "16A" ? opts.quarter ?? null : null
+  const deductor = await getDeductorIdentity()
   const existing = (await query(
     `SELECT party_id, certificate_id, status FROM tds_certificates
        WHERE form_type = ? AND financial_year = ? AND ${quarter ? "quarter = ?" : "quarter IS NULL"}`,
@@ -848,6 +1063,7 @@ export async function previewCertificates(opts: {
   return {
     form_type: opts.formType,
     direction: dir,
+    deductor,
     quarter,
     financial_year: opts.financialYear,
     deductees,
@@ -883,7 +1099,9 @@ export async function generateCertificates(opts: {
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`,
         [
           certificateId, opts.formType, dir, quarter, opts.financialYear, d.party_id || null, d.party_name,
-          d.pan || null, d.sections, d.base, d.tds, "Issued", JSON.stringify(d), opts.actorId ?? null,
+          d.pan || null, d.sections, d.base, d.tds, "Issued",
+          JSON.stringify({ ...d, deductor: preview.deductor, form_type: opts.formType, financial_year: opts.financialYear, quarter }),
+          opts.actorId ?? null,
         ],
       )
       created += 1

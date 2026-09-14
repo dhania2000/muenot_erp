@@ -40,6 +40,8 @@ export async function POST(req: NextRequest) {
       interest: Number(body.interest || 0),
       lateFee: Number(body.late_fee || 0),
       paymentMode: body.payment_mode ?? null,
+      bankName: body.bank_name ?? null,
+      paymentRef: body.payment_ref ?? null,
       note: body.note ?? null,
       actorId: session.userId,
     })

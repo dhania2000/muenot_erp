@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Loader2Icon } from "lucide-react"
-import { inr } from "@/lib/finance-calc"
+import { inr, financialYearFor } from "@/lib/finance-calc"
 import type { FieldDef, LookupConfig, ModuleConfig, VisibleWhen } from "@/lib/finance-schema"
 
 type FormState = Record<string, string>
@@ -102,6 +102,10 @@ export function FinanceModuleDialog({
     [cfg],
   )
   const computedFields = useMemo(() => cfg.fields.filter((f) => f.computed), [cfg])
+  const computedKeys = useMemo(
+    () => new Set(cfg.fields.filter((f) => f.computed).map((f) => f.key)),
+    [cfg],
+  )
   const sections = useMemo(() => sectionsOf(cfg), [cfg])
 
   useEffect(() => {
@@ -121,7 +125,22 @@ export function FinanceModuleDialog({
   }, [open, record, cfg, checkboxKeys])
 
   function update(key: string, value: string) {
-    setForm((prev) => ({ ...prev, [key]: value }))
+    setForm((prev) => {
+      const next = { ...prev, [key]: value }
+      // Selecting the module's date (e.g. Invoice date) auto-derives the
+      // financial year, so users never hand-enter it. Only fill when the FY
+      // field is empty or still matches the FY derived from the previous date,
+      // so a manual override is never clobbered.
+      const fyKey = cfg.financialYearColumn
+      if (fyKey && key === cfg.dateColumn && fyKey in next && !computedKeys.has(fyKey)) {
+        const prevDerived = financialYearFor(prev[key] ?? "")
+        const currentFy = (prev[fyKey] ?? "").trim()
+        if (!currentFy || currentFy === prevDerived) {
+          next[fyKey] = financialYearFor(value)
+        }
+      }
+      return next
+    })
   }
 
   /**

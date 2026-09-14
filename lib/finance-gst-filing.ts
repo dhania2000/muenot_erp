@@ -137,22 +137,45 @@ function quarterLabel(m: number) {
  * always agree. Safe when the register is empty / not yet created.
  */
 async function gstInputAggregates(period: string) {
+  const empty = {
+    input_net: 0,
+    input_gross: 0,
+    eligible: 0,
+    reversal: 0,
+    itc_cgst: 0,
+    itc_sgst: 0,
+    itc_igst: 0,
+    itc_cess: 0,
+    rcm: 0,
+  }
   try {
     await ensureGstInputSchema()
     const [row] = (await query(
       `SELECT COALESCE(SUM(itc_net),0) AS input_net,
+              COALESCE(SUM(itc_gross),0) AS input_gross,
+              COALESCE(SUM(itc_eligible_amount),0) AS eligible,
               COALESCE(SUM(itc_reversal_amount),0) AS reversal,
+              COALESCE(SUM(itc_cgst),0) AS itc_cgst,
+              COALESCE(SUM(itc_sgst),0) AS itc_sgst,
+              COALESCE(SUM(itc_igst),0) AS itc_igst,
+              COALESCE(SUM(itc_cess),0) AS itc_cess,
               COALESCE(SUM(CASE WHEN rcm_applicable = 1 THEN total_gst ELSE 0 END),0) AS rcm
          FROM finance_gst_input WHERE period = ?`,
       [period],
     ).catch(() => [{}])) as any[]
     return {
       input_net: round2(num(row?.input_net)),
+      input_gross: round2(num(row?.input_gross)),
+      eligible: round2(num(row?.eligible)),
       reversal: round2(num(row?.reversal)),
+      itc_cgst: round2(num(row?.itc_cgst)),
+      itc_sgst: round2(num(row?.itc_sgst)),
+      itc_igst: round2(num(row?.itc_igst)),
+      itc_cess: round2(num(row?.itc_cess)),
       rcm: round2(num(row?.rcm)),
     }
   } catch {
-    return { input_net: 0, reversal: 0, rcm: 0 }
+    return empty
   }
 }
 
@@ -313,6 +336,76 @@ export async function gstSummary(period: string) {
   const netLiability = round2(outputGst + agg.rcm - agg.input_net)
   const balancePayable = round2(netLiability - taxPaid)
 
+  // Invoice-level rows shaped once and reused for both the document register and
+  // the GSTR-1 data sections below, so the two never diverge.
+  const mappedInvoices = invoices.map((r) => {
+    const taxableAmt = round2(num(r.taxable_amount))
+    const cgstAmt = round2(num(r.cgst_amount))
+    const sgstAmt = round2(num(r.sgst_amount))
+    const igstAmt = round2(num(r.igst_amount))
+    const cessAmt = round2(num(r.cess_amount))
+    const taxTotal = round2(cgstAmt + sgstAmt + igstAmt)
+    // Effective GST rate derived from the document's own tax vs taxable value,
+    // so a nil / exempt invoice reports 0% instead of a blank.
+    const gstRate = taxableAmt > 0 ? Math.round((taxTotal / taxableAmt) * 100) : 0
+    const gstin = r.client_gstin || ""
+    return {
+      invoice_id: r.invoice_id,
+      invoice_date: r.invoice_date,
+      invoice_type: r.invoice_type,
+      client_name: r.client_name || "—",
+      client_legal_name: r.client_legal_name || r.client_name || "—",
+      client_gstin: gstin,
+      // GST registration status of the customer for the return.
+      gst_registration: gstin ? "Registered" : "Unregistered",
+      // GST type = the supply split that decides CGST+SGST vs IGST.
+      gst_type: r.supply_type || "Intra-State",
+      gst_rate: gstRate,
+      project_name: r.project_name || "",
+      place_of_supply: r.place_of_supply || "",
+      supply_type: r.supply_type,
+      status: r.invoice_status,
+      taxable: taxableAmt,
+      cgst: cgstAmt,
+      sgst: sgstAmt,
+      igst: igstAmt,
+      cess: cessAmt,
+      total: round2(num(r.invoice_total)),
+    }
+  })
+
+  const sections = buildGstr1Sections(mappedInvoices)
+
+  // ── GSTR-3B (Phase 4) ────────────────────────────────────────────────────
+  // Auto-computed, NOT a re-entry screen. Outward side comes from the same
+  // sales-invoice totals as GSTR-1 (net of credit notes); the ITC side is read
+  // straight from the shared GST Input register (Purchase Bills + Expenses), so
+  // there is no duplicate input entry. Net tax payable == the dashboard's Net
+  // GST liability by construction.
+  const netItc = agg.input_net
+  const gstr3b = {
+    outward: {
+      taxable: round2(taxable - round2(num(totals?.cn_taxable))),
+      cgst,
+      sgst,
+      igst,
+      cess,
+      credit_note_tax: creditNoteTax,
+      net_output_tax: outputGst,
+    },
+    rcm_liability: agg.rcm,
+    itc: {
+      eligible: agg.eligible,
+      cgst: agg.itc_cgst,
+      sgst: agg.itc_sgst,
+      igst: agg.itc_igst,
+      cess: agg.itc_cess,
+      reversal: agg.reversal,
+      net: netItc,
+    },
+    net_tax_payable: netLiability,
+  }
+
   return {
     period,
     financial_year: financialYearFor(`${period}-01`),
@@ -355,41 +448,9 @@ export async function gstSummary(period: string) {
       taxable: round2(num(r.taxable)),
       tax: round2(num(r.tax)),
     })),
-    invoices: invoices.map((r) => {
-      const taxableAmt = round2(num(r.taxable_amount))
-      const cgstAmt = round2(num(r.cgst_amount))
-      const sgstAmt = round2(num(r.sgst_amount))
-      const igstAmt = round2(num(r.igst_amount))
-      const cessAmt = round2(num(r.cess_amount))
-      const taxTotal = round2(cgstAmt + sgstAmt + igstAmt)
-      // Effective GST rate derived from the document's own tax vs taxable value,
-      // so a nil / exempt invoice reports 0% instead of a blank.
-      const gstRate = taxableAmt > 0 ? Math.round((taxTotal / taxableAmt) * 100) : 0
-      const gstin = r.client_gstin || ""
-      return {
-        invoice_id: r.invoice_id,
-        invoice_date: r.invoice_date,
-        invoice_type: r.invoice_type,
-        client_name: r.client_name || "—",
-        client_legal_name: r.client_legal_name || r.client_name || "—",
-        client_gstin: gstin,
-        // GST registration status of the customer for the return.
-        gst_registration: gstin ? "Registered" : "Unregistered",
-        // GST type = the supply split that decides CGST+SGST vs IGST.
-        gst_type: r.supply_type || "Intra-State",
-        gst_rate: gstRate,
-        project_name: r.project_name || "",
-        place_of_supply: r.place_of_supply || "",
-        supply_type: r.supply_type,
-        status: r.invoice_status,
-        taxable: taxableAmt,
-        cgst: cgstAmt,
-        sgst: sgstAmt,
-        igst: igstAmt,
-        cess: cessAmt,
-        total: round2(num(r.invoice_total)),
-      }
-    }),
+    invoices: mappedInvoices,
+    sections,
+    gstr3b,
     excluded: {
       in_period: Number(diag?.in_period ?? 0),
       draft: Number(diag?.draft ?? 0),
@@ -448,6 +509,81 @@ export async function fileGstReturn(period: string, arn: string | null, actorId?
     actorId: actorId ?? null,
   })
   return { filing_id: filingId, period }
+}
+
+type Gstr1Invoice = {
+  invoice_id: string
+  invoice_date: any
+  invoice_type: string
+  client_name: string
+  client_legal_name: string
+  client_gstin: string
+  gst_registration: string
+  gst_type: string
+  gst_rate: number
+  place_of_supply: string
+  supply_type: any
+  taxable: number
+  cgst: number
+  sgst: number
+  igst: number
+  cess: number
+  total: number
+}
+
+type SectionBucket = {
+  key: string
+  title: string
+  description: string
+  count: number
+  taxable: number
+  tax: number
+  rows: Gstr1Invoice[]
+}
+
+/**
+ * Phase 3 — organize the period's outward documents into the standard GSTR-1
+ * data sections, derived ENTIRELY from fields the sales invoice already carries
+ * (invoice type, customer GSTIN, tax split). No fabricated fields:
+ *
+ *   B2B      — registered customer (has GSTIN), taxable supply
+ *   B2C      — unregistered customer, taxable supply
+ *   Credit   — Credit Notes (reduce output liability)
+ *   Debit    — Debit Notes (increase output liability)
+ *   Nil/Exempt/Zero-Rated — documents with taxable value but ₹0 GST
+ *
+ * Export is intentionally NOT a separate bucket: the sales-invoice schema has no
+ * export / overseas flag, so zero-tax supplies fold into Nil/Exempt/Zero-Rated
+ * rather than inventing an export classification the source data can't support.
+ */
+function buildGstr1Sections(rows: Gstr1Invoice[]) {
+  const mk = (key: string, title: string, description: string): SectionBucket => ({
+    key, title, description, count: 0, taxable: 0, tax: 0, rows: [],
+  })
+  const b2b = mk("b2b", "B2B", "Registered customers (GSTIN on file)")
+  const b2c = mk("b2c", "B2C", "Unregistered customers")
+  const nil = mk("nil", "Nil / Exempt / Zero-Rated", "Taxable value with ₹0 GST")
+  const credit = mk("credit_notes", "Credit Notes", "Reduce output tax liability")
+  const debit = mk("debit_notes", "Debit Notes", "Increase output tax liability")
+
+  const push = (b: SectionBucket, r: Gstr1Invoice) => {
+    b.rows.push(r)
+    b.count += 1
+    b.taxable = round2(b.taxable + num(r.taxable))
+    b.tax = round2(b.tax + num(r.cgst) + num(r.sgst) + num(r.igst) + num(r.cess))
+  }
+
+  for (const r of rows) {
+    const type = String(r.invoice_type || "")
+    if (type === "Credit Note") { push(credit, r); continue }
+    if (type === "Debit Note") { push(debit, r); continue }
+    const tax = num(r.cgst) + num(r.sgst) + num(r.igst) + num(r.cess)
+    if (num(r.taxable) > 0 && tax <= 0) { push(nil, r); continue }
+    if (r.client_gstin) push(b2b, r)
+    else push(b2c, r)
+  }
+
+  return [b2b, b2c, nil, credit, debit]
 }
 
 function financialYearFor(dateStr: string) {

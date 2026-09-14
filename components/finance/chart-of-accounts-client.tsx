@@ -37,7 +37,7 @@ import {
 import {
   BookOpen, Coins, Plus, Pencil, Trash2, ChevronRight, ChevronDown,
   Lock, Loader2Icon, CornerDownRight, ShieldCheck, GitMerge, Settings2,
-  Download, Upload, SlidersHorizontal, Network, List,
+  Download, Upload, SlidersHorizontal, Network, List, CalendarClock,
 } from "lucide-react"
 import { inr, inr0, financialYearFor } from "@/lib/finance-calc"
 import {
@@ -49,6 +49,7 @@ import { exportRowsToExcel } from "@/lib/excel-export"
 import { CoaMappingDialog } from "@/components/finance/coa-mapping-dialog"
 import { CoaMergeDialog } from "@/components/finance/coa-merge-dialog"
 import { CoaImportDialog } from "@/components/finance/coa-import-dialog"
+import { CoaOpeningBalancesDialog } from "@/components/finance/coa-opening-balances-dialog"
 
 type Row = Record<string, any>
 type ApiShape = { rows: Row[]; summary: any }
@@ -185,6 +186,7 @@ export function ChartOfAccountsClient() {
   const [mergeOpen, setMergeOpen] = useState(false)
   const [mergeSource, setMergeSource] = useState<Row | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [obYearsAccount, setObYearsAccount] = useState<Row | null>(null)
   const [viewMode, setViewMode] = useState<"tree" | "flat">("tree")
   const [showFilters, setShowFilters] = useState(false)
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
@@ -733,6 +735,15 @@ export function ChartOfAccountsClient() {
                                   <Button variant="ghost" size="icon" aria-label="Add child account" onClick={() => openChild(row)}>
                                     <Plus className="size-4" />
                                   </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label="Opening balances by year"
+                                    title="Opening balances by financial year"
+                                    onClick={() => setObYearsAccount(row)}
+                                  >
+                                    <CalendarClock className="size-4" />
+                                  </Button>
                                   <Button variant="ghost" size="icon" aria-label="Edit" onClick={() => openEdit(row)}>
                                     <Pencil className="size-4" />
                                   </Button>
@@ -794,6 +805,16 @@ export function ChartOfAccountsClient() {
         rows={rows}
         onSaved={() => {
           setDialogOpen(false)
+          mutate()
+          mutateBalances()
+        }}
+      />
+
+      <CoaOpeningBalancesDialog
+        open={!!obYearsAccount}
+        onOpenChange={(v) => !v && setObYearsAccount(null)}
+        account={obYearsAccount}
+        onSaved={() => {
           mutate()
           mutateBalances()
         }}

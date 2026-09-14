@@ -20,6 +20,15 @@ import { financialYearFor } from "@/lib/finance-calc"
 // It creates NO parallel ledger and adds NO new account key — an imported row is
 // matched to an existing account by account_id or account_code and updated in
 // place, otherwise created with a server-generated COA-#### id.
+//
+// Two integrity checks run across the WHOLE uploaded file (not just against the
+// database), because a bad batch can be internally inconsistent before a single
+// row is committed:
+//   1. a code that appears on more than one row in the file (would create two
+//      accounts sharing a code the posting engine resolves by);
+//   2. a parent hierarchy that forms a cycle across rows in the same batch
+//      (A → B → A), which the per-row database guard cannot see until the rows
+//      are committed.
 // ---------------------------------------------------------------------------
 
 type RawRow = {
@@ -58,6 +67,20 @@ function parseDate(value: string): string | null {
   return null
 }
 
+/** A planned create/update after the file has been parsed and validated. */
+type Plan = {
+  rowNo: number
+  label: string
+  merged: Record<string, any>
+  target: any | null
+  parentRaw: string
+  /** Stable node key for cycle detection: the account_id for an update, or a
+   * provisional NEW#<row> token for a create. */
+  nodeKey: string
+  /** The node key of this row's intended parent within the batch, or null. */
+  parentKey: string | null
+}
+
 export async function POST(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -87,10 +110,13 @@ export async function POST(req: NextRequest) {
     if (r.account_code) byCode.set(String(r.account_code).toLowerCase(), r)
   }
 
-  let created = 0
-  let updated = 0
   const errors: { row: number; account: string; message: string }[] = []
-  const postedAccountIds: string[] = []
+
+  // --- Pass 1: parse + plan every row, catching duplicate codes in the file --
+  const plans: Plan[] = []
+  const planByKey = new Map<string, Plan>()
+  const planByCode = new Map<string, Plan>()
+  const codeFirstSeen = new Map<string, number>()
 
   for (let i = 0; i < rows.length; i++) {
     const raw = rows[i]
@@ -99,23 +125,134 @@ export async function POST(req: NextRequest) {
     const code = (raw.account_code ?? "").toString().trim()
     const label = name || code || `Row ${rowNo}`
 
+    if (!name) {
+      errors.push({ row: rowNo, account: label, message: "Account name is required." })
+      continue
+    }
+
+    // Duplicate account code within the uploaded file (not just vs. the DB).
+    if (code) {
+      const key = code.toLowerCase()
+      const first = codeFirstSeen.get(key)
+      if (first !== undefined) {
+        errors.push({
+          row: rowNo,
+          account: label,
+          message: `Duplicate account code "${code}" in the import file (already used on row ${first}). Codes must be unique.`,
+        })
+        continue
+      }
+      codeFirstSeen.set(key, rowNo)
+    }
+
+    const group = normType(raw.account_group ?? "") || "Asset"
+    const nature = natureForAccountType(group)
+
+    // Match an existing account: prefer an explicit id, then a unique code.
+    const target =
+      (raw.account_id && byId.get(String(raw.account_id).trim())) || (code && byCode.get(code.toLowerCase())) || null
+
+    const status = VALID_STATUS.has((raw.active_status ?? "").trim()) ? (raw.active_status ?? "").trim() : "Active"
+    const opening = toNumber(raw.opening_balance ?? "")
+    const obDate = parseDate(raw.opening_balance_date ?? "")
+    const finYear = financialYearFor(obDate ?? new Date().toISOString().slice(0, 10))
+
+    const merged: Record<string, any> = {
+      id: target?.id,
+      account_id: target?.account_id,
+      account_code: code || target?.account_code || "",
+      account_name: name,
+      account_group: group,
+      account_type: (raw.account_type ?? "").toString().trim(),
+      nature,
+      parent_account_id: "", // resolved at commit time (Pass 3)
+      opening_balance: opening,
+      opening_balance_type: nature,
+      opening_balance_date: obDate,
+      financial_year: finYear,
+      active_status: status,
+    }
+
+    const nodeKey = target ? String(target.account_id) : `NEW#${rowNo}`
+    const plan: Plan = {
+      rowNo,
+      label,
+      merged,
+      target: target ?? null,
+      parentRaw: (raw.parent ?? "").toString().trim(),
+      nodeKey,
+      parentKey: null,
+    }
+    plans.push(plan)
+    planByKey.set(nodeKey, plan)
+    if (code) planByCode.set(code.toLowerCase(), plan)
+  }
+
+  // --- Pass 2: resolve each row's intended parent + reject cycles in the batch
+  const resolveParentKey = (parentRaw: string): string | null => {
+    if (!parentRaw) return null
+    // A parent defined elsewhere in this same file wins over the DB snapshot.
+    const planByC = planByCode.get(parentRaw.toLowerCase())
+    if (planByC) return planByC.nodeKey
+    const planById = planByKey.get(parentRaw)
+    if (planById) return planById.nodeKey
+    // Otherwise an existing DB account (by id or code).
+    const p = byId.get(parentRaw) || byCode.get(parentRaw.toLowerCase())
+    if (p) return String(p.account_id)
+    return null
+  }
+
+  // Intended parent of any node: a batch plan's intent overrides the DB parent
+  // (an account being re-parented in this file), otherwise the committed parent.
+  const parentOf = (key: string): string | null => {
+    const plan = planByKey.get(key)
+    if (plan) return plan.parentKey
+    const db = byId.get(key)
+    return db?.parent_account_id ? String(db.parent_account_id) : null
+  }
+
+  for (const plan of plans) {
+    plan.parentKey = resolveParentKey(plan.parentRaw)
+  }
+
+  const cyclic = new Set<string>()
+  for (const plan of plans) {
+    if (plan.parentKey === plan.nodeKey) {
+      cyclic.add(plan.nodeKey)
+      continue
+    }
+    let cursor: string | null = plan.parentKey
+    let hops = 0
+    const seen = new Set<string>([plan.nodeKey])
+    while (cursor && hops < 500) {
+      if (cursor === plan.nodeKey || seen.has(cursor)) {
+        cyclic.add(plan.nodeKey)
+        break
+      }
+      seen.add(cursor)
+      cursor = parentOf(cursor)
+      hops++
+    }
+  }
+
+  // --- Pass 3: commit every non-cyclic plan in file order --------------------
+  let created = 0
+  let updated = 0
+  const postedAccountIds: string[] = []
+
+  for (const plan of plans) {
+    const { rowNo, label, merged, target, parentRaw } = plan
     try {
-      if (!name) {
-        errors.push({ row: rowNo, account: label, message: "Account name is required." })
+      if (cyclic.has(plan.nodeKey)) {
+        errors.push({
+          row: rowNo,
+          account: label,
+          message: "This account's parent would create a circular hierarchy within the import file.",
+        })
         continue
       }
 
-      const group = normType(raw.account_group ?? "") || "Asset"
-      const nature = natureForAccountType(group)
-
-      // Match an existing account: prefer an explicit id, then a unique code.
-      const target =
-        (raw.account_id && byId.get(String(raw.account_id).trim())) ||
-        (code && byCode.get(code.toLowerCase())) ||
-        null
-
-      // Resolve parent against ids first, then codes (existing + just-created).
-      const parentRaw = (raw.parent ?? "").toString().trim()
+      // Resolve the stored parent id against ids/codes (existing + just-created).
       let parentId = ""
       if (parentRaw) {
         const p = byId.get(parentRaw) || byCode.get(parentRaw.toLowerCase())
@@ -127,29 +264,7 @@ export async function POST(req: NextRequest) {
             message: `Parent "${parentRaw}" not found — imported as a top-level account.`,
           })
       }
-
-      const status = VALID_STATUS.has((raw.active_status ?? "").trim())
-        ? (raw.active_status ?? "").trim()
-        : "Active"
-      const opening = toNumber(raw.opening_balance ?? "")
-      const obDate = parseDate(raw.opening_balance_date ?? "")
-      const finYear = financialYearFor(obDate ?? new Date().toISOString().slice(0, 10))
-
-      const merged: Record<string, any> = {
-        id: target?.id,
-        account_id: target?.account_id,
-        account_code: code || target?.account_code || "",
-        account_name: name,
-        account_group: group,
-        account_type: (raw.account_type ?? "").toString().trim(),
-        nature,
-        parent_account_id: parentId,
-        opening_balance: opening,
-        opening_balance_type: nature,
-        opening_balance_date: obDate,
-        financial_year: finYear,
-        active_status: status,
-      }
+      merged.parent_account_id = parentId
 
       const guard = await guardChartOfAccountWrite(merged, {
         isCreate: !target,
@@ -209,10 +324,12 @@ export async function POST(req: NextRequest) {
           ],
         )
         created++
-        // Register the new account so later rows can parent to it by id/code.
+        // Register the new account (and its provisional key) so later rows can
+        // parent to it by id/code.
         const rec = { id: 0, account_id: accountId, account_code: merged.account_code }
         byId.set(accountId, rec)
         if (merged.account_code) byCode.set(String(merged.account_code).toLowerCase(), rec)
+        byId.set(plan.nodeKey, rec)
       }
 
       postedAccountIds.push(accountId)
@@ -224,7 +341,7 @@ export async function POST(req: NextRequest) {
   // Project every imported opening balance into a balanced Journal + GL voucher.
   // Idempotent per account, so re-imports never double-post.
   for (const accountId of postedAccountIds) {
-    await syncOpeningBalancePosting(accountId, { createdBy: null }).catch(() => {})
+    await syncOpeningBalancePosting(accountId, { createdBy: session.userId }).catch(() => {})
   }
 
   return NextResponse.json({ created, updated, failed: errors.length, errors })

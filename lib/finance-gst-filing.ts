@@ -18,8 +18,13 @@ import { logFinanceEvent } from "@/lib/finance-audit"
  * excluded (spec 220). A filing can be locked for a period, and a locked period
  * cannot be filed twice (duplicate prevention, spec 122).
  *
- * Schema is self-creating + idempotent — `gst_filings` has no migration yet, so
- * the engine owns its DDL the same way the payments/masters modules do.
+ * Schema is self-creating + idempotent. The engine owns a DEDICATED
+ * `gst_return_filings` table. It must NOT reuse the name `gst_filings`: the
+ * finance migrations ship an unrelated, differently-shaped `gst_filings`
+ * register (columns like `return_period` / `filing_status`, and no `period` /
+ * `status` / `filing_id`). When both existed, `CREATE TABLE IF NOT EXISTS`
+ * no-oped against the migration table and the engine's `WHERE period = ?`
+ * lookups threw "Unknown column 'period'", which blanked the entire GST page.
  */
 
 const num = (v: any) => {
@@ -33,7 +38,7 @@ let ensured = false
 export async function ensureGstFilingSchema() {
   if (ensured) return
   await query(
-    `CREATE TABLE IF NOT EXISTS gst_filings (
+    `CREATE TABLE IF NOT EXISTS gst_return_filings (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       filing_id VARCHAR(40) NOT NULL,
       return_type VARCHAR(20) NOT NULL DEFAULT 'GSTR-1',
@@ -57,6 +62,27 @@ export async function ensureGstFilingSchema() {
       UNIQUE KEY uq_gst_filing_id (filing_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+
+  // One-time rescue: earlier builds of this engine wrote filing-lock rows into a
+  // table literally named `gst_filings`, which now collides with the unrelated
+  // GST register shipped in the finance migrations. If this DB still holds
+  // engine-shaped rows there (detected by the engine-only `period` column), copy
+  // them into the dedicated table so filed history survives. On DBs where
+  // `gst_filings` is the migration register (no `period` column) this is a no-op.
+  const legacyEngine = (await query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gst_filings' AND COLUMN_NAME = 'period'`,
+  ).catch(() => [])) as any[]
+  if (legacyEngine.length) {
+    await query(
+      `INSERT IGNORE INTO gst_return_filings
+         (filing_id, return_type, period, financial_year, invoice_count, total_taxable,
+          total_cgst, total_sgst, total_igst, total_cess, total_tax, status, arn, snapshot, filed_at, filed_by, created_at)
+       SELECT filing_id, return_type, period, financial_year, invoice_count, total_taxable,
+          total_cgst, total_sgst, total_igst, total_cess, total_tax, status, arn, snapshot, filed_at, filed_by, created_at
+         FROM gst_filings`,
+    ).catch(() => {})
+  }
   ensured = true
 }
 
@@ -186,7 +212,7 @@ export async function gstSummary(period: string) {
   ).catch(() => [])) as any[]
 
   const [existing] = (await query(
-    `SELECT * FROM gst_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    `SELECT * FROM gst_return_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
     [period],
   )) as any[]
 
@@ -271,14 +297,14 @@ export async function gstSummary(period: string) {
 
 export async function listGstFilings() {
   await ensureGstFilingSchema()
-  return (await query(`SELECT * FROM gst_filings ORDER BY period DESC, id DESC LIMIT 200`)) as any[]
+  return (await query(`SELECT * FROM gst_return_filings ORDER BY period DESC, id DESC LIMIT 200`)) as any[]
 }
 
 /** Lock (file) a period's GSTR-1 from the derived summary. Duplicate-safe. */
 export async function fileGstReturn(period: string, arn: string | null, actorId?: number | null) {
   await ensureGstFilingSchema()
   const [existing] = (await query(
-    `SELECT id FROM gst_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
+    `SELECT id FROM gst_return_filings WHERE return_type = 'GSTR-1' AND period = ? LIMIT 1`,
     [period],
   )) as any[]
   if (existing) throw new Error(`GSTR-1 for ${period} is already filed. Use an amendment instead.`)
@@ -291,7 +317,7 @@ export async function fileGstReturn(period: string, arn: string | null, actorId?
   const filingId = await nextRecordId("GST")
   const fy = financialYearFor(`${period}-01`)
   await query(
-    `INSERT INTO gst_filings
+    `INSERT INTO gst_return_filings
        (filing_id, return_type, period, financial_year, invoice_count, total_taxable,
         total_cgst, total_sgst, total_igst, total_cess, total_tax, status, arn, snapshot, filed_at, filed_by)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`,

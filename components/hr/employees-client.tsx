@@ -54,6 +54,7 @@ import {
   History,
   MoreHorizontal,
   Loader2,
+  LayoutDashboard,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ExcelImportButton } from "@/components/sales/excel-import-button";
@@ -801,6 +802,9 @@ export function EmployeesClient() {
           <p className="mt-1 text-sm text-muted-foreground">Complete employee master records and workforce details.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+            <LayoutDashboard className="size-4" /> Dashboard
+          </Button>
           <ImportHistoryDialog />
           <ExcelExportButton
             rows={employees}

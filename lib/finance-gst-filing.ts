@@ -1,6 +1,7 @@
 import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { logFinanceEvent } from "@/lib/finance-audit"
+import { ensureGstInputSchema } from "@/lib/finance-ensure"
 
 /**
  * GST filing engine (server-only) — Phase 3.
@@ -63,6 +64,19 @@ export async function ensureGstFilingSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
 
+  // Per-period cash-ledger challan: the GST actually paid for a tax period
+  // (GSTR-3B / PMT-06). One row per period; the dashboard's Balance Payable is
+  // Net GST Liability minus this. Self-creating + idempotent like the rest.
+  await query(
+    `CREATE TABLE IF NOT EXISTS gst_tax_payments (
+      period VARCHAR(7) NOT NULL PRIMARY KEY,          -- YYYY-MM
+      amount DECIMAL(16,2) NOT NULL DEFAULT 0,
+      note VARCHAR(255) DEFAULT NULL,
+      updated_by BIGINT UNSIGNED DEFAULT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  ).catch(() => {})
+
   // One-time rescue: earlier builds of this engine wrote filing-lock rows into a
   // table literally named `gst_filings`, which now collides with the unrelated
   // GST register shipped in the finance migrations. If this DB still holds
@@ -110,6 +124,70 @@ const PERIOD_MATCH = (col: string) => `YEAR(${col}) = ? AND MONTH(${col}) = ?`
 // invoices whose GST works out to ₹0 (exempt / nil-rated / unregistered).
 const INCLUDED_STATUS = "NOT IN ('Draft','Cancelled')"
 
+/** FY quarter label (Apr–Jun = Q1) for a calendar month 1..12. */
+function quarterLabel(m: number) {
+  const q = m >= 4 && m <= 6 ? 1 : m >= 7 && m <= 9 ? 2 : m >= 10 && m <= 12 ? 3 : 4
+  return `Q${q}`
+}
+
+/**
+ * Input-side aggregates for a period, read from the shared GST Input (ITC)
+ * register that Purchase Bills + Expenses already project into. We do NOT
+ * recompute ITC here — we only sum the register so GST Filing and GST Input
+ * always agree. Safe when the register is empty / not yet created.
+ */
+async function gstInputAggregates(period: string) {
+  try {
+    await ensureGstInputSchema()
+    const [row] = (await query(
+      `SELECT COALESCE(SUM(itc_net),0) AS input_net,
+              COALESCE(SUM(itc_reversal_amount),0) AS reversal,
+              COALESCE(SUM(CASE WHEN rcm_applicable = 1 THEN total_gst ELSE 0 END),0) AS rcm
+         FROM finance_gst_input WHERE period = ?`,
+      [period],
+    ).catch(() => [{}])) as any[]
+    return {
+      input_net: round2(num(row?.input_net)),
+      reversal: round2(num(row?.reversal)),
+      rcm: round2(num(row?.rcm)),
+    }
+  } catch {
+    return { input_net: 0, reversal: 0, rcm: 0 }
+  }
+}
+
+/** The GST actually paid (cash-ledger challan) recorded for a period. */
+export async function getGstTaxPaid(period: string): Promise<number> {
+  await ensureGstFilingSchema()
+  const [row] = (await query(
+    `SELECT amount FROM gst_tax_payments WHERE period = ? LIMIT 1`,
+    [period],
+  ).catch(() => [])) as any[]
+  return round2(num(row?.amount))
+}
+
+/** Record (upsert) the GST paid for a period. Idempotent per period. */
+export async function recordGstTaxPaid(period: string, amount: number, actorId?: number | null) {
+  await ensureGstFilingSchema()
+  if (!PERIOD_RE.test(period)) throw new Error("Period must be in YYYY-MM format.")
+  const value = round2(Math.max(num(amount), 0))
+  await query(
+    `INSERT INTO gst_tax_payments (period, amount, updated_by)
+       VALUES (?,?,?)
+     ON DUPLICATE KEY UPDATE amount = VALUES(amount), updated_by = VALUES(updated_by)`,
+    [period, value, actorId ?? null],
+  )
+  await logFinanceEvent({
+    entityType: "gst_filing",
+    entityRef: `TAX-PAID:${period}`,
+    type: "updated",
+    summary: `GST tax paid recorded for ${period}: ${value}`,
+    amount: value,
+    actorId: actorId ?? null,
+  }).catch(() => {})
+  return { period, amount: value }
+}
+
 /** Build the GSTR-1 outward-supply summary for a calendar-month period. */
 export async function gstSummary(period: string) {
   await ensureGstFilingSchema()
@@ -124,7 +202,11 @@ export async function gstSummary(period: string) {
         COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN 0 ELSE igst_amount END),0) AS igst,
         COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN 0 ELSE other_tax_cess END),0) AS cess,
         COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN taxable_amount ELSE 0 END),0) AS cn_taxable,
-        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN (cgst_amount+sgst_amount+igst_amount+other_tax_cess) ELSE 0 END),0) AS cn_tax
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN (cgst_amount+sgst_amount+igst_amount+other_tax_cess) ELSE 0 END),0) AS cn_tax,
+        COALESCE(SUM(CASE WHEN invoice_type='Debit Note' THEN taxable_amount ELSE 0 END),0) AS dn_taxable,
+        COALESCE(SUM(CASE WHEN invoice_type='Debit Note' THEN (cgst_amount+sgst_amount+igst_amount+other_tax_cess) ELSE 0 END),0) AS dn_tax,
+        COALESCE(SUM(CASE WHEN invoice_type='Credit Note' THEN 1 ELSE 0 END),0) AS cn_count,
+        COALESCE(SUM(CASE WHEN invoice_type='Debit Note' THEN 1 ELSE 0 END),0) AS dn_count
       FROM sales_invoices
      WHERE ${PERIOD_MATCH("invoice_date")}
        AND invoice_status ${INCLUDED_STATUS}
@@ -216,9 +298,35 @@ export async function gstSummary(period: string) {
     [period],
   )) as any[]
 
+  // ── Compliance liability (Phase 1) ──────────────────────────────────────
+  // Output GST is the outward tax NET of credit notes (debit notes already add
+  // to the output totals above, since only Credit Note is zeroed there). Input
+  // GST, RCM and reversal come straight from the shared ITC register so the two
+  // GST screens never disagree. RCM tax is a liability on the output side AND a
+  // claimable credit on the input side — the standard offset nets it to zero
+  // when fully eligible, so we surface both without double counting.
+  const creditNoteTax = round2(num(totals?.cn_tax))
+  const debitNoteTax = round2(num(totals?.dn_tax))
+  const agg = await gstInputAggregates(period)
+  const taxPaid = await getGstTaxPaid(period)
+  const outputGst = round2(totalTax - creditNoteTax)
+  const netLiability = round2(outputGst + agg.rcm - agg.input_net)
+  const balancePayable = round2(netLiability - taxPaid)
+
   return {
     period,
+    financial_year: financialYearFor(`${period}-01`),
+    quarter: quarterLabel(m),
     range: { from, to },
+    liability: {
+      output_gst: outputGst,
+      input_gst: agg.input_net,
+      rcm_liability: agg.rcm,
+      itc_reversal: agg.reversal,
+      net_liability: netLiability,
+      tax_paid: taxPaid,
+      balance_payable: balancePayable,
+    },
     totals: {
       invoice_count: Number(totals?.invoice_count ?? 0),
       taxable,
@@ -228,7 +336,11 @@ export async function gstSummary(period: string) {
       cess,
       total_tax: totalTax,
       credit_note_taxable: round2(num(totals?.cn_taxable)),
-      credit_note_tax: round2(num(totals?.cn_tax)),
+      credit_note_tax: creditNoteTax,
+      credit_note_count: Number(totals?.cn_count ?? 0),
+      debit_note_taxable: round2(num(totals?.dn_taxable)),
+      debit_note_tax: debitNoteTax,
+      debit_note_count: Number(totals?.dn_count ?? 0),
     },
     rate_wise: rateWise.map((r) => ({
       rate: num(r.rate),

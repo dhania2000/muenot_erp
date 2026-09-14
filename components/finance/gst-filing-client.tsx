@@ -17,6 +17,17 @@ const thisMonth = () => new Date().toISOString().slice(0, 7)
 
 type Summary = {
   period: string
+  financial_year: string
+  quarter: string
+  liability: {
+    output_gst: number
+    input_gst: number
+    rcm_liability: number
+    itc_reversal: number
+    net_liability: number
+    tax_paid: number
+    balance_payable: number
+  }
   totals: {
     invoice_count: number
     taxable: number
@@ -27,6 +38,10 @@ type Summary = {
     total_tax: number
     credit_note_taxable: number
     credit_note_tax: number
+    credit_note_count: number
+    debit_note_taxable: number
+    debit_note_tax: number
+    debit_note_count: number
   }
   rate_wise: { rate: number; taxable: number; cgst: number; sgst: number; igst: number; cess: number }[]
   supply_split: { supply_type: string; taxable: number; tax: number }[]
@@ -79,6 +94,8 @@ export function GstFilingClient() {
     const summaryRows = [
       ["GSTR-1 Outward Supply Summary"],
       ["Tax period", s.period],
+      ["Financial year", s.financial_year],
+      ["Quarter", s.quarter],
       ["Generated on", new Date().toLocaleString()],
       [],
       ["Documents", s.totals.invoice_count],
@@ -88,8 +105,21 @@ export function GstFilingClient() {
       ["IGST", s.totals.igst],
       ["Cess", s.totals.cess],
       ["Total tax", s.totals.total_tax],
+      ["Credit notes", s.totals.credit_note_count],
       ["Credit note taxable", s.totals.credit_note_taxable],
       ["Credit note tax reduced", s.totals.credit_note_tax],
+      ["Debit notes", s.totals.debit_note_count],
+      ["Debit note taxable", s.totals.debit_note_taxable],
+      ["Debit note tax added", s.totals.debit_note_tax],
+      [],
+      ["GST LIABILITY"],
+      ["Output GST (net of credit notes)", s.liability.output_gst],
+      ["Input GST (net eligible ITC)", s.liability.input_gst],
+      ["RCM liability", s.liability.rcm_liability],
+      ["ITC reversal", s.liability.itc_reversal],
+      ["Net GST liability", s.liability.net_liability],
+      ["Tax paid", s.liability.tax_paid],
+      ["Balance payable", s.liability.balance_payable],
     ]
     if (s.filing) {
       summaryRows.push([], ["Filing ID", s.filing.filing_id], ["Status", s.filing.status], ["ARN", s.filing.arn || "—"])
@@ -185,12 +215,55 @@ export function GstFilingClient() {
 
       {error ? <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Documents" value={String(s?.totals.invoice_count ?? 0)} />
-        <Stat label="Taxable value" value={currency(s?.totals.taxable)} />
-        <Stat label="Total tax" value={currency(s?.totals.total_tax)} />
-        <Stat label="Credit notes" value={currency(s?.totals.credit_note_tax)} hint="tax reduced" />
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Badge variant="outline" className="gap-1 font-normal">
+          Tax period <span className="font-medium text-foreground">{s?.period ?? period}</span>
+        </Badge>
+        <Badge variant="outline" className="gap-1 font-normal">
+          FY <span className="font-medium text-foreground">{s?.financial_year ?? "—"}</span>
+        </Badge>
+        <Badge variant="outline" className="gap-1 font-normal">
+          Quarter <span className="font-medium text-foreground">{s?.quarter ?? "—"}</span>
+        </Badge>
       </div>
+
+      <section className="flex flex-col gap-2">
+        <div className="text-sm font-medium">Return overview</div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat label="Documents" value={String(s?.totals.invoice_count ?? 0)} />
+          <Stat label="Taxable value" value={currency(s?.totals.taxable)} />
+          <Stat label="Total tax" value={currency(s?.totals.total_tax)} />
+          <Stat
+            label="Credit notes"
+            value={currency(s?.totals.credit_note_tax)}
+            hint={`${s?.totals.credit_note_count ?? 0} note${(s?.totals.credit_note_count ?? 0) === 1 ? "" : "s"} · tax reduced`}
+          />
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <div className="text-sm font-medium">GST liability</div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat label="Output GST" value={currency(s?.liability.output_gst)} hint="net of credit notes" />
+          <Stat label="Input GST (ITC)" value={currency(s?.liability.input_gst)} hint="net eligible credit" />
+          <Stat label="RCM liability" value={currency(s?.liability.rcm_liability)} hint="reverse charge" />
+          <Stat label="ITC reversal" value={currency(s?.liability.itc_reversal)} hint="credit reversed" />
+          <Stat label="Net GST liability" value={currency(s?.liability.net_liability)} hint="output + RCM − ITC" emphasis />
+          <Stat label="Debit notes" value={currency(s?.totals.debit_note_tax)} hint={`${s?.totals.debit_note_count ?? 0} note${(s?.totals.debit_note_count ?? 0) === 1 ? "" : "s"} · tax added`} />
+          <Stat label="Tax paid" value={currency(s?.liability.tax_paid)} hint="cash-ledger challan" />
+          <Stat
+            label="Balance payable"
+            value={currency(s?.liability.balance_payable)}
+            hint={(s?.liability.balance_payable ?? 0) <= 0 ? "credit carried forward" : "still payable"}
+            emphasis
+          />
+        </div>
+        <RecordPayment
+          period={period}
+          current={s?.liability.tax_paid ?? 0}
+          onSaved={() => mutate()}
+        />
+      </section>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -289,7 +362,7 @@ export function GstFilingClient() {
                     <TableRow key={inv.invoice_id}>
                       <TableCell>
                         <div className="font-mono text-xs">{inv.invoice_id}</div>
-                        <div className="text-xs text-muted-foreground">{inv.invoice_type}</div>
+                        <NoteTypeBadge type={inv.invoice_type} />
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-sm">
                         {inv.invoice_date ? inv.invoice_date.slice(0, 10) : "—"}
@@ -402,14 +475,97 @@ function ExclusionHint({
   )
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function NoteTypeBadge({ type }: { type: string }) {
+  const t = String(type || "")
+  if (t === "Credit Note") {
+    return (
+      <Badge variant="outline" className="mt-0.5 border-amber-500/40 text-amber-700 dark:text-amber-400">
+        Credit Note
+      </Badge>
+    )
+  }
+  if (t === "Debit Note") {
+    return (
+      <Badge variant="outline" className="mt-0.5 border-sky-500/40 text-sky-700 dark:text-sky-400">
+        Debit Note
+      </Badge>
+    )
+  }
+  return <div className="text-xs text-muted-foreground">{t || "Tax Invoice"}</div>
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  emphasis,
+}: {
+  label: string
+  value: string
+  hint?: string
+  emphasis?: boolean
+}) {
   return (
-    <Card>
+    <Card className={emphasis ? "border-primary/40 bg-primary/5" : undefined}>
       <CardContent className="flex flex-col gap-1 p-4">
         <div className="text-sm text-muted-foreground">{label}</div>
-        <div className="text-xl font-semibold">{value}</div>
+        <div className={`text-xl font-semibold${emphasis ? " text-primary" : ""}`}>{value}</div>
         {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
       </CardContent>
     </Card>
+  )
+}
+
+function RecordPayment({
+  period,
+  current,
+  onSaved,
+}: {
+  period: string
+  current: number
+  onSaved: () => void
+}) {
+  const [amount, setAmount] = useState<string>("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  async function save() {
+    setBusy(true)
+    setError("")
+    try {
+      const res = await fetch("/api/finance/gst-filing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "record-payment", period, amount: Number(amount || 0) }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Could not record payment")
+      setAmount("")
+      onSaved()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+      <span className="text-muted-foreground">Record GST paid for {period}:</span>
+      <Input
+        type="number"
+        inputMode="decimal"
+        min={0}
+        step="0.01"
+        placeholder={current ? String(current) : "0.00"}
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        className="h-8 w-40"
+      />
+      <Button size="sm" variant="outline" onClick={save} disabled={busy || amount === ""}>
+        {busy ? "Saving…" : "Save"}
+      </Button>
+      {error ? <span className="text-destructive">{error}</span> : null}
+    </div>
   )
 }

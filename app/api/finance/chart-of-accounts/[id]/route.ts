@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { ensureChartOfAccountsColumns } from "@/lib/finance-ensure"
 import { natureForAccountType } from "@/lib/finance-module-configs"
+import { getAccountMappings, ACCOUNT_ROLE_GROUPS } from "@/lib/finance-account-config"
 
 // ---------------------------------------------------------------------------
 // Chart-of-Accounts account 360° — a single read that assembles an account's
@@ -153,5 +154,22 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     [accountId],
   )
 
-  return NextResponse.json({ account, parent, children, stats, ledger, journal, transactions })
+  // Posting roles this head currently serves (Default Bank, Output CGST, TDS
+  // Payable, …). Inverted from the SAME role → account mapping the posting
+  // engine resolves, so the detail view shows exactly what this account is
+  // wired to — never a parallel guess. Failure-tolerant: a mapping read error
+  // simply yields no role tags rather than blocking the 360 view.
+  let roles: { role: string; label: string; overridden: boolean }[] = []
+  try {
+    const labelByRole = new Map<string, string>()
+    for (const g of ACCOUNT_ROLE_GROUPS) for (const r of g.roles) labelByRole.set(r.role, r.label)
+    const mappings = await getAccountMappings()
+    roles = mappings
+      .filter((m) => m.effective_account_id && String(m.effective_account_id) === accountId)
+      .map((m) => ({ role: m.role, label: labelByRole.get(m.role) ?? m.role, overridden: m.overridden }))
+  } catch (error) {
+    console.log("[v0] account-360 role mapping failed:", (error as Error)?.message)
+  }
+
+  return NextResponse.json({ account, parent, children, stats, ledger, journal, transactions, roles })
 }

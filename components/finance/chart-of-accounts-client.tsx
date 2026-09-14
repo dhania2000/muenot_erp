@@ -45,6 +45,14 @@ import {
   COA_SUB_TYPES_BY_TYPE,
   natureForAccountType,
 } from "@/lib/finance-module-configs"
+import {
+  resolveClassification,
+  BS_ASSET_GROUPS,
+  BS_LIABILITY_GROUPS,
+  PL_INCOME_GROUPS,
+  PL_EXPENSE_GROUPS,
+  CASHFLOW_GROUPS,
+} from "@/lib/finance-classification"
 import { exportRowsToExcel } from "@/lib/excel-export"
 import { CoaMappingDialog } from "@/components/finance/coa-mapping-dialog"
 import { CoaMergeDialog } from "@/components/finance/coa-merge-dialog"
@@ -57,6 +65,31 @@ type BalancesShape = { balances: Record<string, { net: number; balance: number; 
 
 const ENDPOINT = "/api/finance/module/chart-of-accounts"
 const BALANCES_ENDPOINT = "/api/finance/chart-of-accounts/balances"
+const CONFIG_ENDPOINT = "/api/finance/chart-of-accounts/config"
+
+type RoleMapping = { role: string; effective_account_id: string | null }
+type RoleGroup = { group: string; roles: { role: string; label: string }[] }
+type ConfigShape = { mappings: RoleMapping[]; roleGroups: RoleGroup[] }
+
+/** A single account's reporting group + Cash Flow activity, as compact badges. */
+function ClassificationBadges({ row }: { row: Row }) {
+  const c = resolveClassification(row)
+  const group = c.section === "ProfitAndLoss" ? c.pnlGroup : c.bsGroup
+  const overridden = c.section === "ProfitAndLoss" ? c.pnlOverridden : c.bsOverridden
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="flex items-center gap-1">
+        <Badge variant="outline" className="font-normal">{group}</Badge>
+        {overridden && (
+          <span className="text-[10px] font-medium uppercase text-muted-foreground" title="Manually pinned classification">
+            pinned
+          </span>
+        )}
+      </span>
+      <span className="text-[11px] text-muted-foreground">{c.cashFlowGroup} activity</span>
+    </div>
+  )
+}
 
 /** Nature badge colouring — Debit vs Credit are the two natural balance sides. */
 function natureVariant(nature: string): "default" | "secondary" {
@@ -148,6 +181,9 @@ function emptyForm(): FormState {
     tds_applicable: "",
     bank_cash_account: "",
     reconciliation_required: "",
+    bs_group: "",
+    pnl_group: "",
+    cashflow_group: "",
   }
 }
 
@@ -194,9 +230,29 @@ export function ChartOfAccountsClient() {
 
   const { data, mutate } = useSWR<ApiShape>(ENDPOINT, fetcher)
   const { data: balanceData, mutate: mutateBalances } = useSWR<BalancesShape>(BALANCES_ENDPOINT, fetcher)
+  const { data: configData } = useSWR<ConfigShape>(CONFIG_ENDPOINT, fetcher)
   const rows = data?.rows ?? []
   const summary = data?.summary ?? {}
   const balances = balanceData?.balances ?? {}
+
+  // account_id → the posting roles it currently serves (Bank, GST Output CGST,
+  // TDS Payable, …). Built by inverting the same role→account mapping the
+  // posting engine resolves, so a head is tagged with exactly the roles it is
+  // wired to — never a guess.
+  const rolesByAccount = useMemo(() => {
+    const labelByRole = new Map<string, string>()
+    for (const g of configData?.roleGroups ?? []) for (const r of g.roles) labelByRole.set(r.role, r.label)
+    const map = new Map<string, string[]>()
+    for (const m of configData?.mappings ?? []) {
+      const id = m.effective_account_id ? String(m.effective_account_id) : ""
+      if (!id) continue
+      const label = labelByRole.get(m.role) ?? m.role
+      const list = map.get(id) ?? []
+      list.push(label)
+      map.set(id, list)
+    }
+    return map
+  }, [configData])
 
   const forest = useMemo(() => buildForest(rows), [rows])
 
@@ -661,6 +717,7 @@ export function ChartOfAccountsClient() {
                           <th className="p-2 font-medium">Account ID</th>
                           <th className="p-2 font-medium">Code</th>
                           <th className="p-2 font-medium">Sub type</th>
+                          <th className="p-2 font-medium">Reporting</th>
                           <th className="p-2 font-medium">Nature</th>
                           <th className="p-2 text-right font-medium">Opening</th>
                           <th className="p-2 text-right font-medium">Current (GL)</th>
@@ -671,7 +728,7 @@ export function ChartOfAccountsClient() {
                       <tbody>
                         {nodes.length === 0 && (
                           <tr>
-                            <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                            <td colSpan={10} className="p-6 text-center text-muted-foreground">
                               No accounts in this group.
                             </td>
                           </tr>
@@ -700,6 +757,20 @@ export function ChartOfAccountsClient() {
                               <td className="p-2 font-mono text-xs text-muted-foreground">{row.account_id}</td>
                               <td className="p-2 font-mono text-xs">{row.account_code || "—"}</td>
                               <td className="p-2">{row.account_type || "—"}</td>
+                              <td className="p-2 align-top">
+                                <ClassificationBadges row={row} />
+                                {(() => {
+                                  const roles = rolesByAccount.get(String(row.account_id)) ?? []
+                                  if (roles.length === 0) return null
+                                  return (
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                      {roles.map((label) => (
+                                        <Badge key={label} variant="secondary" className="text-[10px] font-normal">{label}</Badge>
+                                      ))}
+                                    </div>
+                                  )
+                                })()}
+                              </td>
                               <td className="p-2">
                                 <Badge variant={natureVariant(row.nature)}>{row.nature || natureForAccountType(row.account_group)}</Badge>
                               </td>
@@ -915,6 +986,40 @@ function AccountDialog({
 
   const subTypes = COA_SUB_TYPES_BY_TYPE[form.account_group] ?? []
 
+  // Live reporting classification for the account being edited — auto-derived
+  // from the same fields the statements engine reads, with any pinned override
+  // applied. Recomputed as the form changes so the user sees exactly where this
+  // head will land on the Balance Sheet / P&L / Cash Flow before saving.
+  const classification = useMemo(
+    () =>
+      resolveClassification({
+        account_group: form.account_group,
+        account_type: form.account_type,
+        account_code: form.account_code,
+        account_name: form.account_name,
+        gst_applicable: form.gst_applicable ? 1 : 0,
+        tds_applicable: form.tds_applicable ? 1 : 0,
+        bank_cash_account: form.bank_cash_account ? 1 : 0,
+        bs_group: form.bs_group,
+        pnl_group: form.pnl_group,
+        cashflow_group: form.cashflow_group,
+      }),
+    [form],
+  )
+  const isPnl = classification.section === "ProfitAndLoss"
+  const groupKey = isPnl ? "pnl_group" : "bs_group"
+  const autoGroup = isPnl ? classification.autoPnlGroup : classification.autoBsGroup
+  const groupOptions: readonly string[] =
+    form.account_group === "Asset"
+      ? BS_ASSET_GROUPS
+      : form.account_group === "Liability"
+        ? BS_LIABILITY_GROUPS
+        : form.account_group === "Equity"
+          ? ["Capital & Reserves"]
+          : form.account_group === "Income"
+            ? PL_INCOME_GROUPS
+            : PL_EXPENSE_GROUPS
+
   // Immediate duplicate-code detection (case-insensitive) so a colliding code is
   // flagged before the save round-trip. Mirrors the authoritative server guard
   // in lib/finance-coa.ts → guardChartOfAccountWrite, which remains the source
@@ -944,6 +1049,14 @@ function AccountDialog({
       if (key === "account_group" && next.parent_account_id) {
         const parent = rows.find((r) => String(r.account_id) === next.parent_account_id)
         if (!parent || parent.account_group !== value) next.parent_account_id = ""
+      }
+      // Changing the account type also invalidates any pinned reporting group
+      // (a Balance Sheet group makes no sense once the account is an expense),
+      // so the classification falls back to auto for the new type.
+      if (key === "account_group") {
+        next.bs_group = ""
+        next.pnl_group = ""
+        next.cashflow_group = ""
       }
       return next
     })
@@ -1126,6 +1239,67 @@ function AccountDialog({
                   </SelectContent>
                 </Select>
               </Field>
+            </div>
+          </FieldGroup>
+
+          <FieldGroup>
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold">Reporting classification</h3>
+              <span className="text-xs text-muted-foreground">
+                Groups this head on the {isPnl ? "Profit & Loss" : "Balance Sheet"} & Cash Flow
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Auto-derived from the account type, code and name. Leave on <span className="font-medium">Auto</span> unless
+              you need to pin this account to a specific statement group — the same accounts are used, nothing is duplicated.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel>{isPnl ? "Profit & Loss group" : "Balance Sheet group"}</FieldLabel>
+                <Select
+                  value={form[groupKey] || "auto"}
+                  onValueChange={(v) => set(groupKey, v === "auto" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto · {autoGroup}</SelectItem>
+                    {groupOptions.map((g) => (
+                      <SelectItem key={g} value={g}>{g}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel>Cash Flow activity</FieldLabel>
+                <Select
+                  value={form.cashflow_group || "auto"}
+                  onValueChange={(v) => set("cashflow_group", v === "auto" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto · {classification.autoCashFlowGroup}</SelectItem>
+                    {CASHFLOW_GROUPS.map((g) => (
+                      <SelectItem key={g} value={g}>{g}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/40 px-3 py-2 text-xs">
+              <span className="text-muted-foreground">Effective:</span>
+              <Badge variant="outline" className="font-normal">
+                {isPnl ? classification.pnlGroup : classification.bsGroup}
+              </Badge>
+              <span className="text-muted-foreground">·</span>
+              <Badge variant="outline" className="font-normal">{classification.cashFlowGroup} activity</Badge>
+              {(isPnl ? classification.pnlOverridden : classification.bsOverridden) ||
+              classification.cashFlowOverridden ? (
+                <span className="ml-1 font-medium uppercase text-muted-foreground">pinned</span>
+              ) : null}
             </div>
           </FieldGroup>
 

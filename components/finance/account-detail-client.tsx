@@ -10,10 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import type { BadgeVariant } from "@/lib/finance-schema"
+import { resolveClassification } from "@/lib/finance-classification"
 import {
   ArrowLeft, Loader2Icon, Pencil, BookOpen, ShieldCheck, Coins, Scale,
   ArrowLeftRight, TrendingUp, TrendingDown, ReceiptText, CornerDownRight,
-  FileText, ExternalLink, Landmark, Download,
+  FileText, ExternalLink, Landmark, Download, Layers, Tags,
 } from "lucide-react"
 
 type Row = Record<string, any>
@@ -74,6 +75,7 @@ type Account360 = {
   ledger: Row[]
   journal: Row[]
   transactions: Row[]
+  roles?: { role: string; label: string; overridden: boolean }[]
 }
 
 const STATUS_BADGE: Record<string, BadgeVariant> = {
@@ -135,8 +137,16 @@ export function AccountDetailClient({ accountId }: { accountId: string }) {
   }
 
   const { account: a, parent, children, stats, ledger, journal, transactions } = data
+  const roles = data.roles ?? []
   const status = String(a.active_status || "Active")
   const isSystem = Number(a.is_system) === 1
+
+  // Reporting classification for this head, resolved from the same fields (and
+  // any pinned override) the Balance Sheet / P&L / Cash Flow statements read.
+  const cls = resolveClassification(a)
+  const clsGroup = cls.section === "ProfitAndLoss" ? cls.pnlGroup : cls.bsGroup
+  const clsOverridden = cls.section === "ProfitAndLoss" ? cls.pnlOverridden : cls.bsOverridden
+  const clsStatement = cls.section === "ProfitAndLoss" ? "Profit & Loss" : "Balance Sheet"
 
   return (
     <main className="space-y-6 p-6">
@@ -156,6 +166,16 @@ export function AccountDetailClient({ accountId }: { accountId: string }) {
                 System
               </Badge>
             )}
+            <Badge variant="secondary" className="gap-1">
+              <Layers className="size-3" />
+              {clsGroup}
+            </Badge>
+            {roles.map((r) => (
+              <Badge key={r.role} variant="outline" className="gap-1">
+                <Tags className="size-3" />
+                {r.label}
+              </Badge>
+            ))}
           </div>
           <p className="font-mono text-sm text-muted-foreground">
             {a.account_id}
@@ -251,6 +271,57 @@ export function AccountDetailClient({ accountId }: { accountId: string }) {
               </p>
             </SectionCard>
           </div>
+
+          <SectionCard title="Reporting classification" icon={Layers}>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Statement</p>
+                <p className="text-sm font-medium">{clsStatement}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">
+                  {cls.section === "ProfitAndLoss" ? "P&L group" : "Balance Sheet group"}
+                </p>
+                <p className="flex items-center gap-1.5 text-sm font-medium">
+                  {clsGroup}
+                  {clsOverridden && (
+                    <span className="text-[10px] font-medium uppercase text-muted-foreground">pinned</span>
+                  )}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Cash Flow activity</p>
+                <p className="flex items-center gap-1.5 text-sm font-medium">
+                  {cls.cashFlowGroup}
+                  {cls.cashFlowOverridden && (
+                    <span className="text-[10px] font-medium uppercase text-muted-foreground">pinned</span>
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">Posting roles</p>
+              {roles.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Not mapped to any posting role. Assign one from Account mapping on the Chart of Accounts screen.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {roles.map((r) => (
+                    <Badge key={r.role} variant="secondary" className="gap-1">
+                      <Tags className="size-3" />
+                      {r.label}
+                      {r.overridden && <span className="text-[10px] uppercase text-muted-foreground">custom</span>}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Auto-derived from this account&apos;s type, code and name and shared with the Balance Sheet, Profit &amp; Loss
+              and Cash Flow statements. A pinned group overrides the auto value; roles come from the posting-engine mapping.
+            </p>
+          </SectionCard>
 
           {children.length > 0 && (
             <SectionCard title={`Child accounts (${children.length})`} icon={CornerDownRight}>

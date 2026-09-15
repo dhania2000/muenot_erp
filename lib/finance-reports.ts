@@ -19,6 +19,55 @@ export type ReportColumn = {
   money?: boolean
 }
 
+// Advanced-filter dimensions a report can expose. Each maps to a SQL column in
+// the report's own FROM context, declared centrally (never per report) so the
+// same dimension always behaves identically across the whole catalogue.
+export type ReportFilterDim =
+  | "account"
+  | "accountGroup"
+  | "party"
+  | "customer"
+  | "vendor"
+  | "department"
+  | "costCentre"
+  | "project"
+  | "bank"
+  | "gstin"
+  | "pan"
+  | "tdsSection"
+  | "status"
+
+export type ReportFilter = {
+  dim: ReportFilterDim
+  /** SQL column/expression the filter matches against. */
+  column: string
+  /** "like" (default, case-insensitive contains) or "eq" (exact match). */
+  match?: "like" | "eq"
+}
+
+// How a report is filtered on time. `range` shows FY / Quarter / Month / date
+// range; `asOn` shows a single "as on" date (cumulative up to it); `none` has
+// no period control.
+export type PeriodMode = "range" | "asOn" | "none"
+
+// Human labels for each filter dimension, shared by the API + UI so the picker
+// and the report metadata never drift apart.
+export const FILTER_DIM_LABELS: Record<ReportFilterDim, string> = {
+  account: "Account",
+  accountGroup: "Account Group",
+  party: "Party",
+  customer: "Customer",
+  vendor: "Vendor",
+  department: "Department",
+  costCentre: "Cost Centre",
+  project: "Project",
+  bank: "Bank / Cash Account",
+  gstin: "GSTIN",
+  pan: "PAN",
+  tdsSection: "TDS Section",
+  status: "Status",
+}
+
 export type ReportDef = {
   key: string
   label: string
@@ -31,6 +80,10 @@ export type ReportDef = {
   /** Column used for the date-range filter; when absent the range is ignored. */
   dateColumn?: string
   columns: ReportColumn[]
+  /** Advanced dimension filters this report exposes (assigned centrally). */
+  filters?: ReportFilter[]
+  /** Time-filter style. Defaults to `range` when a `dateColumn` exists. */
+  periodMode?: PeriodMode
 }
 
 // Helper: a date-range WHERE fragment the API can inline. When a report has no
@@ -3074,6 +3127,52 @@ export const FINANCE_REPORTS: ReportDef[] = [
   },
 ]
 
+// ---------------------------------------------------------------------------
+// Central filter + period assignment
+// ---------------------------------------------------------------------------
+// Rather than repeating filter wiring on every report, advanced dimensions are
+// assigned by source table: every report that reads a given table gets the
+// same, verified set of dimension filters. Catalogue entries built with `from`
+// inherit these automatically. Only reports whose SQL carries the `{{range}}`
+// injection marker can receive filters (that is where the WHERE fragment is
+// spliced in); reports without it are left period/filter-free.
+
+const f = (dim: ReportFilterDim, column: string, match?: "like" | "eq"): ReportFilter => ({
+  dim,
+  column,
+  ...(match ? { match } : {}),
+})
+
+const TABLE_FILTERS: Record<string, ReportFilter[]> = {
+  sales_invoices: [f("customer", "client_name"), f("status", "payment_status")],
+  purchase_bills: [f("vendor", "vendor_name"), f("gstin", "vendor_gstin"), f("status", "payment_status")],
+  general_ledger: [f("account", "account_name"), f("accountGroup", "account_group")],
+  chart_of_accounts: [f("account", "account_name"), f("accountGroup", "account_group")],
+  journal_entries: [f("account", "account_name"), f("party", "party_name"), f("status", "posting_status")],
+  bank_transactions: [f("bank", "bank_cash_account_name"), f("party", "party_name"), f("status", "reconciliation_status")],
+  expenses: [
+    f("party", "party_name"),
+    f("vendor", "vendor_name"),
+    f("department", "department"),
+    f("project", "project_name"),
+    f("gstin", "vendor_gstin"),
+    f("pan", "vendor_pan"),
+    f("status", "workflow_status"),
+  ],
+  payments: [f("party", "party_name"), f("status", "status")],
+}
+
+// Reports read cumulatively "as on" a date rather than over a period.
+const AS_ON_REPORTS = new Set(["rx-trial-balance", "rx-balance-sheet", "rx-closing-balance"])
+
+for (const r of FINANCE_REPORTS) {
+  const table = r.sql?.match(/FROM\s+(\w+)/i)?.[1] ?? null
+  if (r.sql?.includes("{{range}}") && table && TABLE_FILTERS[table]) {
+    r.filters = TABLE_FILTERS[table]
+  }
+  r.periodMode = AS_ON_REPORTS.has(r.key) ? "asOn" : r.dateColumn ? "range" : "none"
+}
+
 export const FINANCE_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
   FINANCE_REPORTS.map((r) => [r.key, r]),
 )
@@ -3097,7 +3196,15 @@ export const GENERAL_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
 // declared placeholder (`stub`). A placeholder has no SQL and renders a
 // "no data source yet" note until its underlying data exists in the ERP.
 
-type ReportMeta = { key: string; label: string; group: string; description: string }
+type ReportMeta = {
+  key: string
+  label: string
+  group: string
+  description: string
+  /** Optional per-entry overrides of the inherited period/filter behaviour. */
+  periodMode?: PeriodMode
+  filters?: ReportFilter[]
+}
 
 function from(sourceKey: string, meta: ReportMeta): ReportDef {
   const src = FINANCE_REPORT_MAP[sourceKey]
@@ -3106,7 +3213,7 @@ function from(sourceKey: string, meta: ReportMeta): ReportDef {
 }
 
 function stub(meta: ReportMeta): ReportDef {
-  return { ...meta, columns: [] }
+  return { periodMode: "none", ...meta, columns: [] }
 }
 
 const PENDING = "Data source not available yet — this report will populate once its data exists."

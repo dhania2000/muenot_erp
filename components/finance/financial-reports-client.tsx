@@ -1,7 +1,7 @@
 "use client"
 
 import useSWR from "swr"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -73,7 +73,7 @@ function toCsv(report: ReportResponse["report"], rows: Record<string, any>[]) {
   return `${header}\n${body}`
 }
 
-function ReportCard({
+function ReportView({
   entry,
   from,
   to,
@@ -196,7 +196,8 @@ const emptyRange = { from: "", to: "" }
 
 export function FinancialReportsClient() {
   const [range, setRange] = useState(emptyRange)
-  const [group, setGroup] = useState<string>("all")
+  const [group, setGroup] = useState<string>("")
+  const [reportKey, setReportKey] = useState<string>("")
 
   const { data, isLoading } = useSWR<{ reports: CatalogueEntry[] }>(
     "/api/finance/reports",
@@ -205,16 +206,36 @@ export function FinancialReportsClient() {
 
   const catalogue = data?.reports ?? []
 
+  // Categories in catalogue order (first-seen), so the accounting groups keep
+  // their intended sequence rather than being alphabetised.
   const groups = useMemo(() => {
-    const set = new Set(catalogue.map((r) => r.group))
-    return ["all", ...Array.from(set)]
+    const seen: string[] = []
+    for (const r of catalogue) if (!seen.includes(r.group)) seen.push(r.group)
+    return seen
   }, [catalogue])
 
-  const visible = useMemo(
-    () => (group === "all" ? catalogue : catalogue.filter((r) => r.group === group)),
+  const reportsInGroup = useMemo(
+    () => catalogue.filter((r) => r.group === group),
     [catalogue, group],
   )
 
+  // Default to the first category once the catalogue loads.
+  useEffect(() => {
+    if (!group && groups.length > 0) setGroup(groups[0])
+  }, [group, groups])
+
+  // Keep the selected report valid whenever the category changes.
+  useEffect(() => {
+    if (reportsInGroup.length === 0) {
+      if (reportKey) setReportKey("")
+      return
+    }
+    if (!reportsInGroup.some((r) => r.key === reportKey)) {
+      setReportKey(reportsInGroup[0].key)
+    }
+  }, [reportsInGroup, reportKey])
+
+  const selected = reportsInGroup.find((r) => r.key === reportKey)
   const rangeActive = Boolean(range.from || range.to)
 
   return (
@@ -234,21 +255,54 @@ export function FinancialReportsClient() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-base">Report controls</CardTitle>
-          {(rangeActive || group !== "all") && (
+          {rangeActive && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => {
-                setRange(emptyRange)
-                setGroup("all")
-              }}
+              onClick={() => setRange(emptyRange)}
             >
               <FilterX data-icon="inline-start" />
-              Reset
+              Reset dates
             </Button>
           )}
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="report-group">
+              Category
+            </label>
+            <select
+              id="report-group"
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              value={group}
+              onChange={(e) => setGroup(e.target.value)}
+              disabled={isLoading || groups.length === 0}
+            >
+              {groups.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="report-name">
+              Report
+            </label>
+            <select
+              id="report-name"
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              value={reportKey}
+              onChange={(e) => setReportKey(e.target.value)}
+              disabled={reportsInGroup.length === 0}
+            >
+              {reportsInGroup.map((r) => (
+                <option key={r.key} value={r.key}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-muted-foreground" htmlFor="report-from">
               From date
@@ -271,41 +325,15 @@ export function FinancialReportsClient() {
               onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="report-group">
-              Category
-            </label>
-            <select
-              id="report-group"
-              className="h-10 rounded-md border bg-background px-3 text-sm"
-              value={group}
-              onChange={(e) => setGroup(e.target.value)}
-            >
-              {groups.map((g) => (
-                <option key={g} value={g}>
-                  {g === "all" ? "All categories" : g}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-end">
-            <p className="text-xs text-muted-foreground">
-              Reports generate automatically and refresh when the date range changes.
-            </p>
-          </div>
         </CardContent>
       </Card>
 
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading report catalogue…</p>
-      ) : visible.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No reports available.</p>
+      ) : selected ? (
+        <ReportView entry={selected} from={range.from} to={range.to} />
       ) : (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          {visible.map((entry) => (
-            <ReportCard key={entry.key} entry={entry} from={range.from} to={range.to} />
-          ))}
-        </div>
+        <p className="text-sm text-muted-foreground">Select a category and report to begin.</p>
       )}
     </main>
   )

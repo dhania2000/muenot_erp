@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireFeature } from "@/lib/api-auth"
+import { hasActionGrant } from "@/lib/permission-store"
 import {
   listReportRuns,
   logReportRun,
@@ -42,6 +43,20 @@ export async function POST(req: NextRequest) {
   if (!reportKey) return NextResponse.json({ error: "A report is required" }, { status: 400 })
   if (!DOWNLOAD_FORMATS.has(format)) {
     return NextResponse.json({ error: "Invalid download format" }, { status: 400 })
+  }
+
+  // Phase 32 — exporting is a distinct privilege from viewing. The client
+  // hides download actions when this grant is absent; enforce it here too so
+  // the audit log can't be written (and the file implicitly sanctioned) by a
+  // viewer who lacks export rights.
+  const canExport = await hasActionGrant(
+    (session as any).userId,
+    session.role,
+    "finance.reports",
+    "export_report",
+  )
+  if (!canExport) {
+    return NextResponse.json({ error: "You do not have permission to export reports." }, { status: 403 })
   }
 
   const id = await logReportRun({

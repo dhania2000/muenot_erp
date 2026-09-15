@@ -32,6 +32,66 @@ export function formatNumber(value: number | string, s: SettingsMap = {}): strin
   return (safe < 0 ? "-" : "") + out
 }
 
+/**
+ * Group the integer part using the Indian numbering system: the last three
+ * digits, then every two digits (e.g. 1234567 -> 12,34,567). This is the
+ * lakh/crore convention used by Indian statutory and Tally-style reports.
+ */
+function groupIndian(intPart: string, separator: string) {
+  if (intPart.length <= 3) return intPart
+  const last3 = intPart.slice(-3)
+  const rest = intPart.slice(0, -3)
+  const grouped = rest.replace(/\B(?=(\d{2})+(?!\d))/g, "\u0001").replace(/\u0001/g, separator)
+  return `${grouped}${separator}${last3}`
+}
+
+/** Like `formatNumber`, but with Indian (lakh/crore) grouping. Always emits a
+ * bare magnitude — the sign is handled by the caller so financial reports can
+ * render negatives in accounting style. */
+export function formatNumberIndian(value: number | string, s: SettingsMap = {}): string {
+  const raw = Number(value)
+  const safe = Number.isFinite(raw) ? raw : 0
+  const decimals = Math.max(0, Math.min(6, numSetting(s, "currency.decimals", 2)))
+  const thousand = s["currency.thousand_separator"] ?? ","
+  const decimal = s["currency.decimal_separator"] ?? "."
+  const fixed = Math.abs(safe).toFixed(decimals)
+  const [intPart, fracPart] = fixed.split(".")
+  let out = groupIndian(intPart, thousand)
+  if (fracPart) out += decimal + fracPart
+  return out
+}
+
+/**
+ * Format a monetary value the way Financial Reports present it everywhere
+ * (on-screen table, view dialog and emailed HTML): the configured currency
+ * symbol/position, Indian lakh/crore grouping, and accounting-style negatives
+ * wrapped in parentheses — `(₹1,23,456.00)` rather than `-₹1,23,456.00`. This
+ * matches the PDF/Excel export engine so a figure reads identically across
+ * every surface. Zero renders as a clean `₹0.00`, never a blank.
+ */
+export function formatCurrencyIndian(value: number | string, s: SettingsMap = {}): string {
+  const raw = Number(value)
+  const safe = Number.isFinite(raw) ? raw : 0
+  const symbol = s["currency.symbol"] || "\u20B9"
+  const position = s["currency.symbol_position"] || "Left"
+  const body = formatNumberIndian(Math.abs(safe), s)
+  let out: string
+  switch (position) {
+    case "Right":
+      out = `${body}${symbol}`
+      break
+    case "Left with space":
+      out = `${symbol} ${body}`
+      break
+    case "Right with space":
+      out = `${body} ${symbol}`
+      break
+    default:
+      out = `${symbol}${body}`
+  }
+  return safe < 0 ? `(${out})` : out
+}
+
 /** Format a monetary value with the configured symbol and position. */
 export function formatCurrency(value: number | string, s: SettingsMap = {}): string {
   const raw = Number(value)

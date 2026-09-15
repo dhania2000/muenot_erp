@@ -5,7 +5,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
-import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink, Megaphone, MessageCircle } from "lucide-react"
+import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink, Megaphone, MessageCircle, LayoutDashboard } from "lucide-react"
 
 function settingEnabled(v: string | undefined, fallback = true) {
   if (v == null) return fallback
@@ -181,6 +181,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const canAccess = await getFeatureChecker(session.userId, session.role)
 
   const navItems: NavItem[] = [
+    { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="size-4" /> },
     ...(session.role === "admin"
       ? [{ label: "Admin panel", href: "/admin", icon: <ShieldCheck className="size-4" /> }]
       : []),

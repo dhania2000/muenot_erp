@@ -21,6 +21,7 @@
     "googleapis": "^178.0.0",
     "jose": "6.2.11",
     "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "lucide-react": "^1.16.0",
     "mysql2": "3.24.3",
     "next": "16.3.3",

@@ -35,6 +35,7 @@ import type { ReportExportPayload } from "@/lib/report-tally"
 import type { PeriodMode } from "@/lib/finance-reports"
 import { ReportViewDialog, type ReportCompany } from "@/components/finance/report-view-dialog"
 import { ReportEmailDialog } from "@/components/finance/report-email-dialog"
+import { ReportHistoryPanel } from "@/components/finance/report-history-panel"
 import { ReportDrillDrawer, type DrillTarget } from "@/components/finance/report-drill-drawer"
 import {
   defaultPeriod,
@@ -80,6 +81,7 @@ type ReportResponse = {
   available: boolean
   company: ReportCompany | null
   generatedAt: string
+  generatedBy: string
 }
 
 // Honours the configured currency (symbol/position/separators) via settings.
@@ -128,6 +130,7 @@ function ReportView({
   to,
   filters,
   subtitle,
+  periodLabel,
   filterLabels,
 }: {
   entry: CatalogueEntry
@@ -135,6 +138,7 @@ function ReportView({
   to: string
   filters: Record<string, string>
   subtitle: string
+  periodLabel: string
   filterLabels: string[]
 }) {
   const { data, isLoading, isValidating, mutate } = useSWR<ReportResponse>(
@@ -153,6 +157,7 @@ function ReportView({
   const rows = data?.rows ?? []
   const company = data?.company ?? null
   const generatedAt = data?.generatedAt ?? ""
+  const generatedBy = data?.generatedBy ?? ""
   const totals = useMemo(
     () => (report ? computeTotals(report.columns, rows) : null),
     [report, rows],
@@ -176,22 +181,49 @@ function ReportView({
       subtitle,
       filterLabels,
       generatedAt,
+      generatedBy,
     }
+  }
+
+  // Phase 19 — record a download in the report run log (best-effort, fire and
+  // forget) so it shows up in the Download history alongside emailed reports.
+  function logDownload(format: "PDF" | "Excel" | "CSV") {
+    fetch("/api/finance/reports/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        report_key: entry.key,
+        report_label: entry.label,
+        format,
+        period_label: periodLabel,
+        filters_text: filterLabels.join(", "),
+        row_count: rows.length,
+      }),
+    }).catch(() => {})
   }
 
   function downloadCsv() {
     const payload = exportPayload()
-    if (payload) exportReportCsv(payload)
+    if (payload) {
+      exportReportCsv(payload)
+      logDownload("CSV")
+    }
   }
 
   async function downloadExcel() {
     const payload = exportPayload()
-    if (payload) await exportReportExcel(payload)
+    if (payload) {
+      await exportReportExcel(payload)
+      logDownload("Excel")
+    }
   }
 
   async function downloadPdf() {
     const payload = exportPayload()
-    if (payload) await exportReportPdf(payload)
+    if (payload) {
+      await exportReportPdf(payload)
+      logDownload("PDF")
+    }
   }
 
   return (
@@ -325,10 +357,18 @@ function ReportView({
         onClose={() => setEmailOpen(false)}
         reportKey={entry.key}
         reportLabel={entry.label}
+        reportDescription={entry.description}
         from={from}
         to={to}
         filters={filters}
         subtitle={subtitle}
+        periodLabel={periodLabel}
+        filterLabels={filterLabels}
+        columns={report?.columns ?? []}
+        rows={rows}
+        company={company as ReportCompany | null}
+        generatedAt={generatedAt}
+        generatedBy={generatedBy}
       />
 
       <ReportDrillDrawer
@@ -487,6 +527,7 @@ function PeriodControls({
 }
 
 export function FinancialReportsClient() {
+  const [view, setView] = useState<"reports" | "history">("reports")
   const [period, setPeriod] = useState<PeriodState>(defaultPeriod)
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [reportKey, setReportKey] = useState<string>("")
@@ -561,8 +602,27 @@ export function FinancialReportsClient() {
             <h1 className="text-3xl font-semibold tracking-tight">Financial Reports</h1>
           </div>
         </div>
+        <div className="flex gap-1 rounded-md border p-1">
+          {(["reports", "history"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setView(v)}
+              aria-pressed={view === v}
+              className={`rounded px-3 py-1.5 text-sm font-medium capitalize transition-colors ${
+                view === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/60"
+              }`}
+            >
+              {v === "history" ? "Download & Email history" : "Reports"}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {view === "history" ? (
+        <ReportHistoryPanel />
+      ) : (
+        <>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-base">Report controls</CardTitle>
@@ -677,10 +737,13 @@ export function FinancialReportsClient() {
           to={to}
           filters={filters}
           subtitle={subtitle}
+          periodLabel={label}
           filterLabels={activeFilterLabels(selected, filters)}
         />
       ) : (
         <p className="text-sm text-muted-foreground">Select a category and report to begin.</p>
+      )}
+        </>
       )}
     </main>
   )

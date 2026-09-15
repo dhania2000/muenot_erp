@@ -58,5 +58,6 @@ export async function GET(req: NextRequest) {
     available: run.available,
     company,
     generatedAt: new Date().toISOString(),
+    generatedBy: session.name || "",
   })
 }

@@ -72,6 +72,13 @@ async function ensureManualJournalColumns(): Promise<void> {
   await ensureColumn("journal_entries", "reversed_by", "VARCHAR(40) DEFAULT NULL")
   await ensureColumn("journal_entries", "cost_centre", "VARCHAR(120) DEFAULT NULL")
   await ensureColumn("general_ledger", "cost_centre", "VARCHAR(120) DEFAULT NULL")
+  // Phase 36/37 — payment details are in the base schema, but a journal-level
+  // supporting document (its url + kind: Invoice / Bill / Receipt / Payment
+  // Proof / Other) is added lazily so existing installs upgrade in place.
+  await ensureColumn("journal_entries", "payment_mode", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("journal_entries", "cheque_utr_reference", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn("journal_entries", "attachment_url", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("journal_entries", "attachment_type", "VARCHAR(40) DEFAULT NULL")
   columnsEnsured = true
 }
 
@@ -301,7 +308,55 @@ export type ManualJournalInput = {
   voucherType?: string
   referenceNo?: string | null
   narration?: string | null
+  // Phase 36 — how the voucher was settled, plus the cheque / UTR / reference.
+  paymentMode?: string | null
+  chequeUtrReference?: string | null
+  // Phase 37 — a single supporting document for the whole voucher.
+  attachmentUrl?: string | null
+  attachmentType?: string | null
   lines: ManualJournalLineInput[]
+}
+
+/** Payment modes a manual journal may be settled through (Phase 36). */
+export const MANUAL_JOURNAL_PAYMENT_MODES = [
+  "Bank",
+  "Cash",
+  "Cheque",
+  "UPI",
+  "Card",
+  "Transfer",
+  "Other",
+] as const
+
+/** Supporting-document kinds a journal attachment may be tagged as (Phase 37). */
+export const MANUAL_JOURNAL_ATTACHMENT_TYPES = [
+  "Invoice",
+  "Bill",
+  "Receipt",
+  "Payment Proof",
+  "Other",
+] as const
+
+/**
+ * Normalise the header-level payment + attachment fields to trimmed strings or
+ * null (Phase 36/37). Only known payment modes and attachment kinds are kept so
+ * the stored value always matches the pickers on the Journal Entries screen.
+ */
+function normalisePaymentAndAttachment(input: ManualJournalInput): {
+  paymentMode: string | null
+  chequeUtrReference: string | null
+  attachmentUrl: string | null
+  attachmentType: string | null
+} {
+  const mode = String(input.paymentMode ?? "").trim()
+  const attType = String(input.attachmentType ?? "").trim()
+  const attUrl = String(input.attachmentUrl ?? "").trim()
+  return {
+    paymentMode: (MANUAL_JOURNAL_PAYMENT_MODES as readonly string[]).includes(mode) ? mode : null,
+    chequeUtrReference: String(input.chequeUtrReference ?? "").trim() || null,
+    attachmentUrl: attUrl || null,
+    attachmentType: attUrl && (MANUAL_JOURNAL_ATTACHMENT_TYPES as readonly string[]).includes(attType) ? attType : attUrl ? "Other" : null,
+  }
 }
 
 export type ManualJournalResult = {
@@ -433,6 +488,10 @@ export async function createManualJournal(
   const fy = input.financialYear && String(input.financialYear).trim() ? String(input.financialYear).trim() : financialYear
   const narration = input.narration ? String(input.narration) : null
   const referenceNo = input.referenceNo ? String(input.referenceNo) : null
+  // Phase 36/37 — payment details + a supporting document are journal-level
+  // (header) attributes, denormalised onto every line so they flow straight
+  // through to the general ledger when the voucher is posted.
+  const payment = normalisePaymentAndAttachment(input)
   const status: JournalStatus = opts.submit ? "Pending Approval" : "Draft"
 
   const conn = await pool.getConnection()
@@ -460,16 +519,18 @@ export async function createManualJournal(
            (journal_entry_id, voucher_no, journal_date, financial_year, reference_type,
             reference_no, voucher_type, narration, account_id, account_name, account_group,
             account_type, party_id, party_name, project_id, project_name, cost_centre, debit, credit,
-            net_amount, gst_amount, tds_amount, source_module, source_reference,
+            net_amount, gst_amount, tds_amount, payment_mode, cheque_utr_reference,
+            attachment_url, attachment_type, source_module, source_reference,
             source_entity_type, source_entity_id, approval_status, approved_by,
             posting_status, posting_date, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           lineId, journalId, input.journalDate, fy, "Manual",
           referenceNo, voucherType, lineNarration, account.account_id, account.account_name,
           account.account_group, account.account_type, dim.partyId, dim.partyName,
           dim.projectId, dim.projectName, costCentre, debit, credit,
           round2(debit - credit), round2(num(line.gst)), round2(num(line.tds)),
+          payment.paymentMode, payment.chequeUtrReference, payment.attachmentUrl, payment.attachmentType,
           MANUAL_JOURNAL_SOURCE, journalId, "manual_journal", null, status, null,
           "Unposted", null, opts.createdBy ?? null,
         ],
@@ -550,6 +611,8 @@ export async function updateManualJournalDraft(
       : financialYearFor(input.journalDate) || String(rows[0]?.financial_year ?? "")
   const narration = input.narration ? String(input.narration) : null
   const referenceNo = input.referenceNo ? String(input.referenceNo) : null
+  // Phase 36/37 — payment + attachment header attributes, re-applied on edit.
+  const payment = normalisePaymentAndAttachment(input)
 
   const conn = await pool.getConnection()
   try {
@@ -580,16 +643,18 @@ export async function updateManualJournalDraft(
            (journal_entry_id, voucher_no, journal_date, financial_year, reference_type,
             reference_no, voucher_type, narration, account_id, account_name, account_group,
             account_type, party_id, party_name, project_id, project_name, cost_centre, debit, credit,
-            net_amount, gst_amount, tds_amount, source_module, source_reference,
+            net_amount, gst_amount, tds_amount, payment_mode, cheque_utr_reference,
+            attachment_url, attachment_type, source_module, source_reference,
             source_entity_type, source_entity_id, approval_status, approved_by,
             posting_status, posting_date, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           lineId, journalId, input.journalDate, fy, "Manual",
           referenceNo, voucherType, lineNarration, account.account_id, account.account_name,
           account.account_group, account.account_type, dim.partyId, dim.partyName,
           dim.projectId, dim.projectName, costCentre, debit, credit,
           round2(debit - credit), round2(num(line.gst)), round2(num(line.tds)),
+          payment.paymentMode, payment.chequeUtrReference, payment.attachmentUrl, payment.attachmentType,
           MANUAL_JOURNAL_SOURCE, journalId, "manual_journal", null, "Draft", null,
           "Unposted", null, createdBy,
         ],
@@ -657,9 +722,10 @@ async function writeLedgerFromRows(
          (ledger_id, journal_entry_id, voucher_no, financial_year, transaction_date, value_date,
           account_id, account_name, account_group, account_type, transaction_type, voucher_type,
           reference_no, party_id, party_name, project_id, project_name, cost_centre, description, debit, credit,
-          amount, gst_amount, tds_amount, balance, balance_type, source_module, source_reference,
+          amount, gst_amount, tds_amount, balance, balance_type, payment_mode, cheque_utr_reference,
+          attachment_link, source_module, source_reference,
           source_entity_type, source_entity_id, reconciliation_status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         ledgerId, row.journal_entry_id, row.voucher_no, row.financial_year, row.journal_date, row.journal_date,
         account.account_id, account.account_name, account.account_group, account.account_type,
@@ -667,6 +733,7 @@ async function writeLedgerFromRows(
         row.party_id ?? null, row.party_name ?? null, row.project_id ?? null, row.project_name ?? null,
         row.cost_centre ?? null, description, debit, credit, round2(credit > 0 ? credit : debit),
         round2(num(row.gst_amount)), round2(num(row.tds_amount)), Math.abs(running), balanceType,
+        row.payment_mode ?? null, row.cheque_utr_reference ?? null, row.attachment_url ?? null,
         MANUAL_JOURNAL_SOURCE, row.voucher_no, "manual_journal", null, "Unreconciled",
         opts.createdBy ?? null,
       ],
@@ -792,6 +859,9 @@ async function reverseManualJournalGroup(
     party_name: src.party_name ?? null,
     project_id: src.project_id ?? null,
     project_name: src.project_name ?? null,
+    payment_mode: src.payment_mode ?? null,
+    cheque_utr_reference: src.cheque_utr_reference ?? null,
+    attachment_url: src.attachment_url ?? null,
     debit: round2(num(src.credit)),
     credit: round2(num(src.debit)),
     gst_amount: 0,

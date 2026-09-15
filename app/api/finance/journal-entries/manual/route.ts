@@ -81,6 +81,11 @@ function readInput(body: Partial<ManualJournalInput>): ManualJournalInput {
     voucherType: body.voucherType ?? "Journal",
     referenceNo: body.referenceNo ?? null,
     narration: body.narration ?? null,
+    // Phase 36/37 — header-level payment + attachment metadata.
+    paymentMode: body.paymentMode ?? null,
+    chequeUtrReference: body.chequeUtrReference ?? null,
+    attachmentUrl: body.attachmentUrl ?? null,
+    attachmentType: body.attachmentType ?? null,
     lines: Array.isArray(body.lines) ? body.lines : [],
   }
 }

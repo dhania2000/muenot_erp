@@ -1333,7 +1333,7 @@ const journalEntries: ModuleConfig = {
   dateColumn: "journal_date",
   financialYearColumn: "financial_year",
   statusColumn: "approval_status",
-  searchColumns: ["journal_entry_id", "reference_no", "account_name", "party_name", "project_name", "narration"],
+  searchColumns: ["journal_entry_id", "reference_no", "account_name", "party_name", "project_name", "narration", "cheque_utr_reference", "cost_centre"],
   fields: [
     fld("Entry", "journal_entry_id", "Journal Entry ID", "text", { placeholder: "Auto-generated if left blank" }),
     fld("Entry", "journal_date", "Journal date", "date", { required: true }),
@@ -1357,6 +1357,8 @@ const journalEntries: ModuleConfig = {
     fld("Amounts", "tds_amount", "TDS amount", "number"),
     fld("Payment", "payment_mode", "Payment mode", "select", { options: PAYMENT_MODES, optional: true }),
     fld("Payment", "cheque_utr_reference", "Cheque / UTR / reference", "text"),
+    fld("Attachment", "attachment_type", "Attachment type", "select", { options: ["Invoice", "Bill", "Receipt", "Payment Proof", "Other"], optional: true }),
+    fld("Attachment", "attachment_url", "Attachment link", "text", { placeholder: "Supporting document URL" }),
     fld("Source & approval", "source_module", "Source module", "select", { options: SOURCE_MODULES, optional: true }),
     fld("Source & approval", "source_reference", "Source reference", "text"),
     fld("Source & approval", "approval_status", "Approval status", "select", { options: JOURNAL_APPROVAL_STATUSES }),

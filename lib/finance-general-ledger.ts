@@ -1,5 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { listPeriodLocks } from "@/lib/finance-period-lock"
 
 // ---------------------------------------------------------------------------
 // General Ledger read model (Phases 11–20).
@@ -1026,10 +1027,498 @@ async function getIntegrityView(f: GLFilters, period: { start: string | null; en
 }
 
 // ---------------------------------------------------------------------------
+// Account ledger (Phase 48) — per-account Opening / Debit / Credit / Closing
+// with a transaction count, straight from posted rows. The natural balance
+// side follows the signed net (Dr when ≥ 0), matching the party/project views.
+// ---------------------------------------------------------------------------
+export type AccountLedgerRow = {
+  accountId: string
+  accountName: string
+  accountGroup: string
+  accountType: string
+  opening: number
+  openingSide: Side
+  debit: number
+  credit: number
+  closing: number
+  closingSide: Side
+  txnCount: number
+}
+
+async function getAccountLedger(f: GLFilters, period: { start: string | null; end: string | null }) {
+  const dim = dimensionWhere(f)
+  const per = periodWhere(f, period)
+  const within = await safe(
+    `SELECT account_id,
+            MIN(account_name) account_name,
+            MIN(account_group) account_group,
+            MIN(account_type) account_type,
+            COALESCE(SUM(debit),0) d, COALESCE(SUM(credit),0) c,
+            COUNT(*) txns
+       FROM general_ledger ${whereClause([`account_id IS NOT NULL`, `account_id <> ''`, ...dim.conditions, ...per.conditions])}
+       GROUP BY account_id
+       ORDER BY MIN(account_group), MIN(account_name)`,
+    [...dim.args, ...per.args],
+  )
+
+  const openingMap = new Map<string, number>()
+  if (period.start) {
+    const opens = await safe(
+      `SELECT account_id, COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0) net
+         FROM general_ledger ${whereClause([`account_id IS NOT NULL`, `account_id <> ''`, ...dim.conditions, `transaction_date < ?`])}
+         GROUP BY account_id`,
+      [...dim.args, period.start],
+    )
+    for (const r of opens) openingMap.set(String(r.account_id), round2(num(r.net)))
+  }
+
+  let totalDebit = 0
+  let totalCredit = 0
+  const rows: AccountLedgerRow[] = within.map((r) => {
+    const opening = openingMap.get(String(r.account_id)) ?? 0
+    const debit = round2(num(r.d))
+    const credit = round2(num(r.c))
+    totalDebit = round2(totalDebit + debit)
+    totalCredit = round2(totalCredit + credit)
+    const closingNet = round2(opening + (debit - credit))
+    return {
+      accountId: String(r.account_id),
+      accountName: String(r.account_name || ""),
+      accountGroup: String(r.account_group || ""),
+      accountType: String(r.account_type || ""),
+      opening: round2(Math.abs(opening)),
+      openingSide: opening >= 0 ? "Debit" : "Credit",
+      debit,
+      credit,
+      closing: round2(Math.abs(closingNet)),
+      closingSide: closingNet >= 0 ? "Debit" : "Credit",
+      txnCount: Number(r.txns) || 0,
+    }
+  })
+
+  const opening = await buildOpeningNet(f, period)
+  const summary = summaryFromTotals(opening, totalDebit, totalCredit)
+  return { rows, summary, count: rows.length }
+}
+
+// ---------------------------------------------------------------------------
+// Exception Center (Phase 51) — one place that surfaces every way a posted
+// ledger row can disagree with its source of truth. It is a strict superset of
+// the integrity view: it reuses those voucher-level checks (unbalanced, missing
+// journal, Journal ⇄ GL mismatch, source mismatch) and adds the remaining
+// taxonomy the ledger can violate. Whole-voucher-safe filters only (period /
+// FY / source / text) so a partial account/party slice can't fake an exception.
+// ---------------------------------------------------------------------------
+export type ExceptionCategory =
+  | "unbalanced"
+  | "missingJournal"
+  | "journalMismatch"
+  | "journalWithoutGl"
+  | "duplicateGl"
+  | "accountMissing"
+  | "invalidAccount"
+  | "sourceMismatch"
+  | "gstMismatch"
+  | "tdsMismatch"
+  | "bankMismatch"
+  | "periodLock"
+  | "unreconciled"
+
+export type ExceptionRow = {
+  category: ExceptionCategory
+  label: string
+  severity: "high" | "medium" | "low"
+  voucherNo: string | null
+  ledgerId: string | null
+  journalEntryId: string | null
+  date: string | null
+  account: string | null
+  party: string | null
+  detail: string
+}
+
+const EXCEPTION_META: Record<ExceptionCategory, { label: string; severity: "high" | "medium" | "low" }> = {
+  unbalanced: { label: "Debit/Credit Mismatch", severity: "high" },
+  missingJournal: { label: "GL Without Journal", severity: "high" },
+  journalWithoutGl: { label: "Journal Without GL", severity: "high" },
+  journalMismatch: { label: "Journal ⇄ GL Mismatch", severity: "high" },
+  duplicateGl: { label: "Duplicate GL Posting", severity: "high" },
+  accountMissing: { label: "Account Missing", severity: "high" },
+  invalidAccount: { label: "Invalid Account", severity: "high" },
+  sourceMismatch: { label: "Source Mismatch", severity: "medium" },
+  gstMismatch: { label: "GST Mismatch", severity: "medium" },
+  tdsMismatch: { label: "TDS Mismatch", severity: "medium" },
+  bankMismatch: { label: "Bank Mismatch", severity: "medium" },
+  periodLock: { label: "Period Lock Issue", severity: "medium" },
+  unreconciled: { label: "Unreconciled", severity: "low" },
+}
+
+/** Whole-voucher-safe scope shared by the exception queries. */
+function exceptionScope(f: GLFilters, period: { start: string | null; end: string | null }, alias = "") {
+  const p = alias ? `${alias}.` : ""
+  const conditions: string[] = [`${p}voucher_no IS NOT NULL`, `${p}voucher_no <> ''`]
+  const args: any[] = []
+  if (period.start) {
+    conditions.push(`${p}transaction_date >= ?`)
+    args.push(period.start)
+  }
+  if (period.end) {
+    conditions.push(`${p}transaction_date <= ?`)
+    args.push(period.end)
+  }
+  if (f.financial_year) {
+    conditions.push(`${p}financial_year = ?`)
+    args.push(f.financial_year)
+  }
+  if (f.source_module) {
+    conditions.push(`${p}source_module = ?`)
+    args.push(f.source_module)
+  }
+  if (f.search) {
+    const cols = ["voucher_no", "journal_entry_id", "source_reference", "reference_no", "party_name", "account_name"]
+    conditions.push("(" + cols.map((c) => `${p}${c} LIKE ?`).join(" OR ") + ")")
+    const like = `%${f.search}%`
+    cols.forEach(() => args.push(like))
+  }
+  return { conditions, args }
+}
+
+/** Same whole-voucher-safe scope, but for the journal_entries table (which has
+ * no `journal_entry_id` column — its own `id` is the journal id). */
+function journalScope(f: GLFilters, period: { start: string | null; end: string | null }, alias: string) {
+  const p = `${alias}.`
+  const conditions: string[] = [`${p}voucher_no IS NOT NULL`, `${p}voucher_no <> ''`]
+  const args: any[] = []
+  if (period.start) {
+    conditions.push(`${p}transaction_date >= ?`)
+    args.push(period.start)
+  }
+  if (period.end) {
+    conditions.push(`${p}transaction_date <= ?`)
+    args.push(period.end)
+  }
+  if (f.financial_year) {
+    conditions.push(`${p}financial_year = ?`)
+    args.push(f.financial_year)
+  }
+  if (f.source_module) {
+    conditions.push(`${p}source_module = ?`)
+    args.push(f.source_module)
+  }
+  if (f.search) {
+    const cols = ["voucher_no", "source_reference", "reference_no", "party_name", "account_name"]
+    conditions.push("(" + cols.map((c) => `${p}${c} LIKE ?`).join(" OR ") + ")")
+    const like = `%${f.search}%`
+    cols.forEach(() => args.push(like))
+  }
+  return { conditions, args }
+}
+
+async function getExceptionsView(
+  f: GLFilters,
+  period: { start: string | null; end: string | null },
+  limit: number,
+) {
+  const rows: ExceptionRow[] = []
+  const push = (
+    category: ExceptionCategory,
+    r: Partial<ExceptionRow> & { detail: string },
+  ) => {
+    const meta = EXCEPTION_META[category]
+    rows.push({
+      category,
+      label: meta.label,
+      severity: meta.severity,
+      voucherNo: r.voucherNo ?? null,
+      ledgerId: r.ledgerId ?? null,
+      journalEntryId: r.journalEntryId ?? null,
+      date: r.date ?? null,
+      account: r.account ?? null,
+      party: r.party ?? null,
+      detail: r.detail,
+    })
+  }
+  const asDate = (v: any) => (v ? String(v).slice(0, 10) : null)
+
+  // 1-4) Voucher-level checks reused from the integrity engine so the two views
+  // never drift. Each issue string carries its own category prefix.
+  const integrity = await getIntegrityView(f, period, 2000)
+  for (const iv of integrity.rows) {
+    if (iv.status !== "Exception") continue
+    const base = { voucherNo: iv.voucherNo, date: iv.date, party: null as string | null }
+    if (Math.abs(iv.ledgerDebit - iv.ledgerCredit) > 0.01) {
+      push("unbalanced", {
+        ...base,
+        detail: `Ledger voucher not balanced (Dr ${iv.ledgerDebit.toFixed(2)} ≠ Cr ${iv.ledgerCredit.toFixed(2)}).`,
+      })
+    }
+    if (iv.journalDebit === 0 && iv.journalCredit === 0) {
+      push("missingJournal", { ...base, detail: `No posted Journal Entries voucher backs this ledger posting.` })
+    } else if (
+      Math.abs(iv.journalDebit - iv.ledgerDebit) > 0.01 ||
+      Math.abs(iv.journalCredit - iv.ledgerCredit) > 0.01
+    ) {
+      push("journalMismatch", {
+        ...base,
+        detail: `Journal (Dr ${iv.journalDebit.toFixed(2)}/Cr ${iv.journalCredit.toFixed(2)}) ≠ Ledger (Dr ${iv.ledgerDebit.toFixed(2)}/Cr ${iv.ledgerCredit.toFixed(2)}).`,
+      })
+    }
+    if (iv.sourceAmount != null && Math.abs(iv.sourceAmount - iv.ledgerDebit) > 0.01) {
+      push("sourceMismatch", {
+        ...base,
+        detail: `Source amount ${iv.sourceAmount.toFixed(2)} ≠ posted ledger effect ${iv.ledgerDebit.toFixed(2)}.`,
+      })
+    }
+  }
+
+  const scope = exceptionScope(f, period)
+
+  // 5) Journal Without GL — posted journal lines whose voucher never reached the
+  // ledger. Scoped by the same period/FY/source predicates on the journal side.
+  const jScope = journalScope(f, period, "je")
+  const jWithout = await safe(
+    `SELECT je.voucher_no, MIN(je.transaction_date) transaction_date,
+            ROUND(COALESCE(SUM(je.debit),0),2) jd, ROUND(COALESCE(SUM(je.credit),0),2) jc
+       FROM journal_entries je
+      ${whereClause([`COALESCE(je.posting_status,'') = 'Posted'`, ...jScope.conditions, `NOT EXISTS (SELECT 1 FROM general_ledger gl WHERE gl.voucher_no = je.voucher_no)`])}
+      GROUP BY je.voucher_no
+      ORDER BY MIN(je.transaction_date) DESC
+      LIMIT 500`,
+    jScope.args,
+  )
+  for (const r of jWithout) {
+    push("journalWithoutGl", {
+      voucherNo: String(r.voucher_no),
+      date: asDate(r.transaction_date),
+      detail: `Posted journal (Dr ${num(r.jd).toFixed(2)}/Cr ${num(r.jc).toFixed(2)}) has no matching General Ledger posting.`,
+    })
+  }
+
+  // 6) Duplicate GL — the same journal entry posted to the ledger more than once.
+  const dupes = await safe(
+    `SELECT journal_entry_id, COUNT(*) n, MIN(voucher_no) voucher_no, MIN(transaction_date) transaction_date
+       FROM general_ledger
+       ${whereClause([`journal_entry_id IS NOT NULL`, `journal_entry_id <> ''`, ...scope.conditions])}
+       GROUP BY journal_entry_id
+       HAVING COUNT(DISTINCT id) > 1
+       ORDER BY MIN(transaction_date) DESC
+       LIMIT 500`,
+    scope.args,
+  )
+  for (const r of dupes) {
+    push("duplicateGl", {
+      voucherNo: r.voucher_no ? String(r.voucher_no) : null,
+      journalEntryId: String(r.journal_entry_id),
+      date: asDate(r.transaction_date),
+      detail: `Journal ${r.journal_entry_id} is posted to the ledger ${r.n} times.`,
+    })
+  }
+
+  // 7) Account Missing — posted rows with no account attached.
+  const missingAcct = await safe(
+    `SELECT id, voucher_no, journal_entry_id, transaction_date, party_name
+       FROM general_ledger
+       ${whereClause([`(account_id IS NULL OR account_id = '' OR account_name IS NULL OR account_name = '')`, ...scope.conditions])}
+       ORDER BY transaction_date DESC
+       LIMIT 500`,
+    scope.args,
+  )
+  for (const r of missingAcct) {
+    push("accountMissing", {
+      voucherNo: r.voucher_no ? String(r.voucher_no) : null,
+      ledgerId: r.id != null ? String(r.id) : null,
+      journalEntryId: r.journal_entry_id ? String(r.journal_entry_id) : null,
+      date: asDate(r.transaction_date),
+      party: r.party_name ? String(r.party_name) : null,
+      detail: `Posted ledger row has no account attached.`,
+    })
+  }
+
+  // 8) Invalid Account — an account_id that is not in the Chart of Accounts.
+  const glScope = exceptionScope(f, period, "gl")
+  const invalidAcct = await safe(
+    `SELECT gl.id, gl.voucher_no, gl.journal_entry_id, gl.transaction_date, gl.account_id, gl.account_name
+       FROM general_ledger gl
+       LEFT JOIN chart_of_accounts coa ON coa.id = gl.account_id
+       ${whereClause([`gl.account_id IS NOT NULL`, `gl.account_id <> ''`, `coa.id IS NULL`, ...glScope.conditions])}
+       ORDER BY gl.transaction_date DESC
+       LIMIT 500`,
+    glScope.args,
+  ).catch(() => [] as any[])
+  for (const r of invalidAcct) {
+    push("invalidAccount", {
+      voucherNo: r.voucher_no ? String(r.voucher_no) : null,
+      ledgerId: r.id != null ? String(r.id) : null,
+      journalEntryId: r.journal_entry_id ? String(r.journal_entry_id) : null,
+      date: asDate(r.transaction_date),
+      account: r.account_name ? String(r.account_name) : String(r.account_id),
+      detail: `Account "${r.account_name || r.account_id}" is not present in the Chart of Accounts.`,
+    })
+  }
+
+  // 9-10) GST / TDS mismatch — per-voucher tax posted to the ledger vs the
+  // posted journal it came from.
+  const taxRows = await safe(
+    `SELECT g.voucher_no, g.transaction_date,
+            g.gst gg, g.tds gt, j.gst jg, j.tds jt
+       FROM (SELECT voucher_no, MIN(transaction_date) transaction_date,
+                    ROUND(COALESCE(SUM(gst_amount),0),2) gst, ROUND(COALESCE(SUM(tds_amount),0),2) tds
+               FROM general_ledger ${whereClause(scope.conditions)}
+              GROUP BY voucher_no) g
+       JOIN (SELECT voucher_no,
+                    ROUND(COALESCE(SUM(gst_amount),0),2) gst, ROUND(COALESCE(SUM(tds_amount),0),2) tds
+               FROM journal_entries WHERE COALESCE(posting_status,'') = 'Posted'
+              GROUP BY voucher_no) j ON j.voucher_no = g.voucher_no
+      WHERE ABS(g.gst - j.gst) > 0.01 OR ABS(g.tds - j.tds) > 0.01
+      ORDER BY g.transaction_date DESC
+      LIMIT 500`,
+    scope.args,
+  )
+  for (const r of taxRows) {
+    if (Math.abs(num(r.gg) - num(r.jg)) > 0.01) {
+      push("gstMismatch", {
+        voucherNo: String(r.voucher_no),
+        date: asDate(r.transaction_date),
+        detail: `Ledger GST ${num(r.gg).toFixed(2)} ≠ journal GST ${num(r.jg).toFixed(2)}.`,
+      })
+    }
+    if (Math.abs(num(r.gt) - num(r.jt)) > 0.01) {
+      push("tdsMismatch", {
+        voucherNo: String(r.voucher_no),
+        date: asDate(r.transaction_date),
+        detail: `Ledger TDS ${num(r.gt).toFixed(2)} ≠ journal TDS ${num(r.jt).toFixed(2)}.`,
+      })
+    }
+  }
+
+  // 11) Bank Mismatch — reuse the bank reconciliation engine's verdicts.
+  try {
+    const bank = await getBankReconciliation(f, period)
+    for (const b of (bank.rows as BankReconRow[]) || []) {
+      if (b.status === "Mismatch" || b.status === "Needs Review") {
+        const bad = Object.entries(b.fields)
+          .filter(([, ok]) => !ok)
+          .map(([k]) => k)
+        push("bankMismatch", {
+          ledgerId: b.matched?.ledgerId ?? null,
+          date: b.date,
+          account: b.account,
+          party: b.party,
+          detail: b.matched
+            ? `Bank vs ledger differ on ${bad.length ? bad.join(", ") : "matching"}.`
+            : `Bank transaction has no matching ledger entry.`,
+        })
+      }
+    }
+  } catch {
+    // bank ledger optional
+  }
+
+  // 12) Period Lock Issue — posted rows dated inside a locked period.
+  try {
+    const locks = await listPeriodLocks()
+    const lockedKeys = new Set(
+      (locks || [])
+        .filter((l: any) => String(l.status || l.lock_status || "").toLowerCase() === "locked")
+        .map((l: any) => String(l.period_key || l.period || l.month || "")),
+    )
+    lockedKeys.delete("")
+    if (lockedKeys.size) {
+      const keyList = Array.from(lockedKeys)
+      const ph = keyList.map(() => "?").join(",")
+      const locked = await safe(
+        `SELECT id, voucher_no, journal_entry_id, transaction_date, account_name,
+                DATE_FORMAT(transaction_date,'%Y-%m') period_key
+           FROM general_ledger
+           ${whereClause([`DATE_FORMAT(transaction_date,'%Y-%m') IN (${ph})`, ...scope.conditions])}
+           ORDER BY transaction_date DESC
+           LIMIT 500`,
+        [...keyList, ...scope.args],
+      )
+      for (const r of locked) {
+        push("periodLock", {
+          voucherNo: r.voucher_no ? String(r.voucher_no) : null,
+          ledgerId: r.id != null ? String(r.id) : null,
+          journalEntryId: r.journal_entry_id ? String(r.journal_entry_id) : null,
+          date: asDate(r.transaction_date),
+          account: r.account_name ? String(r.account_name) : null,
+          detail: `Posting sits in locked period ${r.period_key}.`,
+        })
+      }
+    }
+  } catch {
+    // period locks optional
+  }
+
+  // 13) Unreconciled — posted rows still awaiting reconciliation (capped list;
+  // the category count reflects the full total).
+  const [unreconTotal] = await safe(
+    `SELECT COUNT(*) n FROM general_ledger
+      ${whereClause([`COALESCE(reconciliation_status,'Unreconciled') = 'Unreconciled'`, ...scope.conditions])}`,
+    scope.args,
+  )
+  const unrecon = await safe(
+    `SELECT id, voucher_no, journal_entry_id, transaction_date, account_name, party_name
+       FROM general_ledger
+       ${whereClause([`COALESCE(reconciliation_status,'Unreconciled') = 'Unreconciled'`, ...scope.conditions])}
+       ORDER BY transaction_date DESC
+       LIMIT 200`,
+    scope.args,
+  )
+  for (const r of unrecon) {
+    push("unreconciled", {
+      voucherNo: r.voucher_no ? String(r.voucher_no) : null,
+      ledgerId: r.id != null ? String(r.id) : null,
+      journalEntryId: r.journal_entry_id ? String(r.journal_entry_id) : null,
+      date: asDate(r.transaction_date),
+      account: r.account_name ? String(r.account_name) : null,
+      party: r.party_name ? String(r.party_name) : null,
+      detail: `Ledger posting is not yet reconciled.`,
+    })
+  }
+
+  // Assemble category counts. Every category listed so the UI can render a full,
+  // zero-inclusive taxonomy. Unreconciled reflects its true total, not the cap.
+  const byCategory: Record<ExceptionCategory, number> = {
+    unbalanced: 0, missingJournal: 0, journalMismatch: 0, journalWithoutGl: 0,
+    duplicateGl: 0, accountMissing: 0, invalidAccount: 0, sourceMismatch: 0,
+    gstMismatch: 0, tdsMismatch: 0, bankMismatch: 0, periodLock: 0, unreconciled: 0,
+  }
+  for (const r of rows) byCategory[r.category] += 1
+  byCategory.unreconciled = Number(unreconTotal?.n) || byCategory.unreconciled
+
+  const categories = (Object.keys(EXCEPTION_META) as ExceptionCategory[]).map((key) => ({
+    key,
+    label: EXCEPTION_META[key].label,
+    severity: EXCEPTION_META[key].severity,
+    count: byCategory[key],
+  }))
+
+  const severityRank = { high: 0, medium: 1, low: 2 } as const
+  rows.sort((a, b) => {
+    if (a.severity !== b.severity) return severityRank[a.severity] - severityRank[b.severity]
+    return String(b.date ?? "").localeCompare(String(a.date ?? ""))
+  })
+
+  const total = rows.length
+  const capped = rows.slice(0, Math.max(1, Math.min(limit, 2000)))
+  return { rows: capped, categories, counts: { total, byCategory }, truncated: total > capped.length }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point — one call assembles the requested view plus the shared
 // dashboard cards and filter options.
 // ---------------------------------------------------------------------------
-export type GLView = "ledger" | "party" | "project" | "monthly" | "reconciliation" | "bank" | "integrity"
+export type GLView =
+  | "ledger"
+  | "party"
+  | "project"
+  | "monthly"
+  | "reconciliation"
+  | "bank"
+  | "integrity"
+  | "account"
+  | "exceptions"
 
 export async function getGeneralLedger(view: GLView, f: GLFilters, opts: { limit?: number } = {}) {
   const period = resolvePeriod(f)
@@ -1044,6 +1533,8 @@ export async function getGeneralLedger(view: GLView, f: GLFilters, opts: { limit
   else if (view === "reconciliation") payload = await getReconciliationView(f, period, limit)
   else if (view === "bank") payload = await getBankReconciliation(f, period)
   else if (view === "integrity") payload = await getIntegrityView(f, period, limit)
+  else if (view === "account") payload = await getAccountLedger(f, period)
+  else if (view === "exceptions") payload = await getExceptionsView(f, period, limit)
   else payload = await getLedgerView(f, period, limit)
 
   return { view, cards, filterOptions, period, ...payload }

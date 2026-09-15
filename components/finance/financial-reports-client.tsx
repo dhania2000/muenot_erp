@@ -22,12 +22,16 @@ import {
   Download,
   Eye,
   FileBarChart,
+  FileSpreadsheet,
   FileText,
   FilterX,
   Mail,
   RefreshCw,
 } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
+import { exportReportCsv, exportReportExcel } from "@/lib/report-excel"
+import { exportReportPdf } from "@/lib/report-pdf"
+import type { ReportExportPayload } from "@/lib/report-tally"
 import type { PeriodMode } from "@/lib/finance-reports"
 import { ReportViewDialog, type ReportCompany } from "@/components/finance/report-view-dialog"
 import { ReportEmailDialog } from "@/components/finance/report-email-dialog"
@@ -86,13 +90,6 @@ const selectClass =
 
 function formatCell(value: any, col: ReportColumn) {
   if (value === null || value === undefined || value === "") return "—"
-  if (col.money) return currency(value)
-  return String(value)
-}
-
-// Plain-text cell used for CSV / PDF (no em-dash placeholder).
-function plainCell(value: any, col: ReportColumn) {
-  if (value === null || value === undefined || value === "") return ""
   if (col.money) return currency(value)
   return String(value)
 }
@@ -165,71 +162,36 @@ function ReportView({
   const [emailOpen, setEmailOpen] = useState(false)
   const [drillTarget, setDrillTarget] = useState<DrillTarget>(null)
 
+  // Build the shared export payload so CSV / Excel / PDF all render identically
+  // through the single Tally-style export engine.
+  function exportPayload(): ReportExportPayload | null {
+    if (!report) return null
+    return {
+      reportKey: entry.key,
+      reportLabel: entry.label,
+      reportDescription: entry.description,
+      columns: report.columns,
+      rows,
+      company,
+      subtitle,
+      filterLabels,
+      generatedAt,
+    }
+  }
+
   function downloadCsv() {
-    if (!report) return
-    const escape = (v: any) => {
-      const s = v === null || v === undefined ? "" : String(v)
-      return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s
-    }
-    const lines: string[] = []
-    if (subtitle) lines.push(escape(subtitle))
-    lines.push(report.columns.map((c) => escape(c.label)).join(","))
-    for (const row of rows) {
-      lines.push(report.columns.map((c) => escape(plainCell(row[c.key], c))).join(","))
-    }
-    if (totals) {
-      lines.push(
-        report.columns
-          .map((c, i) => escape(i === 0 ? "Total" : totals[c.key] !== undefined ? currency(totals[c.key]) : ""))
-          .join(","),
-      )
-    }
-    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `${entry.key}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    const payload = exportPayload()
+    if (payload) exportReportCsv(payload)
+  }
+
+  async function downloadExcel() {
+    const payload = exportPayload()
+    if (payload) await exportReportExcel(payload)
   }
 
   async function downloadPdf() {
-    if (!report) return
-    const { jsPDF } = await import("jspdf")
-    const autoTable = (await import("jspdf-autotable")).default
-    const doc = new jsPDF({ orientation: report.columns.length > 6 ? "landscape" : "portrait" })
-
-    doc.setFontSize(14)
-    doc.text(entry.label, 14, 16)
-    if (subtitle) {
-      doc.setFontSize(9)
-      doc.setTextColor(120)
-      doc.text(subtitle, 14, 22)
-    }
-
-    const columnStyles: Record<number, any> = {}
-    report.columns.forEach((c, i) => {
-      if (c.align === "right" || c.money) columnStyles[i] = { halign: "right" }
-    })
-
-    autoTable(doc, {
-      startY: subtitle ? 27 : 22,
-      head: [report.columns.map((c) => c.label)],
-      body: rows.map((row) => report.columns.map((c) => plainCell(row[c.key], c))),
-      foot: totals
-        ? [
-            report.columns.map((c, i) =>
-              i === 0 ? "Total" : totals[c.key] !== undefined ? currency(totals[c.key]) : "",
-            ),
-          ]
-        : undefined,
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [31, 41, 55], textColor: 255 },
-      footStyles: { fillColor: [243, 244, 246], textColor: 17, fontStyle: "bold" },
-      columnStyles,
-    })
-
-    doc.save(`${entry.key}.pdf`)
+    const payload = exportPayload()
+    if (payload) await exportReportPdf(payload)
   }
 
   return (
@@ -257,6 +219,10 @@ function ReportView({
           <Button variant="outline" size="sm" onClick={downloadCsv} disabled={rows.length === 0}>
             <Download data-icon="inline-start" />
             CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={downloadExcel} disabled={rows.length === 0}>
+            <FileSpreadsheet data-icon="inline-start" />
+            Excel
           </Button>
           <Button variant="outline" size="sm" onClick={downloadPdf} disabled={rows.length === 0}>
             <FileText data-icon="inline-start" />
@@ -344,6 +310,7 @@ function ReportView({
           generatedAt={generatedAt}
           filterLabels={filterLabels}
           onDownloadCsv={downloadCsv}
+          onDownloadExcel={downloadExcel}
           onDownloadPdf={downloadPdf}
           onEmail={() => {
             setViewOpen(false)

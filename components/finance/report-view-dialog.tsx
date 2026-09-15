@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { inr0 } from "@/lib/finance-calc"
-import { Download, FileText, Mail, X } from "lucide-react"
+import { Download, FileSpreadsheet, FileText, Mail, X } from "lucide-react"
 
 type ReportColumn = { key: string; label: string; align?: "left" | "right"; money?: boolean }
 
@@ -61,6 +61,7 @@ export function ReportViewDialog({
   generatedAt,
   filterLabels,
   onDownloadCsv,
+  onDownloadExcel,
   onDownloadPdf,
   onEmail,
   onDrill,
@@ -76,6 +77,7 @@ export function ReportViewDialog({
   generatedAt: string
   filterLabels: string[]
   onDownloadCsv: () => void
+  onDownloadExcel: () => void
   onDownloadPdf: () => void
   onEmail: () => void
   onDrill: (target: { account?: string; group?: string; label: string }) => void
@@ -153,6 +155,9 @@ export function ReportViewDialog({
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={onDownloadCsv} disabled={rows.length === 0}>
               <Download data-icon="inline-start" /> CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={onDownloadExcel} disabled={rows.length === 0}>
+              <FileSpreadsheet data-icon="inline-start" /> Excel
             </Button>
             <Button variant="outline" size="sm" onClick={onDownloadPdf} disabled={rows.length === 0}>
               <FileText data-icon="inline-start" /> PDF

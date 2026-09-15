@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent, Users, CalendarClock, HandCoins, Database } from "lucide-react"
+import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent, Users, CalendarClock, HandCoins, Database, ShieldAlert, Package } from "lucide-react"
 import { currentFy, FyPicker, isDeductor, type Direction } from "./shared"
 import { DeductorBanner } from "./deductor-banner"
 import { FilingStage } from "./filing-stage"
@@ -15,6 +15,8 @@ import { CalendarStage } from "./calendar-stage"
 import { ReconciliationStage } from "./reconciliation-stage"
 import { CustomerTdsStage } from "./customer-tds-stage"
 import { RawDataStage } from "./raw-data-stage"
+import { ExceptionsStage } from "./exceptions-stage"
+import { ExportStage } from "./export-stage"
 import { ReferenceStage } from "./reference-stage"
 
 const DIRECTIONS: { value: Direction; label: string }[] = [
@@ -33,7 +35,9 @@ type StageId =
   | "calendar"
   | "customer"
   | "reconciliation"
+  | "exceptions"
   | "raw"
+  | "export"
   | "rules"
 
 const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?: boolean; receivableOnly?: boolean }[] = [
@@ -46,7 +50,9 @@ const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?
   { id: "calendar", label: "Calendar", icon: CalendarClock, deductorOnly: true },
   { id: "customer", label: "Customer TDS", icon: HandCoins, receivableOnly: true },
   { id: "reconciliation", label: "Reconciliation", icon: GitCompareArrows },
+  { id: "exceptions", label: "Exceptions", icon: ShieldAlert },
   { id: "raw", label: "Raw Data", icon: Database },
+  { id: "export", label: "Export & CA", icon: Package },
   { id: "rules", label: "Rule master", icon: Percent },
 ]
 
@@ -131,8 +137,14 @@ export function TdsWorkspace() {
         <TabsContent value="reconciliation">
           <ReconciliationStage direction={direction} fy={fy} />
         </TabsContent>
+        <TabsContent value="exceptions">
+          <ExceptionsStage direction={direction} fy={fy} />
+        </TabsContent>
         <TabsContent value="raw">
           <RawDataStage direction={direction} fy={fy} />
+        </TabsContent>
+        <TabsContent value="export">
+          <ExportStage direction={direction} fy={fy} />
         </TabsContent>
         <TabsContent value="rules">
           <ReferenceStage />

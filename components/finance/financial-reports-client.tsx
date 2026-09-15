@@ -204,7 +204,7 @@ const emptyRange = { from: "", to: "" }
 export function FinancialReportsClient() {
   const [range, setRange] = useState(emptyRange)
   const [reportKey, setReportKey] = useState<string>("")
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set())
+  const [openGroup, setOpenGroup] = useState<string>("")
 
   const { data, isLoading } = useSWR<{ reports: CatalogueEntry[] }>(
     "/api/finance/reports",
@@ -231,24 +231,19 @@ export function FinancialReportsClient() {
     if (reportKey || groups.length === 0) return
     const first = groups[0]
     setReportKey(first.reports[0]?.key ?? "")
-    setOpenGroups(new Set([first.group]))
+    setOpenGroup(first.group)
   }, [reportKey, groups])
 
   const selected = catalogue.find((r) => r.key === reportKey)
   const rangeActive = Boolean(range.from || range.to)
 
   function toggleGroup(group: string) {
-    setOpenGroups((prev) => {
-      const next = new Set(prev)
-      if (next.has(group)) next.delete(group)
-      else next.add(group)
-      return next
-    })
+    setOpenGroup((prev) => (prev === group ? "" : group))
   }
 
   function pickReport(entry: CatalogueEntry) {
     setReportKey(entry.key)
-    setOpenGroups((prev) => new Set(prev).add(entry.group))
+    setOpenGroup(entry.group)
   }
 
   return (
@@ -291,7 +286,7 @@ export function FinancialReportsClient() {
             ) : (
               <div className="space-y-2">
                 {groups.map(({ group, reports }) => {
-                  const isOpen = openGroups.has(group)
+                  const isOpen = openGroup === group
                   return (
                     <div key={group} className="rounded-md border">
                       <button

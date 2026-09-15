@@ -208,6 +208,122 @@ export function returnDueDate(quarter: TdsQuarter, financialYear: string): strin
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 47–48 — statutory interest & late-fee auto-calculation.
+//
+// These are pure, deterministic SUGGESTIONS derived from the deducted amount +
+// the statutory due dates already defined above. They never touch a ledger; the
+// challan / return flow may accept, override, or ignore them. Interest and late
+// fee are always kept SEPARATE from the TDS principal.
+// ---------------------------------------------------------------------------
+
+const MS_PER_DAY = 86_400_000
+
+/** Whole months between two dates counting any part-month as a full month (min 1). */
+function partMonthsBetween(from: Date, to: Date): number {
+  if (to.getTime() <= from.getTime()) return 0
+  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+  if (to.getDate() >= from.getDate()) months += 1 // any part of a further month counts as one
+  return Math.max(1, months)
+}
+
+export type DepositChargeSuggestion = {
+  period: string
+  tds_amount: number
+  due_date: string
+  payment_date: string
+  overdue: boolean
+  months_delayed: number
+  interest_rate_pct: number
+  interest: number
+  basis: string
+}
+
+/**
+ * §201(1A) interest on late DEPOSIT of TDS: 1.5% per month (or part of a month)
+ * from the month of deduction to the month of deposit. We treat the deduction
+ * date as the first day of the deduction month and only charge interest once the
+ * statutory deposit due date has passed.
+ */
+export function suggestDepositInterest(
+  period: string,
+  tdsAmount: number,
+  paymentDate?: string | null,
+): DepositChargeSuggestion {
+  const tds = round2(tdsAmount)
+  const due = depositDueDate(period)
+  const payStr = (paymentDate || new Date().toISOString().slice(0, 10)).slice(0, 10)
+  const pay = new Date(payStr)
+  const dueDate = new Date(due)
+  const [y, m] = period.split("-").map(Number)
+  const deductionRef = new Date(y, (m || 1) - 1, 1)
+  const overdue = pay.getTime() > dueDate.getTime() && tds > 0
+  const months = overdue ? partMonthsBetween(deductionRef, pay) : 0
+  const rate = 1.5
+  const interest = overdue ? round2(tds * (rate / 100) * months) : 0
+  return {
+    period,
+    tds_amount: tds,
+    due_date: due,
+    payment_date: payStr,
+    overdue,
+    months_delayed: months,
+    interest_rate_pct: rate,
+    interest,
+    basis: overdue
+      ? `§201(1A): ${rate}% × ${months} month(s) on ${tds} (deducted ${period}, deposited ${payStr}, due ${due})`
+      : `On time — deposited by due date ${due}, no interest.`,
+  }
+}
+
+export type ReturnLateFeeSuggestion = {
+  quarter: TdsQuarter
+  financial_year: string
+  tds_amount: number
+  due_date: string
+  filing_date: string
+  overdue: boolean
+  days_delayed: number
+  fee_per_day: number
+  late_fee: number
+  basis: string
+}
+
+/**
+ * §234E late-filing fee for a TDS return: ₹200 per day of delay past the return
+ * due date, capped at the total TDS of the statement.
+ */
+export function suggestReturnLateFee(
+  quarter: TdsQuarter,
+  financialYear: string,
+  tdsAmount: number,
+  filingDate?: string | null,
+): ReturnLateFeeSuggestion {
+  const tds = round2(tdsAmount)
+  const due = returnDueDate(quarter, financialYear)
+  const fileStr = (filingDate || new Date().toISOString().slice(0, 10)).slice(0, 10)
+  const dueDate = new Date(due)
+  const filed = new Date(fileStr)
+  const overdue = filed.getTime() > dueDate.getTime() && tds > 0
+  const days = overdue ? Math.max(1, Math.round((filed.getTime() - dueDate.getTime()) / MS_PER_DAY)) : 0
+  const perDay = 200
+  const late = overdue ? round2(Math.min(tds, days * perDay)) : 0
+  return {
+    quarter,
+    financial_year: financialYear,
+    tds_amount: tds,
+    due_date: due,
+    filing_date: fileStr,
+    overdue,
+    days_delayed: days,
+    fee_per_day: perDay,
+    late_fee: late,
+    basis: overdue
+      ? `§234E: ₹${perDay}/day × ${days} day(s) = ${round2(days * perDay)}, capped at TDS ${tds}`
+      : `On time — filed by due date ${due}, no late fee.`,
+  }
+}
+
 let ensured = false
 
 export async function ensureTdsComplianceSchema() {

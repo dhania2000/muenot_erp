@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent, Users, CalendarClock } from "lucide-react"
+import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent, Users, CalendarClock, HandCoins } from "lucide-react"
 import { currentFy, FyPicker, isDeductor, type Direction } from "./shared"
 import { DeductorBanner } from "./deductor-banner"
 import { FilingStage } from "./filing-stage"
@@ -13,6 +13,7 @@ import { ReturnsStage } from "./returns-stage"
 import { CertificatesStage } from "./certificates-stage"
 import { CalendarStage } from "./calendar-stage"
 import { ReconciliationStage } from "./reconciliation-stage"
+import { CustomerTdsStage } from "./customer-tds-stage"
 import { ReferenceStage } from "./reference-stage"
 
 const DIRECTIONS: { value: Direction; label: string }[] = [
@@ -29,10 +30,11 @@ type StageId =
   | "returns"
   | "certificates"
   | "calendar"
+  | "customer"
   | "reconciliation"
   | "rules"
 
-const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?: boolean }[] = [
+const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?: boolean; receivableOnly?: boolean }[] = [
   { id: "filing", label: "Filing", icon: FileText },
   { id: "deductees", label: "Deductees", icon: Users },
   { id: "liability", label: "Liability", icon: Scale },
@@ -40,6 +42,7 @@ const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?
   { id: "returns", label: "Returns", icon: ScrollText, deductorOnly: true },
   { id: "certificates", label: "Certificates", icon: Award, deductorOnly: true },
   { id: "calendar", label: "Calendar", icon: CalendarClock, deductorOnly: true },
+  { id: "customer", label: "Customer TDS", icon: HandCoins, receivableOnly: true },
   { id: "reconciliation", label: "Reconciliation", icon: GitCompareArrows },
   { id: "rules", label: "Rule master", icon: Percent },
 ]
@@ -50,12 +53,20 @@ export function TdsWorkspace() {
   const [stage, setStage] = useState<StageId>("filing")
 
   const deductor = isDeductor(direction)
-  const stages = STAGES.filter((s) => !s.deductorOnly || deductor)
+  const stages = STAGES.filter((s) => {
+    if (s.deductorOnly && !deductor) return false
+    if (s.receivableOnly && deductor) return false
+    return true
+  })
 
   function pickDirection(next: Direction) {
     setDirection(next)
+    const nextDeductor = isDeductor(next)
     // Fall back to a stage that exists for the new direction.
-    if (!isDeductor(next) && ["challans", "returns", "certificates"].includes(stage)) {
+    if (!nextDeductor && ["challans", "returns", "certificates", "calendar"].includes(stage)) {
+      setStage("filing")
+    }
+    if (nextDeductor && stage === "customer") {
       setStage("filing")
     }
   }

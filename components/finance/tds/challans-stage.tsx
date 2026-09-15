@@ -56,6 +56,25 @@ export function ChallansStage({ direction, fy }: { direction: Direction; fy: str
   )
   const challans = data?.challans ?? []
   const set = (k: keyof typeof empty, v: string) => setForm((f) => ({ ...f, [k]: v }))
+  const [calc, setCalc] = useState<{ interest: string; late_fee: string } | null>(null)
+
+  async function suggestCharges() {
+    const tds = Number(form.tds_amount || 0)
+    if (tds <= 0) return
+    setError("")
+    try {
+      const res = await fetch(
+        `/api/finance/tds/interest?kind=deposit&period=${form.period}&tds=${tds}&date=${form.payment_date}`,
+      )
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Could not compute interest")
+      const interest = String(body.suggestion?.interest ?? 0)
+      setForm((f) => ({ ...f, interest }))
+      setCalc({ interest: body.suggestion?.basis || "", late_fee: "" })
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
 
   async function save() {
     setBusy(true)
@@ -139,13 +158,26 @@ export function ChallansStage({ direction, fy }: { direction: Direction; fy: str
               />
             </Field>
             <Field label="Interest">
-              <Input
-                type="number"
-                inputMode="decimal"
-                value={form.interest}
-                onChange={(e) => set("interest", e.target.value)}
-                placeholder="0.00"
-              />
+              <div className="flex gap-1.5">
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  value={form.interest}
+                  onChange={(e) => set("interest", e.target.value)}
+                  placeholder="0.00"
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={suggestCharges}
+                  disabled={Number(form.tds_amount || 0) <= 0}
+                  aria-label="Auto-calculate §201(1A) interest"
+                  title="Auto-calculate §201(1A) interest"
+                >
+                  <Wand2 className="h-4 w-4" />
+                </Button>
+              </div>
             </Field>
             <Field label="Late fee">
               <Input
@@ -181,6 +213,9 @@ export function ChallansStage({ direction, fy }: { direction: Direction; fy: str
               />
             </Field>
           </div>
+          {calc?.interest ? (
+            <p className="mt-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{calc.interest}</p>
+          ) : null}
           <div className="mt-4 flex justify-end">
             <Button onClick={save} disabled={busy || Number(form.tds_amount || 0) <= 0}>
               {busy ? "Posting…" : "Record & post challan"}

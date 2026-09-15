@@ -59,6 +59,7 @@ export type ReportCompany = {
   website: string
   taxLabel: string
   taxNumber: string
+  pan: string
 }
 
 /** Serialise a report's declared filters into the { dim, label } UI shape. */
@@ -347,5 +348,15 @@ export async function getReportCompany(): Promise<ReportCompany> {
     website: s["company.website"] || "",
     taxLabel: s["tax.number_label"] || s["address.tax_name"] || "GSTIN",
     taxNumber: s["address.tax_number"] || "",
+    // PAN is either configured directly or derived from a 15-char GSTIN
+    // (characters 3-12 are the PAN), mirroring the invoice PDF letterhead.
+    pan: s["tax.pan"] || derivePanFromGstin(s["address.tax_number"] || ""),
   }
+}
+
+/** GSTIN embeds the PAN at positions 3-12 (e.g. 27ABCDE1234F1Z5 → ABCDE1234F). */
+function derivePanFromGstin(gstin: string): string {
+  const g = gstin.trim().toUpperCase()
+  if (!/^\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z\d]{2}$/.test(g)) return ""
+  return g.slice(2, 12)
 }

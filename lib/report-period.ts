@@ -5,6 +5,7 @@
 // Q1 Apr–Jun, Q2 Jul–Sep, Q3 Oct–Dec, Q4 Jan–Mar.
 
 import type { PeriodMode } from "@/lib/finance-reports"
+import { formatIndianDate } from "@/lib/report-tally"
 
 export type PeriodPreset = "all" | "fy" | "quarter" | "month" | "custom"
 
@@ -109,14 +110,9 @@ export function resolveRange(mode: PeriodMode, s: PeriodState): { from: string; 
   }
 }
 
-const fmtDate = (iso: string) =>
-  iso
-    ? new Date(iso + "T00:00:00").toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
-    : ""
+// Indian numeric convention dd-mm-yyyy, consistent across the reports UI,
+// PDF and Excel/CSV exports.
+const fmtDate = (iso: string) => (iso ? formatIndianDate(iso) : "")
 
 // A human label describing the active period, shown in the header and embedded
 // into CSV / PDF exports.

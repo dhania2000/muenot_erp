@@ -17,6 +17,9 @@ export type ReportColumn = {
   /** When false, this money column is formatted but never auto-totalled (the
    *  report carries its own subtotal/total rows, e.g. financial statements). */
   total?: boolean
+  /** Force Indian dd-mm-yyyy date formatting for this column's values. Values
+   *  that already look like ISO dates are auto-detected even without this. */
+  date?: boolean
 }
 
 export type ReportRow = Record<string, any>
@@ -29,6 +32,8 @@ export type ReportCompany = {
   website: string
   taxLabel: string
   taxNumber: string
+  /** Permanent Account Number, shown alongside GSTIN on statutory letterheads. */
+  pan: string
 }
 
 export type GroupSection = {
@@ -73,10 +78,56 @@ export function formatIndianNumber(value: number, decimals = 2): string {
   return negative ? `(${out})` : out
 }
 
+// Matches an ISO date ("2026-09-15") or ISO datetime ("2026-09-15T10:30:00Z").
+// Used to auto-detect date cells so every surface renders the Indian numeric
+// format without each report having to tag its date columns.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/
+
+/** True when a value looks like an ISO date / datetime string. */
+export function isIsoDateString(value: any): boolean {
+  return typeof value === "string" && ISO_DATE_RE.test(value.trim())
+}
+
+/**
+ * Format any date-ish value to the Indian numeric convention dd-mm-yyyy
+ * (e.g. 15-09-2026), the format used consistently across the reports UI, PDF,
+ * Excel and CSV. Non-date strings are returned unchanged so it is safe to run
+ * over arbitrary cell values.
+ */
+export function formatIndianDate(value: string | number | Date | null | undefined): string {
+  if (value === null || value === undefined || value === "") return ""
+  let d: Date
+  if (value instanceof Date) {
+    d = value
+  } else if (typeof value === "string") {
+    const s = value.trim()
+    if (!ISO_DATE_RE.test(s)) return value
+    d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s)
+  } else {
+    d = new Date(value)
+  }
+  if (Number.isNaN(d.getTime())) return typeof value === "string" ? value : ""
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}`
+}
+
+/** dd-mm-yyyy hh:mm AM/PM — used for "generated on" stamps. */
+export function formatIndianDateTime(value?: string | number | Date | null): string {
+  if (value === null || value === undefined || value === "") return ""
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) return ""
+  const p = (n: number) => String(n).padStart(2, "0")
+  let h = d.getHours()
+  const ampm = h >= 12 ? "PM" : "AM"
+  h = h % 12 || 12
+  return `${formatIndianDate(d)} ${p(h)}:${p(d.getMinutes())} ${ampm}`
+}
+
 /** Plain-text value for a cell in CSV / Excel / PDF (no em-dash placeholder). */
 export function cellExportText(value: any, col: ReportColumn, decimals = 2): string {
   if (value === null || value === undefined || value === "") return ""
   if (col.money) return formatIndianNumber(Number(value) || 0, decimals)
+  if (col.date || isIsoDateString(value)) return formatIndianDate(value)
   return String(value)
 }
 
@@ -135,11 +186,9 @@ export function buildReportModel(columns: ReportColumn[], rows: ReportRow[]): Re
   return { moneyCols, groupKey, sections, grandTotals }
 }
 
-/** Human-readable "generated on" stamp used in export headers. */
+/** Human-readable "generated on" stamp (dd-mm-yyyy hh:mm AM/PM) for headers. */
 export function generatedStamp(generatedAt?: string): string {
-  const d = generatedAt ? new Date(generatedAt) : new Date()
-  if (Number.isNaN(d.getTime())) return ""
-  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+  return formatIndianDateTime(generatedAt || new Date())
 }
 
 /** A safe, lowercased file-name stem for a downloaded report. */
@@ -159,4 +208,6 @@ export type ReportExportPayload = {
   generatedAt?: string
   /** Name of the user who generated this snapshot (Phase 20). */
   generatedBy?: string
+  /** Financial-year context label (e.g. "FY 2026-27") for the footer. */
+  financialYear?: string
 }

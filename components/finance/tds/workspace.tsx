@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent, Users } from "lucide-react"
+import { FileText, Scale, Receipt, ScrollText, Award, GitCompareArrows, Percent, Users, CalendarClock } from "lucide-react"
 import { currentFy, FyPicker, isDeductor, type Direction } from "./shared"
 import { DeductorBanner } from "./deductor-banner"
 import { FilingStage } from "./filing-stage"
@@ -11,6 +11,7 @@ import { LiabilityStage } from "./liability-stage"
 import { ChallansStage } from "./challans-stage"
 import { ReturnsStage } from "./returns-stage"
 import { CertificatesStage } from "./certificates-stage"
+import { CalendarStage } from "./calendar-stage"
 import { ReconciliationStage } from "./reconciliation-stage"
 import { ReferenceStage } from "./reference-stage"
 
@@ -27,6 +28,7 @@ type StageId =
   | "challans"
   | "returns"
   | "certificates"
+  | "calendar"
   | "reconciliation"
   | "rules"
 
@@ -37,6 +39,7 @@ const STAGES: { id: StageId; label: string; icon: typeof FileText; deductorOnly?
   { id: "challans", label: "Challans", icon: Receipt, deductorOnly: true },
   { id: "returns", label: "Returns", icon: ScrollText, deductorOnly: true },
   { id: "certificates", label: "Certificates", icon: Award, deductorOnly: true },
+  { id: "calendar", label: "Calendar", icon: CalendarClock, deductorOnly: true },
   { id: "reconciliation", label: "Reconciliation", icon: GitCompareArrows },
   { id: "rules", label: "Rule master", icon: Percent },
 ]
@@ -105,6 +108,9 @@ export function TdsWorkspace() {
             </TabsContent>
             <TabsContent value="certificates">
               <CertificatesStage direction={direction} fy={fy} />
+            </TabsContent>
+            <TabsContent value="calendar">
+              <CalendarStage direction={direction} fy={fy} />
             </TabsContent>
           </>
         ) : null}

@@ -4,8 +4,12 @@ import {
   previewCertificates,
   generateCertificates,
   listCertificates,
+  setCertificateStatus,
+  correctCertificate,
+  TDS_CERTIFICATE_STATUSES,
   type CertificateForm,
   type TdsQuarter,
+  type TdsCertificateStatus,
 } from "@/lib/finance-tds-compliance"
 import type { TdsDirection } from "@/lib/finance-tds-filing"
 
@@ -24,6 +28,10 @@ function formOf(value: unknown): CertificateForm {
 function quarterOf(value: unknown): TdsQuarter | undefined {
   const s = String(value)
   return s === "Q1" || s === "Q2" || s === "Q3" || s === "Q4" ? s : undefined
+}
+function certStatusOf(value: unknown): TdsCertificateStatus | null {
+  const s = String(value)
+  return (TDS_CERTIFICATE_STATUSES as readonly string[]).includes(s) ? (s as TdsCertificateStatus) : null
 }
 
 export async function GET(req: NextRequest) {
@@ -53,7 +61,28 @@ export async function POST(req: NextRequest) {
   const session = await requireModuleAction(MODULE, "issue_certificate")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   const body = await req.json().catch(() => ({}))
+  const action = String(body.action || "generate")
   try {
+    // Phase 35 — move a certificate through its lifecycle (Generated → Issued …).
+    if (action === "set_status") {
+      const target = certStatusOf(body.status)
+      if (!target) return NextResponse.json({ error: "Unknown certificate status." }, { status: 400 })
+      const result = await setCertificateStatus(String(body.certificate_id || ""), target, {
+        actorId: session.userId,
+        remarks: body.remarks ?? null,
+      })
+      return NextResponse.json({ ok: true, ...result })
+    }
+
+    // Phase 40 — re-issue a corrected certificate from the current ledger.
+    if (action === "correct") {
+      const result = await correctCertificate(String(body.certificate_id || ""), {
+        actorId: session.userId,
+        remarks: body.remarks ?? null,
+      })
+      return NextResponse.json({ ok: true, ...result })
+    }
+
     const result = await generateCertificates({
       formType: formOf(body.form),
       direction: dirOf(body.direction),

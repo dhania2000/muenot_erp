@@ -38,6 +38,11 @@ type Issued = {
   sections: string | null
   total_tds: number
   status: string
+  remarks: string | null
+  corrected_from: string | null
+  corrected_at: string | null
+  issued_at: string | null
+  allowed_transitions: string[]
 }
 
 export function CertificatesStage({ direction, fy }: { direction: Direction; fy: string }) {
@@ -47,6 +52,7 @@ export function CertificatesStage({ direction, fy }: { direction: Direction; fy:
   const [quarter, setQuarter] = useState<Quarter>("Q1")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [rowBusy, setRowBusy] = useState("")
 
   const needsQuarter = formType === "16A"
   const previewKey = `/api/finance/tds/certificates?preview=1&fy=${fy}&form=${formType}&direction=${direction}${
@@ -77,6 +83,49 @@ export function CertificatesStage({ direction, fy }: { direction: Direction; fy:
       setError((e as Error).message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function transition(certificateId: string, status: string) {
+    setRowBusy(certificateId)
+    setError("")
+    try {
+      const remarks = status === "Corrected" ? (window.prompt("Correction remarks (optional):") ?? null) : null
+      const res = await fetch("/api/finance/tds/certificates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set_status", certificate_id: certificateId, status, remarks }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Could not update certificate")
+      mutate()
+      mutateList()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setRowBusy("")
+    }
+  }
+
+  async function correct(certificateId: string) {
+    if (!window.confirm("Re-issue this certificate from the current ledger? The figures are recomputed and the certificate is marked Corrected.")) return
+    setRowBusy(certificateId)
+    setError("")
+    try {
+      const remarks = window.prompt("Correction remarks (optional):") ?? null
+      const res = await fetch("/api/finance/tds/certificates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "correct", certificate_id: certificateId, remarks }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Could not correct certificate")
+      mutate()
+      mutateList()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setRowBusy("")
     }
   }
 
@@ -206,19 +255,25 @@ export function CertificatesStage({ direction, fy }: { direction: Direction; fy:
                   <TableHead>PAN</TableHead>
                   <TableHead className="text-right">TDS</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {issued.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
                       No certificates issued yet.
                     </TableCell>
                   </TableRow>
                 ) : (
                   issued.map((c) => (
                     <TableRow key={c.id}>
-                      <TableCell className="font-mono text-xs">{c.certificate_id}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {c.certificate_id}
+                        {c.corrected_from ? (
+                          <div className="text-[10px] text-muted-foreground">corrected</div>
+                        ) : null}
+                      </TableCell>
                       <TableCell>{c.form_type}</TableCell>
                       <TableCell>{c.quarter || "Annual"}</TableCell>
                       <TableCell className="font-medium">{c.party_name}</TableCell>
@@ -226,6 +281,38 @@ export function CertificatesStage({ direction, fy }: { direction: Direction; fy:
                       <TableCell className="text-right">{currency(c.total_tds)}</TableCell>
                       <TableCell>
                         <StatusBadge status={c.status} />
+                        {c.remarks ? (
+                          <div className="mt-0.5 max-w-[140px] truncate text-[10px] text-muted-foreground" title={c.remarks}>
+                            {c.remarks}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          {c.allowed_transitions
+                            .filter((t) => t !== "Corrected")
+                            .map((t) => (
+                              <Button
+                                key={t}
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs"
+                                disabled={rowBusy === c.certificate_id}
+                                onClick={() => transition(c.certificate_id, t)}
+                              >
+                                {t === "Issued" ? "Mark issued" : t}
+                              </Button>
+                            ))}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            disabled={rowBusy === c.certificate_id}
+                            onClick={() => correct(c.certificate_id)}
+                          >
+                            Correct
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

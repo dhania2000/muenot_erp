@@ -3231,11 +3231,11 @@ export const GENERAL_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
 // ---------------------------------------------------------------------------
 // Financial Reports page catalogue
 // ---------------------------------------------------------------------------
-// The Financial Reports page is organised into 16 accounting categories,
-// browsed via a category picker + report picker. A report either reuses an
-// existing data-backed aggregate (`from`, cloning a definition above) or is a
-// declared placeholder (`stub`). A placeholder has no SQL and renders a
-// "no data source yet" note until its underlying data exists in the ERP.
+// The Financial Reports page is organised into 12 accounting categories,
+// browsed via a category picker + report picker. Every report is data-backed:
+// it either declares its own SQL / statement engine, or reuses an existing
+// aggregate via `from` (cloning a definition above). No blank placeholder
+// cards are shipped — a report only appears once it has a real data source.
 
 type ReportMeta = {
   key: string
@@ -3599,99 +3599,19 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   from("expense-raw-gst", { key: "ex-raw-gst", label: "Raw GST Data", group: "Expenses", description: "Unaggregated GST rows for export." }),
   from("expense-raw-tds", { key: "ex-raw-tds", label: "Raw TDS Data", group: "Expenses", description: "Unaggregated TDS rows for export." }),
 
-  // 10. Fixed Assets ------------------------------------------------------
-  stub({ key: "fa-register", label: "Fixed Asset Register", group: "Fixed Assets", description: PENDING }),
-  stub({ key: "fa-addition", label: "Asset Addition Report", group: "Fixed Assets", description: PENDING }),
-  stub({ key: "fa-disposal", label: "Asset Disposal Report", group: "Fixed Assets", description: PENDING }),
-  stub({ key: "fa-transfer", label: "Asset Transfer Report", group: "Fixed Assets", description: PENDING }),
-  stub({ key: "fa-depreciation", label: "Depreciation Register", group: "Fixed Assets", description: PENDING }),
-  stub({ key: "fa-accumulated-depreciation", label: "Accumulated Depreciation Report", group: "Fixed Assets", description: PENDING }),
-  stub({ key: "fa-asset-ledger", label: "Asset-wise Ledger", group: "Fixed Assets", description: PENDING }),
-  stub({ key: "fa-reconciliation", label: "Fixed Asset Reconciliation", group: "Fixed Assets", description: PENDING }),
-
-  // 11. Loans & Advances --------------------------------------------------
-  stub({ key: "la-loan-register", label: "Loan Register", group: "Loans & Advances", description: PENDING }),
-  stub({ key: "la-loan-outstanding", label: "Loan Outstanding Report", group: "Loans & Advances", description: PENDING }),
-  stub({ key: "la-principal-interest", label: "Principal & Interest Report", group: "Loans & Advances", description: PENDING }),
-  stub({ key: "la-repayment-schedule", label: "Loan Repayment Schedule", group: "Loans & Advances", description: PENDING }),
-  stub({ key: "la-employee-advance", label: "Employee Advance Report", group: "Loans & Advances", description: PENDING }),
-  stub({ key: "la-customer-advance", label: "Customer Advance Report", group: "Loans & Advances", description: PENDING }),
-  stub({ key: "la-vendor-advance", label: "Vendor Advance Report", group: "Loans & Advances", description: PENDING }),
-  stub({ key: "la-advances-reconciliation", label: "Advances Reconciliation", group: "Loans & Advances", description: PENDING }),
-
-  // 12. CA / Audit --------------------------------------------------------
-  stub({ key: "ca-audit-trail", label: "Audit Trail Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-altered-entries", label: "Altered Entries Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-deleted-entries", label: "Deleted Entries Report", group: "CA / Audit", description: PENDING }),
+  // 10. CA / Audit --------------------------------------------------------
   from("rx-cancelled-voucher", { key: "ca-cancelled-entries", label: "Cancelled Entries Report", group: "CA / Audit", description: "Vouchers cancelled after posting, with user and timestamp for audit." }),
   from("rx-reversal-register", { key: "ca-reversed-entries", label: "Reversed Entries Report", group: "CA / Audit", description: "Journal reversals with the original entry reference and reason." }),
-  stub({ key: "ca-backdated-entries", label: "Backdated Entries Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-duplicate-voucher", label: "Duplicate Voucher Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-duplicate-invoice", label: "Duplicate Invoice Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-duplicate-payment", label: "Duplicate Payment Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-voucher-gap", label: "Voucher Number Gap Report", group: "CA / Audit", description: PENDING }),
   from("rx-manual-journal", { key: "ca-manual-journal", label: "Manual Journal Report", group: "CA / Audit", description: "Manually posted journal vouchers not generated by a subsystem." }),
   from("rx-adjustment-register", { key: "ca-manual-adjustment", label: "Manual Adjustment Report", group: "CA / Audit", description: "Manual adjustment entries with narration and posting user." }),
   from("rx-unapproved", { key: "ca-unapproved-transaction", label: "Unapproved Transaction Report", group: "CA / Audit", description: "Transactions still pending approval in the workflow." }),
   from("rx-high-value", { key: "ca-high-value", label: "High Value Transaction Report", group: "CA / Audit", description: "Transactions above the high-value threshold flagged for review." }),
-  stub({ key: "ca-negative-cash", label: "Negative Cash Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-negative-bank", label: "Negative Bank Balance Report", group: "CA / Audit", description: PENDING }),
   from("rx-unreconciled-gl", { key: "ca-unreconciled-transaction", label: "Unreconciled Transaction Report", group: "CA / Audit", description: "Ledger entries not yet reconciled against their control account." }),
-  stub({ key: "ca-tax-override", label: "Tax Override Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-manual-override", label: "Manual Override Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-missing-document", label: "Missing Supporting Document Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-exception", label: "Exception Report", group: "CA / Audit", description: PENDING }),
 
-  // 13. CA Schedules ------------------------------------------------------
-  stub({ key: "sch-debtors", label: "Debtors Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-creditors", label: "Creditors Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-fixed-assets", label: "Fixed Assets Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-loans", label: "Loans Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-advances", label: "Advances Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-investments", label: "Investments Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-capital-account", label: "Capital Account Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-reserves-surplus", label: "Reserves & Surplus Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-revenue", label: "Revenue Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-expense", label: "Expense Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-gst", label: "GST Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-tds", label: "TDS Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-bank-balance", label: "Bank Balance Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-cash-balance", label: "Cash Balance Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-provision", label: "Provision Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-accrual", label: "Accrual Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-prepaid", label: "Prepaid Expense Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-outstanding-liability", label: "Outstanding Liability Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-related-party", label: "Related Party Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-contingent-liability", label: "Contingent Liability Schedule", group: "CA Schedules", description: PENDING }),
-  stub({ key: "sch-commitments", label: "Commitments Schedule", group: "CA Schedules", description: PENDING }),
-
-  // 14. Tax / Income Tax --------------------------------------------------
-  stub({ key: "tax-book-vs-tax-profit", label: "Book Profit vs Tax Profit", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-taxable-income", label: "Taxable Income Computation", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-depreciation-compare", label: "Tax Depreciation vs Book Depreciation", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-disallowance", label: "Disallowance Report", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-allowable-expense", label: "Allowable Expense Report", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-tds-credit", label: "TDS Credit Report", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-advance-tax", label: "Advance Tax Report", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-provision", label: "Tax Provision Report", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-liability-forecast", label: "Tax Liability Forecast", group: "Tax / Income Tax", description: PENDING }),
-  stub({ key: "tax-interest-penalty", label: "Tax Interest / Penalty Exposure", group: "Tax / Income Tax", description: PENDING }),
-
-  // 15. Management / MIS --------------------------------------------------
+  // 11. Management / MIS --------------------------------------------------
   from("income-vs-expense", { key: "mis-revenue-analysis", label: "Revenue Analysis", group: "Management / MIS", description: "Revenue and net trend by month." }),
-  stub({ key: "mis-gross-margin", label: "Gross Margin Analysis", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-cost-analysis", label: "Cost Analysis", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-ebitda", label: "EBITDA Report", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-ebitda-margin", label: "EBITDA Margin Report", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-profitability", label: "Profitability Analysis", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-project-profitability", label: "Project Profitability", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-department-profitability", label: "Department Profitability", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-cost-centre-profitability", label: "Cost Centre Profitability", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-budget-vs-actual", label: "Budget vs Actual", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-variance-analysis", label: "Variance Analysis", group: "Management / MIS", description: PENDING }),
-  stub({ key: "mis-cash-flow-forecast", label: "Cash Flow Forecast", group: "Management / MIS", description: PENDING }),
 
-  // 16. Year-End ----------------------------------------------------------
+  // 12. Year-End ----------------------------------------------------------
   {
     key: "ye-trial-balance",
     label: "Year-End Trial Balance",
@@ -3701,17 +3621,7 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
     periodMode: "asOn",
     columns: STATEMENT_COLUMNS["trial-balance"],
   },
-  stub({ key: "ye-adjustment-register", label: "Year-End Adjustment Register", group: "Year-End", description: PENDING }),
-  stub({ key: "ye-provision", label: "Provision Report", group: "Year-End", description: PENDING }),
-  stub({ key: "ye-accrual", label: "Accrual Report", group: "Year-End", description: PENDING }),
-  stub({ key: "ye-prepaid", label: "Prepaid Expense Report", group: "Year-End", description: PENDING }),
   from("outstanding-expense", { key: "ye-outstanding-expense", label: "Outstanding Expense Report", group: "Year-End", description: "Unpaid expenses carried at year-end." }),
-  stub({ key: "ye-bad-debt-provision", label: "Bad Debt Provision Report", group: "Year-End", description: PENDING }),
-  stub({ key: "ye-tax-provision", label: "Tax Provision Report", group: "Year-End", description: PENDING }),
-  stub({ key: "ye-reconciliation", label: "Year-End Reconciliation", group: "Year-End", description: PENDING }),
-  stub({ key: "ye-opening-carry-forward", label: "Opening Balance Carry Forward Report", group: "Year-End", description: PENDING }),
-  stub({ key: "ye-closing", label: "Year-End Closing Report", group: "Year-End", description: PENDING }),
-  stub({ key: "ye-audit-checklist", label: "Year-End Audit Checklist", group: "Year-End", description: PENDING }),
 ]
 
 export const FINANCE_ONLY_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(

@@ -461,7 +461,17 @@ export function createFinanceHandlers(moduleKey: string) {
     return NextResponse.json({ rows, summary: summary ?? {}, filterOptions: { financialYears } })
   }
 
+  // A read-only ledger (e.g. General Ledger) is written ONLY by the posting
+  // engine. Reject every hand-made mutation with a clear pointer to the correct
+  // entry path, so the ledger can never hold an orphan or unbalanced row.
+  const READ_ONLY_MESSAGE =
+    "The General Ledger is a read-only ledger of posted transactions. It is written automatically when a journal is posted. To make a manual accounting entry, create a balanced journal in Journal Entries."
+  function readOnlyRejection() {
+    return NextResponse.json({ error: READ_ONLY_MESSAGE }, { status: 405 })
+  }
+
   async function POST(req: NextRequest) {
+    if (cfg.readOnly) return readOnlyRejection()
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 

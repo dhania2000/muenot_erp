@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
     report: run.reportMeta,
     rows: run.rows,
     available: run.available,
+    diagnostics: run.diagnostics ?? null,
     company,
     generatedAt: new Date().toISOString(),
     generatedBy: session.name || "",

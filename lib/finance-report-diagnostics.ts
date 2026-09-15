@@ -69,6 +69,9 @@ export type ReportReconRule =
   | { kind: "debitCredit"; debitKey?: string; creditKey?: string }
   | { kind: "balanceSheet"; sectionKey?: string; balanceKey?: string }
   | { kind: "plNet"; sectionKey?: string; amountKey?: string }
+  // Wide P&L shape: income and expense live in their own columns per row
+  // (period, income, expense, net) rather than as classified line rows.
+  | { kind: "plWide"; incomeKey?: string; expenseKey?: string }
   | { kind: "cashFlow"; netKey?: string }
 
 export type ReportDiagnosticsConfig = {
@@ -288,6 +291,16 @@ function evalRecon(
     const net = round2(income - expense)
     // If the posted-ledger earnings snapshot exists, cross-check against it;
     // otherwise reconcile the report against its own income − expense.
+    const ledger = health.glNetEarnings == null ? net : round2(health.glNetEarnings)
+    return line("Net Profit agrees with ledger earnings", net, ledger, "Net Profit", "Ledger Earnings")
+  }
+
+  if (rule.kind === "plWide") {
+    const income = sumRows(rows, rule.incomeKey ?? "income")
+    const expense = sumRows(rows, rule.expenseKey ?? "expense")
+    const net = round2(income - expense)
+    // Cross-check the report's own income − expense against the posted-ledger
+    // earnings snapshot when it exists; otherwise reconcile against itself.
     const ledger = health.glNetEarnings == null ? net : round2(health.glNetEarnings)
     return line("Net Profit agrees with ledger earnings", net, ledger, "Net Profit", "Ledger Earnings")
   }

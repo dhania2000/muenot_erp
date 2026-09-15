@@ -134,6 +134,28 @@ export async function POST(request: NextRequest) {
 
   const generatedAt = new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
 
+  // Phase 24/25 — carry the same reconciliation/health verdict the on-screen
+  // report shows, so an emailed report is never a silent zero either.
+  const diag = run.diagnostics
+  const diagBanner =
+    diag && diag.level !== "ok"
+      ? `<div style="border:1px solid ${
+          diag.level === "error" ? "#fca5a5" : "#fcd34d"
+        };background:${
+          diag.level === "error" ? "#fef2f2" : "#fffbeb"
+        };color:${
+          diag.level === "error" ? "#b91c1c" : "#92400e"
+        };border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:12px;">
+          <strong>${esc(diag.headline)}</strong>${
+            diag.checks.filter((c) => c.message !== diag.headline).length
+              ? `<ul style="margin:6px 0 0;padding-left:18px;">${diag.checks
+                  .filter((c) => c.message !== diag.headline)
+                  .map((c) => `<li>${esc(c.message)}</li>`)
+                  .join("")}</ul>`
+              : ""
+        }</div>`
+      : ""
+
   const html = `
   <div style="font-family:Arial,Helvetica,sans-serif;color:#111827;max-width:820px;margin:0 auto;">
     <div style="border-bottom:3px solid #1f2937;padding-bottom:12px;margin-bottom:16px;">

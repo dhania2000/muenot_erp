@@ -17,6 +17,8 @@ import {
   TableCell,
 } from "@/components/ui/table"
 import {
+  AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Download,
@@ -27,12 +29,14 @@ import {
   FilterX,
   Mail,
   RefreshCw,
+  XCircle,
 } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 import { exportReportCsv, exportReportExcel } from "@/lib/report-excel"
 import { exportReportPdf } from "@/lib/report-pdf"
 import type { ReportExportPayload } from "@/lib/report-tally"
 import type { PeriodMode } from "@/lib/finance-reports"
+import type { ReportDiagnostics } from "@/lib/finance-report-diagnostics"
 import { ReportViewDialog, type ReportCompany } from "@/components/finance/report-view-dialog"
 import { ReportEmailDialog } from "@/components/finance/report-email-dialog"
 import { ReportHistoryPanel } from "@/components/finance/report-history-panel"
@@ -84,6 +88,7 @@ type ReportResponse = {
   }
   rows: Record<string, any>[]
   available: boolean
+  diagnostics: ReportDiagnostics | null
   company: ReportCompany | null
   generatedAt: string
   generatedBy: string
@@ -129,6 +134,62 @@ function activeFilterLabels(entry: CatalogueEntry, filters: Record<string, strin
     .map((f) => `${f.label}: ${filters[f.dim].trim()}`)
 }
 
+// Phase 24/25 — an inline status banner that explains the report's health
+// (reconciliation result, unposted journals, missing mappings, empty period)
+// so a zero row is never a silent, unexplained blank.
+function DiagnosticsBanner({ diagnostics }: { diagnostics: ReportDiagnostics | null }) {
+  if (!diagnostics) return null
+  const { level, headline, checks, reconciliation } = diagnostics
+
+  const tone =
+    level === "error"
+      ? {
+          wrap: "border-destructive/40 bg-destructive/10 text-destructive",
+          Icon: XCircle,
+        }
+      : level === "warning"
+        ? {
+            wrap: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+            Icon: AlertTriangle,
+          }
+        : {
+            wrap: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+            Icon: CheckCircle2,
+          }
+
+  // Show the individual checks only when they add detail beyond the headline.
+  const detailChecks = checks.filter((c) => c.message !== headline)
+
+  return (
+    <div className={`mb-4 rounded-md border px-3 py-2.5 text-sm ${tone.wrap}`} role="status">
+      <div className="flex items-start gap-2">
+        <tone.Icon className="mt-0.5 size-4 shrink-0" />
+        <div className="space-y-1.5">
+          <p className="font-medium">{headline}</p>
+          {detailChecks.length > 0 && (
+            <ul className="list-inside list-disc space-y-0.5 text-xs opacity-90">
+              {detailChecks.map((c, i) => (
+                <li key={i}>{c.message}</li>
+              ))}
+            </ul>
+          )}
+          {reconciliation.length > 0 && (
+            <ul className="space-y-0.5 text-xs opacity-90">
+              {reconciliation.map((r, i) => (
+                <li key={i} className="tabular-nums">
+                  {r.balanced ? "✓" : "✗"} {r.label}: {r.leftLabel} {currency(r.left)} vs {r.rightLabel}{" "}
+                  {currency(r.right)}
+                  {!r.balanced ? ` — diff ${currency(r.delta)}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ReportView({
   entry,
   from,
@@ -164,6 +225,7 @@ function ReportView({
 
   const report = data?.report
   const rows = data?.rows ?? []
+  const diagnostics = data?.diagnostics ?? null
   const company = data?.company ?? null
   const generatedAt = data?.generatedAt ?? ""
   const generatedBy = data?.generatedBy ?? ""
@@ -303,6 +365,7 @@ function ReportView({
         </div>
       </CardHeader>
       <CardContent>
+        {!isLoading && <DiagnosticsBanner diagnostics={diagnostics} />}
         {isLoading ? (
           <p className="py-6 text-center text-sm text-muted-foreground">Generating report…</p>
         ) : data && !data.available ? (

@@ -12,6 +12,8 @@
  * column is left as-is (already a string from the mysql2 dateStrings pool).
  */
 
+import type { ReportDiagnosticsConfig } from "@/lib/finance-report-diagnostics"
+
 export type ReportColumn = {
   key: string
   label: string
@@ -84,6 +86,9 @@ export type ReportDef = {
   filters?: ReportFilter[]
   /** Time-filter style. Defaults to `range` when a `dateColumn` exists. */
   periodMode?: PeriodMode
+  /** Reconciliation rules + source-health requirements + empty-state hint
+   *  (Phases 21-25). Propagates to `fs-*`/`ab-*` aliases via `from()`. */
+  diagnostics?: ReportDiagnosticsConfig
 }
 
 // Helper: a date-range WHERE fragment the API can inline. When a report has no
@@ -132,17 +137,22 @@ export const FINANCE_REPORTS: ReportDef[] = [
                - COALESCE(SUM(CASE WHEN d.module_key IN ('expenses','purchase-bills') THEN d.amount ELSE 0 END),0) AS net
       FROM finance_records d
       WHERE d.record_date IS NOT NULL ${RANGE}
-      GROUP BY period
-      ORDER BY period DESC`,
-    columns: [
-      { key: "period", label: "Month" },
-      { key: "income", label: "Income", align: "right", money: true },
-      { key: "expense", label: "Expense", align: "right", money: true },
-      { key: "net", label: "Net", align: "right", money: true },
-    ],
+  GROUP BY period
+  ORDER BY period DESC`,
+  columns: [
+  { key: "period", label: "Month" },
+  { key: "income", label: "Income", align: "right", money: true },
+  { key: "expense", label: "Expense", align: "right", money: true },
+  { key: "net", label: "Net", align: "right", money: true },
+  ],
+  diagnostics: {
+  recon: [{ kind: "plWide" }],
+  requires: ["posting", "earnings"],
+  emptyHint: "No income or expense records fall in the selected period.",
+  },
   },
   {
-    key: "expense-report",
+  key: "expense-report",
     label: "Expense Report",
     group: "Finance",
     description: "Expenses grouped by category with gross, TDS and net payable.",
@@ -1177,6 +1187,12 @@ export const FINANCE_REPORTS: ReportDef[] = [
       { key: "credit", label: "Credit", align: "right", money: true },
       { key: "balance", label: "Balance", align: "right", money: true },
     ],
+    diagnostics: {
+      recon: [{ kind: "debitCredit" }],
+      requires: ["posting", "coaMapping"],
+      emptyHint:
+        "No posted ledger entries fall in the selected period. Post approved journal entries to populate the Trial Balance.",
+    },
   },
   {
     key: "rx-balance-sheet",
@@ -1209,6 +1225,12 @@ export const FINANCE_REPORTS: ReportDef[] = [
       { key: "credit", label: "Credit", align: "right", money: true },
       { key: "balance", label: "Balance", align: "right", money: true },
     ],
+    diagnostics: {
+      recon: [{ kind: "balanceSheet" }],
+      requires: ["posting", "coaMapping", "earnings"],
+      emptyHint:
+        "No posted balances classify into Assets, Liabilities or Equity for this period. Check Chart of Accounts classification and post entries.",
+    },
   },
   {
     key: "rx-cash-flow",
@@ -1231,6 +1253,11 @@ export const FINANCE_REPORTS: ReportDef[] = [
       { key: "outflow", label: "Outflow", align: "right", money: true },
       { key: "net_cash", label: "Net Cash", align: "right", money: true },
     ],
+    diagnostics: {
+      recon: [{ kind: "cashFlow" }],
+      requires: ["bank"],
+      emptyHint: "No bank or cash movement recorded in the selected period.",
+    },
   },
   {
     key: "rx-quarterly-pl",
@@ -1254,6 +1281,11 @@ export const FINANCE_REPORTS: ReportDef[] = [
       { key: "expense", label: "Expense", align: "right", money: true },
       { key: "net", label: "Net", align: "right", money: true },
     ],
+    diagnostics: {
+      recon: [{ kind: "plWide" }],
+      requires: ["posting", "earnings"],
+      emptyHint: "No income or expense records fall in the selected period.",
+    },
   },
 
   // --- Accounting books (journal_entries / general_ledger / chart_of_accounts) -

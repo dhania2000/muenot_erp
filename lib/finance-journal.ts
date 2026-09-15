@@ -5,6 +5,7 @@ import { financialYearFor } from "@/lib/finance-calc"
 import { resolveAccountById, isDebitNature, type ResolvedAccount } from "@/lib/finance-accounts"
 import { logFinanceEvent } from "@/lib/finance-audit"
 import { assertPeriodOpen } from "@/lib/finance-period-lock"
+import { nextLedgerId } from "@/lib/finance-posting"
 
 // ---------------------------------------------------------------------------
 // Manual journal engine (server-only) — the central accounting workflow.
@@ -80,6 +81,39 @@ async function ensureManualJournalColumns(): Promise<void> {
   await ensureColumn("journal_entries", "attachment_url", "VARCHAR(255) DEFAULT NULL")
   await ensureColumn("journal_entries", "attachment_type", "VARCHAR(40) DEFAULT NULL")
   columnsEnsured = true
+}
+
+/**
+ * Phase 62 — concurrency guard. Serialise every state-changing operation on a
+ * single manual journal (submit / approve / reject / cancel / post / reverse /
+ * edit / delete) behind a MySQL advisory lock keyed per voucher, so two users
+ * acting on the SAME journal at the SAME time cannot both pass the read-status
+ * guard and double-act (e.g. two simultaneous "post" requests double-posting to
+ * the General Ledger, or a second user approving while the first is posting).
+ *
+ * The lock is a pure mutex held on its own dedicated connection: the actual
+ * work still runs on the engine's own transactional connections, and because a
+ * transition commits before its lock is released, the next waiter's fresh
+ * status read always sees the committed state and its own guard rejects the
+ * out-of-order action ("Only an Approved journal can be posted (this one is
+ * Posted)"). GET_LOCK/RELEASE_LOCK must run on the same session, hence the
+ * dedicated connection. Lock names are capped at MySQL's 64-char limit.
+ */
+async function withJournalLock<T>(journalId: string, fn: () => Promise<T>): Promise<T> {
+  const lockName = `je:${String(journalId || "").trim()}`.slice(0, 64)
+  const conn = await pool.getConnection()
+  try {
+    const [rows] = await conn.query<any[]>(`SELECT GET_LOCK(?, 10) AS ok`, [lockName])
+    if (Number(rows?.[0]?.ok) !== 1) {
+      throw new Error(
+        "This journal is currently being updated by another user. Please wait a moment and try again.",
+      )
+    }
+    return await fn()
+  } finally {
+    await conn.query(`SELECT RELEASE_LOCK(?)`, [lockName]).catch(() => {})
+    conn.release()
+  }
 }
 
 /**
@@ -585,6 +619,16 @@ export async function updateManualJournalDraft(
   input: ManualJournalInput,
   opts: { userId?: number | null; actorName?: string | null } = {},
 ): Promise<ManualJournalResult> {
+  // Phase 62 — hold the per-voucher lock so an edit cannot race a concurrent
+  // submit/approve/post on the same journal.
+  return withJournalLock(journalId, () => updateManualJournalDraftLocked(journalId, input, opts))
+}
+
+async function updateManualJournalDraftLocked(
+  journalId: string,
+  input: ManualJournalInput,
+  opts: { userId?: number | null; actorName?: string | null } = {},
+): Promise<ManualJournalResult> {
   const { status, rows } = await getManualJournal(journalId)
   if (!rows.length) throw new Error("This journal was not found.")
   if (!status || !["Draft", "Pending Approval", "Rejected"].includes(status)) {
@@ -704,9 +748,24 @@ async function writeLedgerFromRows(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     const account = resolved[i]
+
+    // Phase 2 — idempotent auto-generation. Every ledger row is keyed to its
+    // journal line's immutable journal_entry_id. If a row for this line already
+    // exists (the same posted journal being processed again), reuse it and skip
+    // the insert so re-processing can never create a duplicate ledger entry or
+    // double-count the running balance.
+    const [existing] = await conn.query<any[]>(
+      `SELECT ledger_id FROM general_ledger WHERE journal_entry_id = ? LIMIT 1`,
+      [row.journal_entry_id],
+    )
+    if (existing.length) {
+      ledgerIds.push(String(existing[0].ledger_id))
+      continue
+    }
+
     const debit = round2(opts.reverse ? num(row.credit) : num(row.debit))
     const credit = round2(opts.reverse ? num(row.debit) : num(row.credit))
-    const ledgerId = await nextRecordId("GL")
+    const ledgerId = await nextLedgerId(row.journal_date)
 
     const prev = await currentSignedBalance(conn, account)
     const naturalDebit = isDebitNature(account)
@@ -935,6 +994,16 @@ export async function transitionManualJournal(
   action: JournalAction,
   opts: { userId?: number | null; actorName?: string | null; reason?: string | null } = {},
 ): Promise<{ status: JournalStatus }> {
+  // Phase 62 — serialise all transitions for this voucher so two concurrent
+  // actors cannot both pass the guard below and double-act.
+  return withJournalLock(journalId, () => transitionManualJournalLocked(journalId, action, opts))
+}
+
+async function transitionManualJournalLocked(
+  journalId: string,
+  action: JournalAction,
+  opts: { userId?: number | null; actorName?: string | null; reason?: string | null } = {},
+): Promise<{ status: JournalStatus }> {
   const { status } = await getManualJournal(journalId)
   if (!status) throw new Error("This journal was not found, or it is a system posting that must be reversed through its source document.")
   const allowed = ACTION_FROM[action]
@@ -1002,6 +1071,11 @@ export async function transitionManualJournal(
  */
 export async function deleteManualJournal(journalId: string): Promise<{ removed: number }> {
   if (!journalId) return { removed: 0 }
+  // Phase 62 — serialise delete with any in-flight transition on this voucher.
+  return withJournalLock(journalId, () => deleteManualJournalLocked(journalId))
+}
+
+async function deleteManualJournalLocked(journalId: string): Promise<{ removed: number }> {
   const { status, rows } = await getManualJournal(journalId)
   if (!rows.length) return { removed: 0 }
   if (status === "Posted") {

@@ -110,10 +110,10 @@ export function PersonalDashboard({ modules }: { modules: ModuleCard[] }) {
       </header>
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard icon={ListTodo} label="Open to-dos" value={stats.openTodos} />
-        <StatCard icon={Clock} label="Pending work" value={stats.pendingWork} />
-        <StatCard icon={FolderKanban} label="Active projects" value={stats.activeProjects} />
-        <StatCard icon={CalendarClock} label="Meetings today" value={stats.meetingsToday} />
+        <StatCard icon={ListTodo} label="Open to-dos" value={stats.openTodos} href="#todo-list" />
+        <StatCard icon={Clock} label="Pending work" value={stats.pendingWork} href="#pending-work" />
+        <StatCard icon={FolderKanban} label="Active projects" value={stats.activeProjects} href="#assigned-projects" />
+        <StatCard icon={CalendarClock} label="Meetings today" value={stats.meetingsToday} href="/calendar" />
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -132,20 +132,42 @@ export function PersonalDashboard({ modules }: { modules: ModuleCard[] }) {
   )
 }
 
-function StatCard({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number }) {
-  return (
-    <Card>
-      <CardContent className="flex items-center gap-3 p-4">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Icon className="size-5" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-2xl font-semibold leading-none">{value}</span>
-          <span className="mt-1 text-xs text-muted-foreground">{label}</span>
-        </div>
-      </CardContent>
-    </Card>
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  href,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  value: number
+  href?: string
+}) {
+  const content = (
+    <CardContent className="flex items-center gap-3 p-4">
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <Icon className="size-5" />
+      </div>
+      <div className="flex flex-col">
+        <span className="text-2xl font-semibold leading-none">{value}</span>
+        <span className="mt-1 text-xs text-muted-foreground">{label}</span>
+      </div>
+    </CardContent>
   )
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        aria-label={`${label}: ${value}`}
+        className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Card className="cursor-pointer transition-all hover:ring-primary/40 hover:shadow-sm">{content}</Card>
+      </Link>
+    )
+  }
+
+  return <Card>{content}</Card>
 }
 
 function SectionCard({
@@ -153,14 +175,16 @@ function SectionCard({
   icon: Icon,
   action,
   children,
+  id,
 }: {
   title: string
   icon: React.ComponentType<{ className?: string }>
   action?: React.ReactNode
   children: React.ReactNode
+  id?: string
 }) {
   return (
-    <Card>
+    <Card id={id} className="scroll-mt-24">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Icon className="size-4 text-muted-foreground" />
@@ -225,7 +249,7 @@ function TodoCard({ todos, loading }: { todos: Todo[]; loading: boolean }) {
   const priorities: Array<"low" | "medium" | "high"> = ["low", "medium", "high"]
 
   return (
-    <SectionCard title="My to-do list" icon={ListTodo}>
+    <SectionCard title="My to-do list" icon={ListTodo} id="todo-list">
       <div className="flex flex-col gap-2 sm:flex-row">
         <Input
           value={title}
@@ -292,7 +316,7 @@ function TodoCard({ todos, loading }: { todos: Todo[]; loading: boolean }) {
 
 function PendingWorkCard({ items, loading }: { items: PendingWork[]; loading: boolean }) {
   return (
-    <SectionCard title="Pending work" icon={Clock}>
+    <SectionCard title="Pending work" icon={Clock} id="pending-work">
       {loading ? (
         <LoadingRow />
       ) : items.length === 0 ? (
@@ -321,7 +345,7 @@ function PendingWorkCard({ items, loading }: { items: PendingWork[]; loading: bo
 
 function ProjectsCard({ projects, loading }: { projects: Project[]; loading: boolean }) {
   return (
-    <SectionCard title="Assigned projects" icon={FolderKanban}>
+    <SectionCard title="Assigned projects" icon={FolderKanban} id="assigned-projects">
       {loading ? (
         <LoadingRow />
       ) : projects.length === 0 ? (

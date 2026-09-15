@@ -335,7 +335,11 @@ function HeaderClockButton() {
       disabled={busy}
       variant={state === "in" ? "outline" : "default"}
       size="sm"
-      className="min-w-28 font-medium"
+      className={
+        state === "in"
+          ? "min-w-28 font-medium"
+          : "min-w-28 font-medium bg-emerald-600 text-white hover:bg-emerald-700"
+      }
     >
       {busy ? <Loader2 className="size-4 animate-spin" /> : state === "in" ? "Clock Out" : "Clock In"}
     </Button>

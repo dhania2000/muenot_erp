@@ -14,6 +14,9 @@ export type ReportColumn = {
   label: string
   align?: "left" | "right"
   money?: boolean
+  /** When false, this money column is formatted but never auto-totalled (the
+   *  report carries its own subtotal/total rows, e.g. financial statements). */
+  total?: boolean
 }
 
 export type ReportRow = Record<string, any>
@@ -103,8 +106,11 @@ function sumColumns(rows: ReportRow[], moneyCols: ReportColumn[]): Record<string
  */
 export function buildReportModel(columns: ReportColumn[], rows: ReportRow[]): ReportModel {
   const moneyCols = columns.filter((c) => c.money)
-  const hasTotals = moneyCols.length > 0 && rows.length > 0
-  const grandTotals = hasTotals ? sumColumns(rows, moneyCols) : null
+  // Columns that participate in subtotals / grand totals. A money column may
+  // opt out (`total: false`) when the report supplies its own total rows.
+  const totalCols = moneyCols.filter((c) => c.total !== false)
+  const hasTotals = totalCols.length > 0 && rows.length > 0
+  const grandTotals = hasTotals ? sumColumns(rows, totalCols) : null
 
   const groupKey = groupColumnKey(columns)
   let sections: GroupSection[] | null = null
@@ -122,7 +128,7 @@ export function buildReportModel(columns: ReportColumn[], rows: ReportRow[]): Re
     }
     sections = order.map((g) => {
       const groupRows = map.get(g)!
-      return { group: g, rows: groupRows, subtotals: sumColumns(groupRows, moneyCols) }
+      return { group: g, rows: groupRows, subtotals: sumColumns(groupRows, totalCols) }
     })
   }
 

@@ -23,6 +23,9 @@ export type ReportColumn = {
   /** When false, this money column is formatted but not auto-totalled (the
    *  report supplies its own subtotal/total rows, e.g. financial statements). */
   total?: boolean
+  /** Force Indian dd-mm-yyyy date formatting for this column (used for
+   *  timestamp columns whose raw value is not a bare ISO date). */
+  date?: boolean
 }
 
 // Advanced-filter dimensions a report can expose. Each maps to a SQL column in
@@ -3607,6 +3610,224 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   from("rx-unapproved", { key: "ca-unapproved-transaction", label: "Unapproved Transaction Report", group: "CA / Audit", description: "Transactions still pending approval in the workflow." }),
   from("rx-high-value", { key: "ca-high-value", label: "High Value Transaction Report", group: "CA / Audit", description: "Transactions above the high-value threshold flagged for review." }),
   from("rx-unreconciled-gl", { key: "ca-unreconciled-transaction", label: "Unreconciled Transaction Report", group: "CA / Audit", description: "Ledger entries not yet reconciled against their control account." }),
+  // Phase 56 — audit trail reports drawn from the append-only
+  // finance_audit_events log and the live journal, so every entry ties back to
+  // a real recorded action rather than an inferred one.
+  {
+    key: "au-audit-trail",
+    label: "Audit Trail",
+    group: "CA / Audit",
+    description: "Every recorded finance action — created, edited, posted, cancelled, reversed — with the user and timestamp, from the append-only audit log.",
+    dateColumn: "DATE(created_at)",
+    periodMode: "range",
+    sql: `
+      SELECT created_at AS event_time,
+             COALESCE(NULLIF(entity_type,''),'—') AS document,
+             COALESCE(NULLIF(entity_ref,''),'—') AS reference,
+             COALESCE(NULLIF(voucher_no,''),'—') AS voucher,
+             event_type AS action,
+             COALESCE(NULLIF(summary,''),'—') AS summary,
+             COALESCE(amount,0) AS amount,
+             COALESCE(NULLIF(actor_name,''),'System') AS actor
+      FROM finance_audit_events
+      WHERE 1=1 {{range}}
+      ORDER BY created_at DESC, id DESC`,
+    columns: [
+      { key: "event_time", label: "Timestamp", date: true },
+      { key: "document", label: "Document" },
+      { key: "reference", label: "Reference" },
+      { key: "voucher", label: "Voucher" },
+      { key: "action", label: "Action" },
+      { key: "summary", label: "Summary" },
+      { key: "amount", label: "Amount", align: "right", money: true, total: false },
+      { key: "actor", label: "User" },
+    ],
+  },
+  {
+    key: "au-altered-entries",
+    label: "Altered Entries Report",
+    group: "CA / Audit",
+    description: "Journal entries modified after they were first recorded (updated timestamp later than creation), flagged for auditor review.",
+    dateColumn: "journal_date",
+    periodMode: "range",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             created_at AS created_on,
+             updated_at AS last_modified
+      FROM journal_entries
+      WHERE updated_at > (created_at + INTERVAL 1 MINUTE) {{range}}
+      ORDER BY updated_at DESC, id DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "created_on", label: "Created", date: true },
+      { key: "last_modified", label: "Last Modified", date: true },
+    ],
+  },
+  {
+    key: "au-deleted-cancelled",
+    label: "Deleted / Cancelled Entries",
+    group: "CA / Audit",
+    description: "Documents cancelled, reversed or deleted after posting, captured from the audit log with the acting user and timestamp.",
+    dateColumn: "DATE(created_at)",
+    periodMode: "range",
+    sql: `
+      SELECT created_at AS event_time,
+             COALESCE(NULLIF(entity_type,''),'—') AS document,
+             COALESCE(NULLIF(entity_ref,''),'—') AS reference,
+             COALESCE(NULLIF(voucher_no,''),'—') AS voucher,
+             event_type AS action,
+             COALESCE(NULLIF(summary,''),'—') AS summary,
+             COALESCE(amount,0) AS amount,
+             COALESCE(NULLIF(actor_name,''),'System') AS actor
+      FROM finance_audit_events
+      WHERE event_type IN ('cancelled','reversed','deleted','payment_reversed','rejected') {{range}}
+      ORDER BY created_at DESC, id DESC`,
+    columns: [
+      { key: "event_time", label: "Timestamp", date: true },
+      { key: "document", label: "Document" },
+      { key: "reference", label: "Reference" },
+      { key: "voucher", label: "Voucher" },
+      { key: "action", label: "Action" },
+      { key: "summary", label: "Summary" },
+      { key: "amount", label: "Amount", align: "right", money: true, total: false },
+      { key: "actor", label: "User" },
+    ],
+  },
+  {
+    key: "au-backdated",
+    label: "Backdated Entries Report",
+    group: "CA / Audit",
+    description: "Journal entries whose transaction date is earlier than the day they were actually entered, with the number of days back.",
+    dateColumn: "journal_date",
+    periodMode: "range",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             DATE(created_at) AS entered_on,
+             DATEDIFF(DATE(created_at), journal_date) AS days_back,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             GREATEST(COALESCE(debit,0), COALESCE(credit,0)) AS amount
+      FROM journal_entries
+      WHERE journal_date IS NOT NULL
+        AND DATE(created_at) > journal_date {{range}}
+      ORDER BY days_back DESC, journal_date DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Entry Date" },
+      { key: "entered_on", label: "Entered On", date: true },
+      { key: "days_back", label: "Days Back", align: "right" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "amount", label: "Amount", align: "right", money: true, total: false },
+    ],
+  },
+  {
+    key: "au-duplicate",
+    label: "Duplicate Entries Report",
+    group: "CA / Audit",
+    description: "Potential duplicate vouchers — the same party, voucher type, date and amount recorded more than once — for review.",
+    dateColumn: "journal_date",
+    periodMode: "range",
+    sql: `
+      SELECT journal_date,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             GREATEST(COALESCE(debit,0), COALESCE(credit,0)) AS amount,
+             COUNT(*) AS occurrences,
+             GROUP_CONCAT(journal_entry_id ORDER BY journal_entry_id SEPARATOR ', ') AS entries
+      FROM journal_entries
+      WHERE GREATEST(COALESCE(debit,0), COALESCE(credit,0)) > 0 {{range}}
+      GROUP BY journal_date, party, voucher_type, amount
+      HAVING COUNT(*) > 1
+      ORDER BY occurrences DESC, amount DESC`,
+    columns: [
+      { key: "journal_date", label: "Date" },
+      { key: "party", label: "Party" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "amount", label: "Amount", align: "right", money: true, total: false },
+      { key: "occurrences", label: "Count", align: "right" },
+      { key: "entries", label: "Entries" },
+    ],
+  },
+  {
+    key: "au-exceptions",
+    label: "Audit Exceptions Report",
+    group: "CA / Audit",
+    description: "Accounting exceptions — vouchers where total debit and credit do not agree, or lines posted without an account — that break double-entry integrity.",
+    dateColumn: "journal_date",
+    periodMode: "range",
+    sql: `
+      SELECT COALESCE(NULLIF(voucher_no,''), journal_entry_id) AS voucher,
+             MIN(journal_date) AS journal_date,
+             COALESCE(NULLIF(MAX(voucher_type),''),'—') AS voucher_type,
+             COALESCE(SUM(debit),0) AS total_debit,
+             COALESCE(SUM(credit),0) AS total_credit,
+             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS difference,
+             CASE
+               WHEN ABS(COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0)) > 0.01 THEN 'Unbalanced voucher'
+               ELSE 'Missing account on a line'
+             END AS exception
+      FROM journal_entries
+      WHERE 1=1 {{range}}
+      GROUP BY voucher
+      HAVING ABS(COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0)) > 0.01
+          OR SUM(CASE WHEN COALESCE(NULLIF(account_name,''),'') = '' THEN 1 ELSE 0 END) > 0
+      ORDER BY ABS(COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0)) DESC`,
+    columns: [
+      { key: "voucher", label: "Voucher" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher_type", label: "Type" },
+      { key: "total_debit", label: "Total Debit", align: "right", money: true },
+      { key: "total_credit", label: "Total Credit", align: "right", money: true },
+      { key: "difference", label: "Difference", align: "right", money: true, total: false },
+      { key: "exception", label: "Exception" },
+    ],
+  },
+  {
+    key: "ca-fixed-assets",
+    label: "Fixed Assets Register",
+    group: "CA / Audit",
+    description: "Fixed-asset ledger accounts with additions (debit), disposals/depreciation (credit) and net book movement, from the posted General Ledger.",
+    dateColumn: "transaction_date",
+    periodMode: "range",
+    sql: `
+      SELECT COALESCE(NULLIF(account_name,''),'Unclassified asset') AS account,
+             COALESCE(NULLIF(account_group,''),'Fixed Assets') AS account_group,
+             COUNT(*) AS entries,
+             COALESCE(SUM(debit),0) AS additions,
+             COALESCE(SUM(credit),0) AS disposals,
+             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS net_movement
+      FROM general_ledger
+      WHERE (account_group LIKE '%Fixed Asset%'
+             OR account_type LIKE '%Fixed Asset%'
+             OR account_name REGEXP 'plant|machinery|building|vehicle|furniture|equipment|depreciat')
+        {{range}}
+      GROUP BY account, account_group
+      ORDER BY net_movement DESC`,
+    columns: [
+      { key: "account", label: "Asset Account" },
+      { key: "account_group", label: "Group" },
+      { key: "entries", label: "Entries", align: "right" },
+      { key: "additions", label: "Additions (Dr)", align: "right", money: true },
+      { key: "disposals", label: "Disposals / Depr. (Cr)", align: "right", money: true },
+      { key: "net_movement", label: "Net Movement", align: "right", money: true },
+    ],
+  },
 
   // 11. Management / MIS --------------------------------------------------
   from("income-vs-expense", { key: "mis-revenue-analysis", label: "Revenue Analysis", group: "Management / MIS", description: "Revenue and net trend by month." }),
@@ -3622,6 +3843,81 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
     columns: STATEMENT_COLUMNS["trial-balance"],
   },
   from("outstanding-expense", { key: "ye-outstanding-expense", label: "Outstanding Expense Report", group: "Year-End", description: "Unpaid expenses carried at year-end." }),
+  // Phase 57 — year-end reports wired to the real closing engine, the Journal,
+  // the General Ledger and the Chart of Accounts so the numbers match the
+  // Year-End Closing screen exactly.
+  {
+    key: "ye-profit-loss",
+    label: "Year-End Profit & Loss",
+    group: "Year-End",
+    description: "Income and expense for the year with net profit / loss carried to Retained Earnings, from the classification engine.",
+    statement: "profit-loss",
+    periodMode: "range",
+    columns: STATEMENT_COLUMNS["profit-loss"],
+  },
+  {
+    key: "ye-balance-sheet",
+    label: "Year-End Balance Sheet",
+    group: "Year-End",
+    description: "Assets, liabilities and equity as on the year-end date, classified from the Chart of Accounts.",
+    statement: "balance-sheet",
+    periodMode: "asOn",
+    columns: STATEMENT_COLUMNS["balance-sheet"],
+  },
+  {
+    key: "ye-closing-register",
+    label: "Year-End Closing Register",
+    group: "Year-End",
+    description: "Every financial year that has been closed, with total income, expense, net result and the closing voucher — straight from the year-end closing engine.",
+    periodMode: "none",
+    sql: `
+      SELECT financial_year,
+             status,
+             COALESCE(total_income,0) AS total_income,
+             COALESCE(total_expense,0) AS total_expense,
+             COALESCE(net_profit,0) AS net_profit,
+             COALESCE(NULLIF(voucher_no,''),'—') AS voucher,
+             closed_at
+      FROM coa_year_end_closings
+      ORDER BY financial_year DESC`,
+    columns: [
+      { key: "financial_year", label: "Financial Year" },
+      { key: "status", label: "Status" },
+      { key: "total_income", label: "Income", align: "right", money: true, total: false },
+      { key: "total_expense", label: "Expense", align: "right", money: true, total: false },
+      { key: "net_profit", label: "Net Profit / (Loss)", align: "right", money: true, total: false },
+      { key: "voucher", label: "Closing Voucher" },
+      { key: "closed_at", label: "Closed On", date: true },
+    ],
+  },
+  {
+    key: "ye-closing-vouchers",
+    label: "Year-End Closing Vouchers",
+    group: "Year-End",
+    description: "The journal lines posted by year-end closing — Profit & Loss accounts zeroed against Retained Earnings — as they appear in the General Ledger.",
+    dateColumn: "journal_date",
+    periodMode: "range",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(voucher_no,''),'—') AS voucher,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(narration,''),'—') AS narration,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM journal_entries
+      WHERE (voucher_type = 'Year-End Closing' OR source_module = 'Year-End Closing') {{range}}
+      ORDER BY journal_date DESC, id DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher", label: "Voucher" },
+      { key: "account", label: "Account" },
+      { key: "narration", label: "Narration" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
 ]
 
 export const FINANCE_ONLY_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(

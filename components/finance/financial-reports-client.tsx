@@ -48,6 +48,7 @@ import type { ReportDiagnostics } from "@/lib/finance-report-diagnostics"
 import { ReportViewDialog, type ReportCompany } from "@/components/finance/report-view-dialog"
 import { ReportEmailDialog } from "@/components/finance/report-email-dialog"
 import { ReportHistoryPanel } from "@/components/finance/report-history-panel"
+import { CaPackagePanel } from "@/components/finance/ca-package-panel"
 import { ReportDrillDrawer, type DrillTarget } from "@/components/finance/report-drill-drawer"
 import {
   defaultPeriod,

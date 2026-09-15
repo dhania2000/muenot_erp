@@ -28,9 +28,17 @@ import {
   FileText,
   FilterX,
   Mail,
+  MoreHorizontal,
   RefreshCw,
+  Search,
   XCircle,
 } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { inr0 } from "@/lib/finance-calc"
 import { exportReportCsv, exportReportExcel } from "@/lib/report-excel"
 import { exportReportPdf } from "@/lib/report-pdf"
@@ -632,6 +640,7 @@ export function FinancialReportsClient() {
   const [reportKey, setReportKey] = useState<string>("")
   const [openGroup, setOpenGroup] = useState<string>("")
   const [pendingAction, setPendingAction] = useState<RowAction | null>(null)
+  const [query, setQuery] = useState("")
 
   const { data, isLoading } = useSWR<{ reports: CatalogueEntry[] }>(
     "/api/finance/reports",
@@ -651,6 +660,29 @@ export function FinancialReportsClient() {
     }
     return Array.from(map, ([group, reports]) => ({ group, reports }))
   }, [catalogue])
+
+  // Phase 28 — report search across name, category and description. Matching is
+  // case-insensitive and substring-based; a group survives only if it still has
+  // at least one matching report so the picker never shows empty categories.
+  const trimmedQuery = query.trim().toLowerCase()
+  const filteredGroups = useMemo(() => {
+    if (!trimmedQuery) return groups
+    return groups
+      .map(({ group, reports }) => ({
+        group,
+        reports: reports.filter((r) =>
+          [r.label, r.group, r.description].some((field) =>
+            field.toLowerCase().includes(trimmedQuery),
+          ),
+        ),
+      }))
+      .filter((g) => g.reports.length > 0)
+  }, [groups, trimmedQuery])
+
+  const totalMatches = useMemo(
+    () => filteredGroups.reduce((sum, g) => sum + g.reports.length, 0),
+    [filteredGroups],
+  )
 
   // Default selection + open the first category once the catalogue loads.
   useEffect(() => {
@@ -788,18 +820,41 @@ export function FinancialReportsClient() {
           buttons (View / CSV / Excel / PDF / Email) that act on that report
           using the period and filters set above. */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-base">Reports</CardTitle>
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search reports by name, category, description"
+              aria-label="Search reports"
+              className="pl-8"
+            />
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <p className="py-4 text-sm text-muted-foreground">Loading report catalogue…</p>
           ) : groups.length === 0 ? (
             <p className="py-4 text-sm text-muted-foreground">No reports available.</p>
+          ) : filteredGroups.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              No reports match “{query.trim()}”.
+            </p>
           ) : (
             <div className="space-y-2">
-              {groups.map(({ group, reports }) => {
-                const isOpen = openGroup === group
+              {trimmedQuery && (
+                <p className="px-1 pb-1 text-xs text-muted-foreground">
+                  {totalMatches} report{totalMatches === 1 ? "" : "s"} across {filteredGroups.length}{" "}
+                  categor{filteredGroups.length === 1 ? "y" : "ies"}
+                </p>
+              )}
+              {filteredGroups.map(({ group, reports }) => {
+                // While searching, keep every matching category expanded so
+                // results are visible without extra clicks.
+                const isOpen = trimmedQuery ? true : openGroup === group
                 return (
                   <div key={group} className="rounded-md border">
                     <button
@@ -861,10 +916,14 @@ export function FinancialReportsClient() {
                                     <Download data-icon="inline-start" />
                                     CSV
                                   </Button>
+                                  {/* Secondary exports stay inline on large
+                                      screens and collapse into a "More" menu on
+                                      smaller viewports (Phase 30). */}
                                   <Button
                                     variant="outline"
                                     size="sm"
                                     onClick={() => runReportAction(r, "excel")}
+                                    className="hidden lg:inline-flex"
                                   >
                                     <FileSpreadsheet data-icon="inline-start" />
                                     Excel
@@ -873,6 +932,7 @@ export function FinancialReportsClient() {
                                     variant="outline"
                                     size="sm"
                                     onClick={() => runReportAction(r, "pdf")}
+                                    className="hidden lg:inline-flex"
                                   >
                                     <FileText data-icon="inline-start" />
                                     PDF
@@ -881,10 +941,38 @@ export function FinancialReportsClient() {
                                     variant="outline"
                                     size="sm"
                                     onClick={() => runReportAction(r, "email")}
+                                    className="hidden lg:inline-flex"
                                   >
                                     <Mail data-icon="inline-start" />
                                     Email
                                   </Button>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="lg:hidden"
+                                        aria-label={`More actions for ${r.label}`}
+                                      >
+                                        <MoreHorizontal data-icon="inline-start" />
+                                        More
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem onClick={() => runReportAction(r, "excel")}>
+                                        <FileSpreadsheet data-icon="inline-start" />
+                                        Excel
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => runReportAction(r, "pdf")}>
+                                        <FileText data-icon="inline-start" />
+                                        PDF
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => runReportAction(r, "email")}>
+                                        <Mail data-icon="inline-start" />
+                                        Email
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </div>
                               </div>
                             </li>

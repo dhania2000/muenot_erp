@@ -198,3 +198,70 @@
     @apply bg-background text-foreground;
   }
 }
+
+/*
+ * Financial Reports — print layout (Phase 27).
+ *
+ * When a report View dialog is open and the user prints, only the report
+ * "sheet" is emitted so the printout matches the PDF layout and no browser /
+ * app chrome (toolbars, buttons, dialog overlay) leaks onto the page. The
+ * visibility trick hides everything, then re-shows the sheet, while the
+ * dialog's scroll container is un-constrained so long reports paginate across
+ * pages instead of being clipped to the on-screen viewport height.
+ */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  [data-report-print="sheet"],
+  [data-report-print="sheet"] * {
+    visibility: visible !important;
+  }
+
+  [data-report-print="container"],
+  [data-report-print="scroll"] {
+    position: static !important;
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+    max-width: none !important;
+    overflow: visible !important;
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    transform: none !important;
+    inset: auto !important;
+  }
+
+  [data-report-print="sheet"] {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* Repeat the table head on every printed page and keep rows intact. */
+  [data-report-print="sheet"] thead {
+    display: table-header-group;
+  }
+  [data-report-print="sheet"] tr {
+    break-inside: avoid;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+}

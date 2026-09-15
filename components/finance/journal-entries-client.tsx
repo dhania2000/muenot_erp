@@ -9,11 +9,16 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ManualJournalDialog, type EditableJournal } from "@/components/finance/manual-journal-dialog"
+import { JournalDetailDrawer } from "@/components/finance/journal-detail-drawer"
+import { JournalImportDialog } from "@/components/finance/journal-import-dialog"
 import { inr, inr0 } from "@/lib/finance-calc"
 import {
   Plus, FilterX, Trash2, ChevronRight, ChevronDown, Lock, Coins, Wallet, ArrowLeftRight, BookOpen,
-  Send, Check, X, Pencil, Undo2, Ban,
+  Send, Check, X, Pencil, Undo2, Ban, Eye, Upload,
 } from "lucide-react"
+
+// The lifecycle statuses a manual journal moves through, in workflow order.
+const STATUS_ORDER = ["Draft", "Pending Approval", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"] as const
 
 type Row = Record<string, any>
 
@@ -123,6 +128,9 @@ export function JournalEntriesClient() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editJournal, setEditJournal] = useState<EditableJournal | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [detailGroup, setDetailGroup] = useState<JournalGroup | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
 
   const queryKey = useMemo(() => {
     const params = new URLSearchParams()
@@ -137,13 +145,27 @@ export function JournalEntriesClient() {
   const summary = data?.summary ?? {}
   const financialYears: string[] = data?.filterOptions?.financialYears ?? []
 
-  const groups = useMemo(() => {
+  // Groups filtered by source only — the status cards count over this set so a
+  // card always shows how many vouchers would appear if that status is picked.
+  const sourceGroups = useMemo(() => {
     const all = buildGroups(rows)
-    const bySource =
-      sourceFilter === "all" ? all : sourceFilter === "manual" ? all.filter((g) => g.isManual) : all.filter((g) => !g.isManual)
-    const byStatus = statusFilter ? bySource.filter((g) => g.status === statusFilter) : bySource
-    return byStatus.sort((a, b) => (a.journalDate < b.journalDate ? 1 : a.journalDate > b.journalDate ? -1 : b.voucherNo.localeCompare(a.voucherNo)))
-  }, [rows, sourceFilter, statusFilter])
+    return sourceFilter === "all"
+      ? all
+      : sourceFilter === "manual"
+        ? all.filter((g) => g.isManual)
+        : all.filter((g) => !g.isManual)
+  }, [rows, sourceFilter])
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const g of sourceGroups) if (g.status) counts[g.status] = (counts[g.status] ?? 0) + 1
+    return counts
+  }, [sourceGroups])
+
+  const groups = useMemo(() => {
+    const byStatus = statusFilter ? sourceGroups.filter((g) => g.status === statusFilter) : sourceGroups
+    return [...byStatus].sort((a, b) => (a.journalDate < b.journalDate ? 1 : a.journalDate > b.journalDate ? -1 : b.voucherNo.localeCompare(a.voucherNo)))
+  }, [sourceGroups, statusFilter])
 
   const activeFilterCount = [search, financialYear, sourceFilter !== "all" ? sourceFilter : "", statusFilter].filter(Boolean).length
 
@@ -278,6 +300,10 @@ export function JournalEntriesClient() {
               { header: "Narration", value: (r: Row) => r.narration },
             ]}
           />
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Upload data-icon="inline-start" />
+            Import
+          </Button>
           <Button onClick={openNew}>
             <Plus data-icon="inline-start" />
             New manual journal
@@ -297,6 +323,29 @@ export function JournalEntriesClient() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {STATUS_ORDER.map((s) => {
+          const count = statusCounts[s] ?? 0
+          const active = statusFilter === s
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatusFilter(active ? "" : s)}
+              aria-pressed={active}
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+                active ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+              } ${count === 0 ? "opacity-60" : ""}`}
+            >
+              <Badge variant={STATUS_BADGE[s] ?? "outline"} className="pointer-events-none">
+                {s}
+              </Badge>
+              <span className="text-lg font-semibold tabular-nums">{count}</span>
+            </button>
+          )
+        })}
       </div>
 
       <Card>
@@ -465,6 +514,18 @@ export function JournalEntriesClient() {
                         <td className="p-2 text-right tabular-nums">{inr(g.totalCredit)}</td>
                         <td className="p-2">
                           <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="View detail"
+                              title="View detail"
+                              onClick={() => {
+                                setDetailGroup(g)
+                                setDetailOpen(true)
+                              }}
+                            >
+                              <Eye className="size-4" />
+                            </Button>
                             {!g.isManual && (
                               <span
                                 className="inline-flex items-center gap-1 text-xs text-muted-foreground"
@@ -557,6 +618,8 @@ export function JournalEntriesClient() {
       </Card>
 
       <ManualJournalDialog open={dialogOpen} onOpenChange={setDialogOpen} onSaved={() => mutate()} editJournal={editJournal} />
+      <JournalImportDialog open={importOpen} onOpenChange={setImportOpen} onImported={() => mutate()} />
+      <JournalDetailDrawer detail={detailGroup} open={detailOpen} onOpenChange={setDetailOpen} />
     </main>
   )
 }

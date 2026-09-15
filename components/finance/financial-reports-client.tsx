@@ -57,6 +57,11 @@ type ReportColumn = {
 
 type FilterMeta = { dim: string; label: string }
 
+// Actions that a per-report row button can trigger. They are queued as a
+// "pending action" on the parent, then executed by ReportView once that
+// report's data has loaded.
+type RowAction = "view" | "csv" | "excel" | "pdf" | "email"
+
 type CatalogueEntry = {
   key: string
   label: string
@@ -132,6 +137,8 @@ function ReportView({
   subtitle,
   periodLabel,
   filterLabels,
+  pendingAction,
+  onActionConsumed,
 }: {
   entry: CatalogueEntry
   from: string
@@ -140,6 +147,8 @@ function ReportView({
   subtitle: string
   periodLabel: string
   filterLabels: string[]
+  pendingAction: RowAction | null
+  onActionConsumed: () => void
 }) {
   const { data, isLoading, isValidating, mutate } = useSWR<ReportResponse>(
     reportUrl(entry.key, from, to, filters),
@@ -225,6 +234,33 @@ function ReportView({
       logDownload("PDF")
     }
   }
+
+  // Run a per-row action queued from the report list. We wait until the data
+  // for *this* report has loaded (keepPreviousData keeps the previous report's
+  // rows during a switch, so guard on data.report.key) before acting.
+  useEffect(() => {
+    if (!pendingAction) return
+    if (isLoading || !data || data.report.key !== entry.key) return
+    switch (pendingAction) {
+      case "view":
+        setViewOpen(true)
+        break
+      case "email":
+        setEmailOpen(true)
+        break
+      case "csv":
+        if (rows.length > 0) downloadCsv()
+        break
+      case "excel":
+        if (rows.length > 0) void downloadExcel()
+        break
+      case "pdf":
+        if (rows.length > 0) void downloadPdf()
+        break
+    }
+    onActionConsumed()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAction, isLoading, data, entry.key])
 
   return (
     <Card>
@@ -532,6 +568,7 @@ export function FinancialReportsClient() {
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [reportKey, setReportKey] = useState<string>("")
   const [openGroup, setOpenGroup] = useState<string>("")
+  const [pendingAction, setPendingAction] = useState<RowAction | null>(null)
 
   const { data, isLoading } = useSWR<{ reports: CatalogueEntry[] }>(
     "/api/finance/reports",
@@ -585,6 +622,13 @@ export function FinancialReportsClient() {
     setFilters({})
   }
 
+  // Per-row button: make this report the active one, then queue the action so
+  // ReportView runs it once the report's data has loaded.
+  function runReportAction(entry: CatalogueEntry, action: RowAction) {
+    if (entry.key !== reportKey) pickReport(entry)
+    setPendingAction(action)
+  }
+
   function resetControls() {
     setPeriod(defaultPeriod())
     setFilters({})
@@ -623,6 +667,8 @@ export function FinancialReportsClient() {
         <ReportHistoryPanel />
       ) : (
         <>
+      {/* Period + filters live at the top and apply to whichever report you
+          view or export from the list below. */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-base">Report controls</CardTitle>
@@ -634,95 +680,158 @@ export function FinancialReportsClient() {
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Category → report picker, rendered as collapsible cards (one per
-              category) to mirror the Chart of Accounts layout. */}
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">Category</p>
-            {isLoading ? (
-              <p className="py-4 text-sm text-muted-foreground">Loading report catalogue…</p>
-            ) : groups.length === 0 ? (
-              <p className="py-4 text-sm text-muted-foreground">No reports available.</p>
-            ) : (
-              <div className="space-y-2">
-                {groups.map(({ group, reports }) => {
-                  const isOpen = openGroup === group
-                  return (
-                    <div key={group} className="rounded-md border">
-                      <button
-                        type="button"
-                        onClick={() => toggleGroup(group)}
-                        className="flex w-full items-center gap-2 px-3 py-3 text-left"
-                        aria-expanded={isOpen}
-                      >
-                        {isOpen ? (
-                          <ChevronDown className="size-4 shrink-0" />
-                        ) : (
-                          <ChevronRight className="size-4 shrink-0" />
-                        )}
-                        <span className="text-sm font-semibold">{group}</span>
-                        <Badge variant="secondary" className="ml-auto">
-                          {reports.length} report{reports.length === 1 ? "" : "s"}
-                        </Badge>
-                      </button>
-                      {isOpen && (
-                        <ul className="border-t p-1">
-                          {reports.map((r) => {
-                            const active = r.key === reportKey
-                            return (
-                              <li key={r.key}>
+          {!selected ? (
+            <p className="text-sm text-muted-foreground">
+              Select a report below to configure its period and filters.
+            </p>
+          ) : (
+            <>
+              <div className="space-y-4">
+                <p className="text-xs font-medium text-muted-foreground">Period</p>
+                <PeriodControls mode={periodMode} period={period} setPeriod={setPeriod} />
+              </div>
+
+              {selected.filters.length > 0 && (
+                <div className="space-y-2 border-t pt-4">
+                  <p className="text-xs font-medium text-muted-foreground">Filters</p>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {selected.filters.map((f) => (
+                      <div key={f.dim} className="flex flex-col gap-1">
+                        <label
+                          className="text-xs font-medium text-muted-foreground"
+                          htmlFor={`filter-${f.dim}`}
+                        >
+                          {f.label}
+                        </label>
+                        <Input
+                          id={`filter-${f.dim}`}
+                          value={filters[f.dim] ?? ""}
+                          placeholder={`Filter by ${f.label.toLowerCase()}`}
+                          onChange={(e) =>
+                            setFilters((prev) => ({ ...prev, [f.dim]: e.target.value }))
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Category → report picker. Each report row carries its own action
+          buttons (View / CSV / Excel / PDF / Email) that act on that report
+          using the period and filters set above. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Reports</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <p className="py-4 text-sm text-muted-foreground">Loading report catalogue…</p>
+          ) : groups.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">No reports available.</p>
+          ) : (
+            <div className="space-y-2">
+              {groups.map(({ group, reports }) => {
+                const isOpen = openGroup === group
+                return (
+                  <div key={group} className="rounded-md border">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(group)}
+                      className="flex w-full items-center gap-2 px-3 py-3 text-left"
+                      aria-expanded={isOpen}
+                    >
+                      {isOpen ? (
+                        <ChevronDown className="size-4 shrink-0" />
+                      ) : (
+                        <ChevronRight className="size-4 shrink-0" />
+                      )}
+                      <span className="text-sm font-semibold">{group}</span>
+                      <Badge variant="secondary" className="ml-auto">
+                        {reports.length} report{reports.length === 1 ? "" : "s"}
+                      </Badge>
+                    </button>
+                    {isOpen && (
+                      <ul className="border-t p-1">
+                        {reports.map((r) => {
+                          const active = r.key === reportKey
+                          return (
+                            <li key={r.key}>
+                              <div
+                                className={`flex flex-col gap-2 rounded-md px-3 py-2 transition-colors lg:flex-row lg:items-center lg:justify-between ${
+                                  active ? "bg-primary/10" : "hover:bg-muted/60"
+                                }`}
+                              >
                                 <button
                                   type="button"
                                   onClick={() => pickReport(r)}
                                   aria-pressed={active}
-                                  className={`flex w-full flex-col gap-0.5 rounded-md px-3 py-2 text-left transition-colors ${
-                                    active ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
-                                  }`}
+                                  className="flex flex-1 flex-col gap-0.5 text-left"
                                 >
-                                  <span className="text-sm font-medium">{r.label}</span>
-                                  <span className="text-xs text-muted-foreground">{r.description}</span>
+                                  <span
+                                    className={`text-sm font-medium ${active ? "text-primary" : ""}`}
+                                  >
+                                    {r.label}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {r.description}
+                                  </span>
                                 </button>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          {selected && (
-            <div className="space-y-4 border-t pt-4">
-              <p className="text-xs font-medium text-muted-foreground">Period</p>
-              <PeriodControls mode={periodMode} period={period} setPeriod={setPeriod} />
-            </div>
-          )}
-
-          {selected && selected.filters.length > 0 && (
-            <div className="space-y-2 border-t pt-4">
-              <p className="text-xs font-medium text-muted-foreground">Filters</p>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {selected.filters.map((f) => (
-                  <div key={f.dim} className="flex flex-col gap-1">
-                    <label
-                      className="text-xs font-medium text-muted-foreground"
-                      htmlFor={`filter-${f.dim}`}
-                    >
-                      {f.label}
-                    </label>
-                    <Input
-                      id={`filter-${f.dim}`}
-                      value={filters[f.dim] ?? ""}
-                      placeholder={`Filter by ${f.label.toLowerCase()}`}
-                      onChange={(e) =>
-                        setFilters((prev) => ({ ...prev, [f.dim]: e.target.value }))
-                      }
-                    />
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <Button
+                                    variant="default"
+                                    size="sm"
+                                    onClick={() => runReportAction(r, "view")}
+                                  >
+                                    <Eye data-icon="inline-start" />
+                                    View
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => runReportAction(r, "csv")}
+                                  >
+                                    <Download data-icon="inline-start" />
+                                    CSV
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => runReportAction(r, "excel")}
+                                  >
+                                    <FileSpreadsheet data-icon="inline-start" />
+                                    Excel
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => runReportAction(r, "pdf")}
+                                  >
+                                    <FileText data-icon="inline-start" />
+                                    PDF
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => runReportAction(r, "email")}
+                                  >
+                                    <Mail data-icon="inline-start" />
+                                    Email
+                                  </Button>
+                                </div>
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
                   </div>
-                ))}
-              </div>
+                )
+              })}
             </div>
           )}
         </CardContent>
@@ -739,6 +848,8 @@ export function FinancialReportsClient() {
           subtitle={subtitle}
           periodLabel={label}
           filterLabels={activeFilterLabels(selected, filters)}
+          pendingAction={pendingAction}
+          onActionConsumed={() => setPendingAction(null)}
         />
       ) : (
         <p className="text-sm text-muted-foreground">Select a category and report to begin.</p>

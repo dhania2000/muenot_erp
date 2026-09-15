@@ -8,10 +8,11 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { ExcelExportButton } from "@/components/excel-export-button"
-import { ManualJournalDialog } from "@/components/finance/manual-journal-dialog"
+import { ManualJournalDialog, type EditableJournal } from "@/components/finance/manual-journal-dialog"
 import { inr, inr0 } from "@/lib/finance-calc"
 import {
   Plus, FilterX, Trash2, ChevronRight, ChevronDown, Lock, Coins, Wallet, ArrowLeftRight, BookOpen,
+  Send, Check, X, Pencil, Undo2, Ban,
 } from "lucide-react"
 
 type Row = Record<string, any>
@@ -21,13 +22,27 @@ type JournalGroup = {
   journalDate: string
   voucherType: string
   narration: string
-  sourceModule: string
   referenceNo: string
+  sourceModule: string
   financialYear: string
   isManual: boolean
+  status: string
+  postingStatus: string
   totalDebit: number
   totalCredit: number
   lines: Row[]
+}
+
+type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
+
+const STATUS_BADGE: Record<string, BadgeVariant> = {
+  Draft: "outline",
+  "Pending Approval": "secondary",
+  Approved: "default",
+  Posted: "default",
+  Rejected: "destructive",
+  Cancelled: "destructive",
+  Reversed: "secondary",
 }
 
 const num = (v: any) => {
@@ -51,10 +66,12 @@ function buildGroups(rows: Row[]): JournalGroup[] {
         journalDate: String(row.journal_date ?? ""),
         voucherType: String(row.voucher_type ?? "Journal"),
         narration: String(row.narration ?? ""),
-        sourceModule: String(row.source_module ?? "Manual"),
         referenceNo: String(row.reference_no ?? ""),
+        sourceModule: String(row.source_module ?? "Manual"),
         financialYear: String(row.financial_year ?? ""),
         isManual: String(row.source_module ?? "Manual") === "Manual",
+        status: String(row.approval_status ?? ""),
+        postingStatus: String(row.posting_status ?? ""),
         totalDebit: 0,
         totalCredit: 0,
         lines: [],
@@ -68,13 +85,35 @@ function buildGroups(rows: Row[]): JournalGroup[] {
   return Array.from(map.values())
 }
 
+/** Which workflow actions apply to a manual journal in a given status. */
+function actionsFor(status: string): Array<"submit" | "approve" | "reject" | "post" | "cancel" | "reverse" | "edit" | "delete"> {
+  switch (status) {
+    case "Draft":
+      return ["submit", "edit", "cancel", "delete"]
+    case "Pending Approval":
+      return ["approve", "reject", "edit", "cancel"]
+    case "Rejected":
+      return ["submit", "edit", "cancel", "delete"]
+    case "Approved":
+      return ["post", "cancel"]
+    case "Posted":
+      return ["reverse"]
+    case "Cancelled":
+      return ["delete"]
+    default:
+      return []
+  }
+}
+
 export function JournalEntriesClient() {
   const [search, setSearch] = useState("")
   const [financialYear, setFinancialYear] = useState("")
   const [sourceFilter, setSourceFilter] = useState<"all" | "manual" | "system">("all")
+  const [statusFilter, setStatusFilter] = useState("")
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [editJournal, setEditJournal] = useState<EditableJournal | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
 
   const queryKey = useMemo(() => {
     const params = new URLSearchParams()
@@ -91,12 +130,13 @@ export function JournalEntriesClient() {
 
   const groups = useMemo(() => {
     const all = buildGroups(rows)
-    const filtered =
+    const bySource =
       sourceFilter === "all" ? all : sourceFilter === "manual" ? all.filter((g) => g.isManual) : all.filter((g) => !g.isManual)
-    return filtered.sort((a, b) => (a.journalDate < b.journalDate ? 1 : a.journalDate > b.journalDate ? -1 : b.voucherNo.localeCompare(a.voucherNo)))
-  }, [rows, sourceFilter])
+    const byStatus = statusFilter ? bySource.filter((g) => g.status === statusFilter) : bySource
+    return byStatus.sort((a, b) => (a.journalDate < b.journalDate ? 1 : a.journalDate > b.journalDate ? -1 : b.voucherNo.localeCompare(a.voucherNo)))
+  }, [rows, sourceFilter, statusFilter])
 
-  const activeFilterCount = [search, financialYear, sourceFilter !== "all" ? sourceFilter : ""].filter(Boolean).length
+  const activeFilterCount = [search, financialYear, sourceFilter !== "all" ? sourceFilter : "", statusFilter].filter(Boolean).length
 
   function toggle(key: string) {
     setExpanded((prev) => {
@@ -107,10 +147,47 @@ export function JournalEntriesClient() {
     })
   }
 
+  async function runAction(
+    group: JournalGroup,
+    action: "submit" | "approve" | "reject" | "post" | "cancel" | "reverse",
+  ) {
+    if (!group.isManual) return
+    const prompts: Record<string, string> = {
+      submit: `Submit journal ${group.voucherNo} for approval?`,
+      approve: `Approve journal ${group.voucherNo}?`,
+      reject: `Reject journal ${group.voucherNo}?`,
+      post: `Post journal ${group.voucherNo} to the general ledger? This makes it live in the books.`,
+      cancel: `Cancel journal ${group.voucherNo}? It will not post to the ledger.`,
+      reverse: `Reverse posted journal ${group.voucherNo}? A contra entry will unwind it from the ledger.`,
+    }
+    let reason: string | null = null
+    if (action === "reject") {
+      reason = window.prompt(`Reason for rejecting ${group.voucherNo} (optional):`, "") ?? ""
+    } else if (!confirm(prompts[action])) {
+      return
+    }
+    setBusyId(group.voucherNo)
+    try {
+      const res = await fetch("/api/finance/journal-entries/manual", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ journalId: group.voucherNo, action, reason }),
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        alert(json.error || `Could not ${action} the journal.`)
+        return
+      }
+      mutate()
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   async function removeJournal(group: JournalGroup) {
     if (!group.isManual) return
-    if (!confirm(`Delete manual journal ${group.voucherNo}? This reverses it out of the ledger and cannot be undone.`)) return
-    setDeletingId(group.voucherNo)
+    if (!confirm(`Delete journal ${group.voucherNo}? This cannot be undone.`)) return
+    setBusyId(group.voucherNo)
     try {
       const res = await fetch(`/api/finance/journal-entries/manual?journal_id=${encodeURIComponent(group.voucherNo)}`, {
         method: "DELETE",
@@ -122,8 +199,30 @@ export function JournalEntriesClient() {
       }
       mutate()
     } finally {
-      setDeletingId(null)
+      setBusyId(null)
     }
+  }
+
+  function openEdit(group: JournalGroup) {
+    setEditJournal({
+      journalId: group.voucherNo,
+      journalDate: group.journalDate,
+      voucherType: group.voucherType,
+      referenceNo: group.referenceNo,
+      narration: group.narration,
+      lines: group.lines.map((l) => ({
+        accountId: String(l.account_id ?? ""),
+        debit: num(l.debit),
+        credit: num(l.credit),
+        narration: String(l.narration ?? ""),
+      })),
+    })
+    setDialogOpen(true)
+  }
+
+  function openNew() {
+    setEditJournal(null)
+    setDialogOpen(true)
   }
 
   const journalCount = groups.length
@@ -154,11 +253,13 @@ export function JournalEntriesClient() {
               { header: "Voucher", value: (r: Row) => r.voucher_type },
               { header: "Debit", value: (r: Row) => r.debit },
               { header: "Credit", value: (r: Row) => r.credit },
+              { header: "Status", value: (r: Row) => r.approval_status },
+              { header: "Posting", value: (r: Row) => r.posting_status },
               { header: "Source", value: (r: Row) => r.source_module },
               { header: "Narration", value: (r: Row) => r.narration },
             ]}
           />
-          <Button onClick={() => setDialogOpen(true)}>
+          <Button onClick={openNew}>
             <Plus data-icon="inline-start" />
             New manual journal
           </Button>
@@ -180,7 +281,7 @@ export function JournalEntriesClient() {
       </div>
 
       <Card>
-        <CardContent className="grid gap-3 pt-6 sm:grid-cols-2 lg:grid-cols-4">
+        <CardContent className="grid gap-3 pt-6 sm:grid-cols-2 lg:grid-cols-5">
           <Input
             placeholder="Search journal, account, party, narration..."
             value={search}
@@ -197,6 +298,19 @@ export function JournalEntriesClient() {
             {financialYears.map((fy) => (
               <option key={fy} value={fy}>
                 {fy}
+              </option>
+            ))}
+          </select>
+          <select
+            className="h-10 rounded-md border bg-background px-3 text-sm"
+            aria-label="Status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="">All statuses</option>
+            {["Draft", "Pending Approval", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"].map((s) => (
+              <option key={s} value={s}>
+                {s}
               </option>
             ))}
           </select>
@@ -219,6 +333,7 @@ export function JournalEntriesClient() {
                 setSearch("")
                 setFinancialYear("")
                 setSourceFilter("all")
+                setStatusFilter("")
               }}
             >
               <FilterX data-icon="inline-start" />
@@ -242,7 +357,7 @@ export function JournalEntriesClient() {
                   <th className="p-2 font-medium">Journal Entry ID</th>
                   <th className="p-2 font-medium">Date</th>
                   <th className="p-2 font-medium">Voucher</th>
-                  <th className="p-2 font-medium">Narration</th>
+                  <th className="p-2 font-medium">Status</th>
                   <th className="p-2 font-medium">Source</th>
                   <th className="p-2 text-right font-medium">Debit</th>
                   <th className="p-2 text-right font-medium">Credit</th>
@@ -259,6 +374,8 @@ export function JournalEntriesClient() {
                 )}
                 {groups.map((g) => {
                   const isOpen = expanded.has(g.voucherNo)
+                  const busy = busyId === g.voucherNo
+                  const acts = g.isManual ? actionsFor(g.status) : []
                   return (
                     <Fragment key={g.voucherNo}>
                       <tr className="border-b hover:bg-muted/40">
@@ -275,8 +392,12 @@ export function JournalEntriesClient() {
                         <td className="p-2 font-mono text-xs">{g.voucherNo}</td>
                         <td className="p-2">{g.journalDate || "—"}</td>
                         <td className="p-2">{g.voucherType}</td>
-                        <td className="p-2 max-w-[18rem] truncate" title={g.narration}>
-                          {g.narration || "—"}
+                        <td className="p-2">
+                          {g.status ? (
+                            <Badge variant={STATUS_BADGE[g.status] ?? "outline"}>{g.status}</Badge>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td className="p-2">
                           <Badge variant={g.isManual ? "outline" : "secondary"}>{g.sourceModule}</Badge>
@@ -284,24 +405,54 @@ export function JournalEntriesClient() {
                         <td className="p-2 text-right tabular-nums">{inr(g.totalDebit)}</td>
                         <td className="p-2 text-right tabular-nums">{inr(g.totalCredit)}</td>
                         <td className="p-2">
-                          <div className="flex items-center justify-end">
-                            {g.isManual ? (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label="Delete manual journal"
-                                disabled={deletingId === g.voucherNo}
-                                onClick={() => removeJournal(g)}
-                              >
-                                <Trash2 className="size-4" />
-                              </Button>
-                            ) : (
+                          <div className="flex items-center justify-end gap-1">
+                            {!g.isManual && (
                               <span
                                 className="inline-flex items-center gap-1 text-xs text-muted-foreground"
                                 title="System posting — reverse it through its source document"
                               >
                                 <Lock className="size-3.5" />
                               </span>
+                            )}
+                            {acts.includes("submit") && (
+                              <Button variant="ghost" size="icon" aria-label="Submit for approval" title="Submit for approval" disabled={busy} onClick={() => runAction(g, "submit")}>
+                                <Send className="size-4" />
+                              </Button>
+                            )}
+                            {acts.includes("approve") && (
+                              <Button variant="ghost" size="icon" aria-label="Approve" title="Approve" disabled={busy} onClick={() => runAction(g, "approve")}>
+                                <Check className="size-4 text-emerald-600" />
+                              </Button>
+                            )}
+                            {acts.includes("reject") && (
+                              <Button variant="ghost" size="icon" aria-label="Reject" title="Reject" disabled={busy} onClick={() => runAction(g, "reject")}>
+                                <X className="size-4 text-destructive" />
+                              </Button>
+                            )}
+                            {acts.includes("post") && (
+                              <Button variant="ghost" size="icon" aria-label="Post to ledger" title="Post to general ledger" disabled={busy} onClick={() => runAction(g, "post")}>
+                                <BookOpen className="size-4 text-primary" />
+                              </Button>
+                            )}
+                            {acts.includes("reverse") && (
+                              <Button variant="ghost" size="icon" aria-label="Reverse" title="Reverse posting" disabled={busy} onClick={() => runAction(g, "reverse")}>
+                                <Undo2 className="size-4" />
+                              </Button>
+                            )}
+                            {acts.includes("edit") && (
+                              <Button variant="ghost" size="icon" aria-label="Edit" title="Edit journal" disabled={busy} onClick={() => openEdit(g)}>
+                                <Pencil className="size-4" />
+                              </Button>
+                            )}
+                            {acts.includes("cancel") && (
+                              <Button variant="ghost" size="icon" aria-label="Cancel" title="Cancel journal" disabled={busy} onClick={() => runAction(g, "cancel")}>
+                                <Ban className="size-4" />
+                              </Button>
+                            )}
+                            {acts.includes("delete") && (
+                              <Button variant="ghost" size="icon" aria-label="Delete" title="Delete journal" disabled={busy} onClick={() => removeJournal(g)}>
+                                <Trash2 className="size-4" />
+                              </Button>
                             )}
                           </div>
                         </td>
@@ -346,7 +497,7 @@ export function JournalEntriesClient() {
         </CardContent>
       </Card>
 
-      <ManualJournalDialog open={dialogOpen} onOpenChange={setDialogOpen} onSaved={() => mutate()} />
+      <ManualJournalDialog open={dialogOpen} onOpenChange={setDialogOpen} onSaved={() => mutate()} editJournal={editJournal} />
     </main>
   )
 }

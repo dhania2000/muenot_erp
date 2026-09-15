@@ -1314,7 +1314,11 @@ const tdsFiling: ModuleConfig = {
 // 11. Journal Entries — double-entry vouchers (JE-#### id, editable)
 // ---------------------------------------------------------------------------
 const ACCOUNT_GROUPS = ["Asset", "Liability", "Equity", "Income", "Expense"]
-const VOUCHER_TYPES = ["Journal", "Payment", "Receipt", "Contra", "Sales", "Purchase"]
+const VOUCHER_TYPES = [
+  "Journal", "Payment", "Receipt", "Contra", "Sales", "Purchase", "Expense",
+  "Credit Note", "Debit Note", "GST", "TDS", "Adjustment", "Opening", "Closing",
+]
+const JOURNAL_APPROVAL_STATUSES = ["Draft", "Pending Approval", "Approved", "Rejected", "Cancelled", "Posted", "Reversed"]
 const SOURCE_MODULES = ["Manual", "Sales Invoices", "Purchase Bills", "Expenses", "FTE Invoices", "Freelance Invoices", "Bank Transactions", "GST Filing", "TDS Filing"]
 
 const journalEntries: ModuleConfig = {
@@ -1355,9 +1359,9 @@ const journalEntries: ModuleConfig = {
     fld("Payment", "cheque_utr_reference", "Cheque / UTR / reference", "text"),
     fld("Source & approval", "source_module", "Source module", "select", { options: SOURCE_MODULES, optional: true }),
     fld("Source & approval", "source_reference", "Source reference", "text"),
-    fld("Source & approval", "approval_status", "Approval status", "select", { options: ["Pending", "Approved", "Rejected"] }),
+    fld("Source & approval", "approval_status", "Approval status", "select", { options: JOURNAL_APPROVAL_STATUSES }),
     fld("Source & approval", "approved_by", "Approved by", "text"),
-    fld("Source & approval", "posting_status", "Posting status", "select", { options: ["Unposted", "Posted"] }),
+    fld("Source & approval", "posting_status", "Posting status", "select", { options: ["Unposted", "Posted", "Reversed"] }),
     fld("Source & approval", "posting_date", "Posting date", "date"),
   ],
   compute: (v) => {
@@ -1374,8 +1378,8 @@ const journalEntries: ModuleConfig = {
     { key: "voucher_type", label: "Voucher" },
     { key: "debit", label: "Debit", align: "right", money: true },
     { key: "credit", label: "Credit", align: "right", money: true },
-    { key: "approval_status", label: "Approval", badge: { Approved: "default", Pending: "secondary", Rejected: "destructive" } },
-    { key: "posting_status", label: "Posting", badge: { Posted: "default", Unposted: "outline" } },
+    { key: "approval_status", label: "Approval", badge: { Posted: "default", Approved: "default", "Pending Approval": "secondary", Draft: "outline", Rejected: "destructive", Cancelled: "destructive", Reversed: "secondary" } },
+    { key: "posting_status", label: "Posting", badge: { Posted: "default", Unposted: "outline", Reversed: "secondary" } },
   ],
   kpis: [
     { label: "Total Debit", key: "total_debit", money: true, icon: "Coins" },

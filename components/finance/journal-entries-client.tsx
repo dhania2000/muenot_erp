@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
-import { ExcelExportButton } from "@/components/excel-export-button"
+import { JournalExportMenu } from "@/components/finance/journal-export-menu"
 import { ManualJournalDialog, type EditableJournal } from "@/components/finance/manual-journal-dialog"
 import { JournalDetailDrawer } from "@/components/finance/journal-detail-drawer"
 import { JournalImportDialog } from "@/components/finance/journal-import-dialog"
@@ -278,27 +278,12 @@ export function JournalEntriesClient() {
           <h1 className="text-3xl font-semibold tracking-tight text-balance">Journal Entries</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ExcelExportButton
-            rows={rows}
-            filename="journal-entries"
-            columns={[
-              { header: "Journal", value: (r: Row) => r.voucher_no || r.journal_entry_id },
-              { header: "Date", value: (r: Row) => r.journal_date },
-              { header: "Account", value: (r: Row) => r.account_name },
-              { header: "Account group", value: (r: Row) => r.account_group },
-              { header: "Voucher", value: (r: Row) => r.voucher_type },
-              { header: "Party", value: (r: Row) => r.party_name },
-              { header: "Project", value: (r: Row) => r.project_name },
-              { header: "Cost centre", value: (r: Row) => r.cost_centre },
-              { header: "Debit", value: (r: Row) => r.debit },
-              { header: "Credit", value: (r: Row) => r.credit },
-              { header: "GST", value: (r: Row) => r.gst_amount },
-              { header: "TDS", value: (r: Row) => r.tds_amount },
-              { header: "Status", value: (r: Row) => r.approval_status },
-              { header: "Posting", value: (r: Row) => r.posting_status },
-              { header: "Source", value: (r: Row) => r.source_module },
-              { header: "Narration", value: (r: Row) => r.narration },
-            ]}
+          <JournalExportMenu
+            filters={{
+              financialYear: financialYear || undefined,
+              source: sourceFilter,
+              search: search || undefined,
+            }}
           />
           <Button variant="outline" onClick={() => setImportOpen(true)}>
             <Upload data-icon="inline-start" />

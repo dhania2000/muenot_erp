@@ -94,6 +94,17 @@ export const TDS_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
   { key: "view_sensitive", label: "View Sensitive Tax Data", fallback: "view", scoped: false, description: "View sensitive TDS data such as full PANs, the audit trail and TRACES tokens." },
 ]
 
+/**
+ * Journal & Ledger granular action — the export registers (Phase 51). Lives
+ * ALONGSIDE the module's Add/View/Update/Delete: a read-only hand-off action
+ * that falls back to `view`, so anyone who can view journals can pull the
+ * Register / Detail / Account-wise / Voucher-wise / Period-wise exports, and
+ * it can be revoked independently without touching view access.
+ */
+export const JOURNAL_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "export", label: "Export Journals", fallback: "view", scoped: false, description: "Export the journal register, detail, account-wise, voucher-wise and period-wise datasets." },
+]
+
 export type ModulePermission = {
   add: PermissionScope
   view: PermissionScope
@@ -194,7 +205,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "finance.customers_vendors", label: "Vendors", group: "finance", aliases: ["customer", "vendor"], scope: { table: "customers_vendors", addedBy: "created_by" } },
       { key: "finance.gst_filing", label: "GST Filing", group: "finance", aliases: ["gst"], scope: { table: "gst_filings" }, extraActions: GST_FILING_EXTRA_ACTIONS },
       { key: "finance.tds_filing", label: "TDS Filing", group: "finance", aliases: ["tds"], scope: { table: "tds_filings" }, extraActions: TDS_FILING_EXTRA_ACTIONS },
-      { key: "finance.journal", label: "Journal & Ledger", group: "finance", aliases: ["journal", "ledger"], scope: { table: "finance_records", addedBy: "created_by" } },
+      { key: "finance.journal", label: "Journal & Ledger", group: "finance", aliases: ["journal", "ledger"], scope: { table: "finance_records", addedBy: "created_by" }, extraActions: JOURNAL_EXTRA_ACTIONS },
       { key: "finance.reports", label: "Financial Reports", group: "finance", aliases: ["financial_report", "report"], scope: { table: "finance_records" } },
       { key: "finance.email_templates", label: "Finance Email Templates", group: "finance", aliases: ["email_template"], scope: { table: "finance_email_templates" } },
       { key: "finance.emails", label: "Finance Emails", group: "finance", aliases: ["email"], scope: { table: "finance_emails", addedBy: "created_by" } },

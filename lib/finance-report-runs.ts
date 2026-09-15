@@ -4,18 +4,19 @@ import { query } from "@/lib/db"
 /**
  * Financial Report run log (Phases 18–20).
  *
- * Every time a report is generated for keeps — downloaded (PDF / Excel / CSV)
- * or emailed — one immutable row is written here recording exactly what was
- * generated, by whom, over which period and with which filters. This is the
- * single source of truth behind the "Download history" and report "Email
- * history" views, and it captures the report snapshot metadata (period +
- * filters + generated-at/by) so a past download/send can always be described.
+ * Every time a report is generated for keeps — viewed on screen, downloaded
+ * (PDF / Excel / CSV) or emailed — one immutable row is written here recording
+ * exactly what was generated, by whom, over which period and with which
+ * filters. This is the single source of truth behind the report "Generation
+ * history" view, and it captures the report snapshot metadata (period +
+ * filters + generated-at/by) so a past view/download/send can always be
+ * described — an audit trail for sensitive financial reports (Phase 34).
  *
  * The table is self-healing (created on first use) so the feature works even
  * before any SQL migration is run manually.
  */
 
-export type ReportRunFormat = "PDF" | "Excel" | "CSV" | "Email"
+export type ReportRunFormat = "PDF" | "Excel" | "CSV" | "Email" | "View"
 
 export type ReportRunRow = {
   id: number
@@ -41,7 +42,7 @@ export async function ensureReportRunSchema() {
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       report_key VARCHAR(80) NOT NULL,
       report_label VARCHAR(190) NOT NULL,
-      format ENUM('PDF','Excel','CSV','Email') NOT NULL DEFAULT 'PDF',
+      format ENUM('PDF','Excel','CSV','Email','View') NOT NULL DEFAULT 'PDF',
       period_label VARCHAR(255) NULL,
       filters_text VARCHAR(500) NULL,
       recipient VARCHAR(320) NULL,
@@ -55,6 +56,16 @@ export async function ensureReportRunSchema() {
       KEY idx_report_runs_generated (generated_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  // Widen the format ENUM on installs where the table predates the 'View'
+  // audit event. Best-effort: a fresh table already has it, so ignore errors.
+  try {
+    await query(
+      `ALTER TABLE finance_report_runs
+         MODIFY COLUMN format ENUM('PDF','Excel','CSV','Email','View') NOT NULL DEFAULT 'PDF'`,
+    )
+  } catch (err) {
+    console.log("[v0] report-runs ENUM upgrade skipped:", (err as Error).message)
+  }
   schemaEnsured = true
 }
 
@@ -113,7 +124,7 @@ export type ListReportRunsResult = {
   total: number
   page: number
   pageSize: number
-  summary: { total: number; downloads: number; emails: number }
+  summary: { total: number; downloads: number; emails: number; views: number }
 }
 
 export async function listReportRuns(input: ListReportRunsInput): Promise<ListReportRunsResult> {

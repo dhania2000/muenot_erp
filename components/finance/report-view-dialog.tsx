@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { inr0 } from "@/lib/finance-calc"
-import { Download, FileSpreadsheet, FileText, Mail, X } from "lucide-react"
+import { Download, FileSpreadsheet, FileText, Mail, Printer, X } from "lucide-react"
 
 type ReportColumn = { key: string; label: string; align?: "left" | "right"; money?: boolean }
 
@@ -146,11 +146,12 @@ export function ReportViewDialog({
   return (
     <Dialog open={open} onOpenChange={(o) => (o ? null : onClose())}>
       <DialogContent
+        data-report-print="container"
         showCloseButton={false}
         className="flex h-[92vh] max-h-[92vh] w-[96vw] max-w-[1100px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1100px]"
       >
-        {/* Toolbar */}
-        <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-2.5">
+        {/* Toolbar (never printed) */}
+        <div className="no-print flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-2.5">
           <DialogTitle className="text-sm font-medium">{reportLabel}</DialogTitle>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={onDownloadCsv} disabled={rows.length === 0}>
@@ -162,6 +163,14 @@ export function ReportViewDialog({
             <Button variant="outline" size="sm" onClick={onDownloadPdf} disabled={rows.length === 0}>
               <FileText data-icon="inline-start" /> PDF
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.print()}
+              disabled={rows.length === 0}
+            >
+              <Printer data-icon="inline-start" /> Print
+            </Button>
             <Button variant="outline" size="sm" onClick={onEmail} disabled={rows.length === 0}>
               <Mail data-icon="inline-start" /> Email
             </Button>
@@ -172,8 +181,11 @@ export function ReportViewDialog({
         </div>
 
         {/* Scrollable report sheet */}
-        <div className="flex-1 overflow-auto bg-muted/20 p-4 sm:p-6">
-          <div className="mx-auto max-w-[960px] rounded-md border bg-background p-6 shadow-sm sm:p-8">
+        <div data-report-print="scroll" className="flex-1 overflow-auto bg-muted/20 p-4 sm:p-6">
+          <div
+            data-report-print="sheet"
+            className="mx-auto max-w-[960px] rounded-md border bg-background p-6 shadow-sm sm:p-8"
+          >
             {/* Letterhead */}
             <div className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-foreground/70 pb-4">
               <div>
@@ -329,7 +341,7 @@ export function ReportViewDialog({
             </div>
 
             {canDrillRow && rows.length > 0 && (
-              <p className="mt-3 text-[11px] text-muted-foreground">
+              <p className="no-print mt-3 text-[11px] text-muted-foreground">
                 Tip: click any account row to drill into its ledger and trace the source documents.
               </p>
             )}

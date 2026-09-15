@@ -105,6 +105,19 @@ export const JOURNAL_EXTRA_ACTIONS: ExtendedAction[] = [
   { key: "export", label: "Export Journals", fallback: "view", scoped: false, description: "Export the journal register, detail, account-wise, voucher-wise and period-wise datasets." },
 ]
 
+/**
+ * Financial Reports granular actions. Viewing a report is governed by the
+ * module's base `view` scope; these two extended grants separate the ability to
+ * take a report OUT of the system from merely reading it, so an admin can let
+ * someone view reports on-screen while revoking downloads and/or emailing.
+ * Both fall back to `view`, so a viewer keeps export + email by default until
+ * an admin explicitly sets either to "none".
+ */
+export const REPORTS_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "export_report", label: "Export / Download Report", fallback: "view", scoped: false, description: "Download a report as PDF, Excel or CSV." },
+  { key: "email_report", label: "Email Report", fallback: "view", scoped: false, description: "Email a report snapshot to a recipient." },
+]
+
 export type ModulePermission = {
   add: PermissionScope
   view: PermissionScope
@@ -206,7 +219,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "finance.gst_filing", label: "GST Filing", group: "finance", aliases: ["gst"], scope: { table: "gst_filings" }, extraActions: GST_FILING_EXTRA_ACTIONS },
       { key: "finance.tds_filing", label: "TDS Filing", group: "finance", aliases: ["tds"], scope: { table: "tds_filings" }, extraActions: TDS_FILING_EXTRA_ACTIONS },
       { key: "finance.journal", label: "Journal & Ledger", group: "finance", aliases: ["journal", "ledger"], scope: { table: "finance_records", addedBy: "created_by" }, extraActions: JOURNAL_EXTRA_ACTIONS },
-      { key: "finance.reports", label: "Financial Reports", group: "finance", aliases: ["financial_report", "report"], scope: { table: "finance_records" } },
+      { key: "finance.reports", label: "Financial Reports", group: "finance", aliases: ["financial_report", "report"], scope: { table: "finance_records" }, extraActions: REPORTS_EXTRA_ACTIONS },
       { key: "finance.email_templates", label: "Finance Email Templates", group: "finance", aliases: ["email_template"], scope: { table: "finance_email_templates" } },
       { key: "finance.emails", label: "Finance Emails", group: "finance", aliases: ["email"], scope: { table: "finance_emails", addedBy: "created_by" } },
     ],

@@ -12,6 +12,7 @@ import {
   type ReportDiagnostics,
   type SourceHealth,
 } from "@/lib/finance-report-diagnostics"
+import { getScope } from "@/lib/permission-store"
 
 /**
  * Single execution engine for every Financial Report. Both the reports GET
@@ -63,6 +64,74 @@ export type ReportCompany = {
 /** Serialise a report's declared filters into the { dim, label } UI shape. */
 export function reportFilterMeta(def: ReportDef) {
   return (def.filters ?? []).map((f) => ({ dim: f.dim, label: FILTER_DIM_LABELS[f.dim] }))
+}
+
+// ---------------------------------------------------------------------------
+// Report data security (Phase 33)
+// ---------------------------------------------------------------------------
+// A report may expose data that belongs to a specific finance sub-module. A
+// user must be able to VIEW that module before they can see, run, export or
+// email the report — otherwise a restricted domain (e.g. payroll-driven
+// expenses) could leak through the reports hub. The requirement is derived
+// from the report's primary source table so it stays correct as the catalogue
+// grows, with an explicit override map for the few cross-table reports.
+//
+// Reports whose source is org-level ledger data (trial balance, P&L, balance
+// sheet, journals) require only the base `finance.reports` view that every
+// visitor to this page already holds, so they map to `null` (no extra gate).
+
+const SOURCE_TABLE_MODULE: Record<string, string> = {
+  expenses: "finance.expenses",
+  purchase_bills: "finance.purchase_bills",
+  sales_invoices: "finance.sales_invoices",
+  bank_transactions: "finance.bank_transactions",
+  finance_accounts: "finance.bank_cash",
+  gst_filings: "finance.gst_filing",
+  finance_gst_input: "finance.gst_filing",
+  gstr2b: "finance.gst_filing",
+  tds_filings: "finance.tds_filing",
+}
+
+/** Explicit per-report overrides where the source table is ambiguous. */
+const REPORT_MODULE_OVERRIDE: Record<string, string | null> = {
+  "ab-payment-register": "finance.expenses",
+  "ab-receipt-register": "finance.sales_invoices",
+}
+
+/**
+ * The finance module a user must be able to VIEW to access this report, or
+ * `null` when only the base Financial Reports view is required.
+ */
+export function reportRequiredModule(def: ReportDef): string | null {
+  if (def.key in REPORT_MODULE_OVERRIDE) return REPORT_MODULE_OVERRIDE[def.key]
+  const table = def.sql?.match(/FROM\s+(\w+)/i)?.[1]?.toLowerCase()
+  if (table && SOURCE_TABLE_MODULE[table]) return SOURCE_TABLE_MODULE[table]
+  return null
+}
+
+export type ReportViewer = { userId: number; role: "admin" | "employee" }
+
+/**
+ * Whether `viewer` may access `def`. Admins always may; otherwise the viewer
+ * needs a non-`none` view scope on the report's required module. Reports with
+ * no module gate (`null`) are accessible to anyone who reached this page.
+ */
+export async function canAccessReport(viewer: ReportViewer, def: ReportDef): Promise<boolean> {
+  if (viewer.role === "admin") return true
+  const moduleKey = reportRequiredModule(def)
+  if (!moduleKey) return true
+  const scope = await getScope(viewer.userId, viewer.role, moduleKey, "view")
+  return scope !== "none"
+}
+
+/** Filter a catalogue down to the reports a viewer is allowed to see. */
+export async function filterAccessibleReports<T extends ReportDef>(
+  viewer: ReportViewer,
+  defs: T[],
+): Promise<T[]> {
+  if (viewer.role === "admin") return defs
+  const verdicts = await Promise.all(defs.map((d) => canAccessReport(viewer, d)))
+  return defs.filter((_, i) => verdicts[i])
 }
 
 export function buildReportMeta(def: ReportDef): ReportRunMeta {

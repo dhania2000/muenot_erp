@@ -3253,12 +3253,6 @@ function from(sourceKey: string, meta: ReportMeta): ReportDef {
   return { ...src, ...meta }
 }
 
-function stub(meta: ReportMeta): ReportDef {
-  return { periodMode: "none", ...meta, columns: [] }
-}
-
-const PENDING = "Data source not available yet — this report will populate once its data exists."
-
 export const FINANCIAL_REPORT_GROUPS = [
   "Core Financial Statements",
   "Accounting Books",
@@ -3269,11 +3263,7 @@ export const FINANCIAL_REPORT_GROUPS = [
   "Bank & Cash",
   "Sales & Purchase",
   "Expenses",
-  "Fixed Assets",
-  "Loans & Advances",
   "CA / Audit",
-  "CA Schedules",
-  "Tax / Income Tax",
   "Management / MIS",
   "Year-End",
 ] as const
@@ -3316,13 +3306,8 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
     periodMode: "range",
     columns: STATEMENT_COLUMNS["cash-flow"],
   },
-  stub({ key: "fs-comparative-pl", label: "Comparative Profit & Loss", group: "Core Financial Statements", description: PENDING }),
-  stub({ key: "fs-comparative-bs", label: "Comparative Balance Sheet", group: "Core Financial Statements", description: PENDING }),
   from("income-vs-expense", { key: "fs-monthly-pl", label: "Monthly Profit & Loss", group: "Core Financial Statements", description: "Monthly income, expense and net position." }),
   from("rx-quarterly-pl", { key: "fs-quarterly-pl", label: "Quarterly Profit & Loss", group: "Core Financial Statements", description: "Income against expenses, summarised by financial quarter." }),
-  stub({ key: "fs-working-capital", label: "Working Capital Statement", group: "Core Financial Statements", description: PENDING }),
-  stub({ key: "fs-changes-equity", label: "Statement of Changes in Equity", group: "Core Financial Statements", description: PENDING }),
-  stub({ key: "fs-ratio-analysis", label: "Financial Ratio Analysis", group: "Core Financial Statements", description: PENDING }),
 
   // 2. Accounting Books ---------------------------------------------------
   from("finance-report", { key: "ab-day-book", label: "Day Book", group: "Accounting Books", description: "All finance activity summarised by module." }),
@@ -3332,7 +3317,6 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   from("rx-group-ledger", { key: "ab-group-ledger", label: "Group Ledger", group: "Accounting Books", description: "Posted ledger movement rolled up by account group." }),
   from("cash-book", { key: "ab-cash-book", label: "Cash Book", group: "Accounting Books", description: "Cash receipts and payments by month." }),
   from("bank-book", { key: "ab-bank-book", label: "Bank Book", group: "Accounting Books", description: "Money in and out per bank account." }),
-  stub({ key: "ab-petty-cash-book", label: "Petty Cash Book", group: "Accounting Books", description: PENDING }),
   from("rx-receipt-register", { key: "ab-receipt-register", label: "Receipt Register", group: "Accounting Books", description: "Cash and bank receipts recorded against invoices." }),
   from("expense-payment-register", { key: "ab-payment-register", label: "Payment Register", group: "Accounting Books", description: "Payments made against expenses." }),
   from("rx-contra-register", { key: "ab-contra-register", label: "Contra Register", group: "Accounting Books", description: "Bank/cash contra entries between own accounts." }),
@@ -3349,11 +3333,37 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   from("rx-receivable-ageing", { key: "ar-receivable-ageing", label: "Receivable Ageing", group: "Receivables", description: "Outstanding receivables bucketed by age from the due date." }),
   from("rx-invoice-receivable", { key: "ar-invoice-wise", label: "Invoice-wise Receivable", group: "Receivables", description: "Each unpaid sales invoice with received and outstanding." }),
   from("rx-customer-sales", { key: "ar-customer-wise", label: "Customer-wise Receivable", group: "Receivables", description: "Billed, received and outstanding grouped by customer." }),
-  stub({ key: "ar-customer-ledger", label: "Customer Ledger", group: "Receivables", description: PENDING }),
-  stub({ key: "ar-customer-statement", label: "Customer Statement", group: "Receivables", description: PENDING }),
+  {
+    key: "ar-customer-ledger",
+    label: "Customer Ledger",
+    group: "Receivables",
+    description: "Per-customer ledger of sales invoices with billed (debit), received (credit) and running outstanding balance.",
+    dateColumn: "invoice_date",
+    periodMode: "range",
+    sql: `
+      SELECT COALESCE(NULLIF(client_name,''),'Unnamed customer') AS customer,
+             invoice_date,
+             COALESCE(NULLIF(invoice_id,''),'—') AS voucher,
+             due_date,
+             COALESCE(invoice_total,0) AS debit,
+             COALESCE(amount_received,0) AS credit,
+             COALESCE(outstanding_amount,0) AS balance,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM sales_invoices
+      WHERE 1=1 ${RANGE}
+      ORDER BY customer, invoice_date, id`,
+    columns: [
+      { key: "customer", label: "Customer" },
+      { key: "invoice_date", label: "Date" },
+      { key: "voucher", label: "Invoice" },
+      { key: "due_date", label: "Due" },
+      { key: "debit", label: "Billed (Dr)", align: "right", money: true },
+      { key: "credit", label: "Received (Cr)", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
   from("rx-overdue-receivable", { key: "ar-overdue", label: "Overdue Receivables", group: "Receivables", description: "Unpaid invoices past their due date, aged in days." }),
-  stub({ key: "ar-customer-advance", label: "Customer Advance Report", group: "Receivables", description: PENDING }),
-  stub({ key: "ar-reconciliation", label: "Receivable Reconciliation", group: "Receivables", description: PENDING }),
 
   // 4. Payables -----------------------------------------------------------
   from("purchase-register", { key: "ap-accounts-payable", label: "Accounts Payable", group: "Payables", description: "Vendor bills with taxable, GST, TDS and net payable." }),
@@ -3361,15 +3371,85 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   from("accounts-payable-ageing", { key: "ap-payable-ageing", label: "Payable Ageing", group: "Payables", description: "Outstanding payables bucketed by age." }),
   from("rx-bill-payable", { key: "ap-bill-wise", label: "Bill-wise Payable", group: "Payables", description: "Each unpaid purchase bill with paid and outstanding." }),
   from("purchase-register", { key: "ap-vendor-wise", label: "Vendor-wise Payable", group: "Payables", description: "Payable totals grouped by vendor." }),
-  stub({ key: "ap-vendor-ledger", label: "Vendor Ledger", group: "Payables", description: PENDING }),
-  stub({ key: "ap-vendor-statement", label: "Vendor Statement", group: "Payables", description: PENDING }),
+  {
+    key: "ap-vendor-ledger",
+    label: "Vendor Ledger",
+    group: "Payables",
+    description: "Per-vendor ledger of purchase bills with billed (credit), paid (debit) and running outstanding balance.",
+    dateColumn: "bill_date",
+    periodMode: "range",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''),'Unnamed vendor') AS vendor,
+             bill_date,
+             COALESCE(NULLIF(po_number,''),'—') AS voucher,
+             due_date,
+             COALESCE(gross_bill_amount,0) AS credit,
+             COALESCE(amount_paid,0) AS debit,
+             COALESCE(outstanding_amount,0) AS balance,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM purchase_bills
+      WHERE 1=1 ${RANGE}
+      ORDER BY vendor, bill_date, id`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "bill_date", label: "Date" },
+      { key: "voucher", label: "Bill / PO" },
+      { key: "due_date", label: "Due" },
+      { key: "credit", label: "Billed (Cr)", align: "right", money: true },
+      { key: "debit", label: "Paid (Dr)", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
   from("rx-overdue-payable", { key: "ap-overdue", label: "Overdue Payables", group: "Payables", description: "Unpaid bills past their due date, aged in days." }),
-  stub({ key: "ap-vendor-advance", label: "Vendor Advance Report", group: "Payables", description: PENDING }),
-  stub({ key: "ap-reconciliation", label: "Payable Reconciliation", group: "Payables", description: PENDING }),
 
   // 5. GST ----------------------------------------------------------------
   from("rx-gstr1-summary", { key: "gst-gstr1-summary", label: "GSTR-1 Summary", group: "GST", description: "Outward supply summary by GST rate and supply type for the GSTR-1 return period." }),
   from("rx-gstr1-detailed", { key: "gst-gstr1-detailed", label: "GSTR-1 Detailed Register", group: "GST", description: "Invoice-level outward supply register with taxable value and tax split." }),
+  {
+    key: "gst-gstr3b",
+    label: "GSTR-3B Summary",
+    group: "GST",
+    description: "Consolidated monthly return per period — outward tax liability against eligible input tax credit, with net GST payable.",
+    periodMode: "none",
+    sql: `
+      SELECT period,
+             COALESCE(SUM(out_taxable),0) AS outward_taxable,
+             COALESCE(SUM(out_igst),0) AS output_igst,
+             COALESCE(SUM(out_cgst),0) AS output_cgst,
+             COALESCE(SUM(out_sgst),0) AS output_sgst,
+             COALESCE(SUM(out_tax),0) AS output_tax,
+             COALESCE(SUM(itc_tax),0) AS eligible_itc,
+             COALESCE(SUM(out_tax),0) - COALESCE(SUM(itc_tax),0) AS net_payable
+      FROM (
+        SELECT COALESCE(NULLIF(return_period,''),'Unclassified') AS period,
+               COALESCE(taxable_value,0) AS out_taxable,
+               COALESCE(igst,0) AS out_igst,
+               COALESCE(cgst,0) AS out_cgst,
+               COALESCE(sgst,0) AS out_sgst,
+               COALESCE(total_tax,0) AS out_tax,
+               0 AS itc_tax
+        FROM gst_filings
+        UNION ALL
+        SELECT COALESCE(NULLIF(period,''),'Unclassified') AS period,
+               0, 0, 0, 0, 0,
+               COALESCE(itc_net,0) AS itc_tax
+        FROM finance_gst_input
+        WHERE COALESCE(itc_eligible,0) = 1
+      ) x
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Return Period" },
+      { key: "outward_taxable", label: "Outward Taxable", align: "right", money: true },
+      { key: "output_igst", label: "Output IGST", align: "right", money: true },
+      { key: "output_cgst", label: "Output CGST", align: "right", money: true },
+      { key: "output_sgst", label: "Output SGST", align: "right", money: true },
+      { key: "output_tax", label: "Output Tax", align: "right", money: true },
+      { key: "eligible_itc", label: "Eligible ITC", align: "right", money: true },
+      { key: "net_payable", label: "Net Payable", align: "right", money: true },
+    ],
+  },
   from("rx-gst-b2b", { key: "gst-b2b-sales", label: "B2B Sales Report", group: "GST", description: "Registered (B2B) outward supplies with counterparty GSTIN and tax break-up." }),
   from("rx-gst-b2c", { key: "gst-b2c-sales", label: "B2C Sales Report", group: "GST", description: "Unregistered (B2C) outward supplies with taxable value and tax." }),
   from("rx-gst-credit-note", { key: "gst-credit-note", label: "Credit Note Register", group: "GST", description: "Credit notes issued against outward supplies with tax adjustment." }),
@@ -3380,7 +3460,41 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   from("rx-gst-ineligible-itc", { key: "gst-ineligible-itc", label: "Ineligible ITC Report", group: "GST", description: "Blocked / ineligible input tax credit that cannot be claimed." }),
   from("rx-gst-itc-reversal", { key: "gst-itc-reversal", label: "ITC Reversal Report", group: "GST", description: "Input tax credit reversed during the period with reason and tax split." }),
   from("rx-gst-recon", { key: "gst-gstr2b-recon", label: "GSTR-2B Reconciliation", group: "GST", description: "Books vs GSTR-2B input credit reconciliation highlighting mismatches." }),
-  stub({ key: "gst-rcm", label: "RCM Report", group: "GST", description: PENDING }),
+  {
+    key: "gst-rcm",
+    label: "RCM Report",
+    group: "GST",
+    description: "Inward supplies liable to GST under reverse charge (RCM), with tax payable by the recipient split by CGST / SGST / IGST / cess.",
+    dateColumn: "bill_date",
+    periodMode: "range",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             COALESCE(NULLIF(vendor_gstin,''),'Unregistered') AS gstin,
+             COALESCE(NULLIF(bill_number,''),'—') AS bill,
+             bill_date,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(cgst_amount,0) AS cgst,
+             COALESCE(sgst_amount,0) AS sgst,
+             COALESCE(igst_amount,0) AS igst,
+             COALESCE(cess_amount,0) AS cess,
+             COALESCE(total_gst,0) AS rcm_tax
+      FROM finance_gst_input
+      WHERE (supply_type LIKE '%RCM%' OR supply_type LIKE '%Reverse%'
+             OR itc_section LIKE '%Reverse%' OR itc_section LIKE '%RCM%') ${RANGE}
+      ORDER BY bill_date DESC, id DESC`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "bill", label: "Bill" },
+      { key: "bill_date", label: "Date" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "cess", label: "Cess", align: "right", money: true },
+      { key: "rcm_tax", label: "RCM Tax", align: "right", money: true },
+    ],
+  },
   from("rx-gst-rate-wise", { key: "gst-rate-wise", label: "GST Rate-wise Report", group: "GST", description: "Taxable value and tax grouped by GST rate slab." }),
   from("expense-raw-gst", { key: "gst-hsn-sac", label: "HSN / SAC Summary", group: "GST", description: "GST line items with HSN/SAC detail." }),
   from("rx-gst-gstin-wise", { key: "gst-gstin-wise", label: "GSTIN-wise Report", group: "GST", description: "Supplies grouped by counterparty GSTIN with taxable value and tax." }),
@@ -3391,30 +3505,54 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   from("rx-gst-cess", { key: "gst-cess", label: "Cess Report", group: "GST", description: "GST compensation cess charged and collected during the period." }),
   from("rx-gst-liability", { key: "gst-liability", label: "GST Liability Report", group: "GST", description: "Net GST payable — output tax less eligible input credit — for the period." }),
   from("rx-gst-payment-challan", { key: "gst-payment-challan", label: "GST Payment / Challan Report", group: "GST", description: "GST payments and challans recorded against the liability for the period." }),
-  stub({ key: "gst-reconciliation", label: "GST Reconciliation Report", group: "GST", description: PENDING }),
   from("rx-gst-exception", { key: "gst-exception", label: "GST Exception Report", group: "GST", description: "Supplies with missing GSTIN, rate or place-of-supply data needing correction." }),
-  stub({ key: "gst-amendment", label: "GST Amendment Report", group: "GST", description: PENDING }),
 
   // 6. TDS / TCS ----------------------------------------------------------
   from("expense-tds", { key: "tds-deduction-register", label: "TDS Deduction Register", group: "TDS / TCS", description: "TDS deducted on expenses by section." }),
   from("expense-raw-tds", { key: "tds-section-wise", label: "Section-wise TDS Report", group: "TDS / TCS", description: "TDS line items grouped by section." }),
   from("rx-tds-deductee", { key: "tds-deductee-wise", label: "Deductee-wise TDS Report", group: "TDS / TCS", description: "TDS deducted grouped by deductee with section, rate and tax amount." }),
   from("rx-tds-pan", { key: "tds-pan-wise", label: "PAN-wise TDS Report", group: "TDS / TCS", description: "TDS deducted grouped by deductee PAN for return filing." }),
-  stub({ key: "tds-vendor", label: "Vendor TDS Report", group: "TDS / TCS", description: PENDING }),
   from("rx-tds-employee", { key: "tds-employee", label: "Employee TDS Report", group: "TDS / TCS", description: "TDS on salary deducted per employee under section 192." }),
-  stub({ key: "tds-freelancer", label: "Freelancer TDS Report", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-customer-receivable", label: "Customer TDS Receivable", group: "TDS / TCS", description: PENDING }),
   from("rx-tds-challan", { key: "tds-challan-register", label: "TDS Challan Register", group: "TDS / TCS", description: "TDS challans deposited with the government with BSR code and date." }),
   from("rx-tds-payment", { key: "tds-payment", label: "TDS Payment Report", group: "TDS / TCS", description: "TDS payments made during the period against deducted liability." }),
   from("rx-tds-outstanding", { key: "tds-outstanding", label: "TDS Outstanding Report", group: "TDS / TCS", description: "TDS deducted but not yet deposited to the government." }),
-  stub({ key: "tds-reconciliation", label: "TDS Reconciliation Report", group: "TDS / TCS", description: PENDING }),
+  {
+    key: "tds-reconciliation",
+    label: "TDS Reconciliation Report",
+    group: "TDS / TCS",
+    description: "TDS deducted vs deposited by quarter and section, with the shortfall / balance and reconciliation status.",
+    dateColumn: "challan_date",
+    periodMode: "range",
+    sql: `
+      SELECT COALESCE(NULLIF(quarter,''),'—') AS quarter,
+             COALESCE(NULLIF(section,''),'—') AS section,
+             COUNT(*) AS records,
+             COALESCE(SUM(tds_amount),0) AS deducted,
+             COALESCE(SUM(tds_paid),0) AS deposited,
+             COALESCE(SUM(tds_amount),0) - COALESCE(SUM(tds_paid),0) AS difference,
+             CASE
+               WHEN COALESCE(SUM(tds_amount),0) - COALESCE(SUM(tds_paid),0) = 0 THEN 'Matched'
+               WHEN COALESCE(SUM(tds_paid),0) = 0 THEN 'Not Deposited'
+               ELSE 'Partially Deposited'
+             END AS status
+      FROM tds_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY quarter, section
+      ORDER BY quarter DESC, section`,
+    columns: [
+      { key: "quarter", label: "Quarter" },
+      { key: "section", label: "Section" },
+      { key: "records", label: "Records", align: "right" },
+      { key: "deducted", label: "Deducted", align: "right", money: true },
+      { key: "deposited", label: "Deposited", align: "right", money: true },
+      { key: "difference", label: "Difference", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
   from("rx-tds-return-summary", { key: "tds-return-summary", label: "TDS Return Summary", group: "TDS / TCS", description: "Section-wise TDS summary for quarterly return (24Q / 26Q) filing." }),
   from("rx-tds-interest", { key: "tds-interest", label: "TDS Interest Report", group: "TDS / TCS", description: "Interest payable on late deduction or late deposit of TDS." }),
   from("rx-tds-late-fee", { key: "tds-late-fee", label: "TDS Late Fee Report", group: "TDS / TCS", description: "Late filing fee under section 234E on delayed TDS returns." }),
-  stub({ key: "tds-form16", label: "Form 16 Register", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-form16a", label: "Form 16A Register", group: "TDS / TCS", description: PENDING }),
   from("rx-tds-correction", { key: "tds-correction", label: "TDS Correction Report", group: "TDS / TCS", description: "Corrections and revisions made to previously deducted or filed TDS." }),
-  stub({ key: "tds-exception", label: "TDS Exception Report", group: "TDS / TCS", description: PENDING }),
 
   // 7. Bank & Cash --------------------------------------------------------
   from("bank-book", { key: "bc-bank-balance", label: "Bank-wise Balance Report", group: "Bank & Cash", description: "Movement and net balance per bank account." }),
@@ -3452,8 +3590,6 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   from("reimbursement-register", { key: "ex-reimbursement", label: "Reimbursement Report", group: "Expenses", description: "Reimbursable expenses and settlements." }),
   from("expense-gst-input", { key: "ex-gst", label: "Expense GST Report", group: "Expenses", description: "GST/ITC on expenses." }),
   from("expense-tds", { key: "ex-tds", label: "Expense TDS Report", group: "Expenses", description: "TDS on expenses by section." }),
-  stub({ key: "ex-budget-vs-actual", label: "Expense Budget vs Actual", group: "Expenses", description: PENDING }),
-  stub({ key: "ex-variance", label: "Expense Variance Report", group: "Expenses", description: PENDING }),
   from("expense-category-analytics", { key: "ex-category-analytics", label: "Category Analytics", group: "Expenses", description: "Analytics across expense categories and heads." }),
   from("expense-top-spend", { key: "ex-top-spend", label: "Top Expenses", group: "Expenses", description: "Highest-value expenses in the period." }),
   from("expense-monthly-trend", { key: "ex-trend", label: "Expense Trend", group: "Expenses", description: "Month-on-month expense movement." }),

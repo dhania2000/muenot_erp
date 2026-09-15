@@ -4,6 +4,7 @@ import { nextRecordId } from "@/lib/record-ids"
 import { financialYearFor } from "@/lib/finance-calc"
 import { resolveAccountById, isDebitNature, type ResolvedAccount } from "@/lib/finance-accounts"
 import { logFinanceEvent } from "@/lib/finance-audit"
+import { assertPeriodOpen } from "@/lib/finance-period-lock"
 
 // ---------------------------------------------------------------------------
 // Manual journal engine (server-only) — the central accounting workflow.
@@ -29,9 +30,13 @@ import { logFinanceEvent } from "@/lib/finance-audit"
 // Approval / Approved / Rejected / Cancelled journal lives only in
 // journal_entries (no general_ledger rows), so it never affects the ledger or
 // any report that re-sums it. Posting writes the balanced general_ledger lines
-// with a running balance inside one transaction; reversing posts the contra
-// lines under the same voucher (netting to zero) so the ledger stays balanced
-// and its running-balance chain always moves forward.
+// with a running balance inside one transaction; reversing creates a SEPARATE
+// linked reversal voucher (JE-…-R) of mirror lines posted in the current open
+// period, so the original month's balances are never rewritten and the
+// running-balance chain always moves forward.
+//
+// Every dated mutation (create / edit / post / reverse / delete) is refused when
+// its accounting month is locked (Phase 27), so a signed-off period never moves.
 // ---------------------------------------------------------------------------
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100
@@ -41,6 +46,29 @@ const num = (v: any) => {
 }
 
 export const MANUAL_JOURNAL_SOURCE = "Manual"
+
+// A reversal is a SEPARATE journal linked to the one it unwinds (Phase 25). The
+// two link columns are added lazily (MySQL has no ADD COLUMN IF NOT EXISTS) so
+// existing installs upgrade in place: `reversal_of` on the reversal voucher
+// points back to the original, and `reversed_by` on the original points forward
+// to its reversal.
+let linkColumnsEnsured = false
+async function ensureReversalLinkColumns(): Promise<void> {
+  if (linkColumnsEnsured) return
+  const ensureColumn = async (column: string, definition: string) => {
+    const rows = (await query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'journal_entries' AND column_name = ? LIMIT 1`,
+      [column],
+    )) as any[]
+    if (!rows.length) {
+      await query(`ALTER TABLE journal_entries ADD COLUMN \`${column}\` ${definition}`).catch(() => {})
+    }
+  }
+  await ensureColumn("reversal_of", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("reversed_by", "VARCHAR(40) DEFAULT NULL")
+  linkColumnsEnsured = true
+}
 
 /**
  * Voucher types a manual journal line may carry (Phase 17). The original four
@@ -227,6 +255,9 @@ export async function createManualJournal(
   const shapeError = validateManualJournal(input)
   if (shapeError) throw new Error(shapeError)
 
+  // Phase 27 — refuse to author a voucher dated inside a closed accounting month.
+  await assertPeriodOpen(input.journalDate)
+
   const voucherType =
     input.voucherType && String(input.voucherType).trim() ? String(input.voucherType).trim() : "Journal"
   const resolved = await resolveLines(input.lines)
@@ -331,6 +362,10 @@ export async function updateManualJournalDraft(
   }
   const shapeError = validateManualJournal(input)
   if (shapeError) throw new Error(shapeError)
+
+  // Phase 27 — neither the edited date nor the row's current month may be closed.
+  await assertPeriodOpen(input.journalDate)
+  await assertPeriodOpen(String(rows[0]?.journal_date ?? ""))
 
   const voucherType =
     input.voucherType && String(input.voucherType).trim() ? String(input.voucherType).trim() : "Journal"
@@ -491,6 +526,9 @@ async function postManualJournalGroup(
   const today = new Date().toISOString().slice(0, 10)
   const postingDate = String(rows[0].journal_date || today).slice(0, 10)
 
+  // Phase 27 — a voucher cannot be posted into a locked accounting month.
+  await assertPeriodOpen(postingDate)
+
   const conn = await pool.getConnection()
   try {
     await conn.beginTransaction()
@@ -521,10 +559,14 @@ async function postManualJournalGroup(
 }
 
 /**
- * Reverse a POSTED manual journal (Phase 19). Posts the contra general_ledger
- * lines under the same voucher (so the voucher nets to zero in every ledger
- * aggregate while its full history is preserved) and stamps the journal
- * Reversed. Running balances move forward, never rewriting history.
+ * Reverse a POSTED manual journal (Phase 25). Rather than mutating the original
+ * voucher, this creates a SEPARATE, linked reversal journal `JE-…-R` whose lines
+ * are the debit/credit mirror of the original, posts it to the general ledger in
+ * the current (open) period, and links the two together: the reversal rows carry
+ * `reversal_of = <original>` and the original rows are stamped `Reversed` with
+ * `reversed_by = <original>-R`. The original month's trial balance is therefore
+ * never touched, running balances only move forward, and the full history of
+ * both vouchers is preserved. A reversal journal can never itself be reversed.
  */
 async function reverseManualJournalGroup(
   journalId: string,
@@ -534,22 +576,88 @@ async function reverseManualJournalGroup(
   if (!rows.length) throw new Error("This journal was not found.")
   if (status !== "Posted") throw new Error(`Only a Posted journal can be reversed (this one is ${status}).`)
 
+  await ensureReversalLinkColumns()
+  if (rows[0].reversal_of) throw new Error("A reversal journal cannot itself be reversed.")
+
+  const reversalId = `${journalId}-R`
+  const existing = await getManualJournal(reversalId)
+  if (existing.rows.length) {
+    throw new Error(`Journal ${journalId} has already been reversed by ${reversalId}.`)
+  }
+
+  // The reversal is dated today so it lands in the current, open period — the
+  // original month can stay locked and its signed-off trial balance intact.
+  const reversalDate = new Date().toISOString().slice(0, 10)
+  await assertPeriodOpen(reversalDate)
+
   const lines: ManualJournalLineInput[] = rows.map((r) => ({
     accountId: String(r.account_id),
     debit: num(r.debit),
     credit: num(r.credit),
   }))
   const resolved = await resolveLines(lines, { requireActive: false })
+  const fy = financialYearFor(reversalDate) || String(rows[0].financial_year ?? "")
+
+  // Build the mirror lines once so the same objects seed both the
+  // journal_entries insert and the general_ledger posting.
+  const reversalRows = rows.map((src, i) => ({
+    journal_entry_id: `${reversalId}-${i + 1}`,
+    voucher_no: reversalId,
+    journal_date: reversalDate,
+    financial_year: fy,
+    reference_no: src.reference_no ?? null,
+    voucher_type: src.voucher_type,
+    narration: `Reversal of ${journalId}${src.narration ? ` — ${src.narration}` : ""}`,
+    account_id: src.account_id,
+    account_name: src.account_name,
+    account_group: src.account_group,
+    account_type: src.account_type,
+    party_id: src.party_id ?? null,
+    party_name: src.party_name ?? null,
+    project_id: src.project_id ?? null,
+    project_name: src.project_name ?? null,
+    debit: round2(num(src.credit)),
+    credit: round2(num(src.debit)),
+    gst_amount: 0,
+    tds_amount: 0,
+  }))
 
   const conn = await pool.getConnection()
   try {
     await conn.beginTransaction()
-    await writeLedgerFromRows(conn, rows, resolved, { reverse: true, createdBy: opts.userId ?? null })
+
+    for (const r of reversalRows) {
+      await conn.query(
+        `INSERT INTO journal_entries
+           (journal_entry_id, voucher_no, journal_date, financial_year, reference_type,
+            reference_no, voucher_type, narration, account_id, account_name, account_group,
+            account_type, party_id, party_name, project_id, project_name, debit, credit,
+            net_amount, gst_amount, tds_amount, source_module, source_reference,
+            source_entity_type, source_entity_id, approval_status, approved_by,
+            posting_status, posting_date, created_by, reversal_of)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          r.journal_entry_id, r.voucher_no, r.journal_date, r.financial_year, "Manual",
+          r.reference_no, r.voucher_type, r.narration, r.account_id, r.account_name, r.account_group,
+          r.account_type, r.party_id, r.party_name, r.project_id, r.project_name, r.debit, r.credit,
+          round2(r.debit - r.credit), 0, 0, MANUAL_JOURNAL_SOURCE, journalId,
+          "manual_journal", null, "Posted", opts.actorName ?? null,
+          "Posted", reversalDate, opts.userId ?? null, journalId,
+        ],
+      )
+    }
+
+    // The mirror lines already carry swapped debit/credit and their own voucher,
+    // so post them straight through (no further reversal) to append contra
+    // ledger rows with forward-moving running balances.
+    await writeLedgerFromRows(conn, reversalRows, resolved, { reverse: false, createdBy: opts.userId ?? null })
+
+    // Stamp the original voucher Reversed and point it at its reversal.
     await conn.query(
       `UPDATE journal_entries
-          SET approval_status = 'Reversed', posting_status = 'Reversed'
+          SET approval_status = 'Reversed', posting_status = 'Reversed', reversed_by = ?
         WHERE voucher_no = ? AND source_module = ?`,
-      [journalId, MANUAL_JOURNAL_SOURCE],
+      [reversalId, journalId, MANUAL_JOURNAL_SOURCE],
     )
     await conn.commit()
   } catch (error) {
@@ -562,9 +670,9 @@ async function reverseManualJournalGroup(
     entityType: "journal",
     entityRef: journalId,
     type: "reversed",
-    summary: `Journal ${journalId} reversed out of the general ledger`,
+    summary: `Journal ${journalId} reversed by linked journal ${reversalId}`,
     amount: round2(rows.reduce((s, r) => s + num(r.debit), 0)),
-    voucherNo: journalId,
+    voucherNo: reversalId,
     actorId: opts.userId ?? null,
     actorName: opts.actorName ?? null,
   })
@@ -653,6 +761,8 @@ export async function deleteManualJournal(journalId: string): Promise<{ removed:
   if (status === "Posted") {
     throw new Error("A posted journal cannot be deleted — reverse it instead so the ledger stays balanced.")
   }
+  // Phase 27 — cannot delete a voucher dated inside a closed accounting month.
+  await assertPeriodOpen(String(rows[0]?.journal_date ?? ""))
   const conn = await pool.getConnection()
   try {
     await conn.beginTransaction()

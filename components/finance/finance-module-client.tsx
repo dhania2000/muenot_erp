@@ -528,16 +528,24 @@ function TableCellContent({ col, row }: { col: TableColumn; row: Row }) {
     return value ? <Badge variant={variant}>{value}</Badge> : <span className="text-muted-foreground">—</span>
   }
   const main = cellValue(col, row)
+  const href = col.link && main !== "—" ? col.link(row) : null
+  const content = href ? (
+    <a href={href} className="text-primary underline-offset-2 hover:underline">
+      {main}
+    </a>
+  ) : (
+    main
+  )
   const sub = col.sub ? row[col.sub] : null
   if (sub) {
     return (
       <div>
-        <div className="font-medium">{main}</div>
+        <div className="font-medium">{content}</div>
         <div className="text-xs text-muted-foreground">{sub}</div>
       </div>
     )
   }
-  return <>{main}</>
+  return <>{content}</>
 }
 
 function SendInvoiceDialog({

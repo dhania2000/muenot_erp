@@ -28,6 +28,8 @@ type JournalGroup = {
   isManual: boolean
   status: string
   postingStatus: string
+  reversalOf: string
+  reversedBy: string
   totalDebit: number
   totalCredit: number
   lines: Row[]
@@ -72,6 +74,8 @@ function buildGroups(rows: Row[]): JournalGroup[] {
         isManual: String(row.source_module ?? "Manual") === "Manual",
         status: String(row.approval_status ?? ""),
         postingStatus: String(row.posting_status ?? ""),
+        reversalOf: String(row.reversal_of ?? ""),
+        reversedBy: String(row.reversed_by ?? ""),
         totalDebit: 0,
         totalCredit: 0,
         lines: [],
@@ -106,7 +110,12 @@ function actionsFor(status: string): Array<"submit" | "approve" | "reject" | "po
 }
 
 export function JournalEntriesClient() {
-  const [search, setSearch] = useState("")
+  // Seed the search box from the URL so JE↔GL deep links (e.g. "view this
+  // voucher in the ledger" and back) land pre-filtered on the linked voucher.
+  const [search, setSearch] = useState(() => {
+    if (typeof window === "undefined") return ""
+    return new URLSearchParams(window.location.search).get("search") ?? ""
+  })
   const [financialYear, setFinancialYear] = useState("")
   const [sourceFilter, setSourceFilter] = useState<"all" | "manual" | "system">("all")
   const [statusFilter, setStatusFilter] = useState("")
@@ -158,7 +167,7 @@ export function JournalEntriesClient() {
       reject: `Reject journal ${group.voucherNo}?`,
       post: `Post journal ${group.voucherNo} to the general ledger? This makes it live in the books.`,
       cancel: `Cancel journal ${group.voucherNo}? It will not post to the ledger.`,
-      reverse: `Reverse posted journal ${group.voucherNo}? A contra entry will unwind it from the ledger.`,
+      reverse: `Reverse posted journal ${group.voucherNo}? A separate linked reversal journal (${group.voucherNo}-R) will be posted in the current period to unwind it.`,
     }
     let reason: string | null = null
     if (action === "reject") {
@@ -375,7 +384,11 @@ export function JournalEntriesClient() {
                 {groups.map((g) => {
                   const isOpen = expanded.has(g.voucherNo)
                   const busy = busyId === g.voucherNo
-                  const acts = g.isManual ? actionsFor(g.status) : []
+                  // A reversal journal can never itself be reversed (engine enforces this
+        // too), so drop the reverse action from its own row.
+        const acts = g.isManual
+          ? actionsFor(g.status).filter((a) => !(a === "reverse" && g.reversalOf))
+          : []
                   return (
                     <Fragment key={g.voucherNo}>
                       <tr className="border-b hover:bg-muted/40">
@@ -389,7 +402,43 @@ export function JournalEntriesClient() {
                             {isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
                           </button>
                         </td>
-                        <td className="p-2 font-mono text-xs">{g.voucherNo}</td>
+                        <td className="p-2 font-mono text-xs">
+                          {g.postingStatus === "Posted" || g.status === "Posted" || g.status === "Reversed" ? (
+                            <a
+                              href={`/modules/finance/general-ledger?search=${encodeURIComponent(g.voucherNo)}`}
+                              className="text-primary underline-offset-2 hover:underline"
+                              title="View this voucher in the general ledger"
+                            >
+                              {g.voucherNo}
+                            </a>
+                          ) : (
+                            g.voucherNo
+                          )}
+                          {g.reversedBy ? (
+                            <div className="mt-0.5 text-[10px] font-normal text-muted-foreground">
+                              reversed by{" "}
+                              <button
+                                type="button"
+                                onClick={() => setSearch(g.reversedBy)}
+                                className="text-primary underline-offset-2 hover:underline"
+                              >
+                                {g.reversedBy}
+                              </button>
+                            </div>
+                          ) : null}
+                          {g.reversalOf ? (
+                            <div className="mt-0.5 text-[10px] font-normal text-muted-foreground">
+                              reversal of{" "}
+                              <button
+                                type="button"
+                                onClick={() => setSearch(g.reversalOf)}
+                                className="text-primary underline-offset-2 hover:underline"
+                              >
+                                {g.reversalOf}
+                              </button>
+                            </div>
+                          ) : null}
+                        </td>
                         <td className="p-2">{g.journalDate || "—"}</td>
                         <td className="p-2">{g.voucherType}</td>
                         <td className="p-2">

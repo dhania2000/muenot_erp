@@ -47,27 +47,32 @@ const num = (v: any) => {
 
 export const MANUAL_JOURNAL_SOURCE = "Manual"
 
-// A reversal is a SEPARATE journal linked to the one it unwinds (Phase 25). The
-// two link columns are added lazily (MySQL has no ADD COLUMN IF NOT EXISTS) so
-// existing installs upgrade in place: `reversal_of` on the reversal voucher
-// points back to the original, and `reversed_by` on the original points forward
-// to its reversal.
-let linkColumnsEnsured = false
-async function ensureReversalLinkColumns(): Promise<void> {
-  if (linkColumnsEnsured) return
-  const ensureColumn = async (column: string, definition: string) => {
+// Columns the manual journal engine depends on are added lazily (MySQL has no
+// ADD COLUMN IF NOT EXISTS) so existing installs upgrade in place even when the
+// SQL migration (2026-09-15-journal-cost-centre.sql) has not been run:
+//   - reversal_of / reversed_by (Phase 25) link a reversal voucher to its
+//     original in both directions;
+//   - cost_centre (Phase 35) carries the cost-centre dimension on both the
+//     unposted voucher (journal_entries) and the posted ledger line
+//     (general_ledger) so it flows straight through to reporting.
+let columnsEnsured = false
+async function ensureManualJournalColumns(): Promise<void> {
+  if (columnsEnsured) return
+  const ensureColumn = async (table: string, column: string, definition: string) => {
     const rows = (await query(
       `SELECT 1 FROM information_schema.columns
-        WHERE table_schema = DATABASE() AND table_name = 'journal_entries' AND column_name = ? LIMIT 1`,
-      [column],
+        WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+      [table, column],
     )) as any[]
     if (!rows.length) {
-      await query(`ALTER TABLE journal_entries ADD COLUMN \`${column}\` ${definition}`).catch(() => {})
+      await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`).catch(() => {})
     }
   }
-  await ensureColumn("reversal_of", "VARCHAR(40) DEFAULT NULL")
-  await ensureColumn("reversed_by", "VARCHAR(40) DEFAULT NULL")
-  linkColumnsEnsured = true
+  await ensureColumn("journal_entries", "reversal_of", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("journal_entries", "reversed_by", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("journal_entries", "cost_centre", "VARCHAR(120) DEFAULT NULL")
+  await ensureColumn("general_ledger", "cost_centre", "VARCHAR(120) DEFAULT NULL")
+  columnsEnsured = true
 }
 
 /**
@@ -128,9 +133,166 @@ export type ManualJournalLineInput = {
   partyName?: string | null
   projectId?: string | null
   projectName?: string | null
+  costCentre?: string | null
   narration?: string | null
   gst?: number
   tds?: number
+}
+
+/** A party resolved against one of the four owning masters (Phase 33). */
+export type ResolvedParty = { partyId: string; partyName: string; source: string }
+
+/**
+ * Resolve a party id against the four authoritative masters, in priority order:
+ * finance Customers/Vendors, CRM Clients, HR Employees, and Freelancers (the
+ * distinct freelancers already invoiced). Returns the canonical name + source,
+ * or null when the id exists in none of them so the caller can reject it.
+ */
+export async function resolveParty(partyId: string): Promise<ResolvedParty | null> {
+  const id = String(partyId ?? "").trim()
+  if (!id) return null
+  const trials: Array<{ sql: string; name: string; source: string }> = [
+    { sql: `SELECT customer_name AS name FROM customers_vendors WHERE party_id = ? LIMIT 1`, name: "name", source: "Customer/Vendor" },
+    { sql: `SELECT COALESCE(NULLIF(company_name,''), client_name) AS name FROM clients WHERE client_code = ? LIMIT 1`, name: "name", source: "Customer" },
+    { sql: `SELECT employee_name AS name FROM hr_employees WHERE employee_id = ? LIMIT 1`, name: "name", source: "Employee" },
+    { sql: `SELECT freelancer_name AS name FROM freelance_invoices WHERE freelancer_id = ? ORDER BY id DESC LIMIT 1`, name: "name", source: "Freelancer" },
+  ]
+  for (const t of trials) {
+    try {
+      const rows = (await query(t.sql, [id])) as any[]
+      if (rows[0]?.name) return { partyId: id, partyName: String(rows[0].name), source: t.source }
+    } catch {
+      // A master table missing in this install just falls through to the next.
+    }
+  }
+  return null
+}
+
+/** Resolve a project id against the Operations projects master (Phase 34). */
+export async function resolveProject(projectId: string): Promise<{ projectId: string; projectName: string } | null> {
+  const id = String(projectId ?? "").trim()
+  if (!id) return null
+  try {
+    const rows = (await query(
+      `SELECT project_name FROM operations_projects WHERE project_id = ? LIMIT 1`,
+      [id],
+    )) as any[]
+    if (rows[0]) return { projectId: id, projectName: String(rows[0].project_name ?? "") }
+  } catch {
+    // Operations module not installed — leave the project unvalidated.
+    return { projectId: id, projectName: "" }
+  }
+  return null
+}
+
+/**
+ * Resolve + validate the party / project dimension on every line (Phases 33/34).
+ * A supplied party or project id that resolves to no master row is rejected; the
+ * canonical master name is written back so Journal and Ledger always agree with
+ * the master. Lines that carry no party / project are left untouched.
+ */
+async function resolveLineDimensions(
+  lines: ManualJournalLineInput[],
+): Promise<Array<{ partyId: string | null; partyName: string | null; projectId: string | null; projectName: string | null }>> {
+  const out: Array<{ partyId: string | null; partyName: string | null; projectId: string | null; projectName: string | null }> = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    let partyId: string | null = null
+    let partyName: string | null = null
+    let projectId: string | null = null
+    let projectName: string | null = null
+
+    const rawParty = String(line.partyId ?? "").trim()
+    if (rawParty) {
+      const party = await resolveParty(rawParty)
+      if (!party) {
+        throw new Error(
+          `Line ${i + 1}: party "${rawParty}" was not found in any Customer/Vendor, Employee or Freelancer master.`,
+        )
+      }
+      partyId = party.partyId
+      partyName = party.partyName
+    }
+
+    const rawProject = String(line.projectId ?? "").trim()
+    if (rawProject) {
+      const project = await resolveProject(rawProject)
+      if (!project) throw new Error(`Line ${i + 1}: project "${rawProject}" was not found in the Projects master.`)
+      projectId = project.projectId
+      projectName = project.projectName || (line.projectName ? String(line.projectName) : "")
+    }
+
+    out.push({ partyId, partyName, projectId, projectName })
+  }
+  return out
+}
+
+/**
+ * Look up the GST + TDS totals of a source document by its business id, trying
+ * each finance module that carries tax (Phase 32). Returns null when the
+ * reference matches no known document so a manual journal without a linked
+ * source is never blocked. Every probe is guarded so a table/column absent in
+ * this install is simply skipped.
+ */
+async function lookupSourceTax(reference: string): Promise<{ gst: number; tds: number; source: string } | null> {
+  const ref = String(reference ?? "").trim()
+  if (!ref) return null
+  const trials: Array<{ sql: string; source: string }> = [
+    { sql: `SELECT COALESCE(cgst_amount,0)+COALESCE(sgst_amount,0)+COALESCE(igst_amount,0) AS gst, COALESCE(tds_amount,0) AS tds FROM purchase_bills WHERE po_number = ? LIMIT 1`, source: "Purchase Bill" },
+    { sql: `SELECT COALESCE(cgst_amount,0)+COALESCE(sgst_amount,0)+COALESCE(igst_amount,0) AS gst, COALESCE(tds_amount,0) AS tds FROM expenses WHERE expense_id = ? LIMIT 1`, source: "Expense" },
+    { sql: `SELECT 0 AS gst, COALESCE(tds_amount,0) AS tds FROM freelance_invoices WHERE freelance_invoice_id = ? LIMIT 1`, source: "Freelance Invoice" },
+    { sql: `SELECT COALESCE(total_tax_amount,0) AS gst, 0 AS tds FROM sales_invoices WHERE invoice_id = ? LIMIT 1`, source: "Sales Invoice" },
+  ]
+  for (const t of trials) {
+    try {
+      const rows = (await query(t.sql, [ref])) as any[]
+      if (rows[0]) return { gst: round2(num(rows[0].gst)), tds: round2(num(rows[0].tds)), source: t.source }
+    } catch {
+      // Missing table/column in this install — skip this source.
+    }
+  }
+  return null
+}
+
+/**
+ * Validate the journal's GST/TDS (Phase 32). When the reference resolves to a
+ * known source document, the journal's line GST and TDS sums must match that
+ * document's — a mismatch is a hard error so the Journal can never disagree with
+ * the transaction it books. With no linked source, only internal consistency is
+ * checked (non-negative amounts) and a soft warning is returned instead.
+ */
+export async function validateJournalTax(
+  input: ManualJournalInput,
+): Promise<{ warnings: string[] }> {
+  const lines = Array.isArray(input.lines) ? input.lines : []
+  const gstSum = round2(lines.reduce((s, l) => s + num(l.gst), 0))
+  const tdsSum = round2(lines.reduce((s, l) => s + num(l.tds), 0))
+  const warnings: string[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    if (num(lines[i].gst) < 0 || num(lines[i].tds) < 0) {
+      throw new Error(`Line ${i + 1}: GST and TDS amounts cannot be negative.`)
+    }
+  }
+
+  const src = await lookupSourceTax(input.referenceNo ?? "")
+  if (src) {
+    if (Math.abs(gstSum - src.gst) > 0.01) {
+      throw new Error(
+        `GST in this journal (${gstSum.toFixed(2)}) does not match the linked ${src.source} ${input.referenceNo} (${src.gst.toFixed(2)}).`,
+      )
+    }
+    if (Math.abs(tdsSum - src.tds) > 0.01) {
+      throw new Error(
+        `TDS in this journal (${tdsSum.toFixed(2)}) does not match the linked ${src.source} ${input.referenceNo} (${src.tds.toFixed(2)}).`,
+      )
+    }
+  } else if (input.referenceNo && (gstSum > 0 || tdsSum > 0)) {
+    warnings.push(
+      `Reference "${input.referenceNo}" did not match a known source document, so the GST/TDS on this journal could not be cross-checked.`,
+    )
+  }
+  return { warnings }
 }
 
 export type ManualJournalInput = {
@@ -258,9 +420,14 @@ export async function createManualJournal(
   // Phase 27 — refuse to author a voucher dated inside a closed accounting month.
   await assertPeriodOpen(input.journalDate)
 
+  await ensureManualJournalColumns()
   const voucherType =
     input.voucherType && String(input.voucherType).trim() ? String(input.voucherType).trim() : "Journal"
   const resolved = await resolveLines(input.lines)
+  // Phases 33/34 — reject any party/project id that resolves to no master row.
+  const dims = await resolveLineDimensions(input.lines)
+  // Phase 32 — block a journal whose GST/TDS disagrees with its linked source.
+  await validateJournalTax(input)
 
   const { journalId, financialYear } = await nextManualJournalId(input.journalDate)
   const fy = input.financialYear && String(input.financialYear).trim() ? String(input.financialYear).trim() : financialYear
@@ -285,21 +452,23 @@ export async function createManualJournal(
 
       const lineId = `${journalId}-${i + 1}`
       const lineNarration = line.narration ? String(line.narration) : narration
+      const dim = dims[i]
+      const costCentre = line.costCentre ? String(line.costCentre).trim() || null : null
 
       await conn.query(
         `INSERT INTO journal_entries
            (journal_entry_id, voucher_no, journal_date, financial_year, reference_type,
             reference_no, voucher_type, narration, account_id, account_name, account_group,
-            account_type, party_id, party_name, project_id, project_name, debit, credit,
+            account_type, party_id, party_name, project_id, project_name, cost_centre, debit, credit,
             net_amount, gst_amount, tds_amount, source_module, source_reference,
             source_entity_type, source_entity_id, approval_status, approved_by,
             posting_status, posting_date, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           lineId, journalId, input.journalDate, fy, "Manual",
           referenceNo, voucherType, lineNarration, account.account_id, account.account_name,
-          account.account_group, account.account_type, line.partyId ?? null, line.partyName ?? null,
-          line.projectId ?? null, line.projectName ?? null, debit, credit,
+          account.account_group, account.account_type, dim.partyId, dim.partyName,
+          dim.projectId, dim.projectName, costCentre, debit, credit,
           round2(debit - credit), round2(num(line.gst)), round2(num(line.tds)),
           MANUAL_JOURNAL_SOURCE, journalId, "manual_journal", null, status, null,
           "Unposted", null, opts.createdBy ?? null,
@@ -367,9 +536,13 @@ export async function updateManualJournalDraft(
   await assertPeriodOpen(input.journalDate)
   await assertPeriodOpen(String(rows[0]?.journal_date ?? ""))
 
+  await ensureManualJournalColumns()
   const voucherType =
     input.voucherType && String(input.voucherType).trim() ? String(input.voucherType).trim() : "Journal"
   const resolved = await resolveLines(input.lines)
+  // Phases 33/34/32 — same master resolution + tax checks as create.
+  const dims = await resolveLineDimensions(input.lines)
+  await validateJournalTax(input)
   const createdBy = rows[0]?.created_by ?? opts.userId ?? null
   const fy =
     input.financialYear && String(input.financialYear).trim()
@@ -400,20 +573,22 @@ export async function updateManualJournalDraft(
       totalCredit += credit
       const lineId = `${journalId}-${i + 1}`
       const lineNarration = line.narration ? String(line.narration) : narration
+      const dim = dims[i]
+      const costCentre = line.costCentre ? String(line.costCentre).trim() || null : null
       await conn.query(
         `INSERT INTO journal_entries
            (journal_entry_id, voucher_no, journal_date, financial_year, reference_type,
             reference_no, voucher_type, narration, account_id, account_name, account_group,
-            account_type, party_id, party_name, project_id, project_name, debit, credit,
+            account_type, party_id, party_name, project_id, project_name, cost_centre, debit, credit,
             net_amount, gst_amount, tds_amount, source_module, source_reference,
             source_entity_type, source_entity_id, approval_status, approved_by,
             posting_status, posting_date, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           lineId, journalId, input.journalDate, fy, "Manual",
           referenceNo, voucherType, lineNarration, account.account_id, account.account_name,
-          account.account_group, account.account_type, line.partyId ?? null, line.partyName ?? null,
-          line.projectId ?? null, line.projectName ?? null, debit, credit,
+          account.account_group, account.account_type, dim.partyId, dim.partyName,
+          dim.projectId, dim.projectName, costCentre, debit, credit,
           round2(debit - credit), round2(num(line.gst)), round2(num(line.tds)),
           MANUAL_JOURNAL_SOURCE, journalId, "manual_journal", null, "Draft", null,
           "Unposted", null, createdBy,
@@ -481,16 +656,16 @@ async function writeLedgerFromRows(
       `INSERT INTO general_ledger
          (ledger_id, journal_entry_id, voucher_no, financial_year, transaction_date, value_date,
           account_id, account_name, account_group, account_type, transaction_type, voucher_type,
-          reference_no, party_id, party_name, project_id, project_name, description, debit, credit,
+          reference_no, party_id, party_name, project_id, project_name, cost_centre, description, debit, credit,
           amount, gst_amount, tds_amount, balance, balance_type, source_module, source_reference,
           source_entity_type, source_entity_id, reconciliation_status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         ledgerId, row.journal_entry_id, row.voucher_no, row.financial_year, row.journal_date, row.journal_date,
         account.account_id, account.account_name, account.account_group, account.account_type,
         debit > 0 ? "Debit" : "Credit", row.voucher_type, row.reference_no,
         row.party_id ?? null, row.party_name ?? null, row.project_id ?? null, row.project_name ?? null,
-        description, debit, credit, round2(credit > 0 ? credit : debit),
+        row.cost_centre ?? null, description, debit, credit, round2(credit > 0 ? credit : debit),
         round2(num(row.gst_amount)), round2(num(row.tds_amount)), Math.abs(running), balanceType,
         MANUAL_JOURNAL_SOURCE, row.voucher_no, "manual_journal", null, "Unreconciled",
         opts.createdBy ?? null,
@@ -514,6 +689,7 @@ async function postManualJournalGroup(
   const { status, rows } = await getManualJournal(journalId)
   if (!rows.length) throw new Error("This journal was not found.")
   if (status !== "Approved") throw new Error(`Only an Approved journal can be posted (this one is ${status}).`)
+  await ensureManualJournalColumns()
 
   const lines: ManualJournalLineInput[] = rows.map((r) => ({
     accountId: String(r.account_id),
@@ -576,7 +752,7 @@ async function reverseManualJournalGroup(
   if (!rows.length) throw new Error("This journal was not found.")
   if (status !== "Posted") throw new Error(`Only a Posted journal can be reversed (this one is ${status}).`)
 
-  await ensureReversalLinkColumns()
+  await ensureManualJournalColumns()
   if (rows[0].reversal_of) throw new Error("A reversal journal cannot itself be reversed.")
 
   const reversalId = `${journalId}-R`

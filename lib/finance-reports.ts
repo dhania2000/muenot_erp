@@ -685,6 +685,37 @@ export const FINANCE_REPORTS: ReportDef[] = [
     ],
   },
   {
+    // Phase 35 — cost-centre rollup over the posted general ledger, so the
+    // dimension entered on manual journals (and carried through posting) is
+    // reportable alongside the expense-sourced cost-centre report above.
+    key: "cost-centre-ledger",
+    label: "Cost Centre Ledger",
+    group: "Finance",
+    description: "Posted general-ledger movement rolled up by cost centre — debit, credit, GST, TDS and net.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT COALESCE(NULLIF(cost_centre,''),'Unassigned') AS cost_centre,
+             COUNT(*) AS entries,
+             COALESCE(SUM(debit),0) AS debit,
+             COALESCE(SUM(credit),0) AS credit,
+             COALESCE(SUM(gst_amount),0) AS gst,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS net
+      FROM general_ledger
+      WHERE 1=1 ${RANGE}
+      GROUP BY cost_centre
+      ORDER BY net DESC`,
+    columns: [
+      { key: "cost_centre", label: "Cost Centre" },
+      { key: "entries", label: "Entries", align: "right" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "gst", label: "GST", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+    ],
+  },
+  {
     key: "expense-payment-register",
     label: "Payment Register",
     group: "Expenses",

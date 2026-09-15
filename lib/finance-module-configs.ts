@@ -1406,7 +1406,7 @@ const generalLedger: ModuleConfig = {
   dateColumn: "transaction_date",
   financialYearColumn: "financial_year",
   statusColumn: "reconciliation_status",
-  searchColumns: ["ledger_id", "reference_no", "account_name", "party_name", "project_name", "description"],
+  searchColumns: ["ledger_id", "voucher_no", "journal_entry_id", "reference_no", "account_name", "party_name", "project_name", "description"],
   fields: [
     fld("Entry", "ledger_id", "Ledger ID", "text", { placeholder: "Auto-generated if left blank" }),
     fld("Entry", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
@@ -1450,6 +1450,13 @@ const generalLedger: ModuleConfig = {
   },
   tableColumns: [
     { key: "ledger_id", label: "Ledger ID", mono: true },
+    {
+      key: "voucher_no",
+      label: "Journal",
+      mono: true,
+      link: (r) =>
+        `/modules/finance/journal-entries?search=${encodeURIComponent(String(r.voucher_no || r.journal_entry_id || ""))}`,
+    },
     { key: "transaction_date", label: "Date" },
     { key: "account_name", label: "Account", sub: "account_group" },
     { key: "debit", label: "Debit", align: "right", money: true },

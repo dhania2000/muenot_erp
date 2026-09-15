@@ -103,6 +103,8 @@ export type TableColumn = {
    * sensitive identifiers are not shown in full in the list.
    */
   mask?: boolean
+  /** Render the cell value as a link to the href built from the row. */
+  link?: (row: Record<string, any>) => string
 }
 
 export type Kpi = { label: string; key: string; money?: boolean; icon?: string }

@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Plus, FilterX, Pencil, Eye, Trash2, Upload, FileDown, Send, Loader2Icon,
+  Plus, FilterX, Pencil, Eye, Trash2, Upload, FileDown, Send, Loader2Icon, Lock,
   Receipt, Coins, Wallet, Clock, Landmark, FileText, Users, TrendingUp,
   Banknote, BookOpen, CreditCard, ArrowLeftRight, Check, X,
 } from "lucide-react"
@@ -222,12 +222,28 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
             </Button>
           )}
           <ImportButton moduleKey={`finance-${cfg.key}`} onImported={() => mutate()} />
-          <Button onClick={openNew}>
-            <Plus data-icon="inline-start" />
-            {cfg.addLabel}
-          </Button>
+          {!cfg.readOnly && (
+            <Button onClick={openNew}>
+              <Plus data-icon="inline-start" />
+              {cfg.addLabel}
+            </Button>
+          )}
         </div>
       </div>
+
+      {cfg.readOnly && (
+        <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
+          <Lock className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <p className="text-muted-foreground">
+            This ledger is posted automatically from Journal Entries. To make a manual accounting entry, create a
+            balanced journal in{" "}
+            <a href="/modules/finance/journal-entries" className="font-medium text-primary hover:underline">
+              Journal Entries
+            </a>
+            {" "}— it will appear here once posted.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cfg.kpis.map((k) => {
@@ -456,12 +472,16 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
                             <Eye className="size-4" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" aria-label="Edit" onClick={() => openEdit(row)}>
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" aria-label="Delete" onClick={() => remove(row)}>
-                          <Trash2 className="size-4" />
-                        </Button>
+                        {!cfg.readOnly && (
+                          <>
+                            <Button variant="ghost" size="icon" aria-label="Edit" onClick={() => openEdit(row)}>
+                              <Pencil className="size-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" aria-label="Delete" onClick={() => remove(row)}>
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

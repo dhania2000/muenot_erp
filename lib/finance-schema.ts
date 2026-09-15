@@ -237,6 +237,16 @@ export type ModuleConfig = {
    * asks the user to confirm before re-submitting with `__forceCreate` (Phase 24).
    */
   duplicateCheck?: boolean
+  /**
+   * When true the module is a protected, read-only ledger: its rows are written
+   * ONLY by the server-side posting engine (journals + source documents), never
+   * by hand. The client hides the Add / Edit / Delete affordances and the CRUD
+   * factory rejects POST / PATCH / DELETE with 405, so the General Ledger stays a
+   * faithful projection of posted accounting transactions — no orphan rows, no
+   * broken running-balance chain. GET (list, KPIs, search, detail, export) is
+   * fully preserved. Manual postings go through Journal Entries instead.
+   */
+  readOnly?: boolean
 }
 
 /**

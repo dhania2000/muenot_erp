@@ -1400,11 +1400,18 @@ const generalLedger: ModuleConfig = {
   key: "general-ledger",
   table: "general_ledger",
   label: "General Ledger",
-  subtitle: "Finance management",
+  subtitle: "Central ledger — auto-posted from Journal Entries",
   addLabel: "New ledger entry",
   idColumn: "ledger_id",
   idPrefix: "GL",
   editableId: true,
+  // The General Ledger is the central ledger of posted accounting transactions.
+  // Every row is written by the server-side posting engine (manual & automated
+  // journals, sales/purchase/expense/bank/opening-balance postings) with a
+  // canonical GL-YYYY-###### id, its journal link, and a per-account running
+  // balance. Direct manual GL CRUD is disabled so the ledger can never hold an
+  // orphan or unbalanced row — manual postings are made in Journal Entries.
+  readOnly: true,
   dateColumn: "transaction_date",
   financialYearColumn: "financial_year",
   statusColumn: "reconciliation_status",

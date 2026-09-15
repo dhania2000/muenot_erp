@@ -26,6 +26,13 @@ export type ReportCompany = {
 
 const currency = (n: number) => inr0(Number(n) || 0)
 
+// Flat, transaction-level reports can return tens of thousands of rows. The
+// preview sheet caps how many are painted into the DOM so opening a large
+// report never crashes the browser tab; totals stay computed from the full set,
+// and the CSV / Excel / PDF exports always contain every row. Grouped reports
+// are account-level aggregates and stay small, so they are never capped.
+const VIEW_ROW_CAP = 1000
+
 /** Render an ISO/date-ish value as dd-mm-yyyy; leave non-dates untouched. */
 function fmtCellDate(value: any): string {
   const d = new Date(value)
@@ -312,7 +319,7 @@ export function ReportViewDialog({
                   ))
                 ) : (
                   <tbody>
-                    {rows.map((row, i) => (
+                    {rows.slice(0, VIEW_ROW_CAP).map((row, i) => (
                       <tr
                         key={i}
                         className={`border-t border-border/60 ${
@@ -332,6 +339,18 @@ export function ReportViewDialog({
                         ))}
                       </tr>
                     ))}
+                    {rows.length > VIEW_ROW_CAP && (
+                      <tr>
+                        <td
+                          colSpan={colCount}
+                          className="px-3 py-3 text-center text-xs text-muted-foreground"
+                        >
+                          Showing the first {VIEW_ROW_CAP.toLocaleString("en-IN")} of{" "}
+                          {rows.length.toLocaleString("en-IN")} rows. The total below covers every
+                          row — download the report (CSV / Excel / PDF) for the complete listing.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 )}
 

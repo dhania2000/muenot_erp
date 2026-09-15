@@ -97,11 +97,11 @@ export function TdsWorkspace() {
       </div>
 
       <Tabs value={stage} onValueChange={(v) => setStage(v as StageId)} className="flex flex-col gap-6">
-        <TabsList className="flex w-full justify-start overflow-x-auto">
+        <TabsList className="flex w-full justify-start overflow-x-auto overflow-y-hidden group-data-horizontal/tabs:h-auto py-1">
           {stages.map((s) => {
             const Icon = s.icon
             return (
-              <TabsTrigger key={s.id} value={s.id} className="shrink-0 gap-1.5">
+              <TabsTrigger key={s.id} value={s.id} className="h-8 shrink-0 gap-1.5">
                 <Icon className="h-4 w-4" />
                 {s.label}
               </TabsTrigger>

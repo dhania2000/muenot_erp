@@ -14,8 +14,16 @@ import type { BadgeVariant } from "@/lib/finance-schema"
 import {
   Coins, Wallet, TrendingUp, BookOpen, CheckCircle2, AlertTriangle, Layers, Link2,
   FilterX, Lock, Loader2Icon, Users, FolderKanban, CalendarRange, ScrollText, Landmark, ShieldCheck, RefreshCw,
-  ListTree, Siren,
+  ListTree, Siren, MoreHorizontal, Eye, FileText, ExternalLink, Undo2, History, CircleDot, CircleCheck,
 } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
 import { LedgerTraceDrawer } from "@/components/finance/ledger-trace-drawer"
 
 type Row = Record<string, any>
@@ -115,6 +123,12 @@ export function GeneralLedgerClient() {
     setFilters((f) => ({ ...f, [key]: value }))
   }
 
+  /** Jump to the per-account ledger view, filtered to one Chart-of-Accounts head. */
+  function viewAccountLedger(accountId: string) {
+    setFilters((f) => ({ ...f, account_id: accountId }))
+    setView("account")
+  }
+
   return (
     <main className="space-y-8 p-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -203,7 +217,7 @@ export function GeneralLedgerClient() {
       </Card>
 
       <Tabs value={view} onValueChange={(v) => setView(v as View)}>
-        <TabsList className="flex-wrap">
+        <TabsList className="flex w-full flex-nowrap justify-start overflow-x-auto">
           <TabsTrigger value="ledger"><BookOpen data-icon="inline-start" />Ledger</TabsTrigger>
           <TabsTrigger value="account"><ListTree data-icon="inline-start" />Account Ledger</TabsTrigger>
           <TabsTrigger value="party"><Users data-icon="inline-start" />Party Ledger</TabsTrigger>
@@ -216,7 +230,13 @@ export function GeneralLedgerClient() {
         </TabsList>
 
         <TabsContent value="ledger">
-          <LedgerTab data={data} loading={isLoading} onTrace={setTraceVoucher} />
+          <LedgerTab
+            data={data}
+            loading={isLoading}
+            onTrace={setTraceVoucher}
+            onViewAccount={viewAccountLedger}
+            onReconciled={() => mutate(queryKey)}
+          />
         </TabsContent>
         <TabsContent value="account">
           <AccountTab data={data} loading={isLoading} />
@@ -231,7 +251,13 @@ export function GeneralLedgerClient() {
           <MonthlyTab data={data} loading={isLoading} />
         </TabsContent>
         <TabsContent value="reconciliation">
-          <ReconciliationTab data={data} loading={isLoading} />
+          <ReconciliationTab
+            data={data}
+            loading={isLoading}
+            onTrace={setTraceVoucher}
+            onViewAccount={viewAccountLedger}
+            onReconciled={() => mutate(queryKey)}
+          />
         </TabsContent>
         <TabsContent value="bank">
           <BankTab data={data} loading={isLoading} />
@@ -279,13 +305,25 @@ function SummaryBox({ label, value, side, emphasize }: { label: string; value: n
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
-function LedgerTab({ data, loading, onTrace }: { data: Row | undefined; loading: boolean; onTrace: (v: string) => void }) {
+function LedgerTab({
+  data,
+  loading,
+  onTrace,
+  onViewAccount,
+  onReconciled,
+}: {
+  data: Row | undefined
+  loading: boolean
+  onTrace: (v: string) => void
+  onViewAccount: (accountId: string) => void
+  onReconciled: () => void
+}) {
   const rows: Row[] = data?.rows ?? []
   return (
     <TableCard title="Ledger entries" count={rows.length} loading={loading} hint="Select a voucher to trace the posting back to its Journal Entry and source document.">
       <SummaryStrip s={data?.summary} />
       <ScrollTable
-        head={["Ledger ID", "Journal", "Date", "Account", "Party", "Voucher", "Source", "Debit", "Credit", "Balance", "Reconciliation"]}
+        head={["Ledger ID", "Journal", "Date", "Account", "Party", "Voucher", "Source", "Debit", "Credit", "Balance", "Reconciliation", ""]}
         rightCols={[7, 8, 9]}
         empty="No posted ledger entries match the current filters."
         rows={rows.map((l) => [
@@ -302,6 +340,7 @@ function LedgerTab({ data, loading, onTrace }: { data: Row | undefined; loading:
           <Amt key="c" value={Number(l.credit)} />,
           <Amt key="b" value={Number(l.balance)} side={(l.balance_type as Side) || undefined} />,
           <Badge key="r" variant={RECON_BADGE[String(l.reconciliation_status)] || "outline"}>{l.reconciliation_status || "Unreconciled"}</Badge>,
+          <RowActions key="act" row={l} onTrace={onTrace} onViewAccount={onViewAccount} onReconciled={onReconciled} />,
         ])}
       />
     </TableCard>
@@ -412,7 +451,19 @@ function MonthlyTab({ data, loading }: { data: Row | undefined; loading: boolean
   )
 }
 
-function ReconciliationTab({ data, loading }: { data: Row | undefined; loading: boolean }) {
+function ReconciliationTab({
+  data,
+  loading,
+  onTrace,
+  onViewAccount,
+  onReconciled,
+}: {
+  data: Row | undefined
+  loading: boolean
+  onTrace: (v: string) => void
+  onViewAccount: (accountId: string) => void
+  onReconciled: () => void
+}) {
   const rows: Row[] = data?.rows ?? []
   const counts: Row = data?.counts ?? {}
   return (
@@ -425,7 +476,7 @@ function ReconciliationTab({ data, loading }: { data: Row | undefined; loading: 
         ))}
       </div>
       <ScrollTable
-        head={["Ledger ID", "Date", "Account", "Party", "Journal", "Source", "UTR / Reference", "Debit", "Credit", "Status"]}
+        head={["Ledger ID", "Date", "Account", "Party", "Journal", "Source", "UTR / Reference", "Debit", "Credit", "Status", ""]}
         rightCols={[7, 8]}
         empty="No entries to reconcile for the current filters."
         rows={rows.map((l) => [
@@ -439,6 +490,13 @@ function ReconciliationTab({ data, loading }: { data: Row | undefined; loading: 
           <Amt key="d" value={Number(l.debit)} />,
           <Amt key="c" value={Number(l.credit)} />,
           <Badge key="s" variant={RECON_BADGE[String(l.recon_status)] || "outline"}>{l.recon_status}</Badge>,
+          <RowActions
+            key="act"
+            row={{ ...l, reconciliation_status: l.reconciliation_status ?? l.recon_status }}
+            onTrace={onTrace}
+            onViewAccount={onViewAccount}
+            onReconciled={onReconciled}
+          />,
         ])}
       />
     </TableCard>
@@ -616,6 +674,164 @@ function ExceptionTab({ data, loading, onTrace }: { data: Row | undefined; loadi
         <p className="mt-3 text-xs text-muted-foreground">Showing the most severe results first. Narrow the filters to see the rest.</p>
       ) : null}
     </TableCard>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Per-row actions (Phases 65/66) — the ledger stays read-only for accounting
+// values, so these actions either navigate to the primary source (Journal
+// Entry / source document), open an in-app read-only view (trace, account
+// ledger), or flip the one operational flag a reviewer may set directly on a
+// posted row: its reconciliation state (server-guarded, RBAC + concurrency).
+// A manual journal can be reversed from here (it routes to the journal reverse
+// engine); a system posting must be reversed through its own source document.
+// ---------------------------------------------------------------------------
+const MANUAL_SOURCE = "Manual"
+
+/** Best-effort route to the source document's module list, searched by ref. */
+function sourceHref(row: Row): string | null {
+  const mod = String(row.source_module ?? "").toLowerCase()
+  const ref = String(row.source_reference ?? row.reference_no ?? "").trim()
+  if (!mod || mod === MANUAL_SOURCE.toLowerCase()) return null
+  const MAP: Record<string, string> = {
+    "sales": "customers-vendors",
+    "purchase": "purchase-bills",
+    "purchase bill": "purchase-bills",
+    "expense": "expenses",
+    "expenses": "expenses",
+    "bank": "bank-transactions",
+    "bank transaction": "bank-transactions",
+    "fte invoice": "fte-invoices",
+    "freelance invoice": "freelance-invoices",
+    "gst": "gst-filing",
+    "tds": "tds-filing",
+  }
+  const slug = MAP[mod]
+  if (!slug) return null
+  return `/modules/finance/${slug}${ref ? `?search=${encodeURIComponent(ref)}` : ""}`
+}
+
+function RowActions({
+  row,
+  onTrace,
+  onViewAccount,
+  onReconciled,
+}: {
+  row: Row
+  onTrace: (v: string) => void
+  onViewAccount: (accountId: string) => void
+  onReconciled: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const voucher = String(row.voucher_no || row.journal_entry_id || "")
+  const accountId = String(row.account_id || "")
+  const isManual = String(row.source_module ?? "") === MANUAL_SOURCE
+  const src = sourceHref(row)
+  const reconStatus = String(row.reconciliation_status || "Unreconciled")
+  const isReconciled = reconStatus === "Reconciled"
+
+  async function toggleReconcile() {
+    const next = isReconciled ? "Unreconciled" : "Reconciled"
+    setBusy(true)
+    setNote(null)
+    try {
+      const res = await fetch("/api/finance/general-ledger/reconcile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ledger_id: row.ledger_id, status: next, expected_status: reconStatus }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error || "Could not update reconciliation.")
+      onReconciled()
+    } catch (error) {
+      setNote((error as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function reverseJournal() {
+    if (!voucher) return
+    setBusy(true)
+    setNote(null)
+    try {
+      const res = await fetch("/api/finance/journal-entries/manual", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ journalId: voucher, action: "reverse" }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error || "Could not reverse this journal.")
+      onReconciled()
+    } catch (error) {
+      setNote((error as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {note ? <span className="max-w-40 truncate text-xs text-destructive" title={note}>{note}</span> : null}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-8" aria-label="Row actions" disabled={busy}>
+            {busy ? <Loader2Icon className="size-4 animate-spin" /> : <MoreHorizontal className="size-4" />}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel>Ledger entry</DropdownMenuLabel>
+          <DropdownMenuItem disabled={!voucher} onClick={() => voucher && onTrace(voucher)}>
+            <Eye className="size-4" />
+            View / trace posting
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild disabled={!voucher}>
+            <a href={`/modules/finance/journal-entries${voucher ? `?search=${encodeURIComponent(voucher)}` : ""}`}>
+              <FileText className="size-4" />
+              Open Journal Entry
+            </a>
+          </DropdownMenuItem>
+          {src ? (
+            <DropdownMenuItem asChild>
+              <a href={src}>
+                <ExternalLink className="size-4" />
+                Open source document
+              </a>
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem disabled>
+              <ExternalLink className="size-4" />
+              {isManual ? "Manual journal (no source)" : "No linked source"}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem disabled={!accountId} onClick={() => accountId && onViewAccount(accountId)}>
+            <ListTree className="size-4" />
+            View account ledger
+          </DropdownMenuItem>
+
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+          <DropdownMenuItem onClick={toggleReconcile}>
+            {isReconciled ? <CircleDot className="size-4" /> : <CircleCheck className="size-4" />}
+            {isReconciled ? "Mark Unreconciled" : "Mark Reconciled"}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!isManual || !voucher}
+            onClick={reverseJournal}
+            title={isManual ? "Post an equal-and-opposite reversing journal" : "Reverse this through its source document"}
+          >
+            <Undo2 className="size-4" />
+            {isManual ? "Reverse journal" : "Reverse via source only"}
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={!voucher} onClick={() => voucher && onTrace(voucher)}>
+            <History className="size-4" />
+            Audit trail
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 

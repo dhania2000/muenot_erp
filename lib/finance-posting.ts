@@ -1,6 +1,7 @@
 import type { PoolConnection } from "mysql2/promise"
 import { pool, query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
+import { financialYearFor } from "@/lib/finance-calc"
 import {
   resolveAccount,
   resolveAccountById,
@@ -27,6 +28,26 @@ const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 1
 const num = (v: any) => {
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
+}
+
+/**
+ * Phase 3 — mint the next financial-year-scoped General Ledger id, e.g.
+ * GL-2026-000001. Keyed per FY start year so each year restarts at 000001, the
+ * id is minted server-side only and, once written onto a general_ledger row, is
+ * never rewritten — so every ledger id is unique and immutable. Shared by BOTH
+ * the automated source-document posting engine (here) and the manual-journal
+ * posting path so every ledger row carries the same GL-YYYY-###### shape.
+ *
+ * Defined in the low-level posting engine (rather than finance-journal) so the
+ * manual-journal module can import it without creating an import cycle.
+ */
+export async function nextLedgerId(dateStr?: string | null): Promise<string> {
+  const today = new Date().toISOString().slice(0, 10)
+  const fy = financialYearFor(dateStr) || financialYearFor(today)
+  const startYear = fy.split("-")[0] || String(new Date().getFullYear())
+  const seq = await nextRecordId(`GL${startYear}`, { digits: 6, allowCustom: true })
+  const number = seq.split("-")[1] ?? "000001"
+  return `GL-${startYear}-${number}`
 }
 
 export type PostingLine = {
@@ -218,7 +239,7 @@ export async function postLines(lines: PostingLine[], args: PostArgs): Promise<P
     for (const line of oriented) {
       const account = line.accountId ? resolvedById.get(line.accountId)! : resolved.get(line.role)!
       const journalEntryId = await nextRecordId("JE")
-      const ledgerId = await nextRecordId("GL")
+      const ledgerId = await nextLedgerId(args.date)
 
       await conn.query(
         `INSERT INTO journal_entries

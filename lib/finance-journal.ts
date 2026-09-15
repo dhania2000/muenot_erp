@@ -5,6 +5,7 @@ import { financialYearFor } from "@/lib/finance-calc"
 import { resolveAccountById, isDebitNature, type ResolvedAccount } from "@/lib/finance-accounts"
 import { logFinanceEvent } from "@/lib/finance-audit"
 import { assertPeriodOpen } from "@/lib/finance-period-lock"
+import { nextLedgerId } from "@/lib/finance-posting"
 
 // ---------------------------------------------------------------------------
 // Manual journal engine (server-only) — the central accounting workflow.
@@ -747,9 +748,24 @@ async function writeLedgerFromRows(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     const account = resolved[i]
+
+    // Phase 2 — idempotent auto-generation. Every ledger row is keyed to its
+    // journal line's immutable journal_entry_id. If a row for this line already
+    // exists (the same posted journal being processed again), reuse it and skip
+    // the insert so re-processing can never create a duplicate ledger entry or
+    // double-count the running balance.
+    const [existing] = await conn.query<any[]>(
+      `SELECT ledger_id FROM general_ledger WHERE journal_entry_id = ? LIMIT 1`,
+      [row.journal_entry_id],
+    )
+    if (existing.length) {
+      ledgerIds.push(String(existing[0].ledger_id))
+      continue
+    }
+
     const debit = round2(opts.reverse ? num(row.credit) : num(row.debit))
     const credit = round2(opts.reverse ? num(row.debit) : num(row.credit))
-    const ledgerId = await nextRecordId("GL")
+    const ledgerId = await nextLedgerId(row.journal_date)
 
     const prev = await currentSignedBalance(conn, account)
     const naturalDebit = isDebitNature(account)

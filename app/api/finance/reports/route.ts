@@ -30,6 +30,20 @@ export async function GET(req: NextRequest) {
   const def = FINANCE_ONLY_REPORT_MAP[reportKey]
   if (!def) return NextResponse.json({ error: "Unknown report" }, { status: 404 })
 
+  const reportMeta = {
+    key: def.key,
+    label: def.label,
+    group: def.group,
+    description: def.description,
+    columns: def.columns,
+    hasDateFilter: !!def.dateColumn,
+  }
+
+  // Placeholder reports have no query yet — surface an empty, unavailable result.
+  if (!def.sql) {
+    return NextResponse.json({ report: reportMeta, rows: [], available: false })
+  }
+
   const from = params.get("from") || ""
   const to = params.get("to") || ""
 
@@ -52,16 +66,5 @@ export async function GET(req: NextRequest) {
     rows = []
   }
 
-  return NextResponse.json({
-    report: {
-      key: def.key,
-      label: def.label,
-      group: def.group,
-      description: def.description,
-      columns: def.columns,
-      hasDateFilter: !!def.dateColumn,
-    },
-    rows,
-    available,
-  })
+  return NextResponse.json({ report: reportMeta, rows, available })
 }

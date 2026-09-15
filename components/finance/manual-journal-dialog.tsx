@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
@@ -37,7 +37,20 @@ type LineDraft = {
   narration: string
 }
 
-const VOUCHER_TYPES = ["Journal", "Payment", "Receipt", "Contra"]
+/** An existing unposted journal loaded for editing. */
+export type EditableJournal = {
+  journalId: string
+  journalDate: string
+  voucherType: string
+  referenceNo: string
+  narration: string
+  lines: Array<{ accountId: string; debit: number; credit: number; narration: string }>
+}
+
+const VOUCHER_TYPES = [
+  "Journal", "Payment", "Receipt", "Contra", "Sales", "Purchase", "Expense",
+  "Credit Note", "Debit Note", "GST", "TDS", "Adjustment", "Opening", "Closing",
+]
 
 const num = (v: string) => {
   const n = Number(v)
@@ -52,11 +65,14 @@ export function ManualJournalDialog({
   open,
   onOpenChange,
   onSaved,
+  editJournal = null,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSaved: (journalId: string) => void
+  editJournal?: EditableJournal | null
 }) {
+  const isEdit = !!editJournal
   const { data } = useSWR<{ accounts: PostableAccount[] }>(
     open ? "/api/finance/journal-entries/manual" : null,
     fetcher,
@@ -68,8 +84,37 @@ export function ManualJournalDialog({
   const [referenceNo, setReferenceNo] = useState("")
   const [narration, setNarration] = useState("")
   const [lines, setLines] = useState<LineDraft[]>([newLine(), newLine()])
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving] = useState<"draft" | "submit" | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Hydrate the form from the journal being edited whenever the dialog opens.
+  useEffect(() => {
+    if (!open) return
+    if (editJournal) {
+      setJournalDate(editJournal.journalDate?.slice(0, 10) || today())
+      setVoucherType(editJournal.voucherType || "Journal")
+      setReferenceNo(editJournal.referenceNo || "")
+      setNarration(editJournal.narration || "")
+      setLines(
+        editJournal.lines.length
+          ? editJournal.lines.map((l) => ({
+              key: `l${++seq}`,
+              accountId: l.accountId,
+              debit: l.debit ? String(l.debit) : "",
+              credit: l.credit ? String(l.credit) : "",
+              narration: l.narration || "",
+            }))
+          : [newLine(), newLine()],
+      )
+    } else {
+      setJournalDate(today())
+      setVoucherType("Journal")
+      setReferenceNo("")
+      setNarration("")
+      setLines([newLine(), newLine()])
+    }
+    setError(null)
+  }, [open, editJournal])
 
   // Accounts grouped for a tidy <optgroup> picker.
   const grouped = useMemo(() => {
@@ -89,15 +134,6 @@ export function ManualJournalDialog({
   const enoughLines = lines.filter((l) => l.accountId && (num(l.debit) > 0 || num(l.credit) > 0)).length >= 2
   const canSave = balanced && enoughLines && !saving
 
-  function reset() {
-    setJournalDate(today())
-    setVoucherType("Journal")
-    setReferenceNo("")
-    setNarration("")
-    setLines([newLine(), newLine()])
-    setError(null)
-  }
-
   function updateLine(key: string, patch: Partial<LineDraft>) {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)))
   }
@@ -108,56 +144,55 @@ export function ManualJournalDialog({
     setLines((prev) => (prev.length <= 2 ? prev : prev.filter((l) => l.key !== key)))
   }
 
-  async function save() {
+  async function save(mode: "draft" | "submit") {
     setError(null)
-    setSaving(true)
+    setSaving(mode)
     try {
-      const payload = {
+      const linePayload = lines
+        .filter((l) => l.accountId && (num(l.debit) > 0 || num(l.credit) > 0))
+        .map((l) => ({
+          accountId: l.accountId,
+          debit: num(l.debit),
+          credit: num(l.credit),
+          narration: l.narration || null,
+        }))
+      const base = {
         journalDate,
         voucherType,
         referenceNo: referenceNo || null,
         narration: narration || null,
-        lines: lines
-          .filter((l) => l.accountId && (num(l.debit) > 0 || num(l.credit) > 0))
-          .map((l) => ({
-            accountId: l.accountId,
-            debit: num(l.debit),
-            credit: num(l.credit),
-            narration: l.narration || null,
-          })),
+        lines: linePayload,
       }
+
+      // Editing an unposted journal replaces its lines (PUT) and always returns
+      // it to Draft server-side; creating uses POST with the submit intent.
       const res = await fetch("/api/finance/journal-entries/manual", {
-        method: "POST",
+        method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(isEdit ? { journalId: editJournal!.journalId, ...base } : { ...base, submit: mode === "submit" }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setError(json.error || "Could not post the journal.")
+        setError(json.error || "Could not save the journal.")
         return
       }
       onSaved(json.journalId)
-      reset()
       onOpenChange(false)
     } finally {
-      setSaving(false)
+      setSaving(null)
     }
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) reset()
-        onOpenChange(next)
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
-          <DialogTitle>New manual journal</DialogTitle>
+          <DialogTitle>{isEdit ? `Edit journal ${editJournal!.journalId}` : "New manual journal"}</DialogTitle>
           <DialogDescription>
-            Enter a balanced double-entry voucher. Total debit must equal total credit before it can post to the
-            general ledger.
+            Enter a balanced double-entry voucher. Total debit must equal total credit.{" "}
+            {isEdit
+              ? "Saving returns the journal to Draft; it posts to the ledger only after it is approved and posted."
+              : "The journal is saved unposted and only reaches the general ledger once it is approved and posted."}
           </DialogDescription>
         </DialogHeader>
 
@@ -318,13 +353,19 @@ export function ManualJournalDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={!!saving}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={!canSave}>
-            {saving && <Loader2Icon data-icon="inline-start" className="animate-spin" />}
-            Post journal
+          <Button variant="secondary" onClick={() => save("draft")} disabled={!canSave}>
+            {saving === "draft" && <Loader2Icon data-icon="inline-start" className="animate-spin" />}
+            {isEdit ? "Save changes" : "Save as draft"}
           </Button>
+          {!isEdit && (
+            <Button onClick={() => save("submit")} disabled={!canSave}>
+              {saving === "submit" && <Loader2Icon data-icon="inline-start" className="animate-spin" />}
+              Submit for approval
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

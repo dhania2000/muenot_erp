@@ -8,7 +8,15 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ScrollText, Users, FileCheck2 } from "lucide-react"
+import {
+  ScrollText,
+  Users,
+  FileCheck2,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
+  History,
+} from "lucide-react"
 import { currency, QUARTERS, returnForm, StatusBadge, type Direction, type Quarter } from "./shared"
 
 type Prep = {
@@ -28,6 +36,22 @@ type Prep = {
   due_date: string
   return: { return_id: string; status: string; token_no: string | null; filed_at: string | null } | null
 }
+
+type ValidationIssue = {
+  code: string
+  severity: "error" | "warning"
+  message: string
+  party_name?: string
+  section?: string
+}
+type Validation = {
+  issues: ValidationIssue[]
+  error_count: number
+  warning_count: number
+  can_file: boolean
+  already_filed: boolean
+}
+
 type FiledReturn = {
   id: number
   return_id: string
@@ -39,6 +63,15 @@ type FiledReturn = {
   deductee_count: number
   status: string
   token_no: string | null
+  arn: string | null
+  challan_label: string | null
+  original_return_id: string | null
+  correction_type: string | null
+  revision_no: number
+  is_correction: boolean
+  remarks: string | null
+  filed_at: string | null
+  allowed_transitions: string[]
 }
 
 export function ReturnsStage({ direction, fy }: { direction: Direction; fy: string }) {
@@ -46,10 +79,15 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
   const [token, setToken] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [rowBusy, setRowBusy] = useState<string>("")
   const form = returnForm(direction)
 
   const { data, mutate } = useSWR<{ preparation: Prep }>(
     `/api/finance/tds/returns?fy=${fy}&quarter=${quarter}&direction=${direction}`,
+    fetcher,
+  )
+  const { data: validationData, mutate: mutateValidation } = useSWR<{ validation: Validation }>(
+    `/api/finance/tds/returns?fy=${fy}&quarter=${quarter}&direction=${direction}&validate=1`,
     fetcher,
   )
   const { data: listData, mutate: mutateList } = useSWR<{ returns: FiledReturn[] }>(
@@ -57,7 +95,14 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
     fetcher,
   )
   const prep = data?.preparation
+  const validation = validationData?.validation
   const filed = listData?.returns ?? []
+
+  function refreshAll() {
+    mutate()
+    mutateValidation()
+    mutateList()
+  }
 
   async function file() {
     setBusy(true)
@@ -71,8 +116,7 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
       const body = await res.json()
       if (!res.ok) throw new Error(body.error || "Could not file return")
       setToken("")
-      mutate()
-      mutateList()
+      refreshAll()
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -80,12 +124,58 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
     }
   }
 
+  async function transition(returnId: string, status: string) {
+    setRowBusy(returnId)
+    setError("")
+    try {
+      let remarks: string | null = null
+      if (status === "Rejected" || status === "Correction Required") {
+        remarks = window.prompt(`Reason for marking this return "${status}" (optional):`) ?? null
+      }
+      const res = await fetch("/api/finance/tds/returns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set_status", return_id: returnId, status, remarks }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Could not update return status")
+      refreshAll()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setRowBusy("")
+    }
+  }
+
+  async function correct(returnId: string) {
+    if (!window.confirm("File a correction return? The original is preserved and a revised copy is created from the current ledger.")) return
+    setRowBusy(returnId)
+    setError("")
+    try {
+      const remarks = window.prompt("Correction remarks (optional):") ?? null
+      const res = await fetch("/api/finance/tds/returns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "correct", return_id: returnId, remarks }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Could not file correction")
+      refreshAll()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setRowBusy("")
+    }
+  }
+
+  const canFile = !!validation?.can_file && !!prep && prep.totals.deductee_count > 0
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-xl text-sm text-muted-foreground">
           Quarterly {form} return, assembled automatically from the deductee ledger and matched against the challans
-          deposited for the quarter. Filing locks the quarter and stores a snapshot.
+          deposited for the quarter. Filing runs pre-filing validation and locks the quarter with a snapshot.
         </p>
         <div className="flex flex-col gap-1">
           <label className="text-xs text-muted-foreground" htmlFor="quarter">
@@ -128,7 +218,7 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
                 onChange={(e) => setToken(e.target.value)}
                 className="h-9 w-40"
               />
-              <Button onClick={file} disabled={busy || !prep || prep.totals.deductee_count === 0}>
+              <Button onClick={file} disabled={busy || !canFile}>
                 {busy ? "Filing…" : "File return"}
               </Button>
             </div>
@@ -139,18 +229,10 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
             <Mini label="Deductees" value={String(prep?.totals.deductee_count ?? 0)} />
             <Mini label="Deducted" value={currency(prep?.totals.total_deducted)} />
             <Mini label="Deposited" value={currency(prep?.totals.total_deposited)} />
-            <Mini
-              label="Balance"
-              value={currency(prep?.totals.balance)}
-              danger={(prep?.totals.balance ?? 0) > 0.5}
-            />
+            <Mini label="Balance" value={currency(prep?.totals.balance)} danger={(prep?.totals.balance ?? 0) > 0.5} />
           </div>
-          {prep && prep.totals.balance > 0.5 ? (
-            <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
-              Deducted TDS exceeds the challans deposited for this quarter. Record the missing challan before filing to
-              keep the return balanced.
-            </p>
-          ) : null}
+
+          {prep && !prep.return ? <ValidationPanel validation={validation} /> : null}
         </CardContent>
       </Card>
 
@@ -273,7 +355,10 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Filed returns</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <History className="h-4 w-4" />
+            Filed returns &amp; corrections
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -284,31 +369,78 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
                   <TableHead>Form</TableHead>
                   <TableHead>Quarter</TableHead>
                   <TableHead>FY</TableHead>
+                  <TableHead>ARN</TableHead>
                   <TableHead className="text-right">Deducted</TableHead>
                   <TableHead className="text-right">Deposited</TableHead>
-                  <TableHead>Token</TableHead>
+                  <TableHead>Filed</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filed.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
                       No returns filed yet.
                     </TableCell>
                   </TableRow>
                 ) : (
                   filed.map((r) => (
                     <TableRow key={r.id}>
-                      <TableCell className="font-mono text-xs">{r.return_id}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {r.return_id}
+                        {r.is_correction ? (
+                          <Badge variant="secondary" className="ml-2 align-middle text-[10px]">
+                            {r.correction_type || `Rev ${r.revision_no}`}
+                          </Badge>
+                        ) : null}
+                        {r.original_return_id ? (
+                          <div className="text-[10px] text-muted-foreground">of {r.original_return_id}</div>
+                        ) : null}
+                      </TableCell>
                       <TableCell>{r.form_type}</TableCell>
                       <TableCell>{r.quarter}</TableCell>
                       <TableCell>{r.financial_year}</TableCell>
+                      <TableCell className="font-mono text-[10px] text-muted-foreground">{r.arn || "—"}</TableCell>
                       <TableCell className="text-right">{currency(r.total_deducted)}</TableCell>
                       <TableCell className="text-right">{currency(r.total_deposited)}</TableCell>
-                      <TableCell className="text-muted-foreground">{r.token_no || "—"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {r.filed_at ? new Date(r.filed_at).toLocaleDateString() : "—"}
+                      </TableCell>
                       <TableCell>
                         <StatusBadge status={r.status} />
+                        {r.remarks ? (
+                          <div className="mt-0.5 max-w-[160px] truncate text-[10px] text-muted-foreground" title={r.remarks}>
+                            {r.remarks}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          {r.allowed_transitions.map((t) => (
+                            <Button
+                              key={t}
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs"
+                              disabled={rowBusy === r.return_id}
+                              onClick={() => transition(r.return_id, t)}
+                            >
+                              {t}
+                            </Button>
+                          ))}
+                          {r.status !== "Cancelled" ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs"
+                              disabled={rowBusy === r.return_id}
+                              onClick={() => correct(r.return_id)}
+                            >
+                              Correct
+                            </Button>
+                          ) : null}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -318,6 +450,60 @@ export function ReturnsStage({ direction, fy }: { direction: Direction; fy: stri
           </div>
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+function ValidationPanel({ validation }: { validation?: Validation }) {
+  if (!validation) {
+    return <p className="text-sm text-muted-foreground">Running pre-filing validation…</p>
+  }
+  const { issues, error_count, warning_count, can_file } = validation
+
+  if (issues.length === 0) {
+    return (
+      <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
+        <ShieldCheck className="h-4 w-4" />
+        All pre-filing checks passed. This return is ready to file.
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border p-3">
+      <div className="flex items-center gap-2 text-sm font-medium">
+        {can_file ? (
+          <ShieldCheck className="h-4 w-4 text-emerald-600" />
+        ) : (
+          <ShieldAlert className="h-4 w-4 text-destructive" />
+        )}
+        Pre-filing validation
+        {error_count > 0 ? (
+          <Badge variant="destructive">{error_count} error{error_count > 1 ? "s" : ""}</Badge>
+        ) : null}
+        {warning_count > 0 ? (
+          <Badge variant="secondary">
+            {warning_count} warning{warning_count > 1 ? "s" : ""}
+          </Badge>
+        ) : null}
+      </div>
+      <ul className="flex flex-col gap-1">
+        {issues.map((issue, i) => (
+          <li key={`${issue.code}-${i}`} className="flex items-start gap-2 text-sm">
+            {issue.severity === "error" ? (
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+            ) : (
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+            )}
+            <span className={issue.severity === "error" ? "text-destructive" : "text-muted-foreground"}>
+              {issue.message}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {error_count > 0 ? (
+        <p className="text-xs text-muted-foreground">Resolve all errors in the source records before filing.</p>
+      ) : null}
     </div>
   )
 }

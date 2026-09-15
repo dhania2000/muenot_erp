@@ -28,6 +28,8 @@ export type FinanceAuditEventType =
   | "approved"
   | "rejected"
   | "reopened"
+  | "allocated"
+  | "allocation_cleared"
 
 export type FinanceAuditEvent = {
   id: number

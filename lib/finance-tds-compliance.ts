@@ -7,7 +7,7 @@ import { listTdsRules, entityTypeForConstitution } from "@/lib/finance-tds-rules
 import { postLines, type PostingLine } from "@/lib/finance-posting"
 import { ensureExpensePostingAccounts } from "@/lib/finance-accounts"
 import { getSetting } from "@/lib/settings/server"
-import { normalizePan } from "@/lib/pan"
+import { normalizePan, panStatus } from "@/lib/pan"
 
 export type DeductorIdentity = { tan: string; pan: string; name: string; address: string }
 
@@ -330,7 +330,104 @@ export async function ensureTdsComplianceSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
 
+  // Phase 38-40 — return lifecycle, acknowledgement and correction chain. The
+  // original strict (form,quarter,fy) uniqueness is dropped so a quarter can be
+  // filed once as an original and then re-filed any number of times as
+  // corrections; a second *active original* is instead blocked in application
+  // code (fileTdsReturn) so history is never overwritten.
+  const strictReturnIdx = (await query(
+    `SELECT 1 FROM information_schema.statistics
+       WHERE table_schema = DATABASE() AND table_name = 'tds_returns' AND index_name = 'uq_tds_return_period' LIMIT 1`,
+  ).catch(() => [])) as any[]
+  if (strictReturnIdx.length > 0) {
+    await query(`ALTER TABLE tds_returns DROP INDEX uq_tds_return_period`).catch(() => {})
+  }
+  await ensureColumn("tds_returns", "arn", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn("tds_returns", "original_return_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("tds_returns", "correction_type", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("tds_returns", "revision_no", "INT NOT NULL DEFAULT 0")
+  await ensureColumn("tds_returns", "is_correction", "TINYINT(1) NOT NULL DEFAULT 0")
+  await ensureColumn("tds_returns", "remarks", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("tds_returns", "challan_label", "VARCHAR(190) DEFAULT NULL")
+
+  // Phase 35 — certificate status lifecycle + correction linkage. The row itself
+  // moves Generated → Issued → Corrected in place (a correction recomputes the
+  // same certificate from the current ledger rather than creating a duplicate,
+  // which the (form,fy,quarter,party) unique key would reject anyway).
+  await ensureColumn("tds_certificates", "corrected_from", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("tds_certificates", "remarks", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("tds_certificates", "corrected_at", "TIMESTAMP NULL DEFAULT NULL")
+
+  // Phase 31-32 — automated compliance calendar + reminder ledger. The calendar
+  // itself is derived on the fly from the deductee ledger + statutory due dates
+  // (nothing to persist). What we DO persist is the reminder each due date has
+  // spawned, so a due date is only ever alerted once per channel and the sweep
+  // is idempotent — the cron can run hourly without creating duplicates.
+  await query(
+    `CREATE TABLE IF NOT EXISTS tds_reminders (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      reminder_id VARCHAR(40) NOT NULL,
+      obligation_key VARCHAR(120) NOT NULL,       -- stable id of the calendar item
+      kind VARCHAR(24) NOT NULL,                  -- challan / return / certificate
+      direction VARCHAR(12) NOT NULL,
+      form_type VARCHAR(8) DEFAULT NULL,
+      quarter VARCHAR(4) DEFAULT NULL,
+      period VARCHAR(7) DEFAULT NULL,
+      financial_year VARCHAR(12) DEFAULT NULL,
+      due_date DATE NOT NULL,
+      title VARCHAR(190) NOT NULL,
+      amount DECIMAL(16,2) NOT NULL DEFAULT 0,
+      severity VARCHAR(16) NOT NULL DEFAULT 'upcoming',
+      status VARCHAR(16) NOT NULL DEFAULT 'open',  -- open / acknowledged / done / dismissed
+      offset_label VARCHAR(24) DEFAULT NULL,       -- which lead time fired (e.g. T-7, DUE, OVERDUE)
+      note VARCHAR(255) DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_tds_reminder_fire (obligation_key, offset_label),
+      KEY idx_tds_reminder_due (due_date),
+      KEY idx_tds_reminder_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+
   ensured = true
+}
+
+// ---------------------------------------------------------------------------
+// Return status lifecycle (Phase 38)
+// ---------------------------------------------------------------------------
+
+/**
+ * The statutory return workflow. "Filed" and "Nil"/"Not filed" (computed) are
+ * preserved from the original engine; the rest are the richer states a preparer
+ * moves a return through. Draft/Ready are pre-submission; the remainder are
+ * post-submission handling states.
+ */
+export const TDS_RETURN_STATUSES = [
+  "Draft",
+  "Ready",
+  "Under Review",
+  "Filed",
+  "Payment Pending",
+  "Correction Required",
+  "Rejected",
+  "Cancelled",
+] as const
+export type TdsReturnStatus = (typeof TDS_RETURN_STATUSES)[number]
+
+/** Allowed forward/lateral transitions for a return status (Phase 38). */
+const RETURN_TRANSITIONS: Record<string, TdsReturnStatus[]> = {
+  Draft: ["Ready", "Cancelled"],
+  Ready: ["Under Review", "Filed", "Draft", "Cancelled"],
+  "Under Review": ["Filed", "Correction Required", "Ready", "Cancelled"],
+  Filed: ["Payment Pending", "Correction Required", "Rejected"],
+  "Payment Pending": ["Filed", "Correction Required"],
+  "Correction Required": ["Filed", "Cancelled"],
+  Rejected: ["Ready", "Cancelled"],
+  Cancelled: [],
+}
+
+export function allowedReturnTransitions(status: string): TdsReturnStatus[] {
+  return RETURN_TRANSITIONS[status] ?? []
 }
 
 // ---------------------------------------------------------------------------
@@ -1189,8 +1286,154 @@ export async function listTdsReturns(direction?: TdsDirection) {
     deductee_count: Number(r.deductee_count || 0),
     status: r.status,
     token_no: r.token_no ?? null,
+    arn: r.arn ?? null,
+    challan_label: r.challan_label ?? null,
+    original_return_id: r.original_return_id ?? null,
+    correction_type: r.correction_type ?? null,
+    revision_no: Number(r.revision_no || 0),
+    is_correction: Number(r.is_correction || 0) === 1,
+    remarks: r.remarks ?? null,
     filed_at: r.filed_at ? new Date(r.filed_at).toISOString() : null,
+    allowed_transitions: allowedReturnTransitions(String(r.status)),
   }))
+}
+
+// ---------------------------------------------------------------------------
+// Pre-filing validation (Phase 36 preparation checks + Phase 37 blocking errors)
+// ---------------------------------------------------------------------------
+
+export type TdsValidationIssue = {
+  code: string
+  severity: "error" | "warning"
+  message: string
+  party_name?: string
+  section?: string
+}
+
+/**
+ * Validate a quarter's return before it can be filed. Errors block filing
+ * (Phase 37); warnings are advisory. Every check is derived from the same
+ * deductee ledger + challans the return itself is built from, plus the
+ * deductor's statutory identity (TAN/PAN) and the configurable rule master, so
+ * nothing is captured twice.
+ */
+export async function validateTdsReturn(quarter: TdsQuarter, financialYear: string, direction: TdsDirection) {
+  await ensureTdsComplianceSchema()
+  const dir = normDirection(direction)
+  if (!isDeductorDirection(dir)) {
+    return {
+      quarter,
+      financial_year: financialYear,
+      direction: dir,
+      issues: [
+        {
+          code: "not_a_deductor",
+          severity: "warning" as const,
+          message: "Receivable TDS is a Form 26AS credit — no return is filed for this direction.",
+        },
+      ],
+      error_count: 0,
+      warning_count: 1,
+      can_file: false,
+    }
+  }
+
+  const prep = await prepareTdsReturn(quarter, financialYear, dir)
+  const rules = await listTdsRules(false).catch(() => [])
+  const ruleSections = new Set(rules.map((r) => normSection(r.section)))
+  const rateBySection = new Map<string, number[]>()
+  for (const r of rules) {
+    const key = normSection(r.section)
+    const arr = rateBySection.get(key) ?? []
+    arr.push(num(r.rate), num(r.rate_no_pan))
+    rateBySection.set(key, arr)
+  }
+
+  const issues: TdsValidationIssue[] = []
+
+  // Deductor identity — TAN / PAN are stamped onto every return (Phase 36/37).
+  if (!prep.deductor.tan) {
+    issues.push({ code: "tan_missing", severity: "error", message: "Deductor TAN is not set in Company Settings → TDS Deductor." })
+  } else if (!/^[A-Z]{4}\d{5}[A-Z]$/.test(prep.deductor.tan)) {
+    issues.push({ code: "tan_invalid", severity: "error", message: `Deductor TAN "${prep.deductor.tan}" is not a valid 10-character TAN.` })
+  }
+  if (!prep.deductor.pan) {
+    issues.push({ code: "deductor_pan_missing", severity: "warning", message: "Deductor PAN is not set in Company Settings." })
+  }
+
+  // Nothing to file.
+  if (prep.deductees.length === 0) {
+    issues.push({ code: "no_deductee", severity: "error", message: `No TDS deductions found for ${quarter} ${financialYear}.` })
+  }
+
+  // Deductee-level checks (Phase 37): PAN, section, rate, amount.
+  const seen = new Map<string, number>()
+  for (const d of prep.deductees) {
+    const pan = normalizePan(d.pan)
+    const ps = panStatus(pan)
+    if (ps === "Missing") {
+      issues.push({ code: "pan_missing", severity: "error", message: `PAN missing for ${d.party_name} (${d.section}).`, party_name: d.party_name, section: d.section })
+    } else if (ps === "Invalid") {
+      issues.push({ code: "pan_invalid", severity: "error", message: `Invalid PAN "${pan}" for ${d.party_name} (${d.section}).`, party_name: d.party_name, section: d.section })
+    }
+
+    const sec = normSection(d.section)
+    if (!sec || sec === "UNSPECIFIED") {
+      issues.push({ code: "section_missing", severity: "error", message: `Missing TDS section for ${d.party_name}.`, party_name: d.party_name })
+    } else if (ruleSections.size > 0 && !ruleSections.has(sec)) {
+      issues.push({ code: "section_unknown", severity: "warning", message: `Section ${d.section} for ${d.party_name} is not in the Rule Master.`, party_name: d.party_name, section: d.section })
+    }
+
+    if (d.tds <= 0) {
+      issues.push({ code: "amount_zero", severity: "warning", message: `Zero TDS deducted for ${d.party_name} (${d.section}).`, party_name: d.party_name, section: d.section })
+    }
+    // Effective rate sanity vs the rule master (Phase 37 "wrong rate").
+    if (d.base > 0 && sec && rateBySection.has(sec)) {
+      const effective = round2((d.tds / d.base) * 100)
+      const allowed = rateBySection.get(sec) ?? []
+      const near = allowed.some((r) => Math.abs(r - effective) <= 0.5)
+      if (!near && effective > 0) {
+        issues.push({
+          code: "rate_mismatch",
+          severity: "warning",
+          message: `Effective rate ${effective}% for ${d.party_name} (${d.section}) does not match any Rule Master rate.`,
+          party_name: d.party_name,
+          section: d.section,
+        })
+      }
+    }
+
+    const key = `${normalizePan(d.pan) || d.party_name}::${sec}`
+    seen.set(key, (seen.get(key) ?? 0) + 1)
+  }
+  for (const [key, count] of seen) {
+    if (count > 1) {
+      issues.push({ code: "duplicate_deductee", severity: "warning", message: `Duplicate deductee/section entry (${key.replace("::", " · ")}) appears ${count} times.` })
+    }
+  }
+
+  // Challan / payment coverage (Phase 37 "missing challan / missing payment / mismatch").
+  if (prep.totals.total_deducted > 0 && prep.totals.total_deposited <= 0) {
+    issues.push({ code: "challan_missing", severity: "error", message: "No challan deposited for this quarter — record the TDS deposit before filing." })
+  } else if (prep.totals.balance > 0.5) {
+    issues.push({ code: "amount_mismatch", severity: "error", message: `Deducted ${prep.totals.total_deducted} exceeds deposited ${prep.totals.total_deposited} by ${prep.totals.balance}.` })
+  } else if (prep.totals.balance < -0.5) {
+    issues.push({ code: "amount_mismatch", severity: "warning", message: `Deposited ${prep.totals.total_deposited} exceeds deducted ${prep.totals.total_deducted}.` })
+  }
+
+  const errorCount = issues.filter((i) => i.severity === "error").length
+  const warningCount = issues.filter((i) => i.severity === "warning").length
+  return {
+    quarter,
+    financial_year: financialYear,
+    direction: dir,
+    form_type: prep.form_type,
+    already_filed: !!prep.return,
+    issues,
+    error_count: errorCount,
+    warning_count: warningCount,
+    can_file: errorCount === 0 && prep.deductees.length > 0 && !prep.return,
+  }
 }
 
 export async function fileTdsReturn(
@@ -1205,27 +1448,157 @@ export async function fileTdsReturn(
   if (prep.return) throw new Error(`${prep.form_type} for ${quarter} ${financialYear} is already filed.`)
   if (prep.totals.deductee_count === 0) throw new Error("No TDS deductions found for this quarter; nothing to file.")
 
+  // Phase 37 — filing is blocked while any error-level validation issue remains.
+  const validation = await validateTdsReturn(quarter, financialYear, direction)
+  if (validation.error_count > 0) {
+    throw new Error(`Cannot file: ${validation.error_count} validation error(s) must be resolved first.`)
+  }
+
   const returnId = await nextRecordId("TDR")
+  const arn = generateAckNumber(prep.form_type)
+  const challanLabel = await quarterChallanLabel(quarter, financialYear, prep.direction as TdsDirection)
   await query(
     `INSERT INTO tds_returns
        (return_id, form_type, direction, quarter, financial_year, total_base, total_deducted, total_deposited,
-        deductee_count, status, token_no, snapshot, filed_at, filed_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`,
+        deductee_count, status, token_no, arn, challan_label, revision_no, is_correction, snapshot, filed_at, filed_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,NOW(),?)`,
     [
       returnId, prep.form_type, prep.direction, quarter, financialYear, prep.totals.total_base,
       prep.totals.total_deducted, prep.totals.total_deposited, prep.totals.deductee_count,
-      "Filed", tokenNo || null, JSON.stringify(prep), actorId ?? null,
+      "Filed", tokenNo || null, arn, challanLabel || null, JSON.stringify(prep), actorId ?? null,
     ],
   )
   await logFinanceEvent({
     entityType: "tds_return",
     entityRef: returnId,
     type: "posted",
-    summary: `${prep.form_type} filed for ${quarter} ${financialYear}: deducted ${prep.totals.total_deducted}, deposited ${prep.totals.total_deposited}`,
+    summary: `${prep.form_type} filed for ${quarter} ${financialYear}: deducted ${prep.totals.total_deducted}, deposited ${prep.totals.total_deposited} (ARN ${arn})`,
     amount: prep.totals.total_deducted,
     actorId: actorId ?? null,
   })
-  return { return_id: returnId, form_type: prep.form_type, quarter, financial_year: financialYear }
+  return { return_id: returnId, form_type: prep.form_type, quarter, financial_year: financialYear, arn }
+}
+
+/** A deterministic-looking acknowledgement/token reference for a filed return. */
+function generateAckNumber(formType: string): string {
+  const ts = Date.now().toString(36).toUpperCase().slice(-6)
+  const rand = Math.floor(Math.random() * 46656).toString(36).toUpperCase().padStart(3, "0")
+  return `ACK${formType.replace(/[^0-9A-Z]/gi, "")}${ts}${rand}`
+}
+
+/** The comma-joined challan references that cover a quarter, for filing history. */
+async function quarterChallanLabel(quarter: TdsQuarter, financialYear: string, direction: TdsDirection): Promise<string> {
+  const dir = normDirection(direction)
+  if (!isDeductorDirection(dir)) return ""
+  const label = new Set<string>()
+  for (const period of monthsOfQuarter(quarter, financialYear)) {
+    const rows = (await query(
+      `SELECT DISTINCT c.challan_no
+         FROM tds_challans c
+         JOIN tds_challan_allocations a ON a.challan_id = c.id
+        WHERE a.period = ? AND a.direction = ? AND c.challan_no IS NOT NULL AND c.challan_no <> ''`,
+      [period, dir],
+    ).catch(() => [])) as any[]
+    for (const r of rows) if (r.challan_no) label.add(String(r.challan_no))
+  }
+  return Array.from(label).join(", ")
+}
+
+/**
+ * Move a filed/prepared return to another lifecycle state (Phase 38). Only the
+ * transitions declared in RETURN_TRANSITIONS are allowed; an ARN or remark can
+ * be attached (e.g. a rejection reason). History is preserved — this never
+ * deletes a row.
+ */
+export async function setReturnStatus(
+  returnId: string,
+  target: TdsReturnStatus,
+  opts: { actorId?: number | null; remarks?: string | null; arn?: string | null } = {},
+) {
+  await ensureTdsComplianceSchema()
+  const [row] = (await query(`SELECT * FROM tds_returns WHERE return_id = ? LIMIT 1`, [returnId]).catch(() => [])) as any[]
+  if (!row) throw new Error("Return not found.")
+  const from = String(row.status)
+  if (from === target) return { return_id: returnId, status: target }
+  if (!allowedReturnTransitions(from).includes(target)) {
+    throw new Error(`Cannot move a ${from} return to ${target}.`)
+  }
+  await query(
+    `UPDATE tds_returns SET status = ?, remarks = COALESCE(?, remarks), arn = COALESCE(?, arn) WHERE return_id = ?`,
+    [target, opts.remarks ?? null, opts.arn ?? null, returnId],
+  )
+  await logFinanceEvent({
+    entityType: "tds_return",
+    entityRef: returnId,
+    type: "updated",
+    summary: `${row.form_type} ${row.quarter} ${row.financial_year} moved ${from} → ${target}${opts.remarks ? ` (${opts.remarks})` : ""}`,
+    actorId: opts.actorId ?? null,
+  }).catch(() => {})
+  return { return_id: returnId, status: target }
+}
+
+/**
+ * File a correction/revised return (Phase 40). The ORIGINAL is preserved and
+ * flagged "Correction Required"; a NEW return row is created carrying the
+ * correction linkage (original id, correction type, incremented revision) and
+ * recomputed figures from the current ledger. The original is never overwritten.
+ */
+export async function createReturnCorrection(opts: {
+  originalReturnId: string
+  correctionType?: string
+  tokenNo?: string | null
+  remarks?: string | null
+  actorId?: number | null
+}) {
+  await ensureTdsComplianceSchema()
+  const [orig] = (await query(`SELECT * FROM tds_returns WHERE return_id = ? LIMIT 1`, [opts.originalReturnId]).catch(
+    () => [],
+  )) as any[]
+  if (!orig) throw new Error("Original return not found.")
+  if (["Cancelled"].includes(String(orig.status))) throw new Error("A cancelled return cannot be corrected.")
+
+  const quarter = String(orig.quarter) as TdsQuarter
+  const financialYear = String(orig.financial_year)
+  const direction = String(orig.direction) as TdsDirection
+  const prep = await prepareTdsReturn(quarter, financialYear, direction)
+
+  const rootId = orig.original_return_id || orig.return_id
+  const priorRevisions = (await query(
+    `SELECT COALESCE(MAX(revision_no),0) AS mx FROM tds_returns WHERE original_return_id = ? OR return_id = ?`,
+    [rootId, rootId],
+  ).catch(() => [{ mx: 0 }])) as any[]
+  const revisionNo = Number(priorRevisions[0]?.mx || 0) + 1
+  const correctionType = opts.correctionType || `C${revisionNo}`
+
+  const returnId = await nextRecordId("TDR")
+  const arn = generateAckNumber(String(orig.form_type))
+  const challanLabel = await quarterChallanLabel(quarter, financialYear, direction)
+  await query(
+    `INSERT INTO tds_returns
+       (return_id, form_type, direction, quarter, financial_year, total_base, total_deducted, total_deposited,
+        deductee_count, status, token_no, arn, challan_label, original_return_id, correction_type, revision_no,
+        is_correction, remarks, snapshot, filed_at, filed_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,NOW(),?)`,
+    [
+      returnId, orig.form_type, normDirection(direction), quarter, financialYear, prep.totals.total_base,
+      prep.totals.total_deducted, prep.totals.total_deposited, prep.totals.deductee_count, "Filed",
+      opts.tokenNo || null, arn, challanLabel || null, rootId, correctionType, revisionNo,
+      opts.remarks ?? null, JSON.stringify(prep), opts.actorId ?? null,
+    ],
+  )
+  // Flag the original so history clearly shows it was superseded.
+  await query(`UPDATE tds_returns SET status = 'Correction Required' WHERE return_id = ? AND status = 'Filed'`, [
+    orig.return_id,
+  ]).catch(() => {})
+  await logFinanceEvent({
+    entityType: "tds_return",
+    entityRef: returnId,
+    type: "posted",
+    summary: `Correction ${correctionType} (rev ${revisionNo}) of ${orig.return_id} — ${orig.form_type} ${quarter} ${financialYear}`,
+    amount: prep.totals.total_deducted,
+    actorId: opts.actorId ?? null,
+  }).catch(() => {})
+  return { return_id: returnId, original_return_id: rootId, correction_type: correctionType, revision_no: revisionNo, arn }
 }
 
 // ---------------------------------------------------------------------------
@@ -1306,6 +1679,7 @@ export async function previewCertificates(opts: {
         doc_count: d.doc_count,
         issued: !!iss,
         certificate_id: iss?.certificate_id ?? null,
+        status: iss?.status ?? "Pending",
       }
     })
     .sort((a, b) => b.tds - a.tds)
@@ -1349,7 +1723,7 @@ export async function generateCertificates(opts: {
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`,
         [
           certificateId, opts.formType, dir, quarter, opts.financialYear, d.party_id || null, d.party_name,
-          d.pan || null, d.sections, d.base, d.tds, "Issued",
+          d.pan || null, d.sections, d.base, d.tds, "Generated",
           JSON.stringify({ ...d, deductor: preview.deductor, form_type: opts.formType, financial_year: opts.financialYear, quarter }),
           opts.actorId ?? null,
         ],
@@ -1392,8 +1766,107 @@ export async function listCertificates(direction: TdsDirection, financialYear?: 
     total_base: round2(num(r.total_base)),
     total_tds: round2(num(r.total_tds)),
     status: r.status,
+    remarks: r.remarks ?? null,
+    corrected_from: r.corrected_from ?? null,
+    corrected_at: r.corrected_at ? new Date(r.corrected_at).toISOString() : null,
     issued_at: r.issued_at ? new Date(r.issued_at).toISOString() : null,
+    allowed_transitions: allowedCertificateTransitions(String(r.status)),
   }))
+}
+
+// ---------------------------------------------------------------------------
+// Certificate status lifecycle (Phase 35)
+// ---------------------------------------------------------------------------
+
+export const TDS_CERTIFICATE_STATUSES = ["Pending", "Generated", "Issued", "Corrected"] as const
+export type TdsCertificateStatus = (typeof TDS_CERTIFICATE_STATUSES)[number]
+
+const CERTIFICATE_TRANSITIONS: Record<string, TdsCertificateStatus[]> = {
+  Generated: ["Issued", "Corrected"],
+  Issued: ["Corrected"],
+  Corrected: ["Issued"],
+}
+
+export function allowedCertificateTransitions(status: string): TdsCertificateStatus[] {
+  return CERTIFICATE_TRANSITIONS[status] ?? []
+}
+
+/** Move a certificate Generated → Issued (delivered to the deductee), etc. */
+export async function setCertificateStatus(
+  certificateId: string,
+  target: TdsCertificateStatus,
+  opts: { actorId?: number | null; remarks?: string | null } = {},
+) {
+  await ensureTdsComplianceSchema()
+  const [row] = (await query(`SELECT * FROM tds_certificates WHERE certificate_id = ? LIMIT 1`, [certificateId]).catch(
+    () => [],
+  )) as any[]
+  if (!row) throw new Error("Certificate not found.")
+  const from = String(row.status)
+  if (from === target) return { certificate_id: certificateId, status: target }
+  if (!allowedCertificateTransitions(from).includes(target)) {
+    throw new Error(`Cannot move a ${from} certificate to ${target}.`)
+  }
+  await query(`UPDATE tds_certificates SET status = ?, remarks = COALESCE(?, remarks) WHERE certificate_id = ?`, [
+    target,
+    opts.remarks ?? null,
+    certificateId,
+  ])
+  await logFinanceEvent({
+    entityType: "tds_certificate",
+    entityRef: certificateId,
+    type: "updated",
+    summary: `Certificate ${certificateId} moved ${from} → ${target}`,
+    actorId: opts.actorId ?? null,
+  }).catch(() => {})
+  return { certificate_id: certificateId, status: target }
+}
+
+/**
+ * Re-issue a corrected certificate (Phase 35). Recomputes the deductee's base/TDS
+ * from the CURRENT ledger and rewrites the same certificate row in place, marking
+ * it "Corrected" and stamping the correction time. The unique
+ * (form/fy/quarter/party) key means a correction is a re-issue, never a duplicate.
+ */
+export async function correctCertificate(certificateId: string, opts: { actorId?: number | null; remarks?: string | null } = {}) {
+  await ensureTdsComplianceSchema()
+  const [row] = (await query(`SELECT * FROM tds_certificates WHERE certificate_id = ? LIMIT 1`, [certificateId]).catch(
+    () => [],
+  )) as any[]
+  if (!row) throw new Error("Certificate not found.")
+
+  const preview = await previewCertificates({
+    formType: String(row.form_type) as CertificateForm,
+    direction: String(row.direction) as TdsDirection,
+    quarter: (row.quarter ?? undefined) as TdsQuarter | undefined,
+    financialYear: String(row.financial_year),
+  })
+  const match = preview.deductees.find((d) => String(d.party_id || "") === String(row.party_id || "") || d.party_name === row.party_name)
+  if (!match) throw new Error("This deductee no longer has TDS in the current ledger — nothing to correct.")
+
+  await query(
+    `UPDATE tds_certificates
+        SET total_base = ?, total_tds = ?, sections = ?, pan = ?, status = 'Corrected',
+            corrected_from = COALESCE(corrected_from, ?), corrected_at = NOW(),
+            remarks = COALESCE(?, remarks),
+            snapshot = ?
+      WHERE certificate_id = ?`,
+    [
+      match.base, match.tds, match.sections, match.pan || null, row.certificate_id,
+      opts.remarks ?? null,
+      JSON.stringify({ ...match, deductor: preview.deductor, form_type: row.form_type, financial_year: row.financial_year, quarter: row.quarter ?? null, corrected: true }),
+      certificateId,
+    ],
+  )
+  await logFinanceEvent({
+    entityType: "tds_certificate",
+    entityRef: certificateId,
+    type: "updated",
+    summary: `Corrected certificate ${certificateId} — base ${match.base}, TDS ${match.tds}`,
+    amount: match.tds,
+    actorId: opts.actorId ?? null,
+  }).catch(() => {})
+  return { certificate_id: certificateId, status: "Corrected", total_tds: match.tds }
 }
 
 // ---------------------------------------------------------------------------

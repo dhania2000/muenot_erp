@@ -120,6 +120,13 @@ type ReportCapabilities = { canExport: boolean; canEmail: boolean }
 const selectClass =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
+// Transaction-level reports (general ledger, journal register, etc.) run over
+// "All time" by default and can return tens of thousands of rows. Rendering
+// every one into a single DOM table crashes the browser tab, so the on-screen
+// preview is capped. Totals still reflect the full result set, and CSV / Excel
+// / PDF exports always contain every row.
+const INLINE_ROW_CAP = 500
+
 function formatCell(value: any, col: ReportColumn) {
   if (value === null || value === undefined || value === "") return "—"
   if (col.money) return currency(value)
@@ -413,6 +420,13 @@ function ReportView({
           </p>
         ) : (
           <div className="overflow-x-auto">
+            {rows.length > INLINE_ROW_CAP && (
+              <p className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                Showing the first {INLINE_ROW_CAP.toLocaleString("en-IN")} of{" "}
+                {rows.length.toLocaleString("en-IN")} rows. Totals below reflect the full result.
+                Narrow the period or filters, or download the report for every row.
+              </p>
+            )}
             <Table>
               <TableHeader>
                 <TableRow>
@@ -434,7 +448,7 @@ function ReportView({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  rows.map((row, i) => (
+                  rows.slice(0, INLINE_ROW_CAP).map((row, i) => (
                     <TableRow key={i}>
                       {report?.columns.map((c) => (
                         <TableCell

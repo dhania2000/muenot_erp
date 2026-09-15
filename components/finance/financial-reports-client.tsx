@@ -20,13 +20,18 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Eye,
   FileBarChart,
   FileText,
   FilterX,
+  Mail,
   RefreshCw,
 } from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 import type { PeriodMode } from "@/lib/finance-reports"
+import { ReportViewDialog, type ReportCompany } from "@/components/finance/report-view-dialog"
+import { ReportEmailDialog } from "@/components/finance/report-email-dialog"
+import { ReportDrillDrawer, type DrillTarget } from "@/components/finance/report-drill-drawer"
 import {
   defaultPeriod,
   fyOptions,
@@ -69,6 +74,8 @@ type ReportResponse = {
   }
   rows: Record<string, any>[]
   available: boolean
+  company: ReportCompany | null
+  generatedAt: string
 }
 
 // Honours the configured currency (symbol/position/separators) via settings.
@@ -124,25 +131,39 @@ function ReportView({
   to,
   filters,
   subtitle,
+  filterLabels,
 }: {
   entry: CatalogueEntry
   from: string
   to: string
   filters: Record<string, string>
   subtitle: string
+  filterLabels: string[]
 }) {
   const { data, isLoading, isValidating, mutate } = useSWR<ReportResponse>(
     reportUrl(entry.key, from, to, filters),
     fetcher,
-    { keepPreviousData: true },
+    {
+      keepPreviousData: true,
+      // Live data: refresh when the tab regains focus or the network reconnects
+      // so posted transactions surface without a manual reload.
+      revalidateOnFocus: true,
+      revalidateOnReconnect: true,
+    },
   )
 
   const report = data?.report
   const rows = data?.rows ?? []
+  const company = data?.company ?? null
+  const generatedAt = data?.generatedAt ?? ""
   const totals = useMemo(
     () => (report ? computeTotals(report.columns, rows) : null),
     [report, rows],
   )
+
+  const [viewOpen, setViewOpen] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
+  const [drillTarget, setDrillTarget] = useState<DrillTarget>(null)
 
   function downloadCsv() {
     if (!report) return
@@ -229,6 +250,10 @@ function ReportView({
           >
             <RefreshCw className={isValidating ? "animate-spin" : ""} />
           </Button>
+          <Button variant="default" size="sm" onClick={() => setViewOpen(true)} disabled={!report}>
+            <Eye data-icon="inline-start" />
+            View
+          </Button>
           <Button variant="outline" size="sm" onClick={downloadCsv} disabled={rows.length === 0}>
             <Download data-icon="inline-start" />
             CSV
@@ -236,6 +261,10 @@ function ReportView({
           <Button variant="outline" size="sm" onClick={downloadPdf} disabled={rows.length === 0}>
             <FileText data-icon="inline-start" />
             PDF
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setEmailOpen(true)} disabled={rows.length === 0}>
+            <Mail data-icon="inline-start" />
+            Email
           </Button>
         </div>
       </CardHeader>
@@ -301,6 +330,46 @@ function ReportView({
           </div>
         )}
       </CardContent>
+
+      {report && (
+        <ReportViewDialog
+          open={viewOpen}
+          onClose={() => setViewOpen(false)}
+          reportLabel={entry.label}
+          reportDescription={entry.description}
+          columns={report.columns}
+          rows={rows}
+          company={company as ReportCompany | null}
+          subtitle={subtitle}
+          generatedAt={generatedAt}
+          filterLabels={filterLabels}
+          onDownloadCsv={downloadCsv}
+          onDownloadPdf={downloadPdf}
+          onEmail={() => {
+            setViewOpen(false)
+            setEmailOpen(true)
+          }}
+          onDrill={(target) => setDrillTarget(target)}
+        />
+      )}
+
+      <ReportEmailDialog
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        reportKey={entry.key}
+        reportLabel={entry.label}
+        from={from}
+        to={to}
+        filters={filters}
+        subtitle={subtitle}
+      />
+
+      <ReportDrillDrawer
+        target={drillTarget}
+        from={from}
+        to={to}
+        onClose={() => setDrillTarget(null)}
+      />
     </Card>
   )
 }
@@ -635,7 +704,14 @@ export function FinancialReportsClient() {
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading report catalogue…</p>
       ) : selected ? (
-        <ReportView entry={selected} from={from} to={to} filters={filters} subtitle={subtitle} />
+        <ReportView
+          entry={selected}
+          from={from}
+          to={to}
+          filters={filters}
+          subtitle={subtitle}
+          filterLabels={activeFilterLabels(selected, filters)}
+        />
       ) : (
         <p className="text-sm text-muted-foreground">Select a category and report to begin.</p>
       )}

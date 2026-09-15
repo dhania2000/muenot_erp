@@ -74,6 +74,8 @@ type ReportResponse = {
   }
   rows: Record<string, any>[]
   available: boolean
+  company: ReportCompany | null
+  generatedAt: string
 }
 
 // Honours the configured currency (symbol/position/separators) via settings.

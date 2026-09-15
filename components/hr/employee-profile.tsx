@@ -28,9 +28,11 @@ import {
   ScrollText,
   Network,
   Loader2,
+  KeyRound,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PermissionMatrixEditor } from "@/components/hr/permission-matrix-editor"
+import { EmployeeResetPasswordDialog } from "@/components/hr/employee-reset-password-dialog"
 import { shiftTimeLabel } from "@/components/hr/shift-change-status"
 
 function assignmentStateVariant(state: string): "default" | "secondary" | "destructive" | "outline" {
@@ -643,6 +645,7 @@ export function EmployeeProfile({
   const searchParams = useSearchParams()
   const tab = searchParams.get("tab") || defaultTab
   const [statusBusy, setStatusBusy] = useState(false)
+  const [resetOpen, setResetOpen] = useState(false)
 
   function onTabChange(value: string) {
     const params = new URLSearchParams(searchParams.toString())
@@ -729,9 +732,25 @@ export function EmployeeProfile({
             ) : (
               <Badge variant="outline">No login</Badge>
             )}
+            {isAdmin && linkedUser && (
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setResetOpen(true)}>
+                <KeyRound className="size-3.5" />
+                Reset password
+              </Button>
+            )}
           </div>
         </div>
       </div>
+
+      {isAdmin && linkedUser && (
+        <EmployeeResetPasswordDialog
+          open={resetOpen}
+          employeeId={employee.id}
+          employeeName={employee.employee_name}
+          employeeEmail={linkedUser.email}
+          onOpenChange={setResetOpen}
+        />
+      )}
 
       <Tabs value={tab} onValueChange={onTabChange} className="w-full">
         <TabsList className="flex h-auto w-full max-w-full justify-start gap-1 overflow-x-auto">

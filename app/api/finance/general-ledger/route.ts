@@ -4,7 +4,7 @@ import { getGeneralLedger, type GLFilters, type GLView } from "@/lib/finance-gen
 
 export const runtime = "nodejs"
 
-const VIEWS: GLView[] = ["ledger", "party", "project", "monthly", "reconciliation", "bank"]
+const VIEWS: GLView[] = ["ledger", "party", "project", "monthly", "reconciliation", "bank", "integrity"]
 
 // GET /api/finance/general-ledger?view=ledger&financial_year=2026-27&...
 //

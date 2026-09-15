@@ -805,10 +805,231 @@ async function getBankReconciliation(f: GLFilters, period: { start: string | nul
 }
 
 // ---------------------------------------------------------------------------
+// Integrity view (Phases 21 & 22) — GL ⇄ Journal ⇄ Source reconciliation.
+//
+// Journal Entries stays the PRIMARY accounting source; the General Ledger is the
+// central record of what was posted. This view proves the two agree, voucher by
+// voucher, and that both trace back to the originating source document:
+//
+//   Phase 21 (Journal reconciliation): a posted voucher's General Ledger
+//   debit/credit total must equal the Journal Entries total that produced it,
+//   and each side must itself balance. Any divergence is a GL Exception.
+//
+//   Phase 22 (Source reconciliation): the source document's amount must flow
+//   Source → Journal → General Ledger with the same accounting effect (the
+//   voucher's ledger debit total, which by construction equals the document's
+//   gross/total). A divergence is a GL Exception.
+//
+// GST/TDS are compared as stored — never recomputed — so tax values recorded by
+// the source engines are preserved, only totals are reconciled. This layer is
+// strictly read-only: it inspects what the posting engine already wrote and
+// mutates nothing. Balanced vouchers pass; only mismatches raise exceptions.
+// ---------------------------------------------------------------------------
+
+/** Source document tables whose stored gross/total maps onto a voucher's ledger
+ *  debit total. Each posting engine writes debit-total = document gross by
+ *  construction, so an equality check reconciles the source amount end-to-end. */
+const SOURCE_AMOUNT_SPECS: { type: string; table: string; column: string; label: string }[] = [
+  { type: "sales_invoice", table: "sales_invoices", column: "invoice_total", label: "Sales Invoice" },
+  { type: "purchase_bill", table: "purchase_bills", column: "gross_bill_amount", label: "Purchase Bill" },
+  { type: "expense", table: "expenses", column: "gross_amount", label: "Expense" },
+]
+
+export type GlIntegrityRow = {
+  voucherNo: string
+  date: string | null
+  sourceModule: string
+  sourceReference: string | null
+  sourceType: string | null
+  journalDebit: number
+  journalCredit: number
+  ledgerDebit: number
+  ledgerCredit: number
+  gst: number
+  tds: number
+  sourceAmount: number | null
+  status: "Balanced" | "Exception"
+  issues: string[]
+}
+
+export type GlIntegrityCounts = {
+  total: number
+  balanced: number
+  exceptions: number
+  journalMismatch: number
+  sourceMismatch: number
+  unbalanced: number
+  missingJournal: number
+}
+
+/**
+ * Reconcile every posted voucher in the reporting window. Only whole-voucher
+ * safe filters (period / financial year / source module / free text) are
+ * applied — account or party filters would slice a voucher and make a balanced
+ * posting look unbalanced, so they are intentionally ignored here.
+ */
+async function getIntegrityView(f: GLFilters, period: { start: string | null; end: string | null }, limit: number) {
+  const conditions: string[] = [`voucher_no <> ''`]
+  const args: any[] = []
+  if (period.start) {
+    conditions.push(`transaction_date >= ?`)
+    args.push(period.start)
+  }
+  if (period.end) {
+    conditions.push(`transaction_date <= ?`)
+    args.push(period.end)
+  }
+  if (f.financial_year) {
+    conditions.push(`financial_year = ?`)
+    args.push(f.financial_year)
+  }
+  if (f.source_module) {
+    conditions.push(`source_module = ?`)
+    args.push(f.source_module)
+  }
+  if (f.search) {
+    const cols = ["voucher_no", "journal_entry_id", "source_reference", "reference_no", "party_name", "account_name"]
+    conditions.push("(" + cols.map((c) => `${c} LIKE ?`).join(" OR ") + ")")
+    const like = `%${f.search}%`
+    cols.forEach(() => args.push(like))
+  }
+
+  const emptyCounts: GlIntegrityCounts = {
+    total: 0, balanced: 0, exceptions: 0, journalMismatch: 0, sourceMismatch: 0, unbalanced: 0, missingJournal: 0,
+  }
+
+  const glRows = await safe(
+    `SELECT voucher_no,
+            MIN(transaction_date) transaction_date,
+            COALESCE(MAX(source_module),'') source_module,
+            COALESCE(MAX(source_reference),'') source_reference,
+            COALESCE(MAX(source_entity_type),'') source_entity_type,
+            MAX(source_entity_id) source_entity_id,
+            ROUND(COALESCE(SUM(debit),0),2) gd,
+            ROUND(COALESCE(SUM(credit),0),2) gc,
+            ROUND(COALESCE(SUM(gst_amount),0),2) gst,
+            ROUND(COALESCE(SUM(tds_amount),0),2) tds
+       FROM general_ledger ${whereClause(conditions)}
+       GROUP BY voucher_no
+       ORDER BY MIN(transaction_date) DESC`,
+    args,
+  )
+  if (!glRows.length) return { rows: [] as GlIntegrityRow[], counts: emptyCounts }
+
+  const vouchers = glRows.map((r) => String(r.voucher_no))
+  const ph = vouchers.map(() => "?").join(",")
+
+  // Journal totals for the same vouchers (posted lines are what feed the GL).
+  const jRows = await safe(
+    `SELECT voucher_no,
+            ROUND(COALESCE(SUM(debit),0),2) jd,
+            ROUND(COALESCE(SUM(credit),0),2) jc,
+            COUNT(*) lines
+       FROM journal_entries
+      WHERE voucher_no IN (${ph}) AND COALESCE(posting_status,'') = 'Posted'
+      GROUP BY voucher_no`,
+    vouchers,
+  )
+  const jMap = new Map(jRows.map((r) => [String(r.voucher_no), r]))
+
+  // Source-document amounts, one grouped read per known source type.
+  const sourceMap = new Map<string, number>()
+  const byType = new Map<string, Set<string>>()
+  for (const r of glRows) {
+    const t = String(r.source_entity_type || "")
+    const id = r.source_entity_id
+    if (t && id != null && SOURCE_AMOUNT_SPECS.some((s) => s.type === t)) {
+      if (!byType.has(t)) byType.set(t, new Set())
+      byType.get(t)!.add(String(id))
+    }
+  }
+  for (const [type, ids] of byType) {
+    const spec = SOURCE_AMOUNT_SPECS.find((s) => s.type === type)!
+    const idList = Array.from(ids)
+    const iph = idList.map(() => "?").join(",")
+    const rows = await safe(
+      `SELECT id, COALESCE(${spec.column},0) amount FROM ${spec.table} WHERE id IN (${iph})`,
+      idList,
+    )
+    for (const r of rows) sourceMap.set(`${type}:${r.id}`, round2(num(r.amount)))
+  }
+
+  const counts: GlIntegrityCounts = { ...emptyCounts }
+  const rows: GlIntegrityRow[] = glRows.map((r) => {
+    const voucherNo = String(r.voucher_no)
+    const gd = round2(num(r.gd))
+    const gc = round2(num(r.gc))
+    const j = jMap.get(voucherNo)
+    const jd = j ? round2(num(j.jd)) : 0
+    const jc = j ? round2(num(j.jc)) : 0
+    const type = String(r.source_entity_type || "") || null
+    const sid = r.source_entity_id
+    const sourceAmount = type && sid != null ? sourceMap.get(`${type}:${sid}`) ?? null : null
+    const issues: string[] = []
+
+    // Phase 21 — ledger internal balance + Journal ⇄ GL agreement.
+    if (Math.abs(gd - gc) > 0.01) {
+      issues.push(`Ledger voucher is not balanced (Dr ${gd.toFixed(2)} ≠ Cr ${gc.toFixed(2)}).`)
+      counts.unbalanced += 1
+    }
+    if (!j) {
+      issues.push(`No posted Journal Entries voucher backs this ledger posting.`)
+      counts.missingJournal += 1
+    } else {
+      if (Math.abs(jd - jc) > 0.01) {
+        issues.push(`Journal is not balanced (Dr ${jd.toFixed(2)} ≠ Cr ${jc.toFixed(2)}).`)
+      }
+      if (Math.abs(jd - gd) > 0.01 || Math.abs(jc - gc) > 0.01) {
+        issues.push(
+          `Journal total (Dr ${jd.toFixed(2)}/Cr ${jc.toFixed(2)}) does not match General Ledger (Dr ${gd.toFixed(2)}/Cr ${gc.toFixed(2)}).`,
+        )
+        counts.journalMismatch += 1
+      }
+    }
+    // Phase 22 — source-document amount flows through to the ledger effect.
+    if (sourceAmount != null && Math.abs(sourceAmount - gd) > 0.01) {
+      const label = SOURCE_AMOUNT_SPECS.find((s) => s.type === type)?.label || "Source"
+      issues.push(`${label} amount ${sourceAmount.toFixed(2)} does not match the posted ledger effect ${gd.toFixed(2)}.`)
+      counts.sourceMismatch += 1
+    }
+
+    const status: "Balanced" | "Exception" = issues.length ? "Exception" : "Balanced"
+    if (status === "Exception") counts.exceptions += 1
+    else counts.balanced += 1
+    counts.total += 1
+
+    return {
+      voucherNo,
+      date: r.transaction_date ? String(r.transaction_date).slice(0, 10) : null,
+      sourceModule: String(r.source_module || ""),
+      sourceReference: String(r.source_reference || "") || null,
+      sourceType: type,
+      journalDebit: jd,
+      journalCredit: jc,
+      ledgerDebit: gd,
+      ledgerCredit: gc,
+      gst: round2(num(r.gst)),
+      tds: round2(num(r.tds)),
+      sourceAmount,
+      status,
+      issues,
+    }
+  })
+
+  // Exceptions first, then most recent — so problems lead the table.
+  rows.sort((a, b) => {
+    if (a.status !== b.status) return a.status === "Exception" ? -1 : 1
+    return String(b.date ?? "").localeCompare(String(a.date ?? ""))
+  })
+  const capped = rows.slice(0, Math.max(1, Math.min(limit, 2000)))
+  return { rows: capped, counts }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point — one call assembles the requested view plus the shared
 // dashboard cards and filter options.
 // ---------------------------------------------------------------------------
-export type GLView = "ledger" | "party" | "project" | "monthly" | "reconciliation" | "bank"
+export type GLView = "ledger" | "party" | "project" | "monthly" | "reconciliation" | "bank" | "integrity"
 
 export async function getGeneralLedger(view: GLView, f: GLFilters, opts: { limit?: number } = {}) {
   const period = resolvePeriod(f)
@@ -822,6 +1043,7 @@ export async function getGeneralLedger(view: GLView, f: GLFilters, opts: { limit
   else if (view === "monthly") payload = await getMonthlyLedger(f, period)
   else if (view === "reconciliation") payload = await getReconciliationView(f, period, limit)
   else if (view === "bank") payload = await getBankReconciliation(f, period)
+  else if (view === "integrity") payload = await getIntegrityView(f, period, limit)
   else payload = await getLedgerView(f, period, limit)
 
   return { view, cards, filterOptions, period, ...payload }

@@ -3,6 +3,7 @@ import { requireFeature } from "@/lib/api-auth"
 import { isEmailConfigured } from "@/lib/email"
 import { createFinanceEmail } from "@/lib/finance-email"
 import { getReportCompany, runFinanceReport } from "@/lib/finance-report-run"
+import { logReportRun } from "@/lib/finance-report-runs"
 import { inr0 } from "@/lib/finance-calc"
 
 // Email a Financial Report. Reuses the shared report engine to regenerate the
@@ -40,8 +41,23 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}))
   const reportKey = String(body.report || "").trim()
   const toEmail = String(body.to_email || "").trim()
+  const toName = String(body.to_name || "").trim()
   const subtitle = String(body.subtitle || "").trim()
   const message = String(body.message || "").trim()
+  const subjectOverride = String(body.subject || "").trim()
+  const periodLabel = String(body.period_label || "").trim()
+  const filtersText = String(body.filters_text || "").trim()
+
+  // Optional PDF snapshot to attach (uploaded client-side to email-attachments).
+  const attachmentInput =
+    body.attachment && typeof body.attachment === "object" && body.attachment.pathname
+      ? {
+          pathname: String(body.attachment.pathname),
+          filename: String(body.attachment.filename || "report.pdf"),
+          contentType: String(body.attachment.contentType || "application/pdf"),
+          size: Number(body.attachment.size) || null,
+        }
+      : null
 
   if (!reportKey) return NextResponse.json({ error: "A report is required" }, { status: 400 })
   if (!toEmail) return NextResponse.json({ error: "A recipient email is required" }, { status: 400 })
@@ -141,10 +157,13 @@ export async function POST(request: NextRequest) {
     )} finance records. Figures reflect posted transactions as of the generated time above.</p>
   </div>`
 
-  const subject = `${reportMeta.label}${subtitle ? ` — ${subtitle}` : ""}`
+  // Phase 17: honour the sender's (editable) subject, falling back to the
+  // auto-generated "<Report> — <Period • Filters>" default when none is sent.
+  const subject = subjectOverride || `${reportMeta.label}${subtitle ? ` — ${subtitle}` : ""}`
 
   const result = await createFinanceEmail({
     toEmail,
+    toName: toName || null,
     cc: body.cc ?? null,
     subject,
     body: html,
@@ -154,11 +173,29 @@ export async function POST(request: NextRequest) {
     emailType: "Manual",
     mode: "send",
     createdBy: (session as any).userId ?? null,
+    attachment: attachmentInput,
     render: false,
   })
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.code || 400 })
   }
+
+  // Phase 18: record this send in the report run log so it appears in the
+  // report Email history alongside downloads (in addition to the Finance
+  // Email Hub, which already tracks every finance email).
+  await logReportRun({
+    reportKey,
+    reportLabel: reportMeta.label,
+    format: "Email",
+    periodLabel: periodLabel || subtitle || null,
+    filtersText: filtersText || null,
+    recipient: toName ? `${toName} <${toEmail}>` : toEmail,
+    status: String(result.status || "Sent"),
+    userId: (session as any).userId ?? null,
+    userName: session.name || null,
+    rowCount: rows.length,
+  })
+
   return NextResponse.json({ ok: true, id: result.id, email_uid: result.emailUid, status: result.status })
 }

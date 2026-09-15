@@ -112,8 +112,17 @@ function excelCell(value: any, col: ReportColumn): any {
 
 export async function exportReportExcel(payload: ReportExportPayload): Promise<void> {
   const XLSX = await import("xlsx")
-  const { reportLabel, reportDescription, columns, rows, company, subtitle, filterLabels, generatedAt } =
-    payload
+  const {
+    reportLabel,
+    reportDescription,
+    columns,
+    rows,
+    company,
+    subtitle,
+    filterLabels,
+    generatedAt,
+    generatedBy,
+  } = payload
   const model = buildReportModel(columns, rows)
 
   const aoa: any[][] = []
@@ -134,7 +143,14 @@ export async function exportReportExcel(payload: ReportExportPayload): Promise<v
   if (subtitle) aoa.push(pad([subtitle]))
   if (filterLabels && filterLabels.length > 0) aoa.push(pad([filterLabels.join("   •   ")]))
   const stamp = generatedStamp(generatedAt)
-  aoa.push(pad([`Amounts in INR${stamp ? `   •   Generated ${stamp}` : ""}`]))
+  const stampLine = [
+    "Amounts in INR",
+    stamp ? `Generated ${stamp}` : "",
+    generatedBy ? `by ${generatedBy}` : "",
+  ]
+    .filter(Boolean)
+    .join("   •   ")
+  aoa.push(pad([stampLine]))
   aoa.push(pad([]))
 
   aoa.push(pad(columns.map((c) => c.label)))

@@ -151,4 +151,6 @@ export type ReportExportPayload = {
   subtitle?: string
   filterLabels?: string[]
   generatedAt?: string
+  /** Name of the user who generated this snapshot (Phase 20). */
+  generatedBy?: string
 }

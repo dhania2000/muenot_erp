@@ -25,12 +25,27 @@ const GROUP_BG = [229, 231, 235] as const
 const SUBTOTAL_BG = [243, 244, 246] as const
 const TOTAL_BG = [219, 223, 230] as const
 
-export async function exportReportPdf(payload: ReportExportPayload): Promise<void> {
+/**
+ * Build the report PDF document (without saving). Both the direct download
+ * (`exportReportPdf`) and the email-attachment builder (`buildReportPdfBlob`)
+ * share this so an emailed PDF is byte-for-byte the same snapshot a user would
+ * have downloaded.
+ */
+async function buildReportPdfDoc(payload: ReportExportPayload) {
   const { jsPDF } = await import("jspdf")
   const autoTable = (await import("jspdf-autotable")).default
 
-  const { reportLabel, reportDescription, columns, rows, company, subtitle, filterLabels, generatedAt } =
-    payload
+  const {
+    reportLabel,
+    reportDescription,
+    columns,
+    rows,
+    company,
+    subtitle,
+    filterLabels,
+    generatedAt,
+    generatedBy,
+  } = payload
 
   const model = buildReportModel(columns, rows)
   const wide = columns.length > 6
@@ -165,12 +180,19 @@ export async function exportReportPdf(payload: ReportExportPayload): Promise<voi
         doc.text(bandBits.join("   •   "), pageWidth / 2, y, { align: "center" })
       }
 
-      // Generated stamp + "Amounts in INR" note.
+      // Generated stamp + "Amounts in INR" note. The stamp records the exact
+      // snapshot moment and author (Phase 20) so a saved/emailed PDF is
+      // self-describing long after the underlying figures move on.
       y += 4.5
       doc.setFontSize(7.5)
       doc.setTextColor(...MUTED)
       const noteLeft = "Amounts in INR"
-      const noteRight = stamp ? `Generated ${stamp}` : ""
+      const noteRight = [
+        stamp ? `Generated ${stamp}` : "",
+        generatedBy ? `by ${generatedBy}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
       doc.text(noteLeft, marginX, y)
       if (noteRight) doc.text(noteRight, pageWidth - marginX, y, { align: "right" })
 
@@ -201,5 +223,26 @@ export async function exportReportPdf(payload: ReportExportPayload): Promise<voi
     ;(doc as any).putTotalPages(totalPagesExp)
   }
 
-  doc.save(`${reportFileStem(payload.reportKey)}.pdf`)
+  return doc
+}
+
+/** A stable, human-friendly file name for a downloaded / attached report PDF. */
+export function reportPdfFileName(payload: ReportExportPayload): string {
+  return `${reportFileStem(payload.reportKey)}.pdf`
+}
+
+/** Generate the report PDF and trigger a browser download. */
+export async function exportReportPdf(payload: ReportExportPayload): Promise<void> {
+  const doc = await buildReportPdfDoc(payload)
+  doc.save(reportPdfFileName(payload))
+}
+
+/**
+ * Generate the identical report PDF as a Blob — used to attach the exact
+ * snapshot to an outgoing report email (Phase 16 / 20) rather than rebuilding
+ * a second, potentially-divergent document.
+ */
+export async function buildReportPdfBlob(payload: ReportExportPayload): Promise<Blob> {
+  const doc = await buildReportPdfDoc(payload)
+  return doc.output("blob")
 }

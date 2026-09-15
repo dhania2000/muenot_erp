@@ -51,6 +51,7 @@ import { ReportHistoryPanel } from "@/components/finance/report-history-panel"
 import { ReportDrillDrawer, type DrillTarget } from "@/components/finance/report-drill-drawer"
 import {
   defaultPeriod,
+  fyLabel,
   fyOptions,
   monthOptions,
   periodLabel,
@@ -216,6 +217,7 @@ function ReportView({
   subtitle,
   periodLabel,
   filterLabels,
+  financialYear,
   pendingAction,
   onActionConsumed,
   capabilities,
@@ -227,6 +229,7 @@ function ReportView({
   subtitle: string
   periodLabel: string
   filterLabels: string[]
+  financialYear: string
   pendingAction: RowAction | null
   onActionConsumed: () => void
   capabilities: ReportCapabilities
@@ -273,6 +276,7 @@ function ReportView({
       filterLabels,
       generatedAt,
       generatedBy,
+      financialYear,
     }
   }
 
@@ -730,6 +734,14 @@ export function FinancialReportsClient() {
     ? [label, ...activeFilterLabels(selected, filters)].filter(Boolean).join("  •  ")
     : ""
 
+  // Financial-year context for the export footer (Phase 43). Meaningful only for
+  // date-scoped presets that live inside a selected FY; blank for all-time,
+  // as-on and free custom ranges where an FY label would be misleading.
+  const financialYearLabel =
+    selected && periodMode !== "none" && ["fy", "quarter", "month"].includes(period.preset)
+      ? fyLabel(Number(period.fy))
+      : ""
+
   const controlsActive =
     period.preset !== "all" ||
     Boolean(period.asOn) ||
@@ -1046,6 +1058,7 @@ export function FinancialReportsClient() {
           subtitle={subtitle}
           periodLabel={label}
           filterLabels={activeFilterLabels(selected, filters)}
+          financialYear={financialYearLabel}
           pendingAction={pendingAction}
           onActionConsumed={() => setPendingAction(null)}
         />

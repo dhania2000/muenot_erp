@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { inr0 } from "@/lib/finance-calc"
 import { Download, FileSpreadsheet, FileText, Mail, Printer, X } from "lucide-react"
 
-type ReportColumn = { key: string; label: string; align?: "left" | "right"; money?: boolean }
+type ReportColumn = { key: string; label: string; align?: "left" | "right"; money?: boolean; date?: boolean }
 
 export type ReportCompany = {
   name: string
@@ -21,13 +21,23 @@ export type ReportCompany = {
   website: string
   taxLabel: string
   taxNumber: string
+  pan?: string
 }
 
 const currency = (n: number) => inr0(Number(n) || 0)
 
+/** Render an ISO/date-ish value as dd-mm-yyyy; leave non-dates untouched. */
+function fmtCellDate(value: any): string {
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return String(value)
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}`
+}
+
 function cellText(value: any, col: ReportColumn) {
   if (value === null || value === undefined || value === "") return "—"
   if (col.money) return currency(value)
+  if (col.date) return fmtCellDate(value)
   return String(value)
 }
 
@@ -117,7 +127,9 @@ export function ReportViewDialog({
   const generatedLabel = useMemo(() => {
     if (!generatedAt) return ""
     try {
-      return new Date(generatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+      const d = new Date(generatedAt)
+      const p = (n: number) => String(n).padStart(2, "0")
+      return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`
     } catch {
       return ""
     }
@@ -198,6 +210,7 @@ export function ReportViewDialog({
                 <p className="mt-1 text-xs text-muted-foreground">
                   {[
                     company?.taxNumber && `${company.taxLabel}: ${company.taxNumber}`,
+                    company?.pan && `PAN: ${company.pan}`,
                     company?.email,
                     company?.phone,
                   ]

@@ -52,6 +52,10 @@ export type EditableJournal = {
   voucherType: string
   referenceNo: string
   narration: string
+  paymentMode?: string
+  chequeUtrReference?: string
+  attachmentUrl?: string
+  attachmentType?: string
   lines: Array<{
     accountId: string
     debit: number
@@ -69,6 +73,9 @@ const VOUCHER_TYPES = [
   "Journal", "Payment", "Receipt", "Contra", "Sales", "Purchase", "Expense",
   "Credit Note", "Debit Note", "GST", "TDS", "Adjustment", "Opening", "Closing",
 ]
+
+const PAYMENT_MODES = ["Bank", "Cash", "Cheque", "UPI", "Card", "Transfer", "Other"]
+const ATTACHMENT_TYPES = ["Invoice", "Bill", "Receipt", "Payment Proof", "Other"]
 
 const num = (v: string) => {
   const n = Number(v)
@@ -121,6 +128,11 @@ export function ManualJournalDialog({
   const [voucherType, setVoucherType] = useState("Journal")
   const [referenceNo, setReferenceNo] = useState("")
   const [narration, setNarration] = useState("")
+  // Phase 36/37 — journal-level payment + supporting document.
+  const [paymentMode, setPaymentMode] = useState("")
+  const [chequeUtr, setChequeUtr] = useState("")
+  const [attachmentUrl, setAttachmentUrl] = useState("")
+  const [attachmentType, setAttachmentType] = useState("")
   const [lines, setLines] = useState<LineDraft[]>([newLine(), newLine()])
   const [saving, setSaving] = useState<"draft" | "submit" | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -133,6 +145,10 @@ export function ManualJournalDialog({
       setVoucherType(editJournal.voucherType || "Journal")
       setReferenceNo(editJournal.referenceNo || "")
       setNarration(editJournal.narration || "")
+      setPaymentMode(editJournal.paymentMode || "")
+      setChequeUtr(editJournal.chequeUtrReference || "")
+      setAttachmentUrl(editJournal.attachmentUrl || "")
+      setAttachmentType(editJournal.attachmentType || "")
       setLines(
         editJournal.lines.length
           ? editJournal.lines.map((l) => ({
@@ -221,6 +237,10 @@ export function ManualJournalDialog({
         voucherType,
         referenceNo: referenceNo || null,
         narration: narration || null,
+        paymentMode: paymentMode || null,
+        chequeUtrReference: chequeUtr || null,
+        attachmentUrl: attachmentUrl || null,
+        attachmentType: attachmentType || null,
         lines: linePayload,
       }
 
@@ -284,6 +304,60 @@ export function ManualJournalDialog({
                 value={referenceNo}
                 onChange={(e) => setReferenceNo(e.target.value)}
                 placeholder="Link a source doc (e.g. bill/expense id) to cross-check GST/TDS"
+              />
+            </div>
+
+            {/* Phase 36 — how this voucher was settled. */}
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel htmlFor="mj-pay-mode">Payment mode (optional)</FieldLabel>
+              <select
+                id="mj-pay-mode"
+                className="h-10 rounded-md border bg-background px-3 text-sm"
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value)}
+              >
+                <option value="">Not specified</option>
+                {PAYMENT_MODES.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel htmlFor="mj-cheque">Cheque / UTR / reference</FieldLabel>
+              <Input
+                id="mj-cheque"
+                value={chequeUtr}
+                onChange={(e) => setChequeUtr(e.target.value)}
+                placeholder="e.g. UTR / cheque no."
+              />
+            </div>
+
+            {/* Phase 37 — a single supporting document for the voucher. */}
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel htmlFor="mj-att-type">Attachment type (optional)</FieldLabel>
+              <select
+                id="mj-att-type"
+                className="h-10 rounded-md border bg-background px-3 text-sm"
+                value={attachmentType}
+                onChange={(e) => setAttachmentType(e.target.value)}
+              >
+                <option value="">Not specified</option>
+                {ATTACHMENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel htmlFor="mj-att-url">Attachment link</FieldLabel>
+              <Input
+                id="mj-att-url"
+                value={attachmentUrl}
+                onChange={(e) => setAttachmentUrl(e.target.value)}
+                placeholder="Supporting document URL"
               />
             </div>
           </div>

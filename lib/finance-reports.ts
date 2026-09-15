@@ -1083,6 +1083,1995 @@ export const FINANCE_REPORTS: ReportDef[] = [
       { key: "balance", label: "Balance", align: "right", money: true },
     ],
   },
+
+  // ==========================================================================
+  // Phase 1 — data-backed definitions for the Financial Reports catalogue.
+  //
+  // Each report below is a read-only projection over an EXISTING ERP table:
+  //   general_ledger / journal_entries / chart_of_accounts (posted accounting),
+  //   sales_invoices + payments (receivables), purchase_bills (payables),
+  //   bank_transactions + finance_accounts (bank & cash), gst_filings +
+  //   finance_gst_input (GST), tds_filings (TDS), finance_records (P&L).
+  // They are grouped under "Finance" so they never leak into the cross-module
+  // Reports facility (GENERAL_REPORTS excludes finance-domain groups). The
+  // Financial Reports catalogue reaches them via from(); nothing here duplicates
+  // an engine — every value comes straight from the source module's columns.
+  // ==========================================================================
+
+  // --- Core financial statements (posted general ledger + COA classification) -
+  {
+    key: "rx-trial-balance",
+    label: "Trial Balance",
+    group: "Finance",
+    description: "Debit and credit balance per ledger account from the posted general ledger.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT COALESCE(NULLIF(account_name,''),'Unclassified') AS account,
+             COALESCE(NULLIF(account_group,''),'—') AS account_group,
+             COALESCE(NULLIF(account_type,''),'—') AS account_type,
+             COALESCE(SUM(debit),0) AS debit,
+             COALESCE(SUM(credit),0) AS credit,
+             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS balance
+      FROM general_ledger
+      WHERE 1=1 ${RANGE}
+      GROUP BY account, account_group, account_type
+      ORDER BY account_group, account`,
+    columns: [
+      { key: "account", label: "Account" },
+      { key: "account_group", label: "Group" },
+      { key: "account_type", label: "Type" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-balance-sheet",
+    label: "Balance Sheet",
+    group: "Finance",
+    description: "Asset, liability and equity balances classified from the posted ledger.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT CASE
+               WHEN account_type LIKE '%Asset%' THEN 'Assets'
+               WHEN account_type LIKE '%Liab%' THEN 'Liabilities'
+               WHEN account_type LIKE '%Equity%' OR account_type LIKE '%Capital%' THEN 'Equity'
+               ELSE 'Other'
+             END AS section,
+             COALESCE(NULLIF(account_group,''),'—') AS account_group,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(SUM(debit),0) AS debit,
+             COALESCE(SUM(credit),0) AS credit,
+             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS balance
+      FROM general_ledger
+      WHERE (account_type LIKE '%Asset%' OR account_type LIKE '%Liab%'
+             OR account_type LIKE '%Equity%' OR account_type LIKE '%Capital%') ${RANGE}
+      GROUP BY section, account_group, account
+      ORDER BY section, account_group, account`,
+    columns: [
+      { key: "section", label: "Section" },
+      { key: "account_group", label: "Group" },
+      { key: "account", label: "Account" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-cash-flow",
+    label: "Cash Flow Statement",
+    group: "Finance",
+    description: "Month-by-month cash inflow, outflow and net movement across bank & cash accounts.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT DATE_FORMAT(transaction_date, '%Y-%m') AS period,
+             COALESCE(SUM(credit),0) AS inflow,
+             COALESCE(SUM(debit),0) AS outflow,
+             COALESCE(SUM(credit),0) - COALESCE(SUM(debit),0) AS net_cash
+      FROM bank_transactions
+      WHERE transaction_date IS NOT NULL ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Month" },
+      { key: "inflow", label: "Inflow", align: "right", money: true },
+      { key: "outflow", label: "Outflow", align: "right", money: true },
+      { key: "net_cash", label: "Net Cash", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-quarterly-pl",
+    label: "Quarterly Profit & Loss",
+    group: "Finance",
+    description: "Income against expenses, summarised by financial quarter.",
+    dateColumn: "record_date",
+    sql: `
+      SELECT CONCAT(YEAR(record_date), '-Q', QUARTER(record_date)) AS period,
+             COALESCE(SUM(CASE WHEN module_key = 'sales-invoices' THEN amount ELSE 0 END),0) AS income,
+             COALESCE(SUM(CASE WHEN module_key IN ('expenses','purchase-bills') THEN amount ELSE 0 END),0) AS expense,
+             COALESCE(SUM(CASE WHEN module_key = 'sales-invoices' THEN amount ELSE 0 END),0)
+               - COALESCE(SUM(CASE WHEN module_key IN ('expenses','purchase-bills') THEN amount ELSE 0 END),0) AS net
+      FROM finance_records
+      WHERE record_date IS NOT NULL ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Quarter" },
+      { key: "income", label: "Income", align: "right", money: true },
+      { key: "expense", label: "Expense", align: "right", money: true },
+      { key: "net", label: "Net", align: "right", money: true },
+    ],
+  },
+
+  // --- Accounting books (journal_entries / general_ledger / chart_of_accounts) -
+  {
+    key: "rx-journal-register",
+    label: "Journal Register",
+    group: "Finance",
+    description: "Every journal entry line with voucher type, account, debit and credit.",
+    dateColumn: "journal_date",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             COALESCE(NULLIF(approval_status,''),'Pending') AS approval,
+             COALESCE(NULLIF(posting_status,''),'Unposted') AS posting
+      FROM journal_entries
+      WHERE 1=1 ${RANGE}
+      ORDER BY journal_date DESC, id DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "approval", label: "Approval" },
+      { key: "posting", label: "Posting" },
+    ],
+  },
+  {
+    key: "rx-voucher-register",
+    label: "Voucher Register",
+    group: "Finance",
+    description: "Journal activity grouped by voucher type with debit and credit totals.",
+    dateColumn: "journal_date",
+    sql: `
+      SELECT COALESCE(NULLIF(voucher_type,''),'Unspecified') AS voucher_type,
+             COUNT(*) AS entries,
+             COALESCE(SUM(debit),0) AS debit,
+             COALESCE(SUM(credit),0) AS credit
+      FROM journal_entries
+      WHERE 1=1 ${RANGE}
+      GROUP BY voucher_type
+      ORDER BY entries DESC`,
+    columns: [
+      { key: "voucher_type", label: "Voucher Type" },
+      { key: "entries", label: "Entries", align: "right" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-account-ledger",
+    label: "Account Ledger",
+    group: "Finance",
+    description: "Posted ledger movement per account with debit, credit and net balance.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT COALESCE(NULLIF(account_name,''),'Unclassified') AS account,
+             COALESCE(NULLIF(account_group,''),'—') AS account_group,
+             COUNT(*) AS entries,
+             COALESCE(SUM(debit),0) AS debit,
+             COALESCE(SUM(credit),0) AS credit,
+             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS balance
+      FROM general_ledger
+      WHERE 1=1 ${RANGE}
+      GROUP BY account, account_group
+      ORDER BY account_group, account`,
+    columns: [
+      { key: "account", label: "Account" },
+      { key: "account_group", label: "Group" },
+      { key: "entries", label: "Entries", align: "right" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-group-ledger",
+    label: "Group Ledger",
+    group: "Finance",
+    description: "Posted ledger movement rolled up by account group.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT COALESCE(NULLIF(account_group,''),'Ungrouped') AS account_group,
+             COUNT(*) AS entries,
+             COALESCE(SUM(debit),0) AS debit,
+             COALESCE(SUM(credit),0) AS credit,
+             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS balance
+      FROM general_ledger
+      WHERE 1=1 ${RANGE}
+      GROUP BY account_group
+      ORDER BY balance DESC`,
+    columns: [
+      { key: "account_group", label: "Group" },
+      { key: "entries", label: "Entries", align: "right" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-receipt-register",
+    label: "Receipt Register",
+    group: "Finance",
+    description: "Cash and bank receipts recorded against invoices.",
+    dateColumn: "payment_date",
+    sql: `
+      SELECT payment_id,
+             payment_date,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(invoice_ref,''),'—') AS invoice,
+             COALESCE(NULLIF(payment_mode,''),'—') AS mode,
+             COALESCE(NULLIF(reference_no,''),'—') AS reference,
+             COALESCE(amount,0) AS amount
+      FROM payments
+      WHERE COALESCE(NULLIF(status,''),'Active') = 'Active' ${RANGE}
+      ORDER BY payment_date DESC, id DESC`,
+    columns: [
+      { key: "payment_id", label: "Receipt" },
+      { key: "payment_date", label: "Date" },
+      { key: "party", label: "Party" },
+      { key: "invoice", label: "Against Invoice" },
+      { key: "mode", label: "Mode" },
+      { key: "reference", label: "Reference" },
+      { key: "amount", label: "Amount", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-contra-register",
+    label: "Contra Register",
+    group: "Finance",
+    description: "Bank/cash contra entries (transfers between own accounts).",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT transaction_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             COALESCE(NULLIF(reference_no,''),'—') AS reference
+      FROM bank_transactions
+      WHERE voucher_type LIKE '%Contra%' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "transaction_id", label: "Txn" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Counterparty" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "reference", label: "Reference" },
+    ],
+  },
+  {
+    key: "rx-adjustment-register",
+    label: "Adjustment Register",
+    group: "Finance",
+    description: "Journal entries flagged as adjustments.",
+    dateColumn: "journal_date",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(narration,''),'—') AS narration,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM journal_entries
+      WHERE (voucher_type LIKE '%Adjust%' OR reference_type LIKE '%Adjust%') ${RANGE}
+      ORDER BY journal_date DESC, id DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "narration", label: "Narration" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-opening-balance",
+    label: "Opening Balance Report",
+    group: "Finance",
+    description: "Opening balances per ledger account from the chart of accounts.",
+    sql: `
+      SELECT COALESCE(NULLIF(account_code,''),'—') AS code,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(account_group,''),'—') AS account_group,
+             COALESCE(NULLIF(account_type,''),'—') AS account_type,
+             COALESCE(opening_balance,0) AS opening_balance,
+             COALESCE(NULLIF(opening_balance_type,''),'—') AS balance_type
+      FROM chart_of_accounts
+      ORDER BY account_group, code`,
+    columns: [
+      { key: "code", label: "Code" },
+      { key: "account", label: "Account" },
+      { key: "account_group", label: "Group" },
+      { key: "account_type", label: "Type" },
+      { key: "opening_balance", label: "Opening Balance", align: "right", money: true },
+      { key: "balance_type", label: "Dr/Cr" },
+    ],
+  },
+  {
+    key: "rx-closing-balance",
+    label: "Closing Balance Report",
+    group: "Finance",
+    description: "Closing balance per ledger account from the posted general ledger.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT COALESCE(NULLIF(account_name,''),'Unclassified') AS account,
+             COALESCE(NULLIF(account_group,''),'—') AS account_group,
+             COALESCE(SUM(debit),0) AS debit,
+             COALESCE(SUM(credit),0) AS credit,
+             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS closing_balance
+      FROM general_ledger
+      WHERE 1=1 ${RANGE}
+      GROUP BY account, account_group
+      ORDER BY account_group, account`,
+    columns: [
+      { key: "account", label: "Account" },
+      { key: "account_group", label: "Group" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "closing_balance", label: "Closing Balance", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-suspense-account",
+    label: "Suspense Account Report",
+    group: "Finance",
+    description: "Ledger lines posted to suspense accounts awaiting classification.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT ledger_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM general_ledger
+      WHERE account_name LIKE '%Suspense%' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "ledger_id", label: "Ledger" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-reversal-register",
+    label: "Reversal Register",
+    group: "Finance",
+    description: "Journal entries recorded as reversals.",
+    dateColumn: "journal_date",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             COALESCE(NULLIF(narration,''),'—') AS narration,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM journal_entries
+      WHERE (voucher_type LIKE '%Revers%' OR reference_type LIKE '%Revers%'
+             OR narration LIKE '%revers%') ${RANGE}
+      ORDER BY journal_date DESC, id DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "narration", label: "Narration" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-cancelled-voucher",
+    label: "Cancelled Voucher Report",
+    group: "Finance",
+    description: "Journal vouchers marked cancelled.",
+    dateColumn: "journal_date",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             COALESCE(NULLIF(approval_status,''),'—') AS approval
+      FROM journal_entries
+      WHERE approval_status = 'Cancelled' OR posting_status = 'Cancelled' ${RANGE}
+      ORDER BY journal_date DESC, id DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "account", label: "Account" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "approval", label: "Status" },
+    ],
+  },
+
+  // --- Receivables (sales_invoices) ------------------------------------------
+  {
+    key: "rx-customer-outstanding",
+    label: "Customer Outstanding",
+    group: "Finance",
+    description: "Billed, received and outstanding grouped by customer (dues only).",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(client_name,''),'Unnamed customer') AS customer,
+             COUNT(*) AS invoices,
+             COALESCE(SUM(invoice_total),0) AS billed,
+             COALESCE(SUM(amount_received),0) AS received,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding
+      FROM sales_invoices
+      WHERE COALESCE(outstanding_amount,0) > 0 ${RANGE}
+      GROUP BY customer
+      ORDER BY outstanding DESC`,
+    columns: [
+      { key: "customer", label: "Customer" },
+      { key: "invoices", label: "Invoices", align: "right" },
+      { key: "billed", label: "Billed", align: "right", money: true },
+      { key: "received", label: "Received", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-customer-sales",
+    label: "Customer-wise Sales",
+    group: "Finance",
+    description: "Billed, received and outstanding grouped by customer.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(client_name,''),'Unnamed customer') AS customer,
+             COUNT(*) AS invoices,
+             COALESCE(SUM(invoice_total),0) AS billed,
+             COALESCE(SUM(amount_received),0) AS received,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding
+      FROM sales_invoices
+      WHERE 1=1 ${RANGE}
+      GROUP BY customer
+      ORDER BY billed DESC`,
+    columns: [
+      { key: "customer", label: "Customer" },
+      { key: "invoices", label: "Invoices", align: "right" },
+      { key: "billed", label: "Billed", align: "right", money: true },
+      { key: "received", label: "Received", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-receivable-ageing",
+    label: "Receivable Ageing",
+    group: "Finance",
+    description: "Outstanding receivables bucketed by age from the due date.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(client_name,''),'Unnamed customer') AS customer,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) <= 0 THEN outstanding_amount ELSE 0 END),0) AS not_due,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) BETWEEN 1 AND 30 THEN outstanding_amount ELSE 0 END),0) AS d1_30,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) BETWEEN 31 AND 60 THEN outstanding_amount ELSE 0 END),0) AS d31_60,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) BETWEEN 61 AND 90 THEN outstanding_amount ELSE 0 END),0) AS d61_90,
+             COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), due_date) > 90 THEN outstanding_amount ELSE 0 END),0) AS d90_plus
+      FROM sales_invoices
+      WHERE COALESCE(outstanding_amount,0) > 0 ${RANGE}
+      GROUP BY customer
+      ORDER BY outstanding DESC`,
+    columns: [
+      { key: "customer", label: "Customer" },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "not_due", label: "Not Due", align: "right", money: true },
+      { key: "d1_30", label: "1–30d", align: "right", money: true },
+      { key: "d31_60", label: "31–60d", align: "right", money: true },
+      { key: "d61_90", label: "61–90d", align: "right", money: true },
+      { key: "d90_plus", label: "90d+", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-invoice-receivable",
+    label: "Invoice-wise Receivable",
+    group: "Finance",
+    description: "Each unpaid sales invoice with billed, received and outstanding.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT invoice_id,
+             invoice_date,
+             COALESCE(NULLIF(client_name,''),'—') AS customer,
+             due_date,
+             COALESCE(invoice_total,0) AS billed,
+             COALESCE(amount_received,0) AS received,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM sales_invoices
+      WHERE COALESCE(outstanding_amount,0) > 0 ${RANGE}
+      ORDER BY outstanding_amount DESC`,
+    columns: [
+      { key: "invoice_id", label: "Invoice" },
+      { key: "invoice_date", label: "Date" },
+      { key: "customer", label: "Customer" },
+      { key: "due_date", label: "Due" },
+      { key: "billed", label: "Billed", align: "right", money: true },
+      { key: "received", label: "Received", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-overdue-receivable",
+    label: "Overdue Receivables",
+    group: "Finance",
+    description: "Unpaid invoices past their due date, aged in days.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT invoice_id,
+             invoice_date,
+             COALESCE(NULLIF(client_name,''),'—') AS customer,
+             due_date,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             DATEDIFF(CURDATE(), due_date) AS age_days,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM sales_invoices
+      WHERE COALESCE(outstanding_amount,0) > 0 AND due_date IS NOT NULL
+        AND due_date < CURDATE() ${RANGE}
+      ORDER BY age_days DESC`,
+    columns: [
+      { key: "invoice_id", label: "Invoice" },
+      { key: "invoice_date", label: "Date" },
+      { key: "customer", label: "Customer" },
+      { key: "due_date", label: "Due" },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "age_days", label: "Age (days)", align: "right" },
+      { key: "status", label: "Status" },
+    ],
+  },
+
+  // --- Payables (purchase_bills) ---------------------------------------------
+  {
+    key: "rx-vendor-outstanding",
+    label: "Vendor Outstanding",
+    group: "Finance",
+    description: "Gross, paid and outstanding grouped by vendor (dues only).",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''),'Unnamed vendor') AS vendor,
+             COUNT(*) AS bills,
+             COALESCE(SUM(gross_bill_amount),0) AS gross,
+             COALESCE(SUM(amount_paid),0) AS paid,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding
+      FROM purchase_bills
+      WHERE COALESCE(outstanding_amount,0) > 0 ${RANGE}
+      GROUP BY vendor
+      ORDER BY outstanding DESC`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "bills", label: "Bills", align: "right" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-bill-payable",
+    label: "Bill-wise Payable",
+    group: "Finance",
+    description: "Each unpaid purchase bill with gross, paid and outstanding.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT po_number,
+             bill_date,
+             COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             due_date,
+             COALESCE(gross_bill_amount,0) AS gross,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM purchase_bills
+      WHERE COALESCE(outstanding_amount,0) > 0 ${RANGE}
+      ORDER BY outstanding_amount DESC`,
+    columns: [
+      { key: "po_number", label: "Bill / PO" },
+      { key: "bill_date", label: "Date" },
+      { key: "vendor", label: "Vendor" },
+      { key: "due_date", label: "Due" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-overdue-payable",
+    label: "Overdue Payables",
+    group: "Finance",
+    description: "Unpaid bills past their due date, aged in days.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT po_number,
+             bill_date,
+             COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             due_date,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             DATEDIFF(CURDATE(), due_date) AS age_days,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM purchase_bills
+      WHERE COALESCE(outstanding_amount,0) > 0 AND due_date IS NOT NULL
+        AND due_date < CURDATE() ${RANGE}
+      ORDER BY age_days DESC`,
+    columns: [
+      { key: "po_number", label: "Bill / PO" },
+      { key: "bill_date", label: "Date" },
+      { key: "vendor", label: "Vendor" },
+      { key: "due_date", label: "Due" },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "age_days", label: "Age (days)", align: "right" },
+      { key: "status", label: "Status" },
+    ],
+  },
+
+  // --- GST (gst_filings outward + finance_gst_input ITC) ---------------------
+  {
+    key: "rx-gstr1-summary",
+    label: "GSTR-1 Summary",
+    group: "Finance",
+    description: "Outward supplies summarised by return period.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(return_period,''),'—') AS period,
+             COUNT(*) AS invoices,
+             COALESCE(SUM(taxable_value),0) AS taxable,
+             COALESCE(SUM(igst),0) AS igst,
+             COALESCE(SUM(cgst),0) AS cgst,
+             COALESCE(SUM(sgst),0) AS sgst,
+             COALESCE(SUM(cess_amount),0) AS cess,
+             COALESCE(SUM(total_tax),0) AS total_tax,
+             COALESCE(SUM(total_invoice_value),0) AS invoice_value
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Period" },
+      { key: "invoices", label: "Invoices", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "cess", label: "Cess", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+      { key: "invoice_value", label: "Invoice Value", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gstr1-detailed",
+    label: "GSTR-1 Detailed Register",
+    group: "Finance",
+    description: "Outward supply invoices with recipient, place of supply and tax split.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(invoice_number,''),'—') AS invoice,
+             invoice_date,
+             COALESCE(NULLIF(recipient_name,''),'—') AS recipient,
+             COALESCE(NULLIF(recipient_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(place_of_supply,''),'—') AS place_of_supply,
+             COALESCE(tax_rate,0) AS rate,
+             COALESCE(taxable_value,0) AS taxable,
+             COALESCE(igst,0) AS igst,
+             COALESCE(cgst,0) AS cgst,
+             COALESCE(sgst,0) AS sgst,
+             COALESCE(cess_amount,0) AS cess,
+             COALESCE(total_invoice_value,0) AS invoice_value
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      ORDER BY invoice_date DESC, id DESC`,
+    columns: [
+      { key: "invoice", label: "Invoice" },
+      { key: "invoice_date", label: "Date" },
+      { key: "recipient", label: "Recipient" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "place_of_supply", label: "Place of Supply" },
+      { key: "rate", label: "Rate", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "cess", label: "Cess", align: "right", money: true },
+      { key: "invoice_value", label: "Invoice Value", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-b2b",
+    label: "B2B Sales Report",
+    group: "Finance",
+    description: "Registered (B2B) outward supplies grouped by recipient GSTIN.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(recipient_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(recipient_name,''),'—') AS recipient,
+             COUNT(*) AS invoices,
+             COALESCE(SUM(taxable_value),0) AS taxable,
+             COALESCE(SUM(total_tax),0) AS total_tax,
+             COALESCE(SUM(total_invoice_value),0) AS invoice_value
+      FROM gst_filings
+      WHERE recipient_gstin IS NOT NULL AND recipient_gstin <> '' ${RANGE}
+      GROUP BY gstin, recipient
+      ORDER BY invoice_value DESC`,
+    columns: [
+      { key: "gstin", label: "GSTIN" },
+      { key: "recipient", label: "Recipient" },
+      { key: "invoices", label: "Invoices", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+      { key: "invoice_value", label: "Invoice Value", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-b2c",
+    label: "B2C Sales Report",
+    group: "Finance",
+    description: "Unregistered (B2C) outward supplies grouped by place of supply.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(place_of_supply,''),'—') AS place_of_supply,
+             COUNT(*) AS invoices,
+             COALESCE(SUM(taxable_value),0) AS taxable,
+             COALESCE(SUM(total_tax),0) AS total_tax,
+             COALESCE(SUM(total_invoice_value),0) AS invoice_value
+      FROM gst_filings
+      WHERE recipient_gstin IS NULL OR recipient_gstin = '' ${RANGE}
+      GROUP BY place_of_supply
+      ORDER BY invoice_value DESC`,
+    columns: [
+      { key: "place_of_supply", label: "Place of Supply" },
+      { key: "invoices", label: "Invoices", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+      { key: "invoice_value", label: "Invoice Value", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-credit-note",
+    label: "Credit Note Register",
+    group: "Finance",
+    description: "GST credit notes with recipient and tax reversed.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(invoice_number,''),'—') AS document,
+             invoice_date,
+             COALESCE(NULLIF(recipient_name,''),'—') AS recipient,
+             COALESCE(taxable_value,0) AS taxable,
+             COALESCE(total_tax,0) AS total_tax,
+             COALESCE(total_invoice_value,0) AS value
+      FROM gst_filings
+      WHERE invoice_type LIKE '%Credit%' ${RANGE}
+      ORDER BY invoice_date DESC, id DESC`,
+    columns: [
+      { key: "document", label: "Credit Note" },
+      { key: "invoice_date", label: "Date" },
+      { key: "recipient", label: "Recipient" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+      { key: "value", label: "Value", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-debit-note",
+    label: "Debit Note Register",
+    group: "Finance",
+    description: "GST debit notes with recipient and additional tax.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(invoice_number,''),'—') AS document,
+             invoice_date,
+             COALESCE(NULLIF(recipient_name,''),'—') AS recipient,
+             COALESCE(taxable_value,0) AS taxable,
+             COALESCE(total_tax,0) AS total_tax,
+             COALESCE(total_invoice_value,0) AS value
+      FROM gst_filings
+      WHERE invoice_type LIKE '%Debit%' ${RANGE}
+      ORDER BY invoice_date DESC, id DESC`,
+    columns: [
+      { key: "document", label: "Debit Note" },
+      { key: "invoice_date", label: "Date" },
+      { key: "recipient", label: "Recipient" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+      { key: "value", label: "Value", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-output",
+    label: "GST Output Report",
+    group: "Finance",
+    description: "Output GST on sales by return period.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(return_period,''),'—') AS period,
+             COALESCE(SUM(taxable_value),0) AS taxable,
+             COALESCE(SUM(cgst),0) AS cgst,
+             COALESCE(SUM(sgst),0) AS sgst,
+             COALESCE(SUM(igst),0) AS igst,
+             COALESCE(SUM(cess_amount),0) AS cess,
+             COALESCE(SUM(total_tax),0) AS total_tax
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Period" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "cess", label: "Cess", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-eligible-itc",
+    label: "Eligible ITC Report",
+    group: "Finance",
+    description: "Input GST eligible for credit, per source bill.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(bill_number,''),'—') AS bill,
+             bill_date,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(itc_cgst,0) AS itc_cgst,
+             COALESCE(itc_sgst,0) AS itc_sgst,
+             COALESCE(itc_igst,0) AS itc_igst,
+             COALESCE(itc_cess,0) AS itc_cess,
+             COALESCE(itc_net,0) AS net_itc
+      FROM finance_gst_input
+      WHERE COALESCE(itc_eligible,0) = 1 ${RANGE}
+      ORDER BY bill_date DESC, id DESC`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "bill", label: "Bill" },
+      { key: "bill_date", label: "Date" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "itc_cgst", label: "ITC CGST", align: "right", money: true },
+      { key: "itc_sgst", label: "ITC SGST", align: "right", money: true },
+      { key: "itc_igst", label: "ITC IGST", align: "right", money: true },
+      { key: "itc_cess", label: "ITC Cess", align: "right", money: true },
+      { key: "net_itc", label: "Net ITC", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-ineligible-itc",
+    label: "Ineligible ITC Report",
+    group: "Finance",
+    description: "Input GST blocked or ineligible for credit, per source bill.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             COALESCE(NULLIF(vendor_gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(bill_number,''),'—') AS bill,
+             bill_date,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(total_gst,0) AS total_gst,
+             COALESCE(itc_ineligible_amount,0) AS ineligible
+      FROM finance_gst_input
+      WHERE COALESCE(itc_ineligible_amount,0) > 0 ${RANGE}
+      ORDER BY bill_date DESC, id DESC`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "bill", label: "Bill" },
+      { key: "bill_date", label: "Date" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total_gst", label: "Total GST", align: "right", money: true },
+      { key: "ineligible", label: "Ineligible ITC", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-itc-reversal",
+    label: "ITC Reversal Report",
+    group: "Finance",
+    description: "Input tax credit reversed, per source bill.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             COALESCE(NULLIF(bill_number,''),'—') AS bill,
+             bill_date,
+             COALESCE(itc_gross,0) AS itc_gross,
+             COALESCE(itc_reversal_amount,0) AS reversal,
+             COALESCE(itc_net,0) AS net_itc
+      FROM finance_gst_input
+      WHERE COALESCE(itc_reversal_amount,0) > 0 ${RANGE}
+      ORDER BY bill_date DESC, id DESC`,
+    columns: [
+      { key: "vendor", label: "Vendor" },
+      { key: "bill", label: "Bill" },
+      { key: "bill_date", label: "Date" },
+      { key: "itc_gross", label: "ITC Gross", align: "right", money: true },
+      { key: "reversal", label: "Reversal", align: "right", money: true },
+      { key: "net_itc", label: "Net ITC", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-recon",
+    label: "GST Reconciliation",
+    group: "Finance",
+    description: "Input GST reconciliation status against GSTR-2B.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') AS status,
+             COUNT(*) AS records,
+             COALESCE(SUM(taxable_amount),0) AS taxable,
+             COALESCE(SUM(total_gst),0) AS total_gst,
+             COALESCE(SUM(itc_net),0) AS net_itc
+      FROM finance_gst_input
+      WHERE 1=1 ${RANGE}
+      GROUP BY status
+      ORDER BY records DESC`,
+    columns: [
+      { key: "status", label: "Reconciliation" },
+      { key: "records", label: "Records", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total_gst", label: "Total GST", align: "right", money: true },
+      { key: "net_itc", label: "Net ITC", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-rate-wise",
+    label: "GST Rate-wise Report",
+    group: "Finance",
+    description: "Outward supplies grouped by GST rate.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(tax_rate,0) AS rate,
+             COUNT(*) AS invoices,
+             COALESCE(SUM(taxable_value),0) AS taxable,
+             COALESCE(SUM(total_tax),0) AS total_tax
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY rate
+      ORDER BY rate`,
+    columns: [
+      { key: "rate", label: "Rate %", align: "right" },
+      { key: "invoices", label: "Invoices", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-gstin-wise",
+    label: "GSTIN-wise Report",
+    group: "Finance",
+    description: "Outward supplies grouped by recipient GSTIN.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(recipient_gstin,''),'Unregistered') AS gstin,
+             COUNT(*) AS invoices,
+             COALESCE(SUM(taxable_value),0) AS taxable,
+             COALESCE(SUM(total_tax),0) AS total_tax,
+             COALESCE(SUM(total_invoice_value),0) AS invoice_value
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY gstin
+      ORDER BY invoice_value DESC`,
+    columns: [
+      { key: "gstin", label: "GSTIN" },
+      { key: "invoices", label: "Invoices", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+      { key: "invoice_value", label: "Invoice Value", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-place-supply",
+    label: "Place of Supply Report",
+    group: "Finance",
+    description: "Outward supplies grouped by place of supply.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(place_of_supply,''),'—') AS place_of_supply,
+             COUNT(*) AS invoices,
+             COALESCE(SUM(taxable_value),0) AS taxable,
+             COALESCE(SUM(igst),0) AS igst,
+             COALESCE(SUM(cgst),0) AS cgst,
+             COALESCE(SUM(sgst),0) AS sgst,
+             COALESCE(SUM(total_tax),0) AS total_tax
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY place_of_supply
+      ORDER BY total_tax DESC`,
+    columns: [
+      { key: "place_of_supply", label: "Place of Supply" },
+      { key: "invoices", label: "Invoices", align: "right" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "total_tax", label: "Total Tax", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-cgst",
+    label: "CGST Report",
+    group: "Finance",
+    description: "Output CGST against input CGST (ITC) by return period.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(return_period,''),'—') AS period,
+             COALESCE(SUM(cgst),0) AS output_cgst,
+             COALESCE(SUM(itc_cgst),0) AS itc_cgst,
+             COALESCE(SUM(cgst),0) - COALESCE(SUM(itc_cgst),0) AS net_cgst
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Period" },
+      { key: "output_cgst", label: "Output CGST", align: "right", money: true },
+      { key: "itc_cgst", label: "ITC CGST", align: "right", money: true },
+      { key: "net_cgst", label: "Net CGST", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-sgst",
+    label: "SGST Report",
+    group: "Finance",
+    description: "Output SGST against input SGST (ITC) by return period.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(return_period,''),'—') AS period,
+             COALESCE(SUM(sgst),0) AS output_sgst,
+             COALESCE(SUM(itc_sgst),0) AS itc_sgst,
+             COALESCE(SUM(sgst),0) - COALESCE(SUM(itc_sgst),0) AS net_sgst
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Period" },
+      { key: "output_sgst", label: "Output SGST", align: "right", money: true },
+      { key: "itc_sgst", label: "ITC SGST", align: "right", money: true },
+      { key: "net_sgst", label: "Net SGST", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-igst",
+    label: "IGST Report",
+    group: "Finance",
+    description: "Output IGST against input IGST (ITC) by return period.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(return_period,''),'—') AS period,
+             COALESCE(SUM(igst),0) AS output_igst,
+             COALESCE(SUM(itc_igst),0) AS itc_igst,
+             COALESCE(SUM(igst),0) - COALESCE(SUM(itc_igst),0) AS net_igst
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Period" },
+      { key: "output_igst", label: "Output IGST", align: "right", money: true },
+      { key: "itc_igst", label: "ITC IGST", align: "right", money: true },
+      { key: "net_igst", label: "Net IGST", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-cess",
+    label: "Cess Report",
+    group: "Finance",
+    description: "Output cess against input cess (ITC) by return period.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(return_period,''),'—') AS period,
+             COALESCE(SUM(cess_amount),0) AS output_cess,
+             COALESCE(SUM(itc_cess),0) AS itc_cess,
+             COALESCE(SUM(cess_amount),0) - COALESCE(SUM(itc_cess),0) AS net_cess
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Period" },
+      { key: "output_cess", label: "Output Cess", align: "right", money: true },
+      { key: "itc_cess", label: "ITC Cess", align: "right", money: true },
+      { key: "net_cess", label: "Net Cess", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-liability",
+    label: "GST Liability Report",
+    group: "Finance",
+    description: "Net GST liability after ITC, interest and late fee by return period.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT COALESCE(NULLIF(return_period,''),'—') AS period,
+             COALESCE(SUM(total_tax),0) AS output_tax,
+             COALESCE(SUM(net_itc),0) AS net_itc,
+             COALESCE(SUM(interest),0) AS interest,
+             COALESCE(SUM(late_fee),0) AS late_fee,
+             COALESCE(SUM(total_liability),0) AS liability
+      FROM gst_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Period" },
+      { key: "output_tax", label: "Output Tax", align: "right", money: true },
+      { key: "net_itc", label: "Net ITC", align: "right", money: true },
+      { key: "interest", label: "Interest", align: "right", money: true },
+      { key: "late_fee", label: "Late Fee", align: "right", money: true },
+      { key: "liability", label: "Net Liability", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-gst-payment-challan",
+    label: "GST Payment / Challan Report",
+    group: "Finance",
+    description: "GST payments made against challans.",
+    dateColumn: "payment_date",
+    sql: `
+      SELECT gst_filing_id,
+             COALESCE(NULLIF(return_period,''),'—') AS period,
+             COALESCE(NULLIF(challan_cin,''),'—') AS challan,
+             payment_date,
+             COALESCE(total_liability,0) AS liability,
+             COALESCE(NULLIF(payment_status,''),'Pending') AS status
+      FROM gst_filings
+      WHERE challan_cin IS NOT NULL AND challan_cin <> '' ${RANGE}
+      ORDER BY payment_date DESC, id DESC`,
+    columns: [
+      { key: "gst_filing_id", label: "Filing" },
+      { key: "period", label: "Period" },
+      { key: "challan", label: "Challan CIN" },
+      { key: "payment_date", label: "Paid On" },
+      { key: "liability", label: "Liability", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-gst-exception",
+    label: "GST Exception Report",
+    group: "Finance",
+    description: "GST filings flagged with validation errors.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT gst_filing_id,
+             COALESCE(NULLIF(return_period,''),'—') AS period,
+             COALESCE(NULLIF(gstin,''),'—') AS gstin,
+             COALESCE(NULLIF(validation_status,''),'—') AS validation,
+             COALESCE(validation_error_count,0) AS errors,
+             COALESCE(NULLIF(validation_message,''),'—') AS message
+      FROM gst_filings
+      WHERE COALESCE(validation_error_count,0) > 0
+         OR COALESCE(NULLIF(validation_status,''),'') = 'Error' ${RANGE}
+      ORDER BY errors DESC, id DESC`,
+    columns: [
+      { key: "gst_filing_id", label: "Filing" },
+      { key: "period", label: "Period" },
+      { key: "gstin", label: "GSTIN" },
+      { key: "validation", label: "Validation" },
+      { key: "errors", label: "Errors", align: "right" },
+      { key: "message", label: "Message" },
+    ],
+  },
+
+  // --- TDS / TCS (tds_filings) -----------------------------------------------
+  {
+    key: "rx-tds-deductee",
+    label: "Deductee-wise TDS Report",
+    group: "Finance",
+    description: "TDS grouped by deductee with gross, deducted, paid and balance.",
+    dateColumn: "challan_date",
+    sql: `
+      SELECT COALESCE(NULLIF(deductee_name,''),'—') AS deductee,
+             COALESCE(NULLIF(pan,''),'—') AS pan,
+             COUNT(*) AS records,
+             COALESCE(SUM(gross_amount),0) AS gross,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(tds_paid),0) AS paid,
+             COALESCE(SUM(balance_payable_refund),0) AS balance
+      FROM tds_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY deductee, pan
+      ORDER BY tds DESC`,
+    columns: [
+      { key: "deductee", label: "Deductee" },
+      { key: "pan", label: "PAN" },
+      { key: "records", label: "Records", align: "right" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-tds-pan",
+    label: "PAN-wise TDS Report",
+    group: "Finance",
+    description: "TDS grouped by deductee PAN.",
+    dateColumn: "challan_date",
+    sql: `
+      SELECT COALESCE(NULLIF(pan,''),'—') AS pan,
+             COUNT(DISTINCT deductee_name) AS deductees,
+             COALESCE(SUM(gross_amount),0) AS gross,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(tds_paid),0) AS paid
+      FROM tds_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY pan
+      ORDER BY tds DESC`,
+    columns: [
+      { key: "pan", label: "PAN" },
+      { key: "deductees", label: "Deductees", align: "right" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-tds-employee",
+    label: "Employee TDS Report",
+    group: "Finance",
+    description: "TDS on salaries (section 192).",
+    dateColumn: "challan_date",
+    sql: `
+      SELECT COALESCE(NULLIF(deductee_name,''),'—') AS employee,
+             COALESCE(NULLIF(pan,''),'—') AS pan,
+             COALESCE(NULLIF(section,''),'—') AS section,
+             COALESCE(SUM(gross_amount),0) AS gross,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(tds_paid),0) AS paid
+      FROM tds_filings
+      WHERE section = '192' OR payment_type LIKE '%Salary%' ${RANGE}
+      GROUP BY employee, pan, section
+      ORDER BY tds DESC`,
+    columns: [
+      { key: "employee", label: "Employee" },
+      { key: "pan", label: "PAN" },
+      { key: "section", label: "Section" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-tds-challan",
+    label: "TDS Challan Register",
+    group: "Finance",
+    description: "TDS challans with section, amount, interest and late fee.",
+    dateColumn: "challan_date",
+    sql: `
+      SELECT COALESCE(NULLIF(challan_no,''),'—') AS challan,
+             challan_date,
+             COALESCE(NULLIF(section,''),'—') AS section,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(interest,0) AS interest,
+             COALESCE(late_fee,0) AS late_fee,
+             COALESCE(tds_paid,0) AS paid
+      FROM tds_filings
+      WHERE challan_no IS NOT NULL AND challan_no <> '' ${RANGE}
+      ORDER BY challan_date DESC, id DESC`,
+    columns: [
+      { key: "challan", label: "Challan" },
+      { key: "challan_date", label: "Date" },
+      { key: "section", label: "Section" },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "interest", label: "Interest", align: "right", money: true },
+      { key: "late_fee", label: "Late Fee", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-tds-payment",
+    label: "TDS Payment Report",
+    group: "Finance",
+    description: "TDS deducted, paid and balance by quarter.",
+    dateColumn: "challan_date",
+    sql: `
+      SELECT COALESCE(NULLIF(quarter,''),'—') AS quarter,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(tds_paid),0) AS paid,
+             COALESCE(SUM(balance_payable_refund),0) AS balance
+      FROM tds_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY quarter
+      ORDER BY quarter DESC`,
+    columns: [
+      { key: "quarter", label: "Quarter" },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-tds-outstanding",
+    label: "TDS Outstanding Report",
+    group: "Finance",
+    description: "TDS filings with a balance still payable.",
+    dateColumn: "filing_due_date",
+    sql: `
+      SELECT tds_filing_id,
+             COALESCE(NULLIF(deductee_name,''),'—') AS deductee,
+             COALESCE(NULLIF(section,''),'—') AS section,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(tds_paid,0) AS paid,
+             COALESCE(balance_payable_refund,0) AS balance,
+             COALESCE(NULLIF(return_status,''),'Pending') AS status
+      FROM tds_filings
+      WHERE COALESCE(balance_payable_refund,0) > 0 ${RANGE}
+      ORDER BY balance DESC`,
+    columns: [
+      { key: "tds_filing_id", label: "Filing" },
+      { key: "deductee", label: "Deductee" },
+      { key: "section", label: "Section" },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "balance", label: "Balance", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-tds-return-summary",
+    label: "TDS Return Summary",
+    group: "Finance",
+    description: "TDS summarised by quarter and return type.",
+    dateColumn: "filing_due_date",
+    sql: `
+      SELECT COALESCE(NULLIF(quarter,''),'—') AS quarter,
+             COALESCE(NULLIF(return_type,''),'—') AS return_type,
+             COUNT(*) AS records,
+             COALESCE(SUM(gross_amount),0) AS gross,
+             COALESCE(SUM(tds_amount),0) AS tds,
+             COALESCE(SUM(tds_paid),0) AS paid,
+             COALESCE(SUM(total_liability),0) AS liability
+      FROM tds_filings
+      WHERE 1=1 ${RANGE}
+      GROUP BY quarter, return_type
+      ORDER BY quarter DESC`,
+    columns: [
+      { key: "quarter", label: "Quarter" },
+      { key: "return_type", label: "Return" },
+      { key: "records", label: "Records", align: "right" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "liability", label: "Liability", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-tds-interest",
+    label: "TDS Interest Report",
+    group: "Finance",
+    description: "TDS filings carrying interest for late deduction / payment.",
+    dateColumn: "challan_date",
+    sql: `
+      SELECT tds_filing_id,
+             COALESCE(NULLIF(quarter,''),'—') AS quarter,
+             COALESCE(NULLIF(section,''),'—') AS section,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(interest,0) AS interest,
+             COALESCE(total_liability,0) AS liability
+      FROM tds_filings
+      WHERE COALESCE(interest,0) > 0 ${RANGE}
+      ORDER BY interest DESC`,
+    columns: [
+      { key: "tds_filing_id", label: "Filing" },
+      { key: "quarter", label: "Quarter" },
+      { key: "section", label: "Section" },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "interest", label: "Interest", align: "right", money: true },
+      { key: "liability", label: "Liability", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-tds-late-fee",
+    label: "TDS Late Fee Report",
+    group: "Finance",
+    description: "TDS filings carrying a late filing fee (section 234E).",
+    dateColumn: "challan_date",
+    sql: `
+      SELECT tds_filing_id,
+             COALESCE(NULLIF(quarter,''),'—') AS quarter,
+             COALESCE(NULLIF(return_type,''),'—') AS return_type,
+             COALESCE(tds_amount,0) AS tds,
+             COALESCE(late_fee,0) AS late_fee,
+             COALESCE(total_liability,0) AS liability
+      FROM tds_filings
+      WHERE COALESCE(late_fee,0) > 0 ${RANGE}
+      ORDER BY late_fee DESC`,
+    columns: [
+      { key: "tds_filing_id", label: "Filing" },
+      { key: "quarter", label: "Quarter" },
+      { key: "return_type", label: "Return" },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "late_fee", label: "Late Fee", align: "right", money: true },
+      { key: "liability", label: "Liability", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-tds-correction",
+    label: "TDS Correction Report",
+    group: "Finance",
+    description: "TDS filings flagged for correction.",
+    dateColumn: "filing_due_date",
+    sql: `
+      SELECT tds_filing_id,
+             COALESCE(NULLIF(quarter,''),'—') AS quarter,
+             COALESCE(NULLIF(deductee_name,''),'—') AS deductee,
+             COALESCE(NULLIF(section,''),'—') AS section,
+             COALESCE(tds_amount,0) AS tds,
+             correction_date,
+             COALESCE(NULLIF(return_status,''),'—') AS status
+      FROM tds_filings
+      WHERE COALESCE(correction_required,0) = 1 ${RANGE}
+      ORDER BY correction_date DESC, id DESC`,
+    columns: [
+      { key: "tds_filing_id", label: "Filing" },
+      { key: "quarter", label: "Quarter" },
+      { key: "deductee", label: "Deductee" },
+      { key: "section", label: "Section" },
+      { key: "tds", label: "TDS", align: "right", money: true },
+      { key: "correction_date", label: "Correction Date" },
+      { key: "status", label: "Status" },
+    ],
+  },
+
+  // --- Bank & Cash (bank_transactions + finance_accounts) --------------------
+  {
+    key: "rx-bank-unreconciled",
+    label: "Unreconciled Bank Transactions",
+    group: "Finance",
+    description: "Bank transactions not yet reconciled.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT transaction_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             COALESCE(NULLIF(reconciliation_status,''),'Pending') AS status
+      FROM bank_transactions
+      WHERE COALESCE(NULLIF(reconciliation_status,''),'Pending') <> 'Reconciled' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "transaction_id", label: "Txn" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-bank-difference",
+    label: "Bank Difference Report",
+    group: "Finance",
+    description: "Book balance vs bank statement balance per account.",
+    sql: `
+      SELECT COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(bank_name,''),'—') AS bank,
+             COALESCE(current_book_balance,0) AS book_balance,
+             COALESCE(bank_statement_balance,0) AS statement_balance,
+             COALESCE(difference,0) AS difference,
+             COALESCE(NULLIF(reconciliation_status,''),'Pending') AS status
+      FROM finance_accounts
+      ORDER BY ABS(COALESCE(difference,0)) DESC`,
+    columns: [
+      { key: "account", label: "Account" },
+      { key: "bank", label: "Bank" },
+      { key: "book_balance", label: "Book Balance", align: "right", money: true },
+      { key: "statement_balance", label: "Statement", align: "right", money: true },
+      { key: "difference", label: "Difference", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-bank-charges",
+    label: "Bank Charges Report",
+    group: "Finance",
+    description: "Bank transactions posted to bank charges.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT transaction_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(account_head,''),'—') AS head,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM bank_transactions
+      WHERE account_head LIKE '%Charge%' OR narration LIKE '%charge%' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "transaction_id", label: "Txn" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "head", label: "Head" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-bank-interest",
+    label: "Bank Interest Report",
+    group: "Finance",
+    description: "Bank transactions posted to interest.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT transaction_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(account_head,''),'—') AS head,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM bank_transactions
+      WHERE account_head LIKE '%Interest%' OR narration LIKE '%interest%' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "transaction_id", label: "Txn" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "head", label: "Head" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-bank-transfer",
+    label: "Bank Transfer Register",
+    group: "Finance",
+    description: "Inter-account transfers (contra) between bank & cash accounts.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT transaction_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS counterparty,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             COALESCE(NULLIF(reference_no,''),'—') AS reference
+      FROM bank_transactions
+      WHERE voucher_type LIKE '%Contra%' OR voucher_type LIKE '%Transfer%'
+         OR transaction_type LIKE '%Transfer%' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "transaction_id", label: "Txn" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "counterparty", label: "Counterparty" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "reference", label: "Reference" },
+    ],
+  },
+  {
+    key: "rx-cheque-register",
+    label: "Cheque Register",
+    group: "Finance",
+    description: "Bank transactions settled by cheque.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT transaction_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(cheque_utr_reference,''),'—') AS cheque,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             COALESCE(NULLIF(reconciliation_status,''),'Pending') AS status
+      FROM bank_transactions
+      WHERE payment_mode LIKE '%Cheque%'
+         OR (cheque_utr_reference IS NOT NULL AND cheque_utr_reference <> '') ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "transaction_id", label: "Txn" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "cheque", label: "Cheque / Ref" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-outstanding-cheques",
+    label: "Outstanding Cheques Report",
+    group: "Finance",
+    description: "Cheque transactions not yet reconciled / cleared.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT transaction_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(cheque_utr_reference,''),'—') AS cheque,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM bank_transactions
+      WHERE payment_mode LIKE '%Cheque%'
+        AND COALESCE(NULLIF(reconciliation_status,''),'Pending') <> 'Reconciled' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "transaction_id", label: "Txn" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "cheque", label: "Cheque / Ref" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-utr-register",
+    label: "UTR / Payment Reference Register",
+    group: "Finance",
+    description: "Bank transactions with a UTR / payment reference.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT transaction_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(NULLIF(payment_mode,''),'—') AS mode,
+             COALESCE(NULLIF(cheque_utr_reference,''),'—') AS reference,
+             COALESCE(amount,0) AS amount
+      FROM bank_transactions
+      WHERE cheque_utr_reference IS NOT NULL AND cheque_utr_reference <> '' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "transaction_id", label: "Txn" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "mode", label: "Mode" },
+      { key: "reference", label: "UTR / Reference" },
+      { key: "amount", label: "Amount", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-account-balances",
+    label: "Bank Balance Schedule",
+    group: "Finance",
+    description: "Opening and current book balance per bank & cash account.",
+    sql: `
+      SELECT COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(account_type,''),'—') AS account_type,
+             COALESCE(NULLIF(bank_name,''),'—') AS bank,
+             COALESCE(opening_balance,0) AS opening_balance,
+             COALESCE(current_book_balance,0) AS book_balance,
+             COALESCE(NULLIF(active_status,''),'Active') AS status
+      FROM finance_accounts
+      ORDER BY account`,
+    columns: [
+      { key: "account", label: "Account" },
+      { key: "account_type", label: "Type" },
+      { key: "bank", label: "Bank" },
+      { key: "opening_balance", label: "Opening", align: "right", money: true },
+      { key: "book_balance", label: "Book Balance", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-cash-balances",
+    label: "Cash Balance Schedule",
+    group: "Finance",
+    description: "Opening and current book balance per cash account.",
+    sql: `
+      SELECT COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(opening_balance,0) AS opening_balance,
+             COALESCE(current_book_balance,0) AS book_balance,
+             COALESCE(NULLIF(active_status,''),'Active') AS status
+      FROM finance_accounts
+      WHERE account_type LIKE '%Cash%'
+      ORDER BY account`,
+    columns: [
+      { key: "account", label: "Account" },
+      { key: "opening_balance", label: "Opening", align: "right", money: true },
+      { key: "book_balance", label: "Book Balance", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+
+  // --- Sales & Purchase (sales_invoices / purchase_bills) --------------------
+  {
+    key: "rx-sales-invoice-register",
+    label: "Sales Invoice Register",
+    group: "Finance",
+    description: "Every sales invoice with tax split, received and outstanding.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT invoice_id,
+             invoice_date,
+             COALESCE(NULLIF(client_name,''),'—') AS customer,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(cgst_amount,0) AS cgst,
+             COALESCE(sgst_amount,0) AS sgst,
+             COALESCE(igst_amount,0) AS igst,
+             COALESCE(invoice_total,0) AS total,
+             COALESCE(amount_received,0) AS received,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM sales_invoices
+      WHERE 1=1 ${RANGE}
+      ORDER BY invoice_date DESC, id DESC`,
+    columns: [
+      { key: "invoice_id", label: "Invoice" },
+      { key: "invoice_date", label: "Date" },
+      { key: "customer", label: "Customer" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "total", label: "Total", align: "right", money: true },
+      { key: "received", label: "Received", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-sales-return",
+    label: "Sales Return Register",
+    group: "Finance",
+    description: "Sales credit notes / returns.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT invoice_id,
+             invoice_date,
+             COALESCE(NULLIF(client_name,''),'—') AS customer,
+             COALESCE(NULLIF(invoice_type,''),'—') AS type,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(invoice_total,0) AS total
+      FROM sales_invoices
+      WHERE invoice_type LIKE '%Credit%' OR invoice_type LIKE '%Return%' ${RANGE}
+      ORDER BY invoice_date DESC, id DESC`,
+    columns: [
+      { key: "invoice_id", label: "Document" },
+      { key: "invoice_date", label: "Date" },
+      { key: "customer", label: "Customer" },
+      { key: "type", label: "Type" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "total", label: "Total", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-sales-vs-collection",
+    label: "Sales vs Collection Report",
+    group: "Finance",
+    description: "Billed against received and outstanding, month by month.",
+    dateColumn: "invoice_date",
+    sql: `
+      SELECT DATE_FORMAT(invoice_date, '%Y-%m') AS period,
+             COALESCE(SUM(invoice_total),0) AS billed,
+             COALESCE(SUM(amount_received),0) AS received,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding
+      FROM sales_invoices
+      WHERE invoice_date IS NOT NULL ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Month" },
+      { key: "billed", label: "Billed", align: "right", money: true },
+      { key: "received", label: "Received", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-purchase-bill-register",
+    label: "Purchase Bill Register",
+    group: "Finance",
+    description: "Every purchase bill with tax split, paid and outstanding.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT po_number,
+             bill_date,
+             COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(cgst_amount,0) AS cgst,
+             COALESCE(sgst_amount,0) AS sgst,
+             COALESCE(igst_amount,0) AS igst,
+             COALESCE(gross_bill_amount,0) AS gross,
+             COALESCE(amount_paid,0) AS paid,
+             COALESCE(outstanding_amount,0) AS outstanding,
+             COALESCE(NULLIF(payment_status,''),'Unpaid') AS status
+      FROM purchase_bills
+      WHERE 1=1 ${RANGE}
+      ORDER BY bill_date DESC, id DESC`,
+    columns: [
+      { key: "po_number", label: "Bill / PO" },
+      { key: "bill_date", label: "Date" },
+      { key: "vendor", label: "Vendor" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "cgst", label: "CGST", align: "right", money: true },
+      { key: "sgst", label: "SGST", align: "right", money: true },
+      { key: "igst", label: "IGST", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
+  {
+    key: "rx-purchase-return",
+    label: "Purchase Return Register",
+    group: "Finance",
+    description: "Purchase debit notes / returns.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT po_number,
+             bill_date,
+             COALESCE(NULLIF(vendor_name,''),'—') AS vendor,
+             COALESCE(NULLIF(bill_type,''),'—') AS type,
+             COALESCE(taxable_amount,0) AS taxable,
+             COALESCE(gross_bill_amount,0) AS gross
+      FROM purchase_bills
+      WHERE bill_type LIKE '%Debit%' OR bill_type LIKE '%Return%' ${RANGE}
+      ORDER BY bill_date DESC, id DESC`,
+    columns: [
+      { key: "po_number", label: "Document" },
+      { key: "bill_date", label: "Date" },
+      { key: "vendor", label: "Vendor" },
+      { key: "type", label: "Type" },
+      { key: "taxable", label: "Taxable", align: "right", money: true },
+      { key: "gross", label: "Gross", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-purchase-vs-payment",
+    label: "Purchase vs Payment Report",
+    group: "Finance",
+    description: "Billed against paid and outstanding, month by month.",
+    dateColumn: "bill_date",
+    sql: `
+      SELECT DATE_FORMAT(bill_date, '%Y-%m') AS period,
+             COALESCE(SUM(gross_bill_amount),0) AS gross,
+             COALESCE(SUM(amount_paid),0) AS paid,
+             COALESCE(SUM(outstanding_amount),0) AS outstanding
+      FROM purchase_bills
+      WHERE bill_date IS NOT NULL ${RANGE}
+      GROUP BY period
+      ORDER BY period DESC`,
+    columns: [
+      { key: "period", label: "Month" },
+      { key: "gross", label: "Gross", align: "right", money: true },
+      { key: "paid", label: "Paid", align: "right", money: true },
+      { key: "outstanding", label: "Outstanding", align: "right", money: true },
+    ],
+  },
+
+  // --- CA / Audit (journal_entries + general_ledger) -------------------------
+  {
+    key: "rx-manual-journal",
+    label: "Manual Journal Report",
+    group: "Finance",
+    description: "Journal entries created manually rather than by a source module.",
+    dateColumn: "journal_date",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(narration,''),'—') AS narration,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM journal_entries
+      WHERE COALESCE(NULLIF(source_module,''),'Manual') = 'Manual'
+         OR source_module LIKE '%Manual%' ${RANGE}
+      ORDER BY journal_date DESC, id DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "account", label: "Account" },
+      { key: "narration", label: "Narration" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-unapproved",
+    label: "Unapproved Transaction Report",
+    group: "Finance",
+    description: "Journal entries pending approval.",
+    dateColumn: "journal_date",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             COALESCE(NULLIF(approval_status,''),'Pending') AS approval
+      FROM journal_entries
+      WHERE COALESCE(NULLIF(approval_status,''),'Pending') <> 'Approved' ${RANGE}
+      ORDER BY journal_date DESC, id DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "account", label: "Account" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "approval", label: "Approval" },
+    ],
+  },
+  {
+    key: "rx-high-value",
+    label: "High Value Transaction Report",
+    group: "Finance",
+    description: "Journal entries of ₹1,00,000 or more.",
+    dateColumn: "journal_date",
+    sql: `
+      SELECT journal_entry_id,
+             journal_date,
+             COALESCE(NULLIF(voucher_type,''),'—') AS voucher_type,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit
+      FROM journal_entries
+      WHERE GREATEST(COALESCE(debit,0), COALESCE(credit,0)) >= 100000 ${RANGE}
+      ORDER BY GREATEST(COALESCE(debit,0), COALESCE(credit,0)) DESC`,
+    columns: [
+      { key: "journal_entry_id", label: "Journal" },
+      { key: "journal_date", label: "Date" },
+      { key: "voucher_type", label: "Voucher" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+    ],
+  },
+  {
+    key: "rx-unreconciled-gl",
+    label: "Unreconciled Transaction Report",
+    group: "Finance",
+    description: "Posted ledger lines not yet reconciled.",
+    dateColumn: "transaction_date",
+    sql: `
+      SELECT ledger_id,
+             transaction_date,
+             COALESCE(NULLIF(account_name,''),'—') AS account,
+             COALESCE(NULLIF(party_name,''),'—') AS party,
+             COALESCE(debit,0) AS debit,
+             COALESCE(credit,0) AS credit,
+             COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') AS status
+      FROM general_ledger
+      WHERE COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') <> 'Reconciled' ${RANGE}
+      ORDER BY transaction_date DESC, id DESC`,
+    columns: [
+      { key: "ledger_id", label: "Ledger" },
+      { key: "transaction_date", label: "Date" },
+      { key: "account", label: "Account" },
+      { key: "party", label: "Party" },
+      { key: "debit", label: "Debit", align: "right", money: true },
+      { key: "credit", label: "Credit", align: "right", money: true },
+      { key: "status", label: "Status" },
+    ],
+  },
 ]
 
 export const FINANCE_REPORT_MAP: Record<string, ReportDef> = Object.fromEntries(
@@ -1143,58 +3132,58 @@ export const FINANCIAL_REPORT_GROUPS = [
 
 export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   // 1. Core Financial Statements ------------------------------------------
-  stub({ key: "fs-trial-balance", label: "Trial Balance", group: "Core Financial Statements", description: PENDING }),
+  from("rx-trial-balance", { key: "fs-trial-balance", label: "Trial Balance", group: "Core Financial Statements", description: "Debit and credit balance per ledger account from the posted general ledger." }),
   from("income-vs-expense", { key: "fs-profit-loss", label: "Profit & Loss", group: "Core Financial Statements", description: "Income against expenses, month by month." }),
-  stub({ key: "fs-balance-sheet", label: "Balance Sheet", group: "Core Financial Statements", description: PENDING }),
-  stub({ key: "fs-cash-flow", label: "Cash Flow Statement", group: "Core Financial Statements", description: PENDING }),
+  from("rx-balance-sheet", { key: "fs-balance-sheet", label: "Balance Sheet", group: "Core Financial Statements", description: "Asset, liability and equity balances classified from the posted ledger." }),
+  from("rx-cash-flow", { key: "fs-cash-flow", label: "Cash Flow Statement", group: "Core Financial Statements", description: "Monthly cash inflow, outflow and net movement across bank & cash." }),
   stub({ key: "fs-comparative-pl", label: "Comparative Profit & Loss", group: "Core Financial Statements", description: PENDING }),
   stub({ key: "fs-comparative-bs", label: "Comparative Balance Sheet", group: "Core Financial Statements", description: PENDING }),
   from("income-vs-expense", { key: "fs-monthly-pl", label: "Monthly Profit & Loss", group: "Core Financial Statements", description: "Monthly income, expense and net position." }),
-  stub({ key: "fs-quarterly-pl", label: "Quarterly Profit & Loss", group: "Core Financial Statements", description: PENDING }),
+  from("rx-quarterly-pl", { key: "fs-quarterly-pl", label: "Quarterly Profit & Loss", group: "Core Financial Statements", description: "Income against expenses, summarised by financial quarter." }),
   stub({ key: "fs-working-capital", label: "Working Capital Statement", group: "Core Financial Statements", description: PENDING }),
   stub({ key: "fs-changes-equity", label: "Statement of Changes in Equity", group: "Core Financial Statements", description: PENDING }),
   stub({ key: "fs-ratio-analysis", label: "Financial Ratio Analysis", group: "Core Financial Statements", description: PENDING }),
 
   // 2. Accounting Books ---------------------------------------------------
   from("finance-report", { key: "ab-day-book", label: "Day Book", group: "Accounting Books", description: "All finance activity summarised by module." }),
-  stub({ key: "ab-journal-register", label: "Journal Register", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-voucher-register", label: "Voucher Register", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-account-ledger", label: "Account Ledger", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-group-ledger", label: "Group Ledger", group: "Accounting Books", description: PENDING }),
+  from("rx-journal-register", { key: "ab-journal-register", label: "Journal Register", group: "Accounting Books", description: "Every journal entry line with voucher, account, debit and credit." }),
+  from("rx-voucher-register", { key: "ab-voucher-register", label: "Voucher Register", group: "Accounting Books", description: "Journal activity grouped by voucher type." }),
+  from("rx-account-ledger", { key: "ab-account-ledger", label: "Account Ledger", group: "Accounting Books", description: "Posted ledger movement per account with net balance." }),
+  from("rx-group-ledger", { key: "ab-group-ledger", label: "Group Ledger", group: "Accounting Books", description: "Posted ledger movement rolled up by account group." }),
   from("cash-book", { key: "ab-cash-book", label: "Cash Book", group: "Accounting Books", description: "Cash receipts and payments by month." }),
   from("bank-book", { key: "ab-bank-book", label: "Bank Book", group: "Accounting Books", description: "Money in and out per bank account." }),
   stub({ key: "ab-petty-cash-book", label: "Petty Cash Book", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-receipt-register", label: "Receipt Register", group: "Accounting Books", description: PENDING }),
+  from("rx-receipt-register", { key: "ab-receipt-register", label: "Receipt Register", group: "Accounting Books", description: "Cash and bank receipts recorded against invoices." }),
   from("expense-payment-register", { key: "ab-payment-register", label: "Payment Register", group: "Accounting Books", description: "Payments made against expenses." }),
-  stub({ key: "ab-contra-register", label: "Contra Register", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-adjustment-register", label: "Adjustment Register", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-opening-balance", label: "Opening Balance Report", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-closing-balance", label: "Closing Balance Report", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-suspense-account", label: "Suspense Account Report", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-reversal-register", label: "Reversal Register", group: "Accounting Books", description: PENDING }),
-  stub({ key: "ab-cancelled-voucher", label: "Cancelled Voucher Report", group: "Accounting Books", description: PENDING }),
+  from("rx-contra-register", { key: "ab-contra-register", label: "Contra Register", group: "Accounting Books", description: "Bank/cash contra entries between own accounts." }),
+  from("rx-adjustment-register", { key: "ab-adjustment-register", label: "Adjustment Register", group: "Accounting Books", description: "Journal entries flagged as adjustments." }),
+  from("rx-opening-balance", { key: "ab-opening-balance", label: "Opening Balance Report", group: "Accounting Books", description: "Opening balances per ledger account." }),
+  from("rx-closing-balance", { key: "ab-closing-balance", label: "Closing Balance Report", group: "Accounting Books", description: "Closing balance per ledger account from the posted ledger." }),
+  from("rx-suspense-account", { key: "ab-suspense-account", label: "Suspense Account Report", group: "Accounting Books", description: "Ledger lines posted to suspense accounts." }),
+  from("rx-reversal-register", { key: "ab-reversal-register", label: "Reversal Register", group: "Accounting Books", description: "Journal entries recorded as reversals." }),
+  from("rx-cancelled-voucher", { key: "ab-cancelled-voucher", label: "Cancelled Voucher Report", group: "Accounting Books", description: "Journal vouchers marked cancelled." }),
 
   // 3. Receivables --------------------------------------------------------
   from("sales-report", { key: "ar-accounts-receivable", label: "Accounts Receivable", group: "Receivables", description: "Billed, received and outstanding by payment status." }),
-  stub({ key: "ar-customer-outstanding", label: "Customer Outstanding", group: "Receivables", description: PENDING }),
-  stub({ key: "ar-receivable-ageing", label: "Receivable Ageing", group: "Receivables", description: PENDING }),
-  stub({ key: "ar-invoice-wise", label: "Invoice-wise Receivable", group: "Receivables", description: PENDING }),
-  stub({ key: "ar-customer-wise", label: "Customer-wise Receivable", group: "Receivables", description: PENDING }),
+  from("rx-customer-outstanding", { key: "ar-customer-outstanding", label: "Customer Outstanding", group: "Receivables", description: "Billed, received and outstanding grouped by customer (dues only)." }),
+  from("rx-receivable-ageing", { key: "ar-receivable-ageing", label: "Receivable Ageing", group: "Receivables", description: "Outstanding receivables bucketed by age from the due date." }),
+  from("rx-invoice-receivable", { key: "ar-invoice-wise", label: "Invoice-wise Receivable", group: "Receivables", description: "Each unpaid sales invoice with received and outstanding." }),
+  from("rx-customer-sales", { key: "ar-customer-wise", label: "Customer-wise Receivable", group: "Receivables", description: "Billed, received and outstanding grouped by customer." }),
   stub({ key: "ar-customer-ledger", label: "Customer Ledger", group: "Receivables", description: PENDING }),
   stub({ key: "ar-customer-statement", label: "Customer Statement", group: "Receivables", description: PENDING }),
-  stub({ key: "ar-overdue", label: "Overdue Receivables", group: "Receivables", description: PENDING }),
+  from("rx-overdue-receivable", { key: "ar-overdue", label: "Overdue Receivables", group: "Receivables", description: "Unpaid invoices past their due date, aged in days." }),
   stub({ key: "ar-customer-advance", label: "Customer Advance Report", group: "Receivables", description: PENDING }),
   stub({ key: "ar-reconciliation", label: "Receivable Reconciliation", group: "Receivables", description: PENDING }),
 
   // 4. Payables -----------------------------------------------------------
   from("purchase-register", { key: "ap-accounts-payable", label: "Accounts Payable", group: "Payables", description: "Vendor bills with taxable, GST, TDS and net payable." }),
-  stub({ key: "ap-vendor-outstanding", label: "Vendor Outstanding", group: "Payables", description: PENDING }),
+  from("rx-vendor-outstanding", { key: "ap-vendor-outstanding", label: "Vendor Outstanding", group: "Payables", description: "Gross, paid and outstanding grouped by vendor (dues only)." }),
   from("accounts-payable-ageing", { key: "ap-payable-ageing", label: "Payable Ageing", group: "Payables", description: "Outstanding payables bucketed by age." }),
-  stub({ key: "ap-bill-wise", label: "Bill-wise Payable", group: "Payables", description: PENDING }),
+  from("rx-bill-payable", { key: "ap-bill-wise", label: "Bill-wise Payable", group: "Payables", description: "Each unpaid purchase bill with paid and outstanding." }),
   from("purchase-register", { key: "ap-vendor-wise", label: "Vendor-wise Payable", group: "Payables", description: "Payable totals grouped by vendor." }),
   stub({ key: "ap-vendor-ledger", label: "Vendor Ledger", group: "Payables", description: PENDING }),
   stub({ key: "ap-vendor-statement", label: "Vendor Statement", group: "Payables", description: PENDING }),
-  stub({ key: "ap-overdue", label: "Overdue Payables", group: "Payables", description: PENDING }),
+  from("rx-overdue-payable", { key: "ap-overdue", label: "Overdue Payables", group: "Payables", description: "Unpaid bills past their due date, aged in days." }),
   stub({ key: "ap-vendor-advance", label: "Vendor Advance Report", group: "Payables", description: PENDING }),
   stub({ key: "ap-reconciliation", label: "Payable Reconciliation", group: "Payables", description: PENDING }),
 

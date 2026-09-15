@@ -15,7 +15,14 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table"
-import { Download, FileBarChart, FilterX, RefreshCw } from "lucide-react"
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  FileBarChart,
+  FilterX,
+  RefreshCw,
+} from "lucide-react"
 import { inr0 } from "@/lib/finance-calc"
 
 type ReportColumn = {
@@ -196,8 +203,8 @@ const emptyRange = { from: "", to: "" }
 
 export function FinancialReportsClient() {
   const [range, setRange] = useState(emptyRange)
-  const [group, setGroup] = useState<string>("")
   const [reportKey, setReportKey] = useState<string>("")
+  const [openGroup, setOpenGroup] = useState<string>("")
 
   const { data, isLoading } = useSWR<{ reports: CatalogueEntry[] }>(
     "/api/finance/reports",
@@ -207,36 +214,37 @@ export function FinancialReportsClient() {
   const catalogue = data?.reports ?? []
 
   // Categories in catalogue order (first-seen), so the accounting groups keep
-  // their intended sequence rather than being alphabetised.
+  // their intended sequence rather than being alphabetised. Each category maps
+  // to the reports it contains, so it can render as one collapsible card.
   const groups = useMemo(() => {
-    const seen: string[] = []
-    for (const r of catalogue) if (!seen.includes(r.group)) seen.push(r.group)
-    return seen
+    const map = new Map<string, CatalogueEntry[]>()
+    for (const r of catalogue) {
+      const list = map.get(r.group) ?? []
+      list.push(r)
+      map.set(r.group, list)
+    }
+    return Array.from(map, ([group, reports]) => ({ group, reports }))
   }, [catalogue])
 
-  const reportsInGroup = useMemo(
-    () => catalogue.filter((r) => r.group === group),
-    [catalogue, group],
-  )
-
-  // Default to the first category once the catalogue loads.
+  // Default selection + open the first category once the catalogue loads.
   useEffect(() => {
-    if (!group && groups.length > 0) setGroup(groups[0])
-  }, [group, groups])
+    if (reportKey || groups.length === 0) return
+    const first = groups[0]
+    setReportKey(first.reports[0]?.key ?? "")
+    setOpenGroup(first.group)
+  }, [reportKey, groups])
 
-  // Keep the selected report valid whenever the category changes.
-  useEffect(() => {
-    if (reportsInGroup.length === 0) {
-      if (reportKey) setReportKey("")
-      return
-    }
-    if (!reportsInGroup.some((r) => r.key === reportKey)) {
-      setReportKey(reportsInGroup[0].key)
-    }
-  }, [reportsInGroup, reportKey])
-
-  const selected = reportsInGroup.find((r) => r.key === reportKey)
+  const selected = catalogue.find((r) => r.key === reportKey)
   const rangeActive = Boolean(range.from || range.to)
+
+  function toggleGroup(group: string) {
+    setOpenGroup((prev) => (prev === group ? "" : group))
+  }
+
+  function pickReport(entry: CatalogueEntry) {
+    setReportKey(entry.key)
+    setOpenGroup(entry.group)
+  }
 
   return (
     <main className="space-y-8 p-6">
@@ -266,64 +274,93 @@ export function FinancialReportsClient() {
             </Button>
           )}
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="report-group">
-              Category
-            </label>
-            <select
-              id="report-group"
-              className="h-10 rounded-md border bg-background px-3 text-sm"
-              value={group}
-              onChange={(e) => setGroup(e.target.value)}
-              disabled={isLoading || groups.length === 0}
-            >
-              {groups.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
+        <CardContent className="space-y-4">
+          {/* Category → report picker, rendered as collapsible cards (one per
+              category) to mirror the Chart of Accounts layout. */}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Category</p>
+            {isLoading ? (
+              <p className="py-4 text-sm text-muted-foreground">Loading report catalogue…</p>
+            ) : groups.length === 0 ? (
+              <p className="py-4 text-sm text-muted-foreground">No reports available.</p>
+            ) : (
+              <div className="space-y-2">
+                {groups.map(({ group, reports }) => {
+                  const isOpen = openGroup === group
+                  return (
+                    <div key={group} className="rounded-md border">
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(group)}
+                        className="flex w-full items-center gap-2 px-3 py-3 text-left"
+                        aria-expanded={isOpen}
+                      >
+                        {isOpen ? (
+                          <ChevronDown className="size-4 shrink-0" />
+                        ) : (
+                          <ChevronRight className="size-4 shrink-0" />
+                        )}
+                        <span className="text-sm font-semibold">{group}</span>
+                        <Badge variant="secondary" className="ml-auto">
+                          {reports.length} report{reports.length === 1 ? "" : "s"}
+                        </Badge>
+                      </button>
+                      {isOpen && (
+                        <ul className="border-t p-1">
+                          {reports.map((r) => {
+                            const active = r.key === reportKey
+                            return (
+                              <li key={r.key}>
+                                <button
+                                  type="button"
+                                  onClick={() => pickReport(r)}
+                                  aria-pressed={active}
+                                  className={`flex w-full flex-col gap-0.5 rounded-md px-3 py-2 text-left transition-colors ${
+                                    active
+                                      ? "bg-primary/10 text-primary"
+                                      : "hover:bg-muted/60"
+                                  }`}
+                                >
+                                  <span className="text-sm font-medium">{r.label}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {r.description}
+                                  </span>
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="report-name">
-              Report
-            </label>
-            <select
-              id="report-name"
-              className="h-10 rounded-md border bg-background px-3 text-sm"
-              value={reportKey}
-              onChange={(e) => setReportKey(e.target.value)}
-              disabled={reportsInGroup.length === 0}
-            >
-              {reportsInGroup.map((r) => (
-                <option key={r.key} value={r.key}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="report-from">
-              From date
-            </label>
-            <Input
-              id="report-from"
-              type="date"
-              value={range.from}
-              onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="report-to">
-              To date
-            </label>
-            <Input
-              id="report-to"
-              type="date"
-              value={range.to}
-              onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
-            />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="report-from">
+                From date
+              </label>
+              <Input
+                id="report-from"
+                type="date"
+                value={range.from}
+                onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="report-to">
+                To date
+              </label>
+              <Input
+                id="report-to"
+                type="date"
+                value={range.to}
+                onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>

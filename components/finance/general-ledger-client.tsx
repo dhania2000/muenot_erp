@@ -1,6 +1,6 @@
 "use client"
 
-import useSWR from "swr"
+import useSWR, { mutate } from "swr"
 import { useMemo, useState } from "react"
 import { fetcher } from "@/lib/fetcher"
 import { inr, inr0 } from "@/lib/finance-calc"
@@ -13,7 +13,7 @@ import { ExcelExportButton } from "@/components/excel-export-button"
 import type { BadgeVariant } from "@/lib/finance-schema"
 import {
   Coins, Wallet, TrendingUp, BookOpen, CheckCircle2, AlertTriangle, Layers, Link2,
-  FilterX, Lock, Loader2Icon, Users, FolderKanban, CalendarRange, ScrollText, Landmark, ShieldCheck,
+  FilterX, Lock, Loader2Icon, Users, FolderKanban, CalendarRange, ScrollText, Landmark, ShieldCheck, RefreshCw,
 } from "lucide-react"
 
 type Row = Record<string, any>
@@ -112,7 +112,10 @@ export function GeneralLedgerClient() {
           <p className="text-sm text-muted-foreground">Central ledger — auto-posted from Journal Entries</p>
           <h1 className="text-3xl font-semibold tracking-tight text-balance">General Ledger</h1>
         </div>
-        <ExportForView view={view} data={data} />
+        <div className="flex items-center gap-2">
+          <SyncLedgerButton onSynced={() => mutate(queryKey)} />
+          <ExportForView view={view} data={data} />
+        </div>
       </div>
 
       {/* The GL is written only by the posting engine — manual entries go through
@@ -578,6 +581,59 @@ function ScrollTable({ head, rows, rightCols = [], empty }: { head: string[]; ro
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Sync ledger (Phase 35) — reconcile posted Journal Entries into the ledger.
+// Idempotent: rebuilds only the ledger rows that are missing, so it is safe to
+// press repeatedly. Feedback is shown inline (no toast dependency).
+// ---------------------------------------------------------------------------
+function SyncLedgerButton({ onSynced }: { onSynced: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
+
+  async function run() {
+    setBusy(true)
+    setNote(null)
+    try {
+      const res = await fetch("/api/finance/general-ledger/sync", { method: "POST" })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error || "Sync failed")
+      const created = Number(body.created ?? 0)
+      const failed = Number(body.failed ?? 0)
+      setNote({
+        kind: failed > 0 ? "err" : "ok",
+        text:
+          created === 0 && failed === 0
+            ? "Ledger already up to date"
+            : `${created} posted${failed > 0 ? ` · ${failed} failed` : ""}`,
+      })
+      onSynced()
+    } catch (error) {
+      setNote({ kind: "err", text: (error as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {note ? (
+        <span className={`text-xs ${note.kind === "ok" ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
+          {note.text}
+        </span>
+      ) : null}
+      <Button
+        variant="outline"
+        onClick={run}
+        disabled={busy}
+        title="Rebuild any missing ledger rows from posted Journal Entries"
+      >
+        {busy ? <Loader2Icon className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+        Sync ledger
+      </Button>
     </div>
   )
 }

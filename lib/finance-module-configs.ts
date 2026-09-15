@@ -1401,7 +1401,10 @@ const generalLedger: ModuleConfig = {
   table: "general_ledger",
   label: "General Ledger",
   subtitle: "Central ledger — auto-posted from Journal Entries",
-  addLabel: "New ledger entry",
+  // GL is read-only: this label drives a controlled call-to-action that routes
+  // to Journal Entries (the sole manual accounting entry path), never a direct
+  // GL write. See finance-module-client.tsx readOnly header action.
+  addLabel: "New journal entry",
   idColumn: "ledger_id",
   idPrefix: "GL",
   editableId: true,

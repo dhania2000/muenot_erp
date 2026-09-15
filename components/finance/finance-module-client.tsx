@@ -228,6 +228,14 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
               {cfg.addLabel}
             </Button>
           )}
+          {cfg.readOnly && (
+            <Button asChild>
+              <a href="/modules/finance/journal-entries">
+                <Plus data-icon="inline-start" />
+                {cfg.addLabel}
+              </a>
+            </Button>
+          )}
         </div>
       </div>
 

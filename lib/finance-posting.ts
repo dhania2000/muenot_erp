@@ -50,6 +50,80 @@ export async function nextLedgerId(dateStr?: string | null): Promise<string> {
   return `GL-${startYear}-${number}`
 }
 
+/**
+ * Phase 33/34/36 — self-healing schema for the General Ledger reliability
+ * upgrade. Two additive changes, both idempotent and non-destructive:
+ *
+ *   1. `posting_date` — the accounting date a ledger row was actually posted,
+ *      kept alongside (never overwriting) the existing transaction_date /
+ *      value_date so the posted-on date is queryable in its own right.
+ *   2. A UNIQUE index on `journal_entry_id` so one posted journal line can back
+ *      at most one ledger row. This turns the existing application-level
+ *      idempotency check into a hard database guarantee — a retry, a concurrent
+ *      re-post, or a re-run of the sync can never double-write a ledger row.
+ *      The unique index is only added when the data is already clean; if legacy
+ *      duplicates exist we fall back to a plain index and log, so this helper
+ *      never risks a destructive dedupe (a duplicate is repaired deliberately,
+ *      not silently here).
+ *
+ * Runs at most once per process. Must be called OUTSIDE any open transaction
+ * (an ALTER implicitly commits), so callers invoke it before beginTransaction.
+ */
+let glColumnsEnsured = false
+export async function ensureGeneralLedgerColumns(): Promise<void> {
+  if (glColumnsEnsured) return
+
+  const [pd] = (await query(
+    `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = 'general_ledger'
+         AND column_name = 'posting_date' LIMIT 1`,
+  )) as any[]
+  if (!pd) {
+    await query(
+      `ALTER TABLE general_ledger
+         ADD COLUMN posting_date DATE DEFAULT NULL AFTER value_date,
+         ADD KEY idx_gl_posting_date (posting_date)`,
+    )
+  }
+
+  const [hasUnique] = (await query(
+    `SELECT 1 FROM information_schema.statistics
+       WHERE table_schema = DATABASE() AND table_name = 'general_ledger'
+         AND index_name = 'uq_gl_journal_entry_id' LIMIT 1`,
+  )) as any[]
+  if (!hasUnique) {
+    const [hasPlain] = (await query(
+      `SELECT 1 FROM information_schema.statistics
+         WHERE table_schema = DATABASE() AND table_name = 'general_ledger'
+           AND index_name = 'idx_gl_journal_entry_id' LIMIT 1`,
+    )) as any[]
+    const dups = (await query(
+      `SELECT journal_entry_id FROM general_ledger
+        WHERE journal_entry_id IS NOT NULL AND journal_entry_id <> ''
+        GROUP BY journal_entry_id HAVING COUNT(*) > 1 LIMIT 1`,
+    )) as any[]
+    if (dups.length === 0) {
+      try {
+        await query(`ALTER TABLE general_ledger ADD UNIQUE KEY uq_gl_journal_entry_id (journal_entry_id)`)
+        if (hasPlain) {
+          await query(`ALTER TABLE general_ledger DROP KEY idx_gl_journal_entry_id`).catch(() => {})
+        }
+      } catch (error) {
+        console.log("[v0] general_ledger unique journal_entry_id index skipped:", (error as Error).message)
+      }
+    } else {
+      if (!hasPlain) {
+        await query(`ALTER TABLE general_ledger ADD KEY idx_gl_journal_entry_id (journal_entry_id)`).catch(() => {})
+      }
+      console.log(
+        "[v0] general_ledger has duplicate journal_entry_id rows — run the ledger sync to repair before the unique guard can be enforced.",
+      )
+    }
+  }
+
+  glColumnsEnsured = true
+}
+
 export type PostingLine = {
   role: AccountRole
   debit: number
@@ -229,6 +303,11 @@ export async function postLines(lines: PostingLine[], args: PostArgs): Promise<P
     }
   }
 
+  // Phase 36 — make sure the ledger carries the posting_date column (and the
+  // duplicate guard) before we open the transaction; an ALTER cannot run inside
+  // one.
+  await ensureGeneralLedgerColumns()
+
   const voucherNo = await nextRecordId("VCH")
   const conn = await pool.getConnection()
   try {
@@ -271,14 +350,14 @@ export async function postLines(lines: PostingLine[], args: PostArgs): Promise<P
 
       await conn.query(
         `INSERT INTO general_ledger
-           (ledger_id, journal_entry_id, voucher_no, financial_year, transaction_date, value_date,
+           (ledger_id, journal_entry_id, voucher_no, financial_year, transaction_date, value_date, posting_date,
             account_id, account_name, account_group, account_type, transaction_type, voucher_type,
             reference_no, party_id, party_name, project_id, project_name, description, debit, credit,
             amount, gst_amount, tds_amount, balance, balance_type, source_module, source_reference,
             source_entity_type, source_entity_id, reconciliation_status, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
-          ledgerId, journalEntryId, voucherNo, args.financialYear, args.date, args.date,
+          ledgerId, journalEntryId, voucherNo, args.financialYear, args.date, args.date, args.date,
           account.account_id, account.account_name, account.account_group, account.account_type,
           line.debit > 0 ? "Debit" : "Credit", args.voucherType, args.entityRef,
           args.partyId ?? null, args.partyName ?? null, args.projectId ?? null, args.projectName ?? null,

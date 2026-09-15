@@ -5,7 +5,7 @@ import { financialYearFor } from "@/lib/finance-calc"
 import { resolveAccountById, isDebitNature, type ResolvedAccount } from "@/lib/finance-accounts"
 import { logFinanceEvent } from "@/lib/finance-audit"
 import { assertPeriodOpen } from "@/lib/finance-period-lock"
-import { nextLedgerId } from "@/lib/finance-posting"
+import { nextLedgerId, ensureGeneralLedgerColumns } from "@/lib/finance-posting"
 
 // ---------------------------------------------------------------------------
 // Manual journal engine (server-only) — the central accounting workflow.
@@ -778,15 +778,16 @@ async function writeLedgerFromRows(
 
     await conn.query(
       `INSERT INTO general_ledger
-         (ledger_id, journal_entry_id, voucher_no, financial_year, transaction_date, value_date,
+         (ledger_id, journal_entry_id, voucher_no, financial_year, transaction_date, value_date, posting_date,
           account_id, account_name, account_group, account_type, transaction_type, voucher_type,
           reference_no, party_id, party_name, project_id, project_name, cost_centre, description, debit, credit,
           amount, gst_amount, tds_amount, balance, balance_type, payment_mode, cheque_utr_reference,
           attachment_link, source_module, source_reference,
           source_entity_type, source_entity_id, reconciliation_status, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         ledgerId, row.journal_entry_id, row.voucher_no, row.financial_year, row.journal_date, row.journal_date,
+        row.posting_date ?? row.journal_date,
         account.account_id, account.account_name, account.account_group, account.account_type,
         debit > 0 ? "Debit" : "Credit", row.voucher_type, row.reference_no,
         row.party_id ?? null, row.party_name ?? null, row.project_id ?? null, row.project_name ?? null,
@@ -830,6 +831,9 @@ async function postManualJournalGroup(
 
   // Phase 27 — a voucher cannot be posted into a locked accounting month.
   await assertPeriodOpen(postingDate)
+
+  // Phase 36 — self-heal the ledger schema before opening the transaction.
+  await ensureGeneralLedgerColumns()
 
   const conn = await pool.getConnection()
   try {
@@ -926,6 +930,9 @@ async function reverseManualJournalGroup(
     gst_amount: 0,
     tds_amount: 0,
   }))
+
+  // Phase 36 — self-heal the ledger schema before opening the transaction.
+  await ensureGeneralLedgerColumns()
 
   const conn = await pool.getConnection()
   try {

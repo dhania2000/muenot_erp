@@ -223,11 +223,15 @@ async function sectionAggregate(period: string, direction: TdsDirection) {
  */
 async function periodCoverage(period: string, dir: TdsDirection) {
   const challans = (await query(
-    `SELECT challan_id, challan_no, tds_amount
+    `SELECT challan_id, challan_no, tds_amount, interest, late_fee
        FROM tds_challans WHERE direction = ? AND period = ?`,
     [dir, period],
   ).catch(() => [])) as any[]
   const depositedTds = round2(challans.reduce((s, c) => s + num(c.tds_amount), 0))
+  // Statutory interest (§201(1A)) and late fee (§234E) actually deposited via
+  // this period's challans — read from the same challan ledger, never recomputed.
+  const depositedInterest = round2(challans.reduce((s, c) => s + num(c.interest), 0))
+  const depositedLateFee = round2(challans.reduce((s, c) => s + num(c.late_fee), 0))
   const challanLabel = challans.map((c) => c.challan_no || c.challan_id).filter(Boolean).join(", ")
 
   const allocRows = (await query(
@@ -248,7 +252,7 @@ async function periodCoverage(period: string, dir: TdsDirection) {
     if (a.challan_id) e.challans.add(String(a.challan_id))
     byParty.set(key, e)
   }
-  return { depositedTds, challanLabel, hasAlloc, bySection, byParty }
+  return { depositedTds, depositedInterest, depositedLateFee, challanLabel, hasAlloc, bySection, byParty }
 }
 
 /** Deposit status of a deducted line given how much of it has been paid. */
@@ -302,6 +306,12 @@ export async function tdsSummary(
   })
 
   const totalPaid = round2(sectionsOut.reduce((s, r) => s + r.paid, 0))
+  // Accounting summary (Phase 73): statutory interest + late fee deposited for
+  // the period come straight from the challan ledger via `periodCoverage`, so
+  // Total liability = deducted TDS + interest + late fee ties back to challans.
+  const totalInterest = round2(coverage?.depositedInterest ?? 0)
+  const totalLateFee = round2(coverage?.depositedLateFee ?? 0)
+  const totalLiability = round2(totalTds + totalInterest + totalLateFee)
 
   const [existing] = (await query(`SELECT * FROM tds_filings WHERE period = ? AND direction = ? LIMIT 1`, [
     period,
@@ -316,6 +326,9 @@ export async function tdsSummary(
       invoice_count: invoiceCount,
       total_base: totalBase,
       total_tds: totalTds,
+      total_interest: totalInterest,
+      total_late_fee: totalLateFee,
+      total_liability: totalLiability,
       total_paid: totalPaid,
       total_balance: round2(totalTds - totalPaid),
     },

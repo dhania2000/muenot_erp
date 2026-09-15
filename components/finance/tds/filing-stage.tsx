@@ -13,7 +13,16 @@ import { currency, thisMonth, DIRECTION_COPY, Stat, StatusBadge, type Direction 
 
 type Summary = {
   period: string
-  totals: { invoice_count: number; total_base: number; total_tds: number }
+  totals: {
+    invoice_count: number
+    total_base: number
+    total_tds: number
+    total_interest: number
+    total_late_fee: number
+    total_liability: number
+    total_paid: number
+    total_balance: number
+  }
   sections: {
     section: string
     invoice_count: number
@@ -79,6 +88,22 @@ function PanCell({ pan, status, noPan }: { pan: string; status: DetailRow["pan_s
   )
 }
 
+/** Indian FY label for a YYYY-MM period, e.g. "2026-03" → "2025-26". */
+function fyOfPeriod(period: string): string {
+  const [y, m] = period.split("-").map(Number)
+  if (!y || !m) return "—"
+  const start = m >= 4 ? y : y - 1
+  return `${start}-${String((start + 1) % 100).padStart(2, "0")}`
+}
+/** Statutory quarter for a YYYY-MM period. */
+function quarterOfPeriod(period: string): string {
+  const m = Number(period.split("-")[1])
+  if (m >= 4 && m <= 6) return "Q1"
+  if (m >= 7 && m <= 9) return "Q2"
+  if (m >= 10 && m <= 12) return "Q3"
+  return "Q4"
+}
+
 export function FilingStage({ direction }: { direction: Direction }) {
   const [period, setPeriod] = useState(thisMonth())
   const [challan, setChallan] = useState("")
@@ -127,14 +152,41 @@ export function FilingStage({ direction }: { direction: Direction }) {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          Section-wise TDS derived from the source ledgers for a calendar month. Locking a month freezes its numbers.
+        <p className="max-w-md text-sm text-muted-foreground">
+          Section-wise TDS derived automatically from the source ledgers for a calendar month. Locking a month freezes
+          its numbers.
         </p>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted-foreground" htmlFor="period">
-            Tax period
-          </label>
-          <Input id="period" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-40" />
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground" htmlFor="period">
+              Tax period
+            </label>
+            <Input
+              id="period"
+              type="month"
+              value={period}
+              onChange={(e) => setPeriod(e.target.value)}
+              className="w-40"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">Financial year</span>
+            <Badge variant="outline" className="h-9 justify-center px-3 text-sm font-medium">
+              FY {fyOfPeriod(period)}
+            </Badge>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">Quarter</span>
+            <Badge variant="outline" className="h-9 justify-center px-3 text-sm font-medium">
+              {quarterOfPeriod(period)}
+            </Badge>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">TDS type</span>
+            <Badge variant="secondary" className="h-9 justify-center px-3 text-sm font-medium">
+              {copy.short}
+            </Badge>
+          </div>
         </div>
       </div>
 
@@ -152,10 +204,21 @@ export function FilingStage({ direction }: { direction: Direction }) {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Documents" value={String(s?.totals.invoice_count ?? 0)} />
         <Stat label="Base amount" value={currency(s?.totals.total_base)} />
         <Stat label="TDS" value={currency(s?.totals.total_tds)} />
+        {depositApplicable ? (
+          <>
+            <Stat label="Interest §201(1A)" value={currency(s?.totals.total_interest)} />
+            <Stat label="Late fee §234E" value={currency(s?.totals.total_late_fee)} />
+            <Stat label="Total liability" value={currency(s?.totals.total_liability)} />
+            <Stat label="Paid" value={currency(s?.totals.total_paid)} />
+            <Stat label="Balance" value={currency(s?.totals.total_balance)} />
+          </>
+        ) : (
+          <Stat label="Receivable" value={currency(s?.totals.total_tds)} hint="Form 26AS credit" />
+        )}
       </div>
 
       <Card>

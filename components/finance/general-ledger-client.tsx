@@ -13,12 +13,12 @@ import { ExcelExportButton } from "@/components/excel-export-button"
 import type { BadgeVariant } from "@/lib/finance-schema"
 import {
   Coins, Wallet, TrendingUp, BookOpen, CheckCircle2, AlertTriangle, Layers, Link2,
-  FilterX, Lock, Loader2Icon, Users, FolderKanban, CalendarRange, ScrollText, Landmark,
+  FilterX, Lock, Loader2Icon, Users, FolderKanban, CalendarRange, ScrollText, Landmark, ShieldCheck,
 } from "lucide-react"
 
 type Row = Record<string, any>
 type Side = "Debit" | "Credit"
-type View = "ledger" | "party" | "project" | "monthly" | "reconciliation" | "bank"
+type View = "ledger" | "party" | "project" | "monthly" | "reconciliation" | "bank" | "integrity"
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -197,6 +197,7 @@ export function GeneralLedgerClient() {
           <TabsTrigger value="monthly"><CalendarRange data-icon="inline-start" />Monthly</TabsTrigger>
           <TabsTrigger value="reconciliation"><CheckCircle2 data-icon="inline-start" />Reconciliation</TabsTrigger>
           <TabsTrigger value="bank"><Landmark data-icon="inline-start" />Bank Reconciliation</TabsTrigger>
+          <TabsTrigger value="integrity"><ShieldCheck data-icon="inline-start" />Integrity</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ledger">
@@ -216,6 +217,9 @@ export function GeneralLedgerClient() {
         </TabsContent>
         <TabsContent value="bank">
           <BankTab data={data} loading={isLoading} />
+        </TabsContent>
+        <TabsContent value="integrity">
+          <IntegrityTab data={data} loading={isLoading} />
         </TabsContent>
       </Tabs>
     </main>
@@ -427,6 +431,67 @@ function MatchChips({ fields, disabled }: { fields: Row; disabled?: boolean }) {
         </span>
       ))}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Integrity tab (Phases 21 & 22) — GL ⇄ Journal ⇄ Source reconciliation. Every
+// posted voucher's Journal total and originating source-document amount are
+// reconciled against the General Ledger; mismatches surface as GL Exceptions.
+// ---------------------------------------------------------------------------
+function IntegrityTab({ data, loading }: { data: Row | undefined; loading: boolean }) {
+  const rows: Row[] = data?.rows ?? []
+  const counts: Row = data?.counts ?? {}
+  return (
+    <TableCard
+      title="GL Integrity — Journal & Source reconciliation"
+      count={rows.length}
+      loading={loading}
+      hint="Journal Entries is the primary source; the ledger is the posted record. Each voucher's Journal total and source-document amount are reconciled against the General Ledger — any divergence is a GL Exception."
+    >
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Badge variant={(counts.exceptions ?? 0) > 0 ? "destructive" : "default"} className="gap-1">
+          {(counts.exceptions ?? 0) > 0 ? <AlertTriangle className="size-3" /> : <CheckCircle2 className="size-3" />}
+          Exceptions: {counts.exceptions ?? 0}
+        </Badge>
+        <Badge variant="default" className="gap-1">Balanced: {counts.balanced ?? 0}</Badge>
+        <Badge variant="secondary" className="gap-1">Journal mismatch: {counts.journalMismatch ?? 0}</Badge>
+        <Badge variant="secondary" className="gap-1">Source mismatch: {counts.sourceMismatch ?? 0}</Badge>
+        <Badge variant="secondary" className="gap-1">Unbalanced: {counts.unbalanced ?? 0}</Badge>
+        <Badge variant="secondary" className="gap-1">Missing journal: {counts.missingJournal ?? 0}</Badge>
+      </div>
+      <ScrollTable
+        head={["Voucher", "Date", "Source", "Journal (Dr / Cr)", "Ledger (Dr / Cr)", "Source Amount", "Status / Issues"]}
+        rightCols={[3, 4, 5]}
+        empty="No posted vouchers to reconcile for the current filters."
+        rows={rows.map((r) => [
+          <a
+            key="v"
+            href={`/modules/finance/journal-entries?search=${encodeURIComponent(String(r.voucherNo))}`}
+            className="font-mono text-xs text-primary hover:underline"
+          >
+            {r.voucherNo}
+          </a>,
+          fmtDate(r.date),
+          [r.sourceModule, r.sourceReference].filter(Boolean).join(" · ") || "Manual",
+          <span key="j" className="tabular-nums text-xs">{inr(Number(r.journalDebit))} / {inr(Number(r.journalCredit))}</span>,
+          <span key="g" className="tabular-nums text-xs">{inr(Number(r.ledgerDebit))} / {inr(Number(r.ledgerCredit))}</span>,
+          r.sourceAmount != null
+            ? <span key="s" className="tabular-nums">{inr(Number(r.sourceAmount))}</span>
+            : <span key="s" className="text-muted-foreground">—</span>,
+          r.status === "Exception" ? (
+            <div key="st" className="space-y-1">
+              <Badge variant="destructive" className="gap-1"><AlertTriangle className="size-3" />Exception</Badge>
+              <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+                {(r.issues ?? []).map((issue: string, idx: number) => <li key={idx}>{issue}</li>)}
+              </ul>
+            </div>
+          ) : (
+            <Badge key="st" variant="default" className="gap-1"><CheckCircle2 className="size-3" />Balanced</Badge>
+          ),
+        ])}
+      />
+    </TableCard>
   )
 }
 

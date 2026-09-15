@@ -13,6 +13,13 @@ import {
   type SourceHealth,
 } from "@/lib/finance-report-diagnostics"
 import { getScope } from "@/lib/permission-store"
+import { flattenStatement } from "@/lib/statement-export"
+import {
+  computeTrialBalance,
+  computeProfitAndLoss,
+  computeBalanceSheet,
+  computeCashFlow,
+} from "@/lib/finance-statements"
 
 /**
  * Single execution engine for every Financial Report. Both the reports GET
@@ -178,6 +185,50 @@ export async function runFinanceReport(input: RunReportInput): Promise<ReportRun
       config: def.diagnostics,
       health,
     })
+
+  // Statement reports (Trial Balance, P&L, Balance Sheet, Cash Flow) carry no
+  // raw SQL — they are computed by the classification-aware statement engine
+  // and flattened through the SAME `flattenStatement` bridge the dedicated
+  // Financial Statements page uses, so the reports hub reuses those exact
+  // numbers rather than a second, naive ledger group-by (Phases 62-63).
+  if (def.statement) {
+    try {
+      let data: any = null
+      switch (def.statement) {
+        case "trial-balance":
+          data = await computeTrialBalance(input.to || null)
+          break
+        case "profit-loss":
+          data = await computeProfitAndLoss(input.from || null, input.to || null)
+          break
+        case "balance-sheet":
+          data = await computeBalanceSheet(input.to || null)
+          break
+        case "cash-flow":
+          data = await computeCashFlow(input.from || null, input.to || null)
+          break
+      }
+      const { rows } = flattenStatement(def.statement, data)
+      return {
+        ok: true,
+        status: 200,
+        reportMeta,
+        rows,
+        available: true,
+        diagnostics: diagnose(rows, true, EMPTY_HEALTH),
+      }
+    } catch (err) {
+      console.log("[v0] statement report failed for", input.reportKey, (err as Error).message)
+      return {
+        ok: true,
+        status: 200,
+        reportMeta,
+        rows: [],
+        available: false,
+        diagnostics: diagnose([], false, EMPTY_HEALTH),
+      }
+    }
+  }
 
   // Placeholder reports have no query yet — surface an empty, unavailable
   // result with an explicit "no data source configured" verdict (Phase 24).

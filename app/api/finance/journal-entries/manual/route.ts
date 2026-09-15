@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { canCreateInModule, canActOnRecord } from "@/lib/permission-enforce"
+import { getFinanceEventsByRefs } from "@/lib/finance-audit"
 import {
   listPostableAccounts,
   createManualJournal,
@@ -67,7 +68,10 @@ export async function GET(req: NextRequest) {
   if (journalId) {
     const { status, rows } = await getManualJournal(journalId)
     if (!rows.length) return notFound()
-    return NextResponse.json({ status, rows })
+    // Phase 42/47 — the detail drawer shows the full lifecycle trail alongside
+    // the header + lines. Manual-journal events are keyed by the voucher ref.
+    const events = await getFinanceEventsByRefs("journal", [journalId])
+    return NextResponse.json({ status, rows, events })
   }
 
   const accounts = await listPostableAccounts()

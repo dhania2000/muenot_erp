@@ -73,27 +73,46 @@ export async function ensureTdsFilingSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
 
-  // Migrate an existing single-direction table: add `direction`, drop the old
-  // period-only unique key, and enforce uniqueness per (period, direction).
-  const cols = (await query<any[]>(
-    `SELECT column_name FROM information_schema.columns
-       WHERE table_schema = DATABASE() AND table_name = 'tds_filings' AND column_name = 'direction' LIMIT 1`,
-  )) as any[]
-  if (cols.length === 0) {
-    await query(`ALTER TABLE tds_filings ADD COLUMN direction VARCHAR(12) NOT NULL DEFAULT 'receivable' AFTER filing_id`)
-  }
+  // Self-heal a pre-existing `tds_filings` table. A different, line-item
+  // variant of this table ships in the 2026-09-07 dedicated-tables migration
+  // (keyed on `tds_filing_id`, with none of the summary columns below). Since
+  // both use CREATE TABLE IF NOT EXISTS, whichever ran first wins — so when the
+  // migration's table is present, the engine's columns are missing. Add every
+  // required column idempotently via ensureColumn WITHOUT an `AFTER <col>`
+  // clause: referencing `filing_id` in an ALTER threw "Unknown column
+  // 'filing_id'" on the legacy table. Each column is nullable/defaulted so it
+  // can be back-filled onto rows that already exist.
+  await ensureColumn("tds_filings", "filing_id", "VARCHAR(40) NULL")
+  await ensureColumn("tds_filings", "direction", "VARCHAR(12) NOT NULL DEFAULT 'receivable'")
+  await ensureColumn("tds_filings", "period", "VARCHAR(7) NULL")
+  await ensureColumn("tds_filings", "financial_year", "VARCHAR(12) DEFAULT NULL")
+  await ensureColumn("tds_filings", "invoice_count", "INT NOT NULL DEFAULT 0")
+  await ensureColumn("tds_filings", "total_base", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+  await ensureColumn("tds_filings", "total_tds", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+  await ensureColumn("tds_filings", "status", "VARCHAR(20) NOT NULL DEFAULT 'Filed'")
+  await ensureColumn("tds_filings", "challan_no", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("tds_filings", "snapshot", "LONGTEXT DEFAULT NULL")
+  await ensureColumn("tds_filings", "filed_at", "TIMESTAMP NULL DEFAULT NULL")
+  await ensureColumn("tds_filings", "filed_by", "BIGINT UNSIGNED DEFAULT NULL")
 
+  // The migration's `tds_filing_id` is NOT NULL with no default; summary
+  // inserts never set it, so relax it (if present) to avoid insert failures.
+  await query(`ALTER TABLE tds_filings MODIFY COLUMN tds_filing_id VARCHAR(40) NULL`).catch(() => {})
+
+  // Drop the old period-only unique key and enforce uniqueness per
+  // (period, direction). Guarded so a legacy layout can't abort the ensure.
   const oldIdx = (await query<any[]>(
     `SELECT 1 FROM information_schema.statistics
        WHERE table_schema = DATABASE() AND table_name = 'tds_filings' AND index_name = 'uq_tds_period' LIMIT 1`,
-  )) as any[]
-  if (oldIdx.length > 0) await query(`ALTER TABLE tds_filings DROP INDEX uq_tds_period`)
+  ).catch(() => [])) as any[]
+  if (oldIdx.length > 0) await query(`ALTER TABLE tds_filings DROP INDEX uq_tds_period`).catch(() => {})
 
   const newIdx = (await query<any[]>(
     `SELECT 1 FROM information_schema.statistics
        WHERE table_schema = DATABASE() AND table_name = 'tds_filings' AND index_name = 'uq_tds_period_dir' LIMIT 1`,
-  )) as any[]
-  if (newIdx.length === 0) await query(`ALTER TABLE tds_filings ADD UNIQUE KEY uq_tds_period_dir (period, direction)`)
+  ).catch(() => [])) as any[]
+  if (newIdx.length === 0)
+    await query(`ALTER TABLE tds_filings ADD UNIQUE KEY uq_tds_period_dir (period, direction)`).catch(() => {})
 
   // Deductee PAN snapshots frozen on the source document, mirroring the
   // vendor_pan snapshot already carried on purchase bills / expenses. FTE and

@@ -82,7 +82,7 @@ async function ensureColumn(table: string, column: string, definition: string) {
 export type TdsQuarter = "Q1" | "Q2" | "Q3" | "Q4"
 export type TdsReturnForm = "24Q" | "26Q" | "27Q" | "27EQ"
 
-const normDirection = (d: any): TdsDirection => {
+export const normDirection = (d: any): TdsDirection => {
   const s = String(d)
   if (s === "payable") return "payable"
   if (s === "employee") return "employee"

@@ -2,6 +2,9 @@ import "server-only"
 import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { logFinanceEvent } from "@/lib/finance-audit"
+import { notify, ensureLeadLifecycleSchema } from "@/lib/sales/lead-lifecycle"
+import { userHasFeature } from "@/lib/permissions"
+import { tdsExceptionReport } from "@/lib/finance-tds-exceptions"
 import type { TdsDirection } from "@/lib/finance-tds-filing"
 import {
   ensureTdsComplianceSchema,
@@ -292,6 +295,231 @@ export async function runTdsReminderSweep(
     }).catch(() => {})
   }
   return { created, resolved, scanned }
+}
+
+/* ------------------------------------------------------------------ *
+ * Phase 64-65 — Automated alerting: push TDS obligations to the in-app
+ * notification bell (sales_notifications, via notify()) on a daily /
+ * monthly / quarterly cadence. This layer NEVER recomputes TDS; it reads
+ * the calendar (complianceCalendar) and the exception report
+ * (tdsExceptionReport) that the engines already derive, and fans the
+ * resulting alerts out to the finance users who can act on them.
+ * ------------------------------------------------------------------ */
+
+const TDS_FEATURE = "finance.tds_filing"
+const TDS_LINK = "/modules/finance/tds-filing"
+
+/** Current Indian financial year label, e.g. "2026-27". */
+function currentFinancialYear(ref: Date = new Date()): string {
+  const start = ref.getMonth() >= 3 ? ref.getFullYear() : ref.getFullYear() - 1
+  return `${start}-${String((start + 1) % 100).padStart(2, "0")}`
+}
+
+/**
+ * Everyone who can act on TDS filings: users holding the feature grant.
+ * Mirrors the GST recipient resolution so both compliance modules alert the
+ * same finance cohort.
+ */
+async function tdsRecipients(): Promise<number[]> {
+  const rows = (await query(
+    `SELECT id, role FROM users WHERE COALESCE(is_active, 1) = 1`,
+  ).catch(() => [])) as any[]
+  const ids: number[] = []
+  for (const u of rows) {
+    const uid = Number(u.id)
+    if (!uid) continue
+    const role = u.role === "admin" ? "admin" : "employee"
+    const ok = await userHasFeature(uid, role, TDS_FEATURE).catch(() => false)
+    if (ok) ids.push(uid)
+  }
+  return ids
+}
+
+type TdsAlert = {
+  dedupe_key: string
+  severity: "overdue" | "due-soon" | "error" | "warning"
+  type: string
+  title: string
+  body: string
+  entityType: string
+  entityId: string
+}
+
+/**
+ * Derive the actionable alert set for a financial year + direction from the
+ * calendar and the exception report. `window` scopes the dedupe key so a given
+ * obligation fires once per cadence bucket (day / month / quarter).
+ */
+async function computeTdsAlerts(
+  financialYear: string,
+  direction: TdsDirection,
+  windowKey: string,
+  ref: Date,
+): Promise<TdsAlert[]> {
+  const alerts: TdsAlert[] = []
+  const dirLabel = direction === "employee" ? "Employee (24Q)" : "Vendor (26Q)"
+
+  const { obligations } = await complianceCalendar(financialYear, direction, ref)
+  for (const ob of obligations) {
+    if (ob.done) continue
+    if (ob.severity !== "overdue" && ob.severity !== "due-soon") continue
+    if (ob.kind === "certificate" && ob.status !== "Return filed") continue
+    const when =
+      ob.severity === "overdue"
+        ? `overdue by ${Math.abs(ob.days_to_due)} day${Math.abs(ob.days_to_due) === 1 ? "" : "s"}`
+        : `due in ${ob.days_to_due} day${ob.days_to_due === 1 ? "" : "s"} (by ${ob.due_date})`
+    alerts.push({
+      dedupe_key: `tds:${windowKey}:${ob.obligation_key}:${ob.severity}`,
+      severity: ob.severity,
+      type: ob.severity === "overdue" ? "error" : "warning",
+      title: `${ob.severity === "overdue" ? "Overdue" : "Upcoming"}: ${ob.title}`,
+      body: `${dirLabel} · ${ob.title} is ${when}. Amount ${Math.round(ob.amount).toLocaleString("en-IN")}.`,
+      entityType: `tds_${ob.kind}`,
+      entityId: ob.obligation_key,
+    })
+  }
+
+  // Data-quality blockers from the exception report (PAN, rate, unlinked etc.).
+  const report = await tdsExceptionReport(financialYear, direction).catch(() => null)
+  for (const cat of report?.categories ?? []) {
+    if (cat.severity !== "error" || cat.count <= 0) continue
+    alerts.push({
+      dedupe_key: `tds:${windowKey}:exc:${direction}:${cat.key}`,
+      severity: "error",
+      type: "error",
+      title: `TDS exception: ${cat.label}`,
+      body: `${dirLabel} · ${cat.count} ${cat.label.toLowerCase()} must be resolved before filing FY ${financialYear}.`,
+      entityType: "tds_exception",
+      entityId: `${direction}:${cat.key}`,
+    })
+  }
+
+  return alerts
+}
+
+/**
+ * The alert-delivery ledger. A UNIQUE dedupe key makes the sweeps idempotent —
+ * re-running a cadence never re-notifies for an alert already sent in the same
+ * window (day / month / quarter).
+ */
+let alertLogEnsured = false
+async function ensureTdsAlertLog(): Promise<void> {
+  if (alertLogEnsured) return
+  await query(
+    `CREATE TABLE IF NOT EXISTS tds_alert_log (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+       dedupe_key VARCHAR(255) NOT NULL,
+       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       PRIMARY KEY (id),
+       UNIQUE KEY uq_tds_alert_dedupe (dedupe_key)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  ).catch(() => {})
+  alertLogEnsured = true
+}
+
+/** Whether this exact alert was already delivered in this cadence window. */
+async function alreadyAlerted(dedupeKey: string): Promise<boolean> {
+  await ensureTdsAlertLog()
+  const rows = (await query(
+    `SELECT 1 FROM tds_alert_log WHERE dedupe_key = ? LIMIT 1`,
+    [dedupeKey],
+  ).catch(() => [])) as any[]
+  return rows.length > 0
+}
+
+async function markAlerted(dedupeKey: string): Promise<void> {
+  await query(
+    `INSERT IGNORE INTO tds_alert_log (dedupe_key) VALUES (?)`,
+    [dedupeKey],
+  ).catch(() => {})
+}
+
+/**
+ * The shared alert fan-out used by all three cadences. Computes alerts for
+ * both deductor directions, dedupes per window, pushes each new alert to every
+ * finance recipient's bell, and records it so it never repeats within the
+ * window. Returns a summary for the cron response.
+ */
+async function runTdsAlertSweep(
+  windowKey: string,
+  opts: { actorId?: number | null; ref?: Date } = {},
+): Promise<{ raised: number; recipients: number; scanned: number }> {
+  await ensureTdsComplianceSchema()
+  await ensureLeadLifecycleSchema().catch(() => {})
+  const ref = opts.ref ?? new Date()
+  const fy = currentFinancialYear(ref)
+  const recipients = await tdsRecipients()
+  const directions: TdsDirection[] = ["payable", "employee"]
+
+  let raised = 0
+  let scanned = 0
+  for (const dir of directions) {
+    const alerts = await computeTdsAlerts(fy, dir, windowKey, ref)
+    for (const a of alerts) {
+      scanned += 1
+      if (await alreadyAlerted(a.dedupe_key)) continue
+      for (const uid of recipients) {
+        await notify(null, {
+          userId: uid,
+          type: a.type,
+          title: a.title,
+          body: a.body,
+          link: TDS_LINK,
+          entityType: a.entityType,
+          entityId: a.entityId,
+        })
+      }
+      await markAlerted(a.dedupe_key)
+      raised += 1
+    }
+  }
+
+  if (raised > 0) {
+    await logFinanceEvent({
+      entityType: "tds_alert",
+      entityRef: `sweep:${windowKey}`,
+      type: "created",
+      summary: `TDS ${windowKey} alert sweep: ${raised} alert(s) delivered to ${recipients.length} recipient(s)`,
+      actorId: opts.actorId ?? null,
+    }).catch(() => {})
+  }
+  return { raised, recipients: recipients.length, scanned }
+}
+
+/**
+ * Daily sweep (cron): refresh the durable reminder to-do list and push any
+ * overdue / due-soon obligation or blocking exception to the bell once per day.
+ */
+export async function runDailyTdsSweep(
+  opts: { actorId?: number | null; ref?: Date } = {},
+): Promise<{ reminders: { created: number; resolved: number; scanned: number }; alerts: { raised: number; recipients: number; scanned: number } }> {
+  const ref = opts.ref ?? new Date()
+  const fy = currentFinancialYear(ref)
+  const prevFy = currentFinancialYear(new Date(ref.getFullYear() - 1, ref.getMonth(), ref.getDate()))
+  const reminders = await runTdsReminderSweep(Array.from(new Set([fy, prevFy])), opts)
+  const day = ref.toISOString().slice(0, 10)
+  const alerts = await runTdsAlertSweep(`day:${day}`, opts)
+  return { reminders, alerts }
+}
+
+/** Monthly sweep (cron): fires once per calendar month, keyed to the month. */
+export async function runMonthlyTdsSweep(
+  opts: { actorId?: number | null; ref?: Date } = {},
+): Promise<{ raised: number; recipients: number; scanned: number }> {
+  const ref = opts.ref ?? new Date()
+  const month = ref.toISOString().slice(0, 7)
+  return runTdsAlertSweep(`month:${month}`, opts)
+}
+
+/** Quarterly sweep (cron): fires once per FY quarter, keyed to FY + quarter. */
+export async function runQuarterlyTdsSweep(
+  opts: { actorId?: number | null; ref?: Date } = {},
+): Promise<{ raised: number; recipients: number; scanned: number }> {
+  const ref = opts.ref ?? new Date()
+  const fy = currentFinancialYear(ref)
+  const m = ref.getMonth()
+  const q = m >= 3 && m <= 5 ? "Q1" : m >= 6 && m <= 8 ? "Q2" : m >= 9 && m <= 11 ? "Q3" : "Q4"
+  return runTdsAlertSweep(`quarter:${fy}:${q}`, opts)
 }
 
 /** Acknowledge / dismiss / reopen a reminder. */

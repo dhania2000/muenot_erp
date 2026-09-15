@@ -80,11 +80,18 @@ export const GST_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
  * file a return, record a government deposit, or issue a certificate.
  */
 export const TDS_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "prepare_return", label: "Prepare TDS Return", fallback: "update", scoped: false, description: "Materialise a draft monthly filing / quarterly 24Q/26Q statement from the derived liability." },
+  { key: "review_return", label: "Review TDS Return", fallback: "update", scoped: false, description: "Submit a prepared return for review and mark it reviewed before filing." },
   { key: "file_return", label: "File TDS Return", fallback: "delete", scoped: false, description: "File a monthly filing or a quarterly 24Q/26Q return." },
   { key: "record_challan", label: "Record Challan", fallback: "delete", scoped: false, description: "Record a government TDS challan / deposit against a period." },
+  { key: "record_payment", label: "Record TDS Payment", fallback: "delete", scoped: false, description: "Record a TDS deposit/payment and allocate it against the period liability." },
   { key: "issue_certificate", label: "Issue Certificate", fallback: "delete", scoped: false, description: "Generate and issue Form 16 / 16A certificates to deductees." },
   { key: "reconcile_tds", label: "Reconcile TDS", fallback: "update", scoped: false, description: "Run the deducted / deposited / reported three-way reconciliation." },
-  { key: "export_return", label: "Export TDS Return", fallback: "view", scoped: false, description: "Export the return, challan register and certificate hand-off pack." },
+  { key: "amend_return", label: "Amend / Correct Return", fallback: "delete", scoped: false, description: "File a correction statement against an already-filed return (archives the prior snapshot)." },
+  { key: "reopen_period", label: "Reopen Period", fallback: "delete", scoped: false, description: "Reopen a locked / closed period back to an editable state." },
+  { key: "manage_rules", label: "Manage TDS Rules", fallback: "delete", scoped: false, description: "Add, edit or retire section rates and thresholds in the TDS rule master." },
+  { key: "export_return", label: "Export TDS Return", fallback: "view", scoped: false, description: "Export the return, challan register, certificate hand-off pack and CA review package." },
+  { key: "view_sensitive", label: "View Sensitive Tax Data", fallback: "view", scoped: false, description: "View sensitive TDS data such as full PANs, the audit trail and TRACES tokens." },
 ]
 
 export type ModulePermission = {

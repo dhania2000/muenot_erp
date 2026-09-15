@@ -23,6 +23,18 @@
     {
       "path": "/api/cron/gst-monthly",
       "schedule": "0 9 1 * *"
+    },
+    {
+      "path": "/api/cron/tds-daily",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/tds-monthly",
+      "schedule": "0 9 1 * *"
+    },
+    {
+      "path": "/api/cron/tds-quarterly",
+      "schedule": "0 9 1 */3 *"
     }
   ]
 }

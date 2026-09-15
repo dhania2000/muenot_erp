@@ -14,11 +14,20 @@ import type { BadgeVariant } from "@/lib/finance-schema"
 import {
   Coins, Wallet, TrendingUp, BookOpen, CheckCircle2, AlertTriangle, Layers, Link2,
   FilterX, Lock, Loader2Icon, Users, FolderKanban, CalendarRange, ScrollText, Landmark, ShieldCheck, RefreshCw,
+  ListTree, Siren,
 } from "lucide-react"
+import { LedgerTraceDrawer } from "@/components/finance/ledger-trace-drawer"
 
 type Row = Record<string, any>
 type Side = "Debit" | "Credit"
-type View = "ledger" | "party" | "project" | "monthly" | "reconciliation" | "bank" | "integrity"
+type View =
+  | "ledger" | "party" | "project" | "monthly" | "reconciliation" | "bank" | "integrity" | "account" | "exceptions"
+
+const SEVERITY_BADGE: Record<string, BadgeVariant> = {
+  high: "destructive",
+  medium: "secondary",
+  low: "outline",
+}
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -77,6 +86,7 @@ function Amt({ value, side }: { value: number; side?: Side }) {
 
 export function GeneralLedgerClient() {
   const [view, setView] = useState<View>("ledger")
+  const [traceVoucher, setTraceVoucher] = useState<string | null>(null)
   const [filters, setFilters] = useState<Filters>(() => {
     const base = { ...emptyFilters }
     if (typeof window !== "undefined") {
@@ -195,16 +205,21 @@ export function GeneralLedgerClient() {
       <Tabs value={view} onValueChange={(v) => setView(v as View)}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="ledger"><BookOpen data-icon="inline-start" />Ledger</TabsTrigger>
+          <TabsTrigger value="account"><ListTree data-icon="inline-start" />Account Ledger</TabsTrigger>
           <TabsTrigger value="party"><Users data-icon="inline-start" />Party Ledger</TabsTrigger>
           <TabsTrigger value="project"><FolderKanban data-icon="inline-start" />Project Ledger</TabsTrigger>
           <TabsTrigger value="monthly"><CalendarRange data-icon="inline-start" />Monthly</TabsTrigger>
           <TabsTrigger value="reconciliation"><CheckCircle2 data-icon="inline-start" />Reconciliation</TabsTrigger>
           <TabsTrigger value="bank"><Landmark data-icon="inline-start" />Bank Reconciliation</TabsTrigger>
           <TabsTrigger value="integrity"><ShieldCheck data-icon="inline-start" />Integrity</TabsTrigger>
+          <TabsTrigger value="exceptions"><Siren data-icon="inline-start" />Exception Center</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ledger">
-          <LedgerTab data={data} loading={isLoading} />
+          <LedgerTab data={data} loading={isLoading} onTrace={setTraceVoucher} />
+        </TabsContent>
+        <TabsContent value="account">
+          <AccountTab data={data} loading={isLoading} />
         </TabsContent>
         <TabsContent value="party">
           <PartyTab data={data} loading={isLoading} />
@@ -222,9 +237,14 @@ export function GeneralLedgerClient() {
           <BankTab data={data} loading={isLoading} />
         </TabsContent>
         <TabsContent value="integrity">
-          <IntegrityTab data={data} loading={isLoading} />
+          <IntegrityTab data={data} loading={isLoading} onTrace={setTraceVoucher} />
+        </TabsContent>
+        <TabsContent value="exceptions">
+          <ExceptionTab data={data} loading={isLoading} onTrace={setTraceVoucher} />
         </TabsContent>
       </Tabs>
+
+      <LedgerTraceDrawer voucherNo={traceVoucher} onClose={() => setTraceVoucher(null)} />
     </main>
   )
 }
@@ -259,10 +279,10 @@ function SummaryBox({ label, value, side, emphasize }: { label: string; value: n
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
-function LedgerTab({ data, loading }: { data: Row | undefined; loading: boolean }) {
+function LedgerTab({ data, loading, onTrace }: { data: Row | undefined; loading: boolean; onTrace: (v: string) => void }) {
   const rows: Row[] = data?.rows ?? []
   return (
-    <TableCard title="Ledger entries" count={rows.length} loading={loading}>
+    <TableCard title="Ledger entries" count={rows.length} loading={loading} hint="Select a voucher to trace the posting back to its Journal Entry and source document.">
       <SummaryStrip s={data?.summary} />
       <ScrollTable
         head={["Ledger ID", "Journal", "Date", "Account", "Party", "Voucher", "Source", "Debit", "Credit", "Balance", "Reconciliation"]}
@@ -270,10 +290,8 @@ function LedgerTab({ data, loading }: { data: Row | undefined; loading: boolean 
         empty="No posted ledger entries match the current filters."
         rows={rows.map((l) => [
           <span key="id" className="font-mono text-xs">{l.ledger_id}</span>,
-          l.journal_entry_id ? (
-            <a key="je" href={`/modules/finance/journal-entries?search=${encodeURIComponent(String(l.voucher_no || l.journal_entry_id))}`} className="font-mono text-xs text-primary hover:underline">
-              {l.voucher_no || l.journal_entry_id}
-            </a>
+          l.voucher_no || l.journal_entry_id ? (
+            <TraceLink key="je" voucherNo={String(l.voucher_no || l.journal_entry_id)} onTrace={onTrace} />
           ) : <span key="je" className="text-muted-foreground">—</span>,
           fmtDate(l.transaction_date),
           <div key="acc"><div className="font-medium">{l.account_name || "—"}</div><div className="text-xs text-muted-foreground">{l.account_group || ""}</div></div>,
@@ -287,6 +305,49 @@ function LedgerTab({ data, loading }: { data: Row | undefined; loading: boolean 
         ])}
       />
     </TableCard>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Account Ledger (Phase 48) — Opening / Debit / Credit / Closing per account,
+// straight from posted rows, mirroring the Party & Project ledger layout.
+// ---------------------------------------------------------------------------
+function AccountTab({ data, loading }: { data: Row | undefined; loading: boolean }) {
+  const rows: Row[] = data?.rows ?? []
+  return (
+    <TableCard title="Account ledger" count={rows.length} loading={loading} hint="Opening / Debit / Credit / Closing per Chart of Accounts head">
+      <SummaryStrip s={data?.summary} />
+      <ScrollTable
+        head={["Account", "Group", "Type", "Txns", "Opening", "Debit", "Credit", "Closing"]}
+        rightCols={[3, 4, 5, 6, 7]}
+        empty="No account postings match the current filters."
+        rows={rows.map((r) => [
+          <span key="a" className="font-medium">{r.accountName || "—"}</span>,
+          r.accountGroup || "—",
+          r.accountType ? <Badge key="t" variant="outline">{r.accountType}</Badge> : "—",
+          <span key="n" className="tabular-nums text-muted-foreground">{r.txnCount}</span>,
+          <Amt key="o" value={Number(r.opening)} side={r.openingSide} />,
+          <Amt key="d" value={Number(r.debit)} />,
+          <Amt key="c" value={Number(r.credit)} />,
+          <Amt key="cl" value={Number(r.closing)} side={r.closingSide} />,
+        ])}
+      />
+    </TableCard>
+  )
+}
+
+/** Voucher link that opens the drill-down trace drawer instead of navigating. */
+function TraceLink({ voucherNo, onTrace }: { voucherNo: string; onTrace: (v: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onTrace(voucherNo)}
+      className="inline-flex items-center gap-1 font-mono text-xs text-primary hover:underline"
+      title="Trace this posting to its Journal Entry and source"
+    >
+      <ListTree className="size-3" />
+      {voucherNo}
+    </button>
   )
 }
 
@@ -442,7 +503,7 @@ function MatchChips({ fields, disabled }: { fields: Row; disabled?: boolean }) {
 // posted voucher's Journal total and originating source-document amount are
 // reconciled against the General Ledger; mismatches surface as GL Exceptions.
 // ---------------------------------------------------------------------------
-function IntegrityTab({ data, loading }: { data: Row | undefined; loading: boolean }) {
+function IntegrityTab({ data, loading, onTrace }: { data: Row | undefined; loading: boolean; onTrace: (v: string) => void }) {
   const rows: Row[] = data?.rows ?? []
   const counts: Row = data?.counts ?? {}
   return (
@@ -468,13 +529,7 @@ function IntegrityTab({ data, loading }: { data: Row | undefined; loading: boole
         rightCols={[3, 4, 5]}
         empty="No posted vouchers to reconcile for the current filters."
         rows={rows.map((r) => [
-          <a
-            key="v"
-            href={`/modules/finance/journal-entries?search=${encodeURIComponent(String(r.voucherNo))}`}
-            className="font-mono text-xs text-primary hover:underline"
-          >
-            {r.voucherNo}
-          </a>,
+          <TraceLink key="v" voucherNo={String(r.voucherNo)} onTrace={onTrace} />,
           fmtDate(r.date),
           [r.sourceModule, r.sourceReference].filter(Boolean).join(" · ") || "Manual",
           <span key="j" className="tabular-nums text-xs">{inr(Number(r.journalDebit))} / {inr(Number(r.journalCredit))}</span>,
@@ -494,6 +549,72 @@ function IntegrityTab({ data, loading }: { data: Row | undefined; loading: boole
           ),
         ])}
       />
+    </TableCard>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Exception Center (Phase 51) — the single place that surfaces every way a
+// posted ledger row can disagree with its source of truth. Filter by category,
+// see severity, and drill into any voucher's full trace.
+// ---------------------------------------------------------------------------
+function ExceptionTab({ data, loading, onTrace }: { data: Row | undefined; loading: boolean; onTrace: (v: string) => void }) {
+  const rows: Row[] = data?.rows ?? []
+  const categories: Row[] = data?.categories ?? []
+  const counts: Row = data?.counts ?? {}
+  const truncated: boolean = Boolean(data?.truncated)
+  const [active, setActive] = useState<string>("")
+
+  const shown = active ? rows.filter((r) => r.category === active) : rows
+  const totalIssues = Number(counts.total ?? rows.length)
+
+  return (
+    <TableCard
+      title="Exception Center"
+      count={shown.length}
+      loading={loading}
+      hint="Every posted ledger row is checked against its Journal Entry, source document, Chart of Accounts, tax, bank and period lock. Anything that disagrees is listed here. Journal Entries stays the primary source of truth."
+    >
+      <div className="mb-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setActive("")}
+          className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${active === "" ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted"}`}
+        >
+          {totalIssues > 0 ? <AlertTriangle className="mr-1 inline size-3" /> : <CheckCircle2 className="mr-1 inline size-3" />}
+          All exceptions: {totalIssues}
+        </button>
+        {categories.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            disabled={!c.count}
+            onClick={() => setActive(active === c.key ? "" : c.key)}
+            className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-40 ${active === c.key ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted"}`}
+          >
+            <span className={`mr-1 inline-block size-2 rounded-full align-middle ${c.severity === "high" ? "bg-destructive" : c.severity === "medium" ? "bg-amber-500" : "bg-muted-foreground"}`} />
+            {c.label}: {c.count}
+          </button>
+        ))}
+      </div>
+      <ScrollTable
+        head={["Severity", "Category", "Voucher", "Date", "Account", "Party", "Detail"]}
+        empty={totalIssues === 0 ? "No exceptions — the ledger fully agrees with Journal Entries and its sources." : "No exceptions in this category for the current filters."}
+        rows={shown.map((r) => [
+          <Badge key="sv" variant={SEVERITY_BADGE[String(r.severity)] || "outline"} className="capitalize">{r.severity}</Badge>,
+          <span key="c" className="font-medium">{r.label}</span>,
+          r.voucherNo
+            ? <TraceLink key="v" voucherNo={String(r.voucherNo)} onTrace={onTrace} />
+            : <span key="v" className="text-muted-foreground">—</span>,
+          fmtDate(r.date),
+          r.account || "—",
+          r.party || "—",
+          <span key="d" className="text-xs text-muted-foreground">{r.detail}</span>,
+        ])}
+      />
+      {truncated ? (
+        <p className="mt-3 text-xs text-muted-foreground">Showing the most severe results first. Narrow the filters to see the rest.</p>
+      ) : null}
     </TableCard>
   )
 }

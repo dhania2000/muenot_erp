@@ -4,7 +4,7 @@
  * Keep this file free of server-only imports (db / auth / node builtins).
  */
 
-import { formatCurrency, type SettingsMap } from "@/lib/settings/format"
+import { formatCurrency, formatCurrencyIndian, type SettingsMap } from "@/lib/settings/format"
 
 export const num = (v: any) => {
   const n = Number(v)
@@ -58,6 +58,15 @@ export const inr = (n: any) => formatCurrency(Number(n) || 0, currencyConfig)
 
 export const inr0 = (n: any) =>
   formatCurrency(Number(n) || 0, { ...currencyConfig, "currency.decimals": "0" })
+
+/**
+ * Currency formatter used across the Financial Reports surfaces (on-screen
+ * table, view dialog, emailed HTML). Honours the configured currency settings
+ * but renders in the Indian lakh/crore grouping with accounting-style negatives
+ * — parenthesised, e.g. `(₹1,23,456.00)` — so a figure reads identically to the
+ * PDF/Excel export engine and negatives/zeros are never formatted ad-hoc.
+ */
+export const inrReport = (n: any) => formatCurrencyIndian(Number(n) || 0, currencyConfig)
 
 /**
  * Pure, client-safe Purchase Bill money engine (Phase 5).

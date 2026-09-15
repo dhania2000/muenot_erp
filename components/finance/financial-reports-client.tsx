@@ -39,7 +39,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { inr0 } from "@/lib/finance-calc"
+import { inrReport } from "@/lib/finance-calc"
 import { exportReportCsv, exportReportExcel } from "@/lib/report-excel"
 import { exportReportPdf } from "@/lib/report-pdf"
 import type { ReportExportPayload } from "@/lib/report-tally"
@@ -102,8 +102,15 @@ type ReportResponse = {
   generatedBy: string
 }
 
-// Honours the configured currency (symbol/position/separators) via settings.
-const currency = (n: number) => inr0(Number(n) || 0)
+// Honours the configured currency (symbol/position/separators) via settings and
+// renders in the Indian lakh/crore grouping with accounting-style negatives, so
+// the on-screen figure matches the PDF/Excel/email exports exactly.
+const currency = (n: number) => inrReport(Number(n) || 0)
+
+// Phase 32 — what the current viewer may do beyond viewing. Downloads and email
+// are separately granted; the catalogue endpoint resolves them once so the UI
+// never shows an action that the server would reject.
+type ReportCapabilities = { canExport: boolean; canEmail: boolean }
 
 const selectClass =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
@@ -208,6 +215,7 @@ function ReportView({
   filterLabels,
   pendingAction,
   onActionConsumed,
+  capabilities,
 }: {
   entry: CatalogueEntry
   from: string
@@ -218,6 +226,7 @@ function ReportView({
   filterLabels: string[]
   pendingAction: RowAction | null
   onActionConsumed: () => void
+  capabilities: ReportCapabilities
 }) {
   const { data, isLoading, isValidating, mutate } = useSWR<ReportResponse>(
     reportUrl(entry.key, from, to, filters),
@@ -354,22 +363,36 @@ function ReportView({
             <Eye data-icon="inline-start" />
             View
           </Button>
-          <Button variant="outline" size="sm" onClick={downloadCsv} disabled={rows.length === 0}>
-            <Download data-icon="inline-start" />
-            CSV
-          </Button>
-          <Button variant="outline" size="sm" onClick={downloadExcel} disabled={rows.length === 0}>
-            <FileSpreadsheet data-icon="inline-start" />
-            Excel
-          </Button>
-          <Button variant="outline" size="sm" onClick={downloadPdf} disabled={rows.length === 0}>
-            <FileText data-icon="inline-start" />
-            PDF
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setEmailOpen(true)} disabled={rows.length === 0}>
-            <Mail data-icon="inline-start" />
-            Email
-          </Button>
+          {capabilities.canExport && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" disabled={rows.length === 0}>
+                  <Download data-icon="inline-start" />
+                  Download
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={downloadCsv}>
+                  <Download data-icon="inline-start" />
+                  CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={downloadExcel}>
+                  <FileSpreadsheet data-icon="inline-start" />
+                  Excel
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={downloadPdf}>
+                  <FileText data-icon="inline-start" />
+                  PDF
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {capabilities.canEmail && (
+            <Button variant="outline" size="sm" onClick={() => setEmailOpen(true)} disabled={rows.length === 0}>
+              <Mail data-icon="inline-start" />
+              Email
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -642,12 +665,15 @@ export function FinancialReportsClient() {
   const [pendingAction, setPendingAction] = useState<RowAction | null>(null)
   const [query, setQuery] = useState("")
 
-  const { data, isLoading } = useSWR<{ reports: CatalogueEntry[] }>(
+  const { data, isLoading } = useSWR<{ reports: CatalogueEntry[]; capabilities?: ReportCapabilities }>(
     "/api/finance/reports",
     fetcher,
   )
 
   const catalogue = data?.reports ?? []
+  // Default to no elevated rights until the catalogue resolves, so actions the
+  // viewer can't perform never flash in before the capability check lands.
+  const capabilities: ReportCapabilities = data?.capabilities ?? { canExport: false, canEmail: false }
 
   // Categories in catalogue order (first-seen), so the accounting groups keep
   // their intended sequence rather than being alphabetised.
@@ -908,71 +934,89 @@ export function FinancialReportsClient() {
                                     <Eye data-icon="inline-start" />
                                     View
                                   </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => runReportAction(r, "csv")}
-                                  >
-                                    <Download data-icon="inline-start" />
-                                    CSV
-                                  </Button>
-                                  {/* Secondary exports stay inline on large
-                                      screens and collapse into a "More" menu on
-                                      smaller viewports (Phase 30). */}
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => runReportAction(r, "excel")}
-                                    className="hidden lg:inline-flex"
-                                  >
-                                    <FileSpreadsheet data-icon="inline-start" />
-                                    Excel
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => runReportAction(r, "pdf")}
-                                    className="hidden lg:inline-flex"
-                                  >
-                                    <FileText data-icon="inline-start" />
-                                    PDF
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => runReportAction(r, "email")}
-                                    className="hidden lg:inline-flex"
-                                  >
-                                    <Mail data-icon="inline-start" />
-                                    Email
-                                  </Button>
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
+                                  {/* Phase 32 — exports and email are separately
+                                      granted; a viewer without those rights sees
+                                      only View, and the download/email controls
+                                      are omitted entirely rather than disabled. */}
+                                  {capabilities.canExport && (
+                                    <>
                                       <Button
                                         variant="outline"
                                         size="sm"
-                                        className="lg:hidden"
-                                        aria-label={`More actions for ${r.label}`}
+                                        onClick={() => runReportAction(r, "csv")}
                                       >
-                                        <MoreHorizontal data-icon="inline-start" />
-                                        More
+                                        <Download data-icon="inline-start" />
+                                        CSV
                                       </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuItem onClick={() => runReportAction(r, "excel")}>
+                                      {/* Secondary exports stay inline on large
+                                          screens and collapse into a "More" menu on
+                                          smaller viewports (Phase 30). */}
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => runReportAction(r, "excel")}
+                                        className="hidden lg:inline-flex"
+                                      >
                                         <FileSpreadsheet data-icon="inline-start" />
                                         Excel
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem onClick={() => runReportAction(r, "pdf")}>
+                                      </Button>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => runReportAction(r, "pdf")}
+                                        className="hidden lg:inline-flex"
+                                      >
                                         <FileText data-icon="inline-start" />
                                         PDF
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem onClick={() => runReportAction(r, "email")}>
-                                        <Mail data-icon="inline-start" />
-                                        Email
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
+                                      </Button>
+                                    </>
+                                  )}
+                                  {capabilities.canEmail && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => runReportAction(r, "email")}
+                                      className="hidden lg:inline-flex"
+                                    >
+                                      <Mail data-icon="inline-start" />
+                                      Email
+                                    </Button>
+                                  )}
+                                  {(capabilities.canExport || capabilities.canEmail) && (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="lg:hidden"
+                                          aria-label={`More actions for ${r.label}`}
+                                        >
+                                          <MoreHorizontal data-icon="inline-start" />
+                                          More
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        {capabilities.canExport && (
+                                          <>
+                                            <DropdownMenuItem onClick={() => runReportAction(r, "excel")}>
+                                              <FileSpreadsheet data-icon="inline-start" />
+                                              Excel
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem onClick={() => runReportAction(r, "pdf")}>
+                                              <FileText data-icon="inline-start" />
+                                              PDF
+                                            </DropdownMenuItem>
+                                          </>
+                                        )}
+                                        {capabilities.canEmail && (
+                                          <DropdownMenuItem onClick={() => runReportAction(r, "email")}>
+                                            <Mail data-icon="inline-start" />
+                                            Email
+                                          </DropdownMenuItem>
+                                        )}
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  )}
                                 </div>
                               </div>
                             </li>

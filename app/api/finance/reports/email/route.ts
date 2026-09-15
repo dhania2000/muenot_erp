@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireFeature } from "@/lib/api-auth"
+import { hasActionGrant } from "@/lib/permission-store"
 import { isEmailConfigured } from "@/lib/email"
 import { createFinanceEmail } from "@/lib/finance-email"
 import { getReportCompany, runFinanceReport } from "@/lib/finance-report-run"
 import { logReportRun } from "@/lib/finance-report-runs"
-import { inr0 } from "@/lib/finance-calc"
+import { inrReport } from "@/lib/finance-calc"
 
 // Email a Financial Report. Reuses the shared report engine to regenerate the
 // rows server-side (so the recipient always gets fresh, authoritative numbers
 // rather than whatever the browser happened to have) and the finance email hub
 // for delivery, tracking and audit — no bespoke report engine or mailer here.
 
-const money = (n: any) => inr0(Number(n) || 0)
+const money = (n: any) => inrReport(Number(n) || 0)
 
 function esc(v: any): string {
   const s = v === null || v === undefined ? "" : String(v)
@@ -30,6 +31,20 @@ function cell(value: any, col: { money?: boolean }) {
 export async function POST(request: NextRequest) {
   const session = await requireFeature("finance.financial_reports")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  // Phase 32 — emailing a report is a distinct privilege from viewing it, since
+  // it sends authoritative figures outside the app. The client hides the Email
+  // action without this grant; enforce it here so the endpoint can't be driven
+  // directly by a viewer who lacks it.
+  const canEmail = await hasActionGrant(
+    (session as any).userId,
+    session.role,
+    "finance.reports",
+    "email_report",
+  )
+  if (!canEmail) {
+    return NextResponse.json({ error: "You do not have permission to email reports." }, { status: 403 })
+  }
 
   if (!isEmailConfigured("finance")) {
     return NextResponse.json(

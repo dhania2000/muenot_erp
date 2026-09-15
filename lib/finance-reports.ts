@@ -13,12 +13,16 @@
  */
 
 import type { ReportDiagnosticsConfig } from "@/lib/finance-report-diagnostics"
+import { STATEMENT_COLUMNS, type StatementType } from "@/lib/statement-export"
 
 export type ReportColumn = {
   key: string
   label: string
   align?: "left" | "right"
   money?: boolean
+  /** When false, this money column is formatted but not auto-totalled (the
+   *  report supplies its own subtotal/total rows, e.g. financial statements). */
+  total?: boolean
 }
 
 // Advanced-filter dimensions a report can expose. Each maps to a SQL column in
@@ -89,6 +93,11 @@ export type ReportDef = {
   /** Reconciliation rules + source-health requirements + empty-state hint
    *  (Phases 21-25). Propagates to `fs-*`/`ab-*` aliases via `from()`. */
   diagnostics?: ReportDiagnosticsConfig
+  /** When set, this report is computed by the classification-aware statement
+   *  engine (lib/finance-statements.ts) rather than by a raw `sql` string, so
+   *  the catalogue reuses the exact same numbers as the Financial Statements
+   *  page instead of a second, naive ledger group-by. */
+  statement?: StatementType
 }
 
 // Helper: a date-range WHERE fragment the API can inline. When a report has no
@@ -3271,10 +3280,42 @@ export const FINANCIAL_REPORT_GROUPS = [
 
 export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   // 1. Core Financial Statements ------------------------------------------
-  from("rx-trial-balance", { key: "fs-trial-balance", label: "Trial Balance", group: "Core Financial Statements", description: "Debit and credit balance per ledger account from the posted general ledger." }),
-  from("income-vs-expense", { key: "fs-profit-loss", label: "Profit & Loss", group: "Core Financial Statements", description: "Income against expenses, month by month." }),
-  from("rx-balance-sheet", { key: "fs-balance-sheet", label: "Balance Sheet", group: "Core Financial Statements", description: "Asset, liability and equity balances classified from the posted ledger." }),
-  from("rx-cash-flow", { key: "fs-cash-flow", label: "Cash Flow Statement", group: "Core Financial Statements", description: "Monthly cash inflow, outflow and net movement across bank & cash." }),
+  {
+    key: "fs-trial-balance",
+    label: "Trial Balance",
+    group: "Core Financial Statements",
+    description: "Cumulative debit/credit per account, classified from the Chart of Accounts and posted General Ledger.",
+    statement: "trial-balance",
+    periodMode: "asOn",
+    columns: STATEMENT_COLUMNS["trial-balance"],
+  },
+  {
+    key: "fs-profit-loss",
+    label: "Profit & Loss",
+    group: "Core Financial Statements",
+    description: "Income and expense movement over the period, grouped by reporting head with net profit / loss.",
+    statement: "profit-loss",
+    periodMode: "range",
+    columns: STATEMENT_COLUMNS["profit-loss"],
+  },
+  {
+    key: "fs-balance-sheet",
+    label: "Balance Sheet",
+    group: "Core Financial Statements",
+    description: "Assets, liabilities and equity as on a date, classified from the Chart of Accounts.",
+    statement: "balance-sheet",
+    periodMode: "asOn",
+    columns: STATEMENT_COLUMNS["balance-sheet"],
+  },
+  {
+    key: "fs-cash-flow",
+    label: "Cash Flow Statement",
+    group: "Core Financial Statements",
+    description: "Cash movement over the period grouped by operating, investing and financing activity.",
+    statement: "cash-flow",
+    periodMode: "range",
+    columns: STATEMENT_COLUMNS["cash-flow"],
+  },
   stub({ key: "fs-comparative-pl", label: "Comparative Profit & Loss", group: "Core Financial Statements", description: PENDING }),
   stub({ key: "fs-comparative-bs", label: "Comparative Balance Sheet", group: "Core Financial Statements", description: PENDING }),
   from("income-vs-expense", { key: "fs-monthly-pl", label: "Monthly Profit & Loss", group: "Core Financial Statements", description: "Monthly income, expense and net position." }),
@@ -3327,78 +3368,78 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   stub({ key: "ap-reconciliation", label: "Payable Reconciliation", group: "Payables", description: PENDING }),
 
   // 5. GST ----------------------------------------------------------------
-  stub({ key: "gst-gstr1-summary", label: "GSTR-1 Summary", group: "GST", description: PENDING }),
-  stub({ key: "gst-gstr1-detailed", label: "GSTR-1 Detailed Register", group: "GST", description: PENDING }),
-  stub({ key: "gst-b2b-sales", label: "B2B Sales Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-b2c-sales", label: "B2C Sales Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-credit-note", label: "Credit Note Register", group: "GST", description: PENDING }),
-  stub({ key: "gst-debit-note", label: "Debit Note Register", group: "GST", description: PENDING }),
-  stub({ key: "gst-output", label: "GST Output Report", group: "GST", description: PENDING }),
+  from("rx-gstr1-summary", { key: "gst-gstr1-summary", label: "GSTR-1 Summary", group: "GST", description: "Outward supply summary by GST rate and supply type for the GSTR-1 return period." }),
+  from("rx-gstr1-detailed", { key: "gst-gstr1-detailed", label: "GSTR-1 Detailed Register", group: "GST", description: "Invoice-level outward supply register with taxable value and tax split." }),
+  from("rx-gst-b2b", { key: "gst-b2b-sales", label: "B2B Sales Report", group: "GST", description: "Registered (B2B) outward supplies with counterparty GSTIN and tax break-up." }),
+  from("rx-gst-b2c", { key: "gst-b2c-sales", label: "B2C Sales Report", group: "GST", description: "Unregistered (B2C) outward supplies with taxable value and tax." }),
+  from("rx-gst-credit-note", { key: "gst-credit-note", label: "Credit Note Register", group: "GST", description: "Credit notes issued against outward supplies with tax adjustment." }),
+  from("rx-gst-debit-note", { key: "gst-debit-note", label: "Debit Note Register", group: "GST", description: "Debit notes raised against supplies with tax adjustment." }),
+  from("rx-gst-output", { key: "gst-output", label: "GST Output Report", group: "GST", description: "Output GST payable on outward supplies split by CGST / SGST / IGST / cess." }),
   from("expense-gst-input", { key: "gst-input-itc", label: "GST Input / ITC Report", group: "GST", description: "Input GST and ITC captured on expenses." }),
-  stub({ key: "gst-eligible-itc", label: "Eligible ITC Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-ineligible-itc", label: "Ineligible ITC Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-itc-reversal", label: "ITC Reversal Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-gstr2b-recon", label: "GSTR-2B Reconciliation", group: "GST", description: PENDING }),
+  from("rx-gst-eligible-itc", { key: "gst-eligible-itc", label: "Eligible ITC Report", group: "GST", description: "Input tax credit eligible to be claimed on inward supplies for the period." }),
+  from("rx-gst-ineligible-itc", { key: "gst-ineligible-itc", label: "Ineligible ITC Report", group: "GST", description: "Blocked / ineligible input tax credit that cannot be claimed." }),
+  from("rx-gst-itc-reversal", { key: "gst-itc-reversal", label: "ITC Reversal Report", group: "GST", description: "Input tax credit reversed during the period with reason and tax split." }),
+  from("rx-gst-recon", { key: "gst-gstr2b-recon", label: "GSTR-2B Reconciliation", group: "GST", description: "Books vs GSTR-2B input credit reconciliation highlighting mismatches." }),
   stub({ key: "gst-rcm", label: "RCM Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-rate-wise", label: "GST Rate-wise Report", group: "GST", description: PENDING }),
+  from("rx-gst-rate-wise", { key: "gst-rate-wise", label: "GST Rate-wise Report", group: "GST", description: "Taxable value and tax grouped by GST rate slab." }),
   from("expense-raw-gst", { key: "gst-hsn-sac", label: "HSN / SAC Summary", group: "GST", description: "GST line items with HSN/SAC detail." }),
-  stub({ key: "gst-gstin-wise", label: "GSTIN-wise Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-place-supply", label: "Place of Supply Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-cgst", label: "CGST Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-sgst", label: "SGST Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-igst", label: "IGST Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-cess", label: "Cess Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-liability", label: "GST Liability Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-payment-challan", label: "GST Payment / Challan Report", group: "GST", description: PENDING }),
+  from("rx-gst-gstin-wise", { key: "gst-gstin-wise", label: "GSTIN-wise Report", group: "GST", description: "Supplies grouped by counterparty GSTIN with taxable value and tax." }),
+  from("rx-gst-place-supply", { key: "gst-place-supply", label: "Place of Supply Report", group: "GST", description: "Supplies grouped by place of supply (state) for inter/intra-state analysis." }),
+  from("rx-gst-cgst", { key: "gst-cgst", label: "CGST Report", group: "GST", description: "Central GST component across outward and inward supplies for the period." }),
+  from("rx-gst-sgst", { key: "gst-sgst", label: "SGST Report", group: "GST", description: "State GST component across outward and inward supplies for the period." }),
+  from("rx-gst-igst", { key: "gst-igst", label: "IGST Report", group: "GST", description: "Integrated GST component across inter-state supplies for the period." }),
+  from("rx-gst-cess", { key: "gst-cess", label: "Cess Report", group: "GST", description: "GST compensation cess charged and collected during the period." }),
+  from("rx-gst-liability", { key: "gst-liability", label: "GST Liability Report", group: "GST", description: "Net GST payable — output tax less eligible input credit — for the period." }),
+  from("rx-gst-payment-challan", { key: "gst-payment-challan", label: "GST Payment / Challan Report", group: "GST", description: "GST payments and challans recorded against the liability for the period." }),
   stub({ key: "gst-reconciliation", label: "GST Reconciliation Report", group: "GST", description: PENDING }),
-  stub({ key: "gst-exception", label: "GST Exception Report", group: "GST", description: PENDING }),
+  from("rx-gst-exception", { key: "gst-exception", label: "GST Exception Report", group: "GST", description: "Supplies with missing GSTIN, rate or place-of-supply data needing correction." }),
   stub({ key: "gst-amendment", label: "GST Amendment Report", group: "GST", description: PENDING }),
 
   // 6. TDS / TCS ----------------------------------------------------------
   from("expense-tds", { key: "tds-deduction-register", label: "TDS Deduction Register", group: "TDS / TCS", description: "TDS deducted on expenses by section." }),
   from("expense-raw-tds", { key: "tds-section-wise", label: "Section-wise TDS Report", group: "TDS / TCS", description: "TDS line items grouped by section." }),
-  stub({ key: "tds-deductee-wise", label: "Deductee-wise TDS Report", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-pan-wise", label: "PAN-wise TDS Report", group: "TDS / TCS", description: PENDING }),
+  from("rx-tds-deductee", { key: "tds-deductee-wise", label: "Deductee-wise TDS Report", group: "TDS / TCS", description: "TDS deducted grouped by deductee with section, rate and tax amount." }),
+  from("rx-tds-pan", { key: "tds-pan-wise", label: "PAN-wise TDS Report", group: "TDS / TCS", description: "TDS deducted grouped by deductee PAN for return filing." }),
   stub({ key: "tds-vendor", label: "Vendor TDS Report", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-employee", label: "Employee TDS Report", group: "TDS / TCS", description: PENDING }),
+  from("rx-tds-employee", { key: "tds-employee", label: "Employee TDS Report", group: "TDS / TCS", description: "TDS on salary deducted per employee under section 192." }),
   stub({ key: "tds-freelancer", label: "Freelancer TDS Report", group: "TDS / TCS", description: PENDING }),
   stub({ key: "tds-customer-receivable", label: "Customer TDS Receivable", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-challan-register", label: "TDS Challan Register", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-payment", label: "TDS Payment Report", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-outstanding", label: "TDS Outstanding Report", group: "TDS / TCS", description: PENDING }),
+  from("rx-tds-challan", { key: "tds-challan-register", label: "TDS Challan Register", group: "TDS / TCS", description: "TDS challans deposited with the government with BSR code and date." }),
+  from("rx-tds-payment", { key: "tds-payment", label: "TDS Payment Report", group: "TDS / TCS", description: "TDS payments made during the period against deducted liability." }),
+  from("rx-tds-outstanding", { key: "tds-outstanding", label: "TDS Outstanding Report", group: "TDS / TCS", description: "TDS deducted but not yet deposited to the government." }),
   stub({ key: "tds-reconciliation", label: "TDS Reconciliation Report", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-return-summary", label: "TDS Return Summary", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-interest", label: "TDS Interest Report", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-late-fee", label: "TDS Late Fee Report", group: "TDS / TCS", description: PENDING }),
+  from("rx-tds-return-summary", { key: "tds-return-summary", label: "TDS Return Summary", group: "TDS / TCS", description: "Section-wise TDS summary for quarterly return (24Q / 26Q) filing." }),
+  from("rx-tds-interest", { key: "tds-interest", label: "TDS Interest Report", group: "TDS / TCS", description: "Interest payable on late deduction or late deposit of TDS." }),
+  from("rx-tds-late-fee", { key: "tds-late-fee", label: "TDS Late Fee Report", group: "TDS / TCS", description: "Late filing fee under section 234E on delayed TDS returns." }),
   stub({ key: "tds-form16", label: "Form 16 Register", group: "TDS / TCS", description: PENDING }),
   stub({ key: "tds-form16a", label: "Form 16A Register", group: "TDS / TCS", description: PENDING }),
-  stub({ key: "tds-correction", label: "TDS Correction Report", group: "TDS / TCS", description: PENDING }),
+  from("rx-tds-correction", { key: "tds-correction", label: "TDS Correction Report", group: "TDS / TCS", description: "Corrections and revisions made to previously deducted or filed TDS." }),
   stub({ key: "tds-exception", label: "TDS Exception Report", group: "TDS / TCS", description: PENDING }),
 
   // 7. Bank & Cash --------------------------------------------------------
   from("bank-book", { key: "bc-bank-balance", label: "Bank-wise Balance Report", group: "Bank & Cash", description: "Movement and net balance per bank account." }),
   from("cash-book", { key: "bc-cash-position", label: "Cash Position Report", group: "Bank & Cash", description: "Cash receipts, payments and net position." }),
   from("bank-reconciliation", { key: "bc-bank-recon", label: "Bank Reconciliation Statement", group: "Bank & Cash", description: "Reconciled vs unreconciled bank entries." }),
-  stub({ key: "bc-unreconciled", label: "Unreconciled Bank Transactions", group: "Bank & Cash", description: PENDING }),
-  stub({ key: "bc-bank-difference", label: "Bank Difference Report", group: "Bank & Cash", description: PENDING }),
-  stub({ key: "bc-bank-charges", label: "Bank Charges Report", group: "Bank & Cash", description: PENDING }),
-  stub({ key: "bc-bank-interest", label: "Bank Interest Report", group: "Bank & Cash", description: PENDING }),
-  stub({ key: "bc-bank-transfer", label: "Bank Transfer Register", group: "Bank & Cash", description: PENDING }),
-  stub({ key: "bc-cheque-register", label: "Cheque Register", group: "Bank & Cash", description: PENDING }),
-  stub({ key: "bc-outstanding-cheques", label: "Outstanding Cheques Report", group: "Bank & Cash", description: PENDING }),
-  stub({ key: "bc-utr-register", label: "UTR / Payment Reference Register", group: "Bank & Cash", description: PENDING }),
+  from("rx-bank-unreconciled", { key: "bc-unreconciled", label: "Unreconciled Bank Transactions", group: "Bank & Cash", description: "Bank statement lines not yet matched to a book entry." }),
+  from("rx-bank-difference", { key: "bc-bank-difference", label: "Bank Difference Report", group: "Bank & Cash", description: "Difference between book balance and bank statement balance per account." }),
+  from("rx-bank-charges", { key: "bc-bank-charges", label: "Bank Charges Report", group: "Bank & Cash", description: "Bank charges and fees debited during the period." }),
+  from("rx-bank-interest", { key: "bc-bank-interest", label: "Bank Interest Report", group: "Bank & Cash", description: "Interest credited or debited by the bank during the period." }),
+  from("rx-bank-transfer", { key: "bc-bank-transfer", label: "Bank Transfer Register", group: "Bank & Cash", description: "Inter-account and contra bank transfers recorded in the period." }),
+  from("rx-cheque-register", { key: "bc-cheque-register", label: "Cheque Register", group: "Bank & Cash", description: "Cheques issued and received with number, date and clearing status." }),
+  from("rx-outstanding-cheques", { key: "bc-outstanding-cheques", label: "Outstanding Cheques Report", group: "Bank & Cash", description: "Issued cheques not yet cleared by the bank." }),
+  from("rx-utr-register", { key: "bc-utr-register", label: "UTR / Payment Reference Register", group: "Bank & Cash", description: "Electronic payments with UTR / reference number and value date." }),
 
   // 8. Sales & Purchase ---------------------------------------------------
   from("sales-report", { key: "sp-sales-register", label: "Sales Register", group: "Sales & Purchase", description: "Sales invoices by payment status." }),
-  stub({ key: "sp-sales-invoice-register", label: "Sales Invoice Register", group: "Sales & Purchase", description: PENDING }),
-  stub({ key: "sp-customer-wise-sales", label: "Customer-wise Sales", group: "Sales & Purchase", description: PENDING }),
-  stub({ key: "sp-sales-return", label: "Sales Return Register", group: "Sales & Purchase", description: PENDING }),
-  stub({ key: "sp-sales-vs-collection", label: "Sales vs Collection Report", group: "Sales & Purchase", description: PENDING }),
+  from("rx-sales-invoice-register", { key: "sp-sales-invoice-register", label: "Sales Invoice Register", group: "Sales & Purchase", description: "All sales invoices raised in the period with value, tax and status." }),
+  from("rx-customer-sales", { key: "sp-customer-wise-sales", label: "Customer-wise Sales", group: "Sales & Purchase", description: "Sales value grouped by customer for the period." }),
+  from("rx-sales-return", { key: "sp-sales-return", label: "Sales Return Register", group: "Sales & Purchase", description: "Sales returns / credit notes with value and tax reversal." }),
+  from("rx-sales-vs-collection", { key: "sp-sales-vs-collection", label: "Sales vs Collection Report", group: "Sales & Purchase", description: "Invoiced sales against amounts collected to gauge realisation." }),
   from("purchase-register", { key: "sp-purchase-register", label: "Purchase Register", group: "Sales & Purchase", description: "Purchase bills by vendor." }),
-  stub({ key: "sp-purchase-bill-register", label: "Purchase Bill Register", group: "Sales & Purchase", description: PENDING }),
-  stub({ key: "sp-vendor-wise-purchase", label: "Vendor-wise Purchase", group: "Sales & Purchase", description: PENDING }),
-  stub({ key: "sp-purchase-return", label: "Purchase Return Register", group: "Sales & Purchase", description: PENDING }),
-  stub({ key: "sp-purchase-vs-payment", label: "Purchase vs Payment Report", group: "Sales & Purchase", description: PENDING }),
+  from("rx-purchase-bill-register", { key: "sp-purchase-bill-register", label: "Purchase Bill Register", group: "Sales & Purchase", description: "All purchase bills recorded in the period with value, tax and status." }),
+  from("rx-vendor-outstanding", { key: "sp-vendor-wise-purchase", label: "Vendor-wise Purchase", group: "Sales & Purchase", description: "Purchase value and outstanding grouped by vendor for the period." }),
+  from("rx-purchase-return", { key: "sp-purchase-return", label: "Purchase Return Register", group: "Sales & Purchase", description: "Purchase returns / debit notes with value and tax reversal." }),
+  from("rx-purchase-vs-payment", { key: "sp-purchase-vs-payment", label: "Purchase vs Payment Report", group: "Sales & Purchase", description: "Billed purchases against amounts paid to gauge settlement." }),
 
   // 9. Expenses -----------------------------------------------------------
   from("expense-register", { key: "ex-register", label: "Expense Register", group: "Expenses", description: "Every expense with tax, payment and status." }),
@@ -3446,20 +3487,20 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   stub({ key: "ca-audit-trail", label: "Audit Trail Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-altered-entries", label: "Altered Entries Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-deleted-entries", label: "Deleted Entries Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-cancelled-entries", label: "Cancelled Entries Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-reversed-entries", label: "Reversed Entries Report", group: "CA / Audit", description: PENDING }),
+  from("rx-cancelled-voucher", { key: "ca-cancelled-entries", label: "Cancelled Entries Report", group: "CA / Audit", description: "Vouchers cancelled after posting, with user and timestamp for audit." }),
+  from("rx-reversal-register", { key: "ca-reversed-entries", label: "Reversed Entries Report", group: "CA / Audit", description: "Journal reversals with the original entry reference and reason." }),
   stub({ key: "ca-backdated-entries", label: "Backdated Entries Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-duplicate-voucher", label: "Duplicate Voucher Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-duplicate-invoice", label: "Duplicate Invoice Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-duplicate-payment", label: "Duplicate Payment Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-voucher-gap", label: "Voucher Number Gap Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-manual-journal", label: "Manual Journal Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-manual-adjustment", label: "Manual Adjustment Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-unapproved-transaction", label: "Unapproved Transaction Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-high-value", label: "High Value Transaction Report", group: "CA / Audit", description: PENDING }),
+  from("rx-manual-journal", { key: "ca-manual-journal", label: "Manual Journal Report", group: "CA / Audit", description: "Manually posted journal vouchers not generated by a subsystem." }),
+  from("rx-adjustment-register", { key: "ca-manual-adjustment", label: "Manual Adjustment Report", group: "CA / Audit", description: "Manual adjustment entries with narration and posting user." }),
+  from("rx-unapproved", { key: "ca-unapproved-transaction", label: "Unapproved Transaction Report", group: "CA / Audit", description: "Transactions still pending approval in the workflow." }),
+  from("rx-high-value", { key: "ca-high-value", label: "High Value Transaction Report", group: "CA / Audit", description: "Transactions above the high-value threshold flagged for review." }),
   stub({ key: "ca-negative-cash", label: "Negative Cash Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-negative-bank", label: "Negative Bank Balance Report", group: "CA / Audit", description: PENDING }),
-  stub({ key: "ca-unreconciled-transaction", label: "Unreconciled Transaction Report", group: "CA / Audit", description: PENDING }),
+  from("rx-unreconciled-gl", { key: "ca-unreconciled-transaction", label: "Unreconciled Transaction Report", group: "CA / Audit", description: "Ledger entries not yet reconciled against their control account." }),
   stub({ key: "ca-tax-override", label: "Tax Override Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-manual-override", label: "Manual Override Report", group: "CA / Audit", description: PENDING }),
   stub({ key: "ca-missing-document", label: "Missing Supporting Document Report", group: "CA / Audit", description: PENDING }),
@@ -3515,7 +3556,15 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
   stub({ key: "mis-cash-flow-forecast", label: "Cash Flow Forecast", group: "Management / MIS", description: PENDING }),
 
   // 16. Year-End ----------------------------------------------------------
-  stub({ key: "ye-trial-balance", label: "Year-End Trial Balance", group: "Year-End", description: PENDING }),
+  {
+    key: "ye-trial-balance",
+    label: "Year-End Trial Balance",
+    group: "Year-End",
+    description: "Closing debit/credit per account as on the year-end date, from the classification engine.",
+    statement: "trial-balance",
+    periodMode: "asOn",
+    columns: STATEMENT_COLUMNS["trial-balance"],
+  },
   stub({ key: "ye-adjustment-register", label: "Year-End Adjustment Register", group: "Year-End", description: PENDING }),
   stub({ key: "ye-provision", label: "Provision Report", group: "Year-End", description: PENDING }),
   stub({ key: "ye-accrual", label: "Accrual Report", group: "Year-End", description: PENDING }),

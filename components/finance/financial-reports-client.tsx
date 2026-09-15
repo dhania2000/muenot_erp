@@ -65,6 +65,9 @@ type ReportColumn = {
   label: string
   align?: "left" | "right"
   money?: boolean
+  /** When false, this money column is not summed into the table footer (the
+   *  report supplies its own subtotal/total rows, e.g. financial statements). */
+  total?: boolean
 }
 
 type FilterMeta = { dim: string; label: string }
@@ -124,7 +127,7 @@ function formatCell(value: any, col: ReportColumn) {
 // Sum the money columns so totals stay consistent across the table footer,
 // CSV and PDF. Returns null when a report has no money columns to total.
 function computeTotals(columns: ReportColumn[], rows: Record<string, any>[]) {
-  const moneyCols = columns.filter((c) => c.money)
+  const moneyCols = columns.filter((c) => c.money && c.total !== false)
   if (moneyCols.length === 0 || rows.length === 0) return null
   const totals: Record<string, number> = {}
   for (const c of moneyCols) {

@@ -14,7 +14,7 @@ import { JournalImportDialog } from "@/components/finance/journal-import-dialog"
 import { inr, inr0 } from "@/lib/finance-calc"
 import {
   Plus, FilterX, Trash2, ChevronRight, ChevronDown, Lock, Coins, Wallet, ArrowLeftRight, BookOpen,
-  Send, Check, X, Pencil, Undo2, Ban, Eye, Upload,
+  Send, Check, X, Pencil, Undo2, Ban, Eye, Upload, ShieldCheck,
 } from "lucide-react"
 
 // The lifecycle statuses a manual journal moves through, in workflow order.
@@ -278,6 +278,12 @@ export function JournalEntriesClient() {
           <h1 className="text-3xl font-semibold tracking-tight text-balance">Journal Entries</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline">
+            <a href="/modules/finance/journal-control">
+              <ShieldCheck data-icon="inline-start" />
+              Control Center
+            </a>
+          </Button>
           <JournalExportMenu
             filters={{
               financialYear: financialYear || undefined,

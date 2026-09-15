@@ -5,9 +5,23 @@ import { fetcher } from "@/lib/fetcher"
 import { Badge } from "@/components/ui/badge"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { inr } from "@/lib/finance-calc"
-import { Paperclip, ExternalLink, Clock } from "lucide-react"
+import { Paperclip, ExternalLink, Clock, ArrowRight, FileText, BookOpen, Layers, BarChart3, AlertTriangle } from "lucide-react"
 
 type Row = Record<string, any>
+
+type JournalTrace = {
+  voucherNo: string
+  source: {
+    isManual: boolean
+    sourceModule: string
+    reference: string
+    href: string | null
+    missing: boolean
+  }
+  journal: { present: boolean; totalDebit: number; totalCredit: number; balanced: boolean; lines: any[] }
+  ledger: { present: boolean; totalDebit: number; totalCredit: number; matchesJournal: boolean; lines: any[] }
+  reports: { accountGroup: string; statement: string; href: string; amount: number }[]
+}
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
 
@@ -87,6 +101,14 @@ export function JournalDetailDrawer({
     fetcher,
   )
   const events = data?.events ?? []
+
+  // Phase 53 — full drill chain (Source → Journal → GL → Report) for this
+  // voucher, fetched read-only whenever the drawer is open.
+  const { data: traceData } = useSWR<{ trace: JournalTrace }>(
+    open && detail ? `/api/finance/journal-entries/trace?voucher=${encodeURIComponent(detail.voucherNo)}` : null,
+    fetcher,
+  )
+  const trace = traceData?.trace ?? null
 
   const head = detail?.lines?.[0] ?? {}
   const paymentMode = String(head.payment_mode ?? "")

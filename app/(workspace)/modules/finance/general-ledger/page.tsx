@@ -1,5 +1,5 @@
-import { FinanceModuleClient } from "@/components/finance/finance-module-client"
+import { GeneralLedgerClient } from "@/components/finance/general-ledger-client"
 
 export default function GeneralLedgerPage() {
-  return <FinanceModuleClient moduleKey="general-ledger" />
+  return <GeneralLedgerClient />
 }

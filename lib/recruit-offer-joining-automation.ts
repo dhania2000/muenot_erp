@@ -2,6 +2,7 @@ import "server-only"
 import { query } from "@/lib/db"
 import { ensureLeadLifecycleSchema, notify } from "@/lib/sales/lead-lifecycle"
 import { syncOfferStatus } from "@/lib/recruit-status-sync"
+import { getWorkflowDays } from "@/lib/recruit-settings"
 
 /**
  * Phases 69 & 70 — Offer-expiry and Joining reminder automation.
@@ -32,12 +33,6 @@ import { syncOfferStatus } from "@/lib/recruit-status-sync"
 
 /** Offer statuses that are terminal / not eligible for expiry handling. */
 const TERMINAL_OFFER_STATUSES = ["accepted", "declined", "rejected", "withdrawn", "joined", "expired", "cancelled"]
-
-const DEFAULTS = {
-  offer_expiry_reminder_days: "3,1",
-  joining_reminder_days: "7,3,1",
-  offer_auto_expire: false,
-} as const
 
 async function safeRows(sql: string, params: any[] = []): Promise<any[]> {
   try {
@@ -91,39 +86,22 @@ async function claim(dedupeKey: string, event: string, sourceModule: string, sou
   }
 }
 
-/** Parse a comma-separated day list ("7,3,1") into a sorted, de-duplicated, positive-int array. */
-function parseDayTiers(raw: string | undefined, fallback: string): number[] {
-  const source = String(raw ?? "").trim() || fallback
-  const tiers = new Set<number>()
-  for (const part of source.split(/[,\s]+/)) {
-    const n = Number(part)
-    if (Number.isFinite(n) && n >= 0) tiers.add(Math.round(n))
-  }
-  return [...tiers].sort((a, b) => b - a)
-}
-
 type AutomationConfig = {
   offerExpiryReminderDays: number[]
   joiningReminderDays: number[]
   offerAutoExpire: boolean
 }
 
-/** Read the configurable offer/joining automation settings from Recruitment Settings. */
+/**
+ * Read the configurable offer/joining automation settings. Phase 96: delegates
+ * to the single Recruitment Settings source of truth (`lib/recruit-settings`).
+ */
 export async function getAutomationConfig(): Promise<AutomationConfig> {
-  const rows = await safeRows(
-    `SELECT LOWER(setting_name) AS name, setting_value AS value
-       FROM recruitment_settings
-      WHERE setting_name IS NOT NULL`,
-  )
-  const map = new Map<string, string>()
-  for (const r of rows) map.set(String(r.name).trim(), String(r.value ?? "").trim())
-
-  const truthy = (v: string | undefined) => ["yes", "true", "1", "on", "enabled"].includes(String(v ?? "").toLowerCase())
-
+  const wd = await getWorkflowDays()
   return {
-    offerExpiryReminderDays: parseDayTiers(map.get("offer_expiry_reminder_days"), DEFAULTS.offer_expiry_reminder_days),
-    joiningReminderDays: parseDayTiers(map.get("joining_reminder_days"), DEFAULTS.joining_reminder_days),
-    offerAutoExpire: map.has("offer_auto_expire") ? truthy(map.get("offer_auto_expire")) : DEFAULTS.offer_auto_expire,
+    offerExpiryReminderDays: wd.offerExpiryReminderDays,
+    joiningReminderDays: wd.joiningReminderDays,
+    offerAutoExpire: wd.offerAutoExpire,
   }
 }
 

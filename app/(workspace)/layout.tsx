@@ -115,10 +115,12 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
 
 const RECRUITMENT_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Recruit Dashboard", href: "/modules/recruitment", feature: "recruitment.view_dashboard" },
-  { label: "Jobs", href: "/modules/recruitment/jobs", feature: "recruitment.view_jobs" },
-  { label: "Job Applications", href: "/modules/recruitment/job-applications", feature: "recruitment.view_applications" },
-  { label: "Interview Schedule", href: "/modules/recruitment/interview-schedule", feature: "recruitment.schedule_interviews" },
-  { label: "Job Offer Letter", href: "/modules/recruitment/job-offer-letter", feature: "recruitment.manage_offers" },
+    { label: "Requisition Hiring", href: "/modules/recruitment/requisition-hiring", feature: "recruitment.requisitions" },
+    { label: "Jobs", href: "/modules/recruitment/jobs", feature: "recruitment.view_jobs" },
+    { label: "Job Applications", href: "/modules/recruitment/job-applications", feature: "recruitment.view_applications" },
+    { label: "Interview Schedule", href: "/modules/recruitment/interview-schedule", feature: "recruitment.schedule_interviews" },
+    { label: "Job Offer Letter", href: "/modules/recruitment/job-offer-letter", feature: "recruitment.manage_offers" },
+    { label: "Onboarding", href: "/modules/recruitment/onboarding", feature: "recruitment.manage_offers" },
   { label: "Job Skills", href: "/modules/recruitment/job-skills", feature: "recruitment.view_skills" },
   { label: "Candidate Database", href: "/modules/recruitment/candidate-database", feature: "recruitment.view_candidates" },
   { label: "Email", href: "/modules/recruitment/emails", feature: "recruitment.view_emails" },

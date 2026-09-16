@@ -14,12 +14,26 @@ type UserRow = {
   must_change_password: number
 }
 
+function isDbConfigured() {
+  return Boolean(process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME)
+}
+
 export async function POST(request: Request) {
   try {
     const { email, password } = await request.json()
 
     if (!email || !password) {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
+    }
+
+    if (!isDbConfigured()) {
+      console.error(
+        "[v0] login error: database is not configured. Missing one of DB_HOST/DB_USER/DB_NAME env vars in this deployment.",
+      )
+      return NextResponse.json(
+        { error: "The server is not connected to a database. Please contact your administrator." },
+        { status: 503 },
+      )
     }
 
     const rows = await query<UserRow[]>("SELECT * FROM users WHERE email = ? LIMIT 1", [
@@ -64,7 +78,34 @@ export async function POST(request: Request) {
       },
     })
   } catch (error) {
-    console.error("[v0] login error:", error)
-    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 })
+    const code = (error as { code?: string })?.code
+    console.error("[v0] login error:", { code, error })
+
+    // Surface actionable diagnostics for the most common infrastructure
+    // failures instead of a blanket "Something went wrong."
+    switch (code) {
+      case "ECONNREFUSED":
+      case "ETIMEDOUT":
+      case "ENOTFOUND":
+      case "EHOSTUNREACH":
+      case "PROTOCOL_CONNECTION_LOST":
+        return NextResponse.json(
+          { error: "Unable to reach the database. Please contact your administrator." },
+          { status: 503 },
+        )
+      case "ER_ACCESS_DENIED_ERROR":
+        return NextResponse.json(
+          { error: "Database credentials are invalid. Please contact your administrator." },
+          { status: 503 },
+        )
+      case "ER_NO_SUCH_TABLE":
+      case "ER_BAD_DB_ERROR":
+        return NextResponse.json(
+          { error: "The database is not set up correctly. Please contact your administrator." },
+          { status: 503 },
+        )
+      default:
+        return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 })
+    }
   }
 }

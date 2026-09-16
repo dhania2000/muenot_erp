@@ -1076,6 +1076,7 @@ export function FinancialReportsClient() {
           financialYear={financialYearLabel}
           pendingAction={pendingAction}
           onActionConsumed={() => setPendingAction(null)}
+          capabilities={capabilities}
         />
       ) : (
         <p className="text-sm text-muted-foreground">Select a category and report to begin.</p>

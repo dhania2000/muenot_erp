@@ -38,6 +38,37 @@ async function safeRead<T>(fn: () => Promise<T>, fallback: T): Promise<{ data: T
   }
 }
 
+// ---------------------------------------------------------------------------
+// Self-healing schema for the unified flow (mirrors
+// database/migrations/2026-10-09-recruit-unified-flow.sql). Best-effort and
+// idempotent so approval / job creation never crash on a not-yet-migrated DB.
+// ---------------------------------------------------------------------------
+let unifiedSchemaEnsured = false
+export async function ensureUnifiedFlowSchema() {
+  if (unifiedSchemaEnsured) return
+  const alters = [
+    "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS submitted_by INT UNSIGNED DEFAULT NULL",
+    "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS submitted_by_name VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS submitted_at DATETIME DEFAULT NULL",
+    "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS rejected_by INT UNSIGNED DEFAULT NULL",
+    "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS rejected_by_name VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS rejected_at DATETIME DEFAULT NULL",
+    "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR(500) DEFAULT NULL",
+    "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS designation VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruit_jobs ADD COLUMN IF NOT EXISTS designation VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruit_jobs ADD COLUMN IF NOT EXISTS hiring_manager VARCHAR(190) DEFAULT NULL",
+  ]
+  for (const sql of alters) {
+    try {
+      await query(sql)
+    } catch {
+      // Column already exists, table not present yet, or engine lacks IF NOT
+      // EXISTS — all safe to ignore for this best-effort heal.
+    }
+  }
+  unifiedSchemaEnsured = true
+}
+
 // ===========================================================================
 // 1. Requisition -> Job link + approval workflow
 // ===========================================================================
@@ -57,13 +88,19 @@ export type RequisitionRow = {
   filled_resources: number | null
   pending_resources: number | null
   priority: string | null
+  designation: string | null
   hiring_manager: string | null
   recruiter: string | null
   remarks: string | null
   status: string | null
   approval_status: string
+  submitted_by_name: string | null
+  submitted_at: string | null
   approved_by_name: string | null
   approved_at: string | null
+  rejected_by_name: string | null
+  rejected_at: string | null
+  rejection_reason: string | null
   approval_notes: string | null
   linked_job_id: string | null
   linked_job_status?: string | null
@@ -108,11 +145,20 @@ const APPROVAL_RESULT: Record<string, string> = {
   reset: "draft",
 }
 
+// Human-facing lifecycle status that mirrors each approval transition.
+const APPROVAL_LIFECYCLE_STATUS: Record<string, string> = {
+  submit: "Pending Approval",
+  approve: "Approved",
+  reject: "Rejected",
+  reset: "Draft",
+}
+
 export async function setRequisitionApproval(
   requisitionId: string,
   action: "submit" | "approve" | "reject" | "reset",
   opts: { userId: number | null; userName: string | null; notes?: string | null },
 ) {
+  await ensureUnifiedFlowSchema()
   const req = await getRequisition(requisitionId)
   if (!req) throw new Error("Requisition not found")
   const from = APPROVAL_TRANSITIONS[action]
@@ -122,28 +168,38 @@ export async function setRequisitionApproval(
     throw new Error(`Cannot ${action} a requisition that is "${current}".`)
   }
   const next = APPROVAL_RESULT[action]
-  const isApprovalDecision = action === "approve" || action === "reject"
-  await query(
-    `UPDATE recruitment_requisitions
-       SET approval_status = ?,
-           approved_by = ?,
-           approved_by_name = ?,
-           approved_at = ?,
-           approval_notes = ?
-     WHERE requisition_id = ?`,
-    [
-      next,
-      isApprovalDecision ? opts.userId : null,
-      isApprovalDecision ? opts.userName : null,
-      isApprovalDecision ? new Date() : null,
-      opts.notes ?? req.approval_notes ?? null,
-      requisitionId,
-    ],
-  )
+  const now = new Date()
+
+  // Build the SET clause for the columns this specific transition touches, so
+  // each action stamps only its own actor/timestamp and the whole audit trail
+  // (Submitted By/At, Approved By/At, Rejected By/At + Reason) is preserved.
+  const sets: string[] = ["approval_status = ?", "status = ?"]
+  const vals: any[] = [next, APPROVAL_LIFECYCLE_STATUS[action] ?? req.status ?? "Draft"]
+
+  if (action === "submit") {
+    sets.push("submitted_by = ?", "submitted_by_name = ?", "submitted_at = ?")
+    vals.push(opts.userId, opts.userName, now)
+  } else if (action === "approve") {
+    sets.push("approved_by = ?", "approved_by_name = ?", "approved_at = ?", "approval_notes = ?")
+    vals.push(opts.userId, opts.userName, now, opts.notes ?? req.approval_notes ?? null)
+  } else if (action === "reject") {
+    sets.push(
+      "rejected_by = ?",
+      "rejected_by_name = ?",
+      "rejected_at = ?",
+      "rejection_reason = ?",
+      "approval_notes = ?",
+    )
+    vals.push(opts.userId, opts.userName, now, opts.notes ?? null, opts.notes ?? req.approval_notes ?? null)
+  }
+
+  vals.push(requisitionId)
+  await query(`UPDATE recruitment_requisitions SET ${sets.join(", ")} WHERE requisition_id = ?`, vals)
   return { approval_status: next }
 }
 
 export async function createJobFromRequisition(requisitionId: string, userId: number | null) {
+  await ensureUnifiedFlowSchema()
   const req = await getRequisition(requisitionId)
   if (!req) throw new Error("Requisition not found")
   if (req.approval_status !== "approved") {
@@ -162,14 +218,16 @@ export async function createJobFromRequisition(requisitionId: string, userId: nu
 
   await query(
     `INSERT INTO recruit_jobs
-      (job_id, public_hash, title, department, location, job_type, work_mode, status, positions,
-       experience, currency, skills, description, requirements, show_on_careers, requisition_id, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      (job_id, public_hash, title, department, designation, location, job_type, work_mode, status, positions,
+       experience, currency, skills, description, requirements, recruiter, hiring_manager, show_on_careers,
+       requisition_id, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       jobId,
       hash,
       req.job_title || "Untitled role",
       req.department || null,
+      req.designation || null,
       req.location || null,
       req.employment_type || null,
       req.work_mode || null,
@@ -180,12 +238,19 @@ export async function createJobFromRequisition(requisitionId: string, userId: nu
       req.required_skills || null,
       description,
       req.required_qualification || null,
+      req.recruiter || null,
+      req.hiring_manager || null,
       1,
       requisitionId,
       userId,
     ],
   )
-  await query("UPDATE recruitment_requisitions SET linked_job_id = ? WHERE requisition_id = ?", [jobId, requisitionId])
+  // Approved -> Job Created -> Open. Roll the requisition's lifecycle status
+  // forward so it no longer sits in "Approved" once its job is live.
+  await query(
+    "UPDATE recruitment_requisitions SET linked_job_id = ?, status = 'Open' WHERE requisition_id = ?",
+    [jobId, requisitionId],
+  )
   return { job_id: jobId, public_hash: hash }
 }
 
@@ -210,11 +275,19 @@ export async function syncRequisitionFromLinkedJob(jobId: string | null | undefi
     const filled = Number(hired)
     const pending = Math.max(required - filled, 0)
     const filledUp = required > 0 && filled >= required
+    // Derive the lifecycle status from the live headcount rather than trusting a
+    // manual update: Filled when the target is met, Partially Filled while some
+    // (but not all) seats are taken, otherwise keep the current open status.
+    const nextStatus = filledUp
+      ? "Filled"
+      : filled > 0
+        ? "Partially Filled"
+        : req.status || "Open"
     await query(
       `UPDATE recruitment_requisitions
          SET filled_resources = ?, pending_resources = ?, status = ?
        WHERE requisition_id = ?`,
-      [filled, pending, filledUp ? "Filled" : req.status || "Open", req.requisition_id],
+      [filled, pending, nextStatus, req.requisition_id],
     )
     if (filledUp) {
       await query("UPDATE recruit_jobs SET status = 'closed' WHERE job_id = ? AND status <> 'closed'", [jobId])

@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
     {
       job_id: job.job_id,
       job_title: job.title,
+      requisition_id: (job as any).requisition_id ?? null,
       candidate_name: body.candidate_name,
       email: body.email,
       phone: body.phone,
@@ -37,6 +38,7 @@ export async function POST(request: NextRequest) {
       resume_url: body.resume_url,
       cover_letter: body.cover_letter,
       source: "Careers Site",
+      campaign: body.campaign || null,
       stage: "applied",
       answers,
     },

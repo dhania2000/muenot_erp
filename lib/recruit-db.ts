@@ -170,20 +170,31 @@ export async function listApplications(jobId?: string) {
 export async function createApplication(data: any, userId: number | null) {
   const applicationId = await nextRecordId("JAP")
   let jobTitle = data.job_title || null
-  if (data.job_id && !jobTitle) {
+  // Adopt the requisition from the application's job when not supplied, so every
+  // application rolls up to the same Requisition -> Job spine (Phase 10).
+  let requisitionId = data.requisition_id || null
+  if (data.job_id && (!jobTitle || !requisitionId)) {
     const job = await getJobById(data.job_id)
-    jobTitle = job?.title ?? null
+    if (!jobTitle) jobTitle = job?.title ?? null
+    if (!requisitionId) requisitionId = (job as any)?.requisition_id ?? null
   }
+  // Self-heal the unified-flow columns so this never crashes on a not-yet-migrated DB.
+  try {
+    const { ensureUnificationSchema } = await import("@/lib/recruit-unification-db")
+    await ensureUnificationSchema()
+  } catch {}
   await query(
     `INSERT INTO recruit_applications
-      (application_id, job_id, job_title, candidate_name, email, phone, location, experience,
-       current_company, expected_salary, resume_url, cover_letter, source, stage, rating, answers, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      (application_id, job_id, job_title, requisition_id, candidate_name, email, phone, location, experience,
+       current_company, expected_salary, resume_url, cover_letter, source, campaign, recruiter, stage, rating,
+       answers, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      applicationId, data.job_id || null, jobTitle, data.candidate_name, data.email || null, data.phone || null,
-      data.location || null, data.experience || null, data.current_company || null, data.expected_salary || null,
-      data.resume_url || null, data.cover_letter || null, data.source || "Direct", data.stage || "applied",
-      Number(data.rating) || 0, data.answers ? JSON.stringify(data.answers) : null, userId,
+      applicationId, data.job_id || null, jobTitle, requisitionId, data.candidate_name, data.email || null,
+      data.phone || null, data.location || null, data.experience || null, data.current_company || null,
+      data.expected_salary || null, data.resume_url || null, data.cover_letter || null, data.source || "Direct",
+      data.campaign || null, data.recruiter || null, data.stage || "applied", Number(data.rating) || 0,
+      data.answers ? JSON.stringify(data.answers) : null, userId,
     ],
   )
   // Link the application into the unified candidate spine. This creates/enriches

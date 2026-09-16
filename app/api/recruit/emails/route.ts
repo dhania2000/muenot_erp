@@ -2,13 +2,17 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import {
+  buildMessageId,
+  buildRecruitThreadId,
   ensureRecruitEmailTables,
+  getRecruitThreadContext,
   hydrateDepartmentSMTP,
   isEmailConfigured,
   loadAttachment,
   renderTemplate,
   sendEmail,
 } from "@/lib/email"
+import { recordCandidateActivity } from "@/lib/recruit-unification-db"
 
 export async function GET() {
   const session = await requireFeature("recruitment.view_applications")
@@ -67,6 +71,15 @@ export async function POST(request: Request) {
   }
   const outgoing = await loadAttachment(attachmentPathname)
 
+  // Phase 45: keep every email to this candidate/application in one conversation.
+  const threadId = buildRecruitThreadId(application_id, to_email)
+  const threadCtx = await getRecruitThreadContext(threadId)
+  const messageId = buildMessageId("recruit", "recruit")
+  const inReplyTo = threadCtx?.inReplyTo ?? null
+  const references = threadCtx
+    ? `${threadCtx.references} ${messageId}`.trim()
+    : messageId
+
   let status: "Sent" | "Failed" = "Sent"
   let errorMessage: string | null = null
   try {
@@ -76,6 +89,10 @@ export async function POST(request: Request) {
       html: renderedBody,
       department: "recruit",
       attachments: outgoing ? [outgoing] : undefined,
+      messageId,
+      inReplyTo: inReplyTo ?? undefined,
+      references,
+      headers: { "X-Entity-Ref-ID": threadId },
     })
   } catch (err: any) {
     status = "Failed"
@@ -85,13 +102,42 @@ export async function POST(request: Request) {
   }
 
   const result = await query<any>(
-    `INSERT INTO recruit_emails (application_id, template_id, to_email, to_name, subject, body, status, error_message, sent_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [application_id || null, template_id || null, to_email, to_name || null, renderedSubject, renderedBody, status, errorMessage, session.userId],
+    `INSERT INTO recruit_emails
+       (application_id, template_id, to_email, to_name, subject, body, status, error_message, sent_by,
+        message_id, in_reply_to, references_header, thread_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      application_id || null, template_id || null, to_email, to_name || null, renderedSubject, renderedBody,
+      status, errorMessage, session.userId,
+      messageId, inReplyTo, references, threadId,
+    ],
   )
 
   if (status === "Failed") {
     return NextResponse.json({ error: errorMessage || "Failed to send email", id: result.insertId }, { status: 502 })
   }
+
+  // Phase 44: surface the sent email on the ONE central candidate timeline so
+  // the full communication history lives alongside every other activity.
+  // Idempotent per email row; best-effort so it never blocks the response.
+  try {
+    await recordCandidateActivity({
+      application_id: application_id || null,
+      candidate_name: to_name || (vars.candidate_name as string) || null,
+      job_applied: (vars.job_title as string) || null,
+      email: to_email,
+      activity_type: "Email",
+      subject: renderedSubject,
+      notes: `Email sent to ${to_email}`,
+      outcome: "Sent",
+      performed_by: session.name || null,
+      source_type: "email",
+      source_ref: String(result.insertId),
+      created_by: session.userId,
+    })
+  } catch (e) {
+    console.error("[recruit-email] timeline record failed", e)
+  }
+
   return NextResponse.json({ id: result.insertId, status })
 }

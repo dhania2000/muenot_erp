@@ -65,6 +65,124 @@ const configs: Record<string, { title: string; fields: string[] }> = {
     title: "Issues",
     fields: ["date_reported", "project_id", "client_name", "issue_type", "issue_category", "priority", "description", "impact", "reported_by", "assigned_to", "root_cause", "corrective_action", "preventive_action", "target_date", "closure_date", "status", "escalation_level", "client_impact", "business_impact", "remarks"],
   },
+  milestones: {
+    title: "Project Milestones",
+    fields: ["project_id", "project_name", "milestone_name", "description", "owner", "planned_start", "planned_end", "actual_start", "actual_end", "completion_percent", "priority", "status", "remarks"],
+  },
+  deliverables: {
+    title: "Project Deliverables",
+    fields: ["project_id", "project_name", "deliverable_name", "milestone_id", "description", "deliverable_type", "owner", "due_date", "submitted_date", "accepted_date", "version", "quality_status", "status", "remarks"],
+  },
+  project_documents: {
+    title: "Project Documents",
+    fields: ["project_id", "project_name", "document_name", "document_type", "category", "version", "owner", "document_url", "effective_date", "expiry_date", "confidentiality", "status", "remarks"],
+  },
+  tasks: {
+    title: "Tasks",
+    fields: ["project_id", "project_name", "task_title", "description", "task_type", "assigned_to", "reporter", "priority", "start_date", "due_date", "estimated_hours", "actual_hours", "completion_percent", "board_stage", "status", "remarks"],
+  },
+  work_orders: {
+    title: "Work Orders",
+    fields: ["work_order_no", "project_id", "client_name", "title", "description", "work_type", "assigned_to", "requested_by", "priority", "start_date", "due_date", "estimated_cost", "actual_cost", "status", "remarks"],
+  },
+  resource_requests: {
+    title: "Resource Requests",
+    fields: ["project_id", "project_name", "requested_by", "resource_type", "skill_category", "required_skills", "quantity", "allocation_percent", "required_from", "required_to", "priority", "justification", "approver", "status", "remarks"],
+  },
+  skill_matrix: {
+    title: "Skill Matrix",
+    fields: ["resource_id", "resource_name", "department", "skill_category", "skill_name", "proficiency_level", "experience_years", "certification", "last_assessed", "assessed_by", "status", "remarks"],
+  },
+  capacity_planning: {
+    title: "Capacity Planning",
+    fields: ["period", "department", "resource_type", "project_id", "planned_capacity", "allocated_capacity", "available_capacity", "demand_forecast", "utilization_target", "owner", "status", "remarks"],
+  },
+  utilization: {
+    title: "Utilization",
+    fields: ["resource_id", "resource_name", "project_id", "period", "billable_hours", "non_billable_hours", "available_hours", "utilization_percent", "billable_percent", "target_utilization", "status", "remarks"],
+  },
+  timesheets: {
+    title: "Timesheet Management",
+    fields: ["resource_id", "resource_name", "project_id", "project_name", "task_id", "work_date", "hours_worked", "billable_hours", "activity_type", "description", "approved_by", "approval_status", "status", "remarks"],
+  },
+  qa_audits: {
+    title: "QA Audits",
+    fields: ["audit_no", "project_id", "client_name", "audit_type", "audit_scope", "auditor", "audit_date", "findings", "non_conformities", "severity", "score", "corrective_action_required", "closure_date", "status", "remarks"],
+  },
+  sla_monitoring: {
+    title: "SLA Monitoring",
+    fields: ["project_id", "client_name", "sla_metric", "sla_target", "actual_value", "unit", "measurement_period", "breach_count", "penalty", "owner", "review_date", "sla_status", "status", "remarks"],
+  },
+  corrective_actions: {
+    title: "Corrective Actions",
+    fields: ["reference_no", "project_id", "source_type", "issue_summary", "root_cause", "corrective_action", "preventive_action", "action_owner", "target_date", "closure_date", "effectiveness", "status", "remarks"],
+  },
+  escalations: {
+    title: "Escalations",
+    fields: ["escalation_no", "project_id", "client_name", "raised_by", "escalation_level", "category", "description", "impact", "assigned_to", "raised_date", "target_resolution", "resolution", "closure_date", "status", "remarks"],
+  },
+  root_cause_capa: {
+    title: "Root Cause / CAPA",
+    fields: ["reference_no", "project_id", "problem_statement", "analysis_method", "root_cause", "capa_type", "corrective_action", "preventive_action", "owner", "target_date", "verification_date", "effectiveness", "status", "remarks"],
+  },
+  sops: {
+    title: "SOPs",
+    fields: ["sop_code", "title", "category", "department", "version", "description", "owner", "effective_date", "review_date", "next_review_date", "approval_status", "document_url", "status", "remarks"],
+  },
+  checklists: {
+    title: "Checklists",
+    fields: ["checklist_name", "category", "project_id", "linked_sop", "description", "total_items", "completed_items", "owner", "due_date", "completion_percent", "status", "remarks"],
+  },
+  approvals: {
+    title: "Approvals",
+    fields: ["approval_no", "request_type", "related_to", "project_id", "requested_by", "approver", "request_date", "priority", "description", "decision", "decision_date", "status", "remarks"],
+  },
+  client_requirements: {
+    title: "Client Requirements",
+    fields: ["client_name", "project_id", "requirement_title", "description", "requirement_type", "priority", "source", "owner", "received_date", "target_date", "acceptance_criteria", "status", "remarks"],
+  },
+  client_deliverables: {
+    title: "Client Deliverables",
+    fields: ["client_name", "project_id", "deliverable_name", "description", "deliverable_type", "owner", "due_date", "submitted_date", "acceptance_date", "acceptance_status", "version", "status", "remarks"],
+  },
+  client_approvals: {
+    title: "Client Approvals",
+    fields: ["client_name", "project_id", "approval_item", "description", "submitted_to", "submitted_date", "approver_name", "decision", "decision_date", "feedback", "status", "remarks"],
+  },
+  project_cost: {
+    title: "Project Cost",
+    fields: ["project_id", "project_name", "client_name", "cost_category", "cost_head", "budgeted_cost", "actual_cost", "committed_cost", "variance", "currency", "period", "cost_date", "status", "remarks"],
+  },
+  resource_cost: {
+    title: "Resource Cost",
+    fields: ["resource_id", "resource_name", "project_id", "cost_type", "rate", "rate_type", "hours", "period", "total_cost", "currency", "billable", "status", "remarks"],
+  },
+  vendor_cost: {
+    title: "Vendor Cost",
+    fields: ["vendor_name", "project_id", "service_category", "po_number", "description", "invoice_amount", "paid_amount", "currency", "invoice_date", "due_date", "payment_status", "status", "remarks"],
+  },
+  budget_vs_actual: {
+    title: "Budget vs Actual",
+    fields: ["project_id", "project_name", "client_name", "category", "budget_amount", "actual_amount", "variance", "variance_percent", "period", "currency", "forecast_amount", "status", "remarks"],
+  },
+}
+
+// Picks the most meaningful display label for a row across all Operations kinds.
+function recordLabel(row: any): string {
+  const candidates = [
+    row.resource_name, row.project_name, row.milestone_name, row.deliverable_name,
+    row.task_title, row.title, row.document_name, row.sop_code, row.checklist_name,
+    row.requirement_title, row.approval_item, row.approval_no, row.escalation_no,
+    row.audit_no, row.work_order_no, row.reference_no, row.vendor_name,
+    row.sla_metric, row.cost_category, row.category, row.skill_name, row.reviewer_name,
+  ]
+  return candidates.find((v) => v != null && String(v).trim() !== "") ?? "Operational record"
+}
+
+function recordId(row: any): string {
+  return String(
+    row.id ?? row.resource_id ?? row.project_id ?? row.allocation_id ?? row.review_id ?? row.issue_id ?? "",
+  )
 }
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -354,15 +472,10 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
                   </td>
                 </tr>
               )}
-              {rows.map((row: any) => (
-                <tr
-                  key={row.resource_id || row.project_id || row.allocation_id || row.review_id || row.issue_id}
-                  className="border-b last:border-0"
-                >
-                  <td className="p-4 font-mono text-xs">
-                    {row.resource_id || row.project_id || row.allocation_id || row.review_id || row.issue_id}
-                  </td>
-                  <td className="p-4">{row.resource_name || row.project_name || row.title || row.reviewer_name || "Operational record"}</td>
+              {rows.map((row: any, i: number) => (
+                <tr key={recordId(row) || i} className="border-b last:border-0">
+                  <td className="p-4 font-mono text-xs">{recordId(row)}</td>
+                  <td className="p-4">{recordLabel(row)}</td>
                   <td className="p-4">{row.status}</td>
                   <td className="p-4 text-muted-foreground">{String(row.created_at || "").slice(0, 10)}</td>
                 </tr>

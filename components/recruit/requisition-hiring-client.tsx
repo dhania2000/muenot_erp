@@ -150,11 +150,16 @@ export function RequisitionHiringClient({ canManage, canApprove }: { canManage: 
               return (
                 <TableRow key={r.requisition_id}>
                   <TableCell>
-                    <div className="font-medium">{r.job_title || "Untitled role"}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {r.requisition_id}
-                      {r.priority ? ` · ${r.priority}` : ""}
-                    </div>
+                    <Link
+                      href={`/modules/recruitment/job-requisitions/${r.requisition_id}`}
+                      className="flex flex-col hover:text-primary"
+                    >
+                      <span className="font-medium">{r.job_title || "Untitled role"}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {r.requisition_id}
+                        {r.priority ? ` · ${r.priority}` : ""}
+                      </span>
+                    </Link>
                   </TableCell>
                   <TableCell className="text-muted-foreground">{r.department || "—"}</TableCell>
                   <TableCell className="text-muted-foreground">
@@ -171,7 +176,7 @@ export function RequisitionHiringClient({ canManage, canApprove }: { canManage: 
                   <TableCell>
                     {r.linked_job_id ? (
                       <Link
-                        href={`/modules/recruitment/jobs/${r.linked_job_id}/edit`}
+                        href={`/modules/recruitment/jobs/${r.linked_job_id}`}
                         className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
                       >
                         {r.linked_job_id} <ExternalLink className="size-3" />

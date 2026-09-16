@@ -153,12 +153,15 @@ export function JobsClient({ canManage }: { canManage: boolean }) {
             {filtered.map((job) => (
               <TableRow key={job.job_id}>
                 <TableCell>
-                  <div className="flex flex-col">
+                  <Link
+                    href={`/modules/recruitment/jobs/${job.job_id}`}
+                    className="flex flex-col hover:text-primary"
+                  >
                     <span className="font-medium">{job.title}</span>
                     <span className="text-xs text-muted-foreground">
                       {job.job_id}{job.department ? ` · ${job.department}` : ""}
                     </span>
-                  </div>
+                  </Link>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   <div className="flex flex-col">

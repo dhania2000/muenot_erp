@@ -34,6 +34,12 @@ export type ReportExceptionCode =
   | "INVALID_PERIOD"
   | "INCOMPLETE_DATA"
   | "NO_SOURCE"
+  // The report's source table/module genuinely does not exist yet (Phase 23),
+  // distinct from NO_SOURCE (no query wired at all) and from a broken query.
+  | "SOURCE_UNAVAILABLE"
+  // The source exists but the report's query references a column/shape that is
+  // no longer valid — the query needs fixing, not the data (Phase 31).
+  | "QUERY_BROKEN"
 
 export type ReportCheck = {
   code: ReportExceptionCode
@@ -130,6 +136,19 @@ function moneyTotals(columns: ReportColumnLike[], rows: Record<string, any>[]) {
   return totals
 }
 
+/**
+ * Why a run came back unavailable, resolved by the server engine from the DB
+ * error (Phases 23/31). `missing` → the source table/module does not exist yet;
+ * `broken` → the source exists but the query references an invalid column;
+ * `unknown` → any other failure. `source` names the table/module and `detail`
+ * carries the raw DB reason for on-screen + log debugging.
+ */
+export type ReportSourceError = {
+  kind: "missing" | "broken" | "unknown"
+  source?: string
+  detail?: string
+}
+
 export type DiagnosticsInput = {
   columns: ReportColumnLike[]
   rows: Record<string, any>[]
@@ -139,6 +158,8 @@ export type DiagnosticsInput = {
   to?: string
   config?: ReportDiagnosticsConfig
   health?: SourceHealth
+  /** Populated only when `available` is false — explains the failure precisely. */
+  sourceError?: ReportSourceError
 }
 
 export function computeReportDiagnostics(input: DiagnosticsInput): ReportDiagnostics {
@@ -175,14 +196,37 @@ export function computeReportDiagnostics(input: DiagnosticsInput): ReportDiagnos
     })
   }
 
-  // Phase 24 — the query ran but its source table/column is unavailable.
+  // Phases 23/31 — the run came back unavailable. Distinguish a genuinely
+  // missing source (needs setting up) from a broken query (needs fixing) from
+  // an unknown failure, so the UI never mislabels an existing source as
+  // "no data source configured".
   if (!available) {
-    checks.push({
-      code: "INCOMPLETE_DATA",
-      level: "error",
-      message:
-        "This report could not be generated — its source table or a required column is missing. Check the Chart of Accounts and posting configuration.",
-    })
+    const err = input.sourceError
+    if (err?.kind === "missing") {
+      checks.push({
+        code: "SOURCE_UNAVAILABLE",
+        level: "error",
+        message: `Required source is not available${
+          err.source ? ` — the ${err.source} module has not been set up yet` : ""
+        }.${err.detail ? ` (${err.detail})` : ""}`,
+      })
+    } else if (err?.kind === "broken") {
+      checks.push({
+        code: "QUERY_BROKEN",
+        level: "error",
+        message: `This report's source${
+          err.source ? ` (${err.source})` : ""
+        } is available, but its query needs updating${err.detail ? ` — ${err.detail}` : ""}.`,
+      })
+    } else {
+      checks.push({
+        code: "INCOMPLETE_DATA",
+        level: "error",
+        message:
+          "This report could not be generated — its source table or a required column is missing. Check the Chart of Accounts and posting configuration." +
+          (err?.detail ? ` (${err.detail})` : ""),
+      })
+    }
     return finalise(checks, reconciliation, totals)
   }
 

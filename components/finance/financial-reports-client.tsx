@@ -161,6 +161,28 @@ function activeFilterLabels(entry: CatalogueEntry, filters: Record<string, strin
     .map((f) => `${f.label}: ${filters[f.dim].trim()}`)
 }
 
+// Phases 22-23 — the concise body line shown when a report comes back
+// unavailable. It mirrors the precise verdict the engine computed so the three
+// states never collapse into one misleading "no data source" line:
+//   • no query wired at all            → "no data source configured yet"
+//   • source module genuinely missing  → "Required source is not available."
+//   • source present but query broken   → "source is available, query needs updating"
+// The DiagnosticsBanner above already carries the full detail (and the missing
+// source name), so this stays short.
+function unavailableMessage(diagnostics: ReportDiagnostics | null): string {
+  const code = diagnostics?.checks?.[0]?.code
+  switch (code) {
+    case "NO_SOURCE":
+      return "This report has no data source configured yet."
+    case "SOURCE_UNAVAILABLE":
+      return "Required source is not available. It will populate once that module is set up."
+    case "QUERY_BROKEN":
+      return "This report's source is available, but its query needs updating."
+    default:
+      return "This report could not be generated — see the details above."
+  }
+}
+
 // Phase 24/25 — an inline status banner that explains the report's health
 // (reconciliation result, unposted journals, missing mappings, empty period)
 // so a zero row is never a silent, unexplained blank.
@@ -416,7 +438,7 @@ function ReportView({
           <p className="py-6 text-center text-sm text-muted-foreground">Generating report…</p>
         ) : data && !data.available ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            No data source available for this report yet.
+            {unavailableMessage(data.diagnostics)}
           </p>
         ) : (
           <div className="overflow-x-auto">

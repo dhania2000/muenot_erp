@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
+import { RecruitEmailVarsHint } from "@/components/recruit/recruit-email-vars-hint"
 
 export type RecruitTemplateRow = {
   id: number
@@ -127,6 +128,8 @@ export function RecruitEmailTemplateDialog({
             <Label>Attachment</Label>
             <EmailAttachmentPicker value={attachment} onChange={setAttachment} />
           </div>
+
+          <RecruitEmailVarsHint />
         </div>
 
         <DialogFooter>

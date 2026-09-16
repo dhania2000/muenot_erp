@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import {
   buildMessageId,
@@ -13,6 +12,8 @@ import {
   sendEmail,
 } from "@/lib/email"
 import { recordCandidateActivity } from "@/lib/recruit-unification-db"
+import { buildRecruitEmailVars } from "@/lib/recruit-email-vars"
+import { query } from "@/lib/db"
 
 export async function GET() {
   const session = await requireFeature("recruitment.view_applications")
@@ -50,14 +51,13 @@ export async function POST(request: Request) {
   }
 
   // Merge variables for template placeholders like {{candidate_name}} / {{job_title}}.
-  let vars: Record<string, string | null | undefined> = { candidate_name: to_name || "", job_title: "", email: to_email }
-  if (application_id) {
-    const rows = await query<any[]>(
-      `SELECT candidate_name, job_title, email FROM recruit_applications WHERE application_id = ? LIMIT 1`,
-      [application_id],
-    )
-    if (rows[0]) vars = { ...vars, ...rows[0] }
-  }
+  // Phase 93: resolve the full merge-field catalog from the unified pipeline
+  // (application -> job -> requisition -> interview -> offer -> joining), so no
+  // candidate data is hard-coded into templates.
+  const vars = await buildRecruitEmailVars(application_id, {
+    candidate_name: to_name || null,
+    email: to_email,
+  })
   const renderedSubject = renderTemplate(subject, vars)
   const renderedBody = renderTemplate(content, vars)
 

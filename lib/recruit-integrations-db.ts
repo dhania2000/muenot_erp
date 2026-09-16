@@ -230,6 +230,30 @@ export async function createJobFromRequisition(requisitionId: string, userId: nu
       .filter(Boolean)
       .join("\n\n") || null
 
+  // Phase 59: resolve the recruiter + hiring manager against the Employee Master
+  // so the job carries stable employee ids; names are derived from the match and
+  // fall back to the requisition's free text when nothing resolves. Best-effort.
+  let recruiterName: string | null = req.recruiter || null
+  let hiringManagerName: string | null = req.hiring_manager || null
+  let recruiterEmployeeId: string | null = null
+  let hiringManagerEmployeeId: string | null = null
+  try {
+    const { resolvePersonField, ensureEmployeeRefColumns } = await import("@/lib/recruit-employee-resolve")
+    const [rec, hm] = await Promise.all([
+      resolvePersonField(req.recruiter),
+      resolvePersonField(req.hiring_manager),
+    ])
+    recruiterName = rec.name
+    recruiterEmployeeId = rec.employeeId
+    hiringManagerName = hm.name
+    hiringManagerEmployeeId = hm.employeeId
+    if (recruiterEmployeeId || hiringManagerEmployeeId) {
+      await ensureEmployeeRefColumns("recruit_jobs", ["recruiter_employee_id", "hiring_manager_employee_id"])
+    }
+  } catch {
+    // HR master missing — keep the requisition's free-text names.
+  }
+
   await query(
     `INSERT INTO recruit_jobs
       (job_id, public_hash, title, department, designation, location, job_type, work_mode, status, positions,
@@ -252,13 +276,24 @@ export async function createJobFromRequisition(requisitionId: string, userId: nu
       req.required_skills || null,
       description,
       req.required_qualification || null,
-      req.recruiter || null,
-      req.hiring_manager || null,
+      recruiterName,
+      hiringManagerName,
       1,
       requisitionId,
       userId,
     ],
   )
+  // Persist the resolved stable employee ids alongside the derived names.
+  if (recruiterEmployeeId || hiringManagerEmployeeId) {
+    try {
+      await query(
+        "UPDATE recruit_jobs SET recruiter_employee_id = ?, hiring_manager_employee_id = ? WHERE job_id = ?",
+        [recruiterEmployeeId, hiringManagerEmployeeId, jobId],
+      )
+    } catch {
+      // best-effort — the derived names are already stored on the row.
+    }
+  }
   // Approved -> Job Created -> Open. Roll the requisition's lifecycle status
   // forward so it no longer sits in "Approved" once its job is live.
   await query(

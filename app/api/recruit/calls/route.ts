@@ -77,5 +77,29 @@ export async function POST(request: Request) {
     [applicationId, toNumber, toName, getCallerId() || null, twilioCallSid, status, duration, disposition, notes, session.userId],
   )
 
+  // Phase 38: a logged call automatically appears on the ONE central candidate
+  // timeline (Candidate Activities), resolved to the canonical candidate by the
+  // application link or, for aggregate-dialer calls, by the dialed number.
+  // Best-effort — recording must never fail the call log.
+  try {
+    const { recordCandidateActivity } = await import("@/lib/recruit-unification-db")
+    const mins = Math.floor(duration / 60)
+    const secs = duration % 60
+    const durationLabel = duration > 0 ? ` (${mins}m ${secs}s)` : ""
+    await recordCandidateActivity({
+      application_id: applicationId ? String(applicationId) : null,
+      candidate_name: toName,
+      phone: toNumber,
+      activity_type: "Call",
+      performed_by: session.name || null,
+      subject: `Call — ${toName || toNumber}`,
+      outcome: disposition || status,
+      notes: notes || `Outbound call${durationLabel}`,
+      source_type: "call",
+      source_ref: String(result.insertId),
+      created_by: session.userId,
+    })
+  } catch {}
+
   return NextResponse.json({ id: result.insertId }, { status: 201 })
 }

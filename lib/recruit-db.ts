@@ -6,6 +6,20 @@ import { nextDocumentId } from "@/lib/settings/numbering"
 import type { JobQuestion, StageKey } from "@/lib/recruit"
 import { normalizeStage } from "@/lib/recruitment-stages"
 
+// Phase 54: record-level permission scope fragment produced by
+// scopeWhereForModule() in lib/permission-enforce.ts. The legacy recruit_*
+// list functions accept it so restricted recruiters only ever read the rows
+// their configured scope (added / owned / both) permits.
+export type RecruitScope = { sql: string; params: any[] } | null
+
+/** Append a scope fragment to a WHERE/args pair, aliasing the given table. */
+function applyScope(baseWhere: string, args: any[], scope: RecruitScope) {
+  if (!scope) return { where: baseWhere, args }
+  const clause = scope.sql
+  const where = baseWhere ? `${baseWhere} AND ${clause}` : `WHERE ${clause}`
+  return { where, args: [...args, ...scope.params] }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -78,10 +92,12 @@ export function safeParseObject(value: any): Record<string, any> {
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
-export async function listJobs() {
+export async function listJobs(scope?: RecruitScope) {
+  const { where, args } = applyScope("", [], scope ? { sql: scope.sql.replace(/\bcreated_by\b/g, "j.created_by"), params: scope.params } : null)
   return query<Job[]>(
     `SELECT j.*, (SELECT COUNT(*) FROM recruit_applications a WHERE a.job_id = j.job_id) AS applications_count
-     FROM recruit_jobs j ORDER BY j.created_at DESC LIMIT 500`,
+     FROM recruit_jobs j ${where} ORDER BY j.created_at DESC LIMIT 500`,
+    args,
   )
 }
 
@@ -161,10 +177,14 @@ export async function deleteJob(jobId: string) {
 // ---------------------------------------------------------------------------
 // Applications
 // ---------------------------------------------------------------------------
-export async function listApplications(jobId?: string) {
-  const rows = jobId
-    ? await query<any[]>("SELECT * FROM recruit_applications WHERE job_id = ? ORDER BY applied_at DESC", [jobId])
-    : await query<any[]>("SELECT * FROM recruit_applications ORDER BY applied_at DESC LIMIT 1000")
+export async function listApplications(jobId?: string, scope?: RecruitScope) {
+  const baseWhere = jobId ? "WHERE job_id = ?" : ""
+  const baseArgs: any[] = jobId ? [jobId] : []
+  const { where, args } = applyScope(baseWhere, baseArgs, scope ?? null)
+  const rows = await query<any[]>(
+    `SELECT * FROM recruit_applications ${where} ORDER BY applied_at DESC ${jobId ? "" : "LIMIT 1000"}`,
+    args,
+  )
   // Phase 11: surface every row in the one canonical stage vocabulary so legacy
   // values (e.g. "phone_screen", "offered") render correctly in the pipeline UI.
   for (const r of rows) r.stage = normalizeStage(r.stage)
@@ -252,6 +272,11 @@ export async function updateApplication(applicationId: string, data: any) {
   await query(`UPDATE recruit_applications SET ${fields.join(", ")} WHERE application_id = ?`, values)
 }
 
+export async function getApplicationById(applicationId: string) {
+  const rows = await query<any[]>("SELECT * FROM recruit_applications WHERE application_id = ? LIMIT 1", [applicationId])
+  return rows[0] ?? null
+}
+
 export async function updateApplicationStage(applicationId: string, stage: StageKey) {
   await query("UPDATE recruit_applications SET stage = ? WHERE application_id = ?", [normalizeStage(stage), applicationId])
 }
@@ -276,8 +301,9 @@ export async function deleteApplication(applicationId: string) {
 // ---------------------------------------------------------------------------
 // Interviews
 // ---------------------------------------------------------------------------
-export async function listInterviews() {
-  return query<any[]>("SELECT * FROM recruit_interviews ORDER BY scheduled_at DESC LIMIT 1000")
+export async function listInterviews(scope?: RecruitScope) {
+  const { where, args } = applyScope("", [], scope ?? null)
+  return query<any[]>(`SELECT * FROM recruit_interviews ${where} ORDER BY scheduled_at DESC LIMIT 1000`, args)
 }
 
 export async function createInterview(data: any, userId: number | null) {
@@ -294,6 +320,11 @@ export async function createInterview(data: any, userId: number | null) {
     ],
   )
   return { interview_id: interviewId }
+}
+
+export async function getInterviewById(interviewId: string) {
+  const rows = await query<any[]>("SELECT * FROM recruit_interviews WHERE interview_id = ? LIMIT 1", [interviewId])
+  return rows[0] ?? null
 }
 
 export async function updateInterview(interviewId: string, data: any) {
@@ -315,8 +346,9 @@ export async function deleteInterview(interviewId: string) {
 // ---------------------------------------------------------------------------
 // Offers
 // ---------------------------------------------------------------------------
-export async function listOffers() {
-  return query<any[]>("SELECT * FROM recruit_offers ORDER BY created_at DESC LIMIT 1000")
+export async function listOffers(scope?: RecruitScope) {
+  const { where, args } = applyScope("", [], scope ?? null)
+  return query<any[]>(`SELECT * FROM recruit_offers ${where} ORDER BY created_at DESC LIMIT 1000`, args)
 }
 
 export async function createOffer(data: any, userId: number | null) {
@@ -332,6 +364,11 @@ export async function createOffer(data: any, userId: number | null) {
     ],
   )
   return { offer_id: offerId }
+}
+
+export async function getOfferById(offerId: string) {
+  const rows = await query<any[]>("SELECT * FROM recruit_offers WHERE offer_id = ? LIMIT 1", [offerId])
+  return rows[0] ?? null
 }
 
 export async function updateOffer(offerId: string, data: any) {

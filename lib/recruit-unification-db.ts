@@ -10,6 +10,8 @@ import {
   interviewResultToStage,
   selectionResultToStage,
   feedbackResultToStage,
+  bgvResultToStage,
+  preJoiningResultToStage,
   type CanonicalStage,
 } from "@/lib/recruitment-stages"
 
@@ -429,6 +431,12 @@ export async function applyStageWriteBack(table: string, record: Record<string, 
         break
       case "recruitment_interview_feedback":
         target = feedbackResultToStage(record)
+        break
+      case "recruitment_background_verification":
+        target = bgvResultToStage(record.status)
+        break
+      case "recruitment_pre_joining":
+        target = preJoiningResultToStage(record)
         break
       default:
         return false

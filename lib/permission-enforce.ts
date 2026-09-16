@@ -56,7 +56,6 @@ export const SUPPORT_PERMISSION_KEYS: Record<string, string> = {
 export const RECRUITMENT_PERMISSION_KEYS: Record<string, string> = {
   "job-requisitions": "recruitment.requisitions",
   "recruitment-campaigns": "recruitment.requisitions",
-  "candidate-master": "recruitment.candidates",
   screening: "recruitment.candidates",
   "recruitment-sources": "recruitment.candidates",
   "interview-tracker": "recruitment.interviews",

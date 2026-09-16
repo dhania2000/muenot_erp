@@ -421,6 +421,26 @@ export async function convertOfferToEmployee(
       "UPDATE recruit_applications SET hired_employee_id = ?, stage = 'hired' WHERE application_id = ?",
       [employeeId, offer.application_id],
     )
+    // Keep the canonical Candidate Master in lock-step with the hire. The raw
+    // stage update above is the authoritative hire action (it force-sets
+    // 'hired'), so it bypasses the normal status-sync — mirror the 'Hired'
+    // status onto the master here so the Candidate Database / 360 views never
+    // lag behind a completed conversion. Best-effort; a missing column or an
+    // unlinked application must never fail the hire.
+    try {
+      const [appRow] = await query<any[]>(
+        "SELECT candidate_master_id FROM recruit_applications WHERE application_id = ? LIMIT 1",
+        [offer.application_id],
+      )
+      const candidateMasterId = appRow?.candidate_master_id
+      if (candidateMasterId) {
+        await query("UPDATE recruitment_candidates SET candidate_status = 'Hired' WHERE candidate_id = ?", [
+          candidateMasterId,
+        ])
+      }
+    } catch (e) {
+      console.error("[recruit-integrations] candidate master hire sync failed", e)
+    }
   }
   await syncRequisitionFromLinkedJob(offer.job_id)
 

@@ -142,70 +142,11 @@ const recruitmentCampaigns: ModuleConfig = {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Candidate Master
+// Candidate Master was consolidated into Candidate Database. Its ModuleConfig
+// was removed so the generic module surface no longer exposes a duplicate
+// candidate registry; Candidate Database (components/recruit/candidates-client)
+// is the single canonical view over the recruitment_candidates table.
 // ---------------------------------------------------------------------------
-const candidateMaster: ModuleConfig = {
-  key: "candidate-master",
-  table: "recruitment_candidates",
-  label: "Candidate Master",
-  subtitle: "Recruitment management",
-  addLabel: "New candidate",
-  idColumn: "candidate_id",
-  idPrefix: "CAND",
-  editableId: true,
-  dateColumn: "application_date",
-  statusColumn: "candidate_status",
-  searchColumns: ["candidate_id", "candidate_name", "email", "mobile", "job_applied", "requisition_id", "primary_skills"],
-  fields: [
-    fld("Candidate", "candidate_id", "Candidate ID", "text", { placeholder: "Auto-generated if left blank" }),
-    fld("Candidate", "application_date", "Application date", "date", { required: true }),
-    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
-    fld("Candidate", "email", "Email", "text"),
-    fld("Candidate", "mobile", "Mobile", "text"),
-    fld("Candidate", "alternate_mobile", "Alternate mobile", "text"),
-    fld("Candidate", "current_location", "Current location", "text"),
-    fld("Candidate", "preferred_location", "Preferred location", "text"),
-    fld("Application", "job_applied", "Job applied", "text"),
-    fld("Application", "requisition_id", "Requisition ID", "text"),
-    fld("Application", "campaign_id", "Campaign ID", "text"),
-    fld("Application", "source", "Source", "text"),
-    fld("Application", "form_link", "Form link", "text"),
-    fld("Application", "form_response_link", "Form response link", "text"),
-    fld("Application", "employment_type", "Employment type", "select", { options: EMPLOYMENT_TYPES, optionsCategory: "employment_type", optional: true }),
-    fld("Profile", "experience", "Experience", "text"),
-    fld("Profile", "highest_qualification", "Highest qualification", "text"),
-    fld("Profile", "primary_skills", "Primary skills", "textarea"),
-    fld("Profile", "secondary_skills", "Secondary skills", "textarea"),
-    fld("Profile", "current_company", "Current company", "text"),
-    fld("Compensation", "current_ctc", "Current CTC", "text"),
-    fld("Compensation", "expected_ctc_rate", "Expected CTC / Rate", "text"),
-    fld("Compensation", "notice_period", "Notice period", "text"),
-    fld("Links", "resume_url", "Resume URL", "text"),
-    fld("Links", "portfolio_url", "Portfolio URL", "text"),
-    fld("Links", "linkedin_url", "LinkedIn URL", "text"),
-    fld("Status", "candidate_status", "Candidate status", "text"),
-    fld("Status", "remarks", "Remarks", "textarea"),
-    fld("Source tracking", "source_spreadsheet", "Source spreadsheet", "text"),
-    fld("Source tracking", "source_sheet", "Source sheet", "text"),
-    fld("Source tracking", "source_row", "Source row", "number"),
-  ],
-  tableColumns: [
-    { key: "candidate_id", label: "Candidate ID", mono: true },
-    { key: "application_date", label: "Applied" },
-    { key: "candidate_name", label: "Candidate", sub: "job_applied" },
-    { key: "email", label: "Email" },
-    { key: "experience", label: "Experience" },
-    { key: "candidate_status", label: "Status", badge: {} },
-  ],
-  kpis: [
-    { label: "Total Candidates", key: "total_rows", icon: "Users" },
-    { label: "Selected", key: "total_selected", icon: "UserCheck" },
-    { label: "In Process", key: "total_process", icon: "Clock" },
-    { label: "Rejected", key: "total_rejected", icon: "UserX" },
-  ],
-  summarySelect:
-    "COUNT(*) total_rows, COALESCE(SUM(candidate_status = 'Selected'),0) total_selected, COALESCE(SUM(candidate_status NOT IN ('Selected','Rejected','Joined')),0) total_process, COALESCE(SUM(candidate_status = 'Rejected'),0) total_rejected",
-}
 
 // ---------------------------------------------------------------------------
 // 4. Screening
@@ -1195,7 +1136,6 @@ const talentPool: ModuleConfig = {
 export const RECRUITMENT_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "job-requisitions": jobRequisitions,
   "recruitment-campaigns": recruitmentCampaigns,
-  "candidate-master": candidateMaster,
   "screening": screening,
   "interview-tracker": interviewTracker,
   "assessment-tracker": assessmentTracker,

@@ -1,5 +1,11 @@
 import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill, computeExpense, accountingPeriodFor, fiscalQuarterFor } from "@/lib/finance-calc"
 import { EMPLOYEE_EXPENSE_TYPES, VENDOR_EXPENSE_TYPES } from "@/lib/finance-expense-types"
+import {
+  LOAN_TYPES,
+  INSTALLMENT_FREQUENCIES,
+  INTEREST_METHODS,
+  computeLoanScheduleFields,
+} from "@/lib/finance-loans-calc"
 import type { FieldDef, FieldType, ModuleConfig, TableColumn } from "@/lib/finance-schema"
 
 /** Terse field builder. */
@@ -1856,43 +1862,134 @@ const fixedAssets: ModuleConfig = {
     "COALESCE(SUM(cost),0) total_cost, COALESCE(SUM(accumulated_depreciation),0) total_depr, COALESCE(SUM(net_book_value),0) total_nbv, COUNT(*) total_rows",
 }
 
+// Phase 4 — Loans & Advances. Four loan/advance types reuse the authoritative
+// HR / Vendor / Customer masters through in-form pickers, and an amortisation
+// schedule (EMI + principal/interest split + running outstanding) is derived
+// from the terms and persisted to loans_advances_schedule. The principal posts
+// a balanced Journal + General Ledger voucher through the register engine, so
+// the Trial Balance, Balance Sheet and ledgers reflect it automatically.
+const LOAN_TYPE_OPTIONS = [...LOAN_TYPES]
+const INSTALLMENT_FREQ_OPTIONS = [...INSTALLMENT_FREQUENCIES]
+const INTEREST_METHOD_OPTIONS = [...INTEREST_METHODS]
+const LOAN_DIRECTIONS = ["Loan / Advance Given", "Loan Taken"]
+
 const loansAdvances: ModuleConfig = {
   key: "loans-advances",
   table: "loans_advances",
   label: "Loans & Advances",
-  subtitle: "Loan register",
+  subtitle: "Loan & advance register",
   addLabel: "New loan / advance",
   idColumn: "loan_id",
   idPrefix: "LA",
   dateColumn: "disbursement_date",
   financialYearColumn: "financial_year",
   statusColumn: "status",
-  searchColumns: ["loan_id", "party_name", "party_type", "direction"],
+  detailPath: "/modules/finance/loans-advances",
+  searchColumns: ["loan_id", "party_name", "party_type", "loan_type", "direction", "purpose"],
   filters: [
-    { type: "select", key: "direction", label: "Direction", options: ["Loan / Advance Given", "Loan Taken"] },
+    { type: "select", key: "loan_type", label: "Type", options: LOAN_TYPE_OPTIONS },
+    { type: "select", key: "direction", label: "Direction", options: LOAN_DIRECTIONS },
     { type: "select", key: "status", label: "Status", options: ["Active", "Closed", "Written Off"] },
   ],
+  // Reuse the existing masters (HR employees, Vendors, Customers) instead of
+  // re-keying parties. Each picker toggles on the chosen loan/advance type and
+  // fills party_id + party_name. The Bank/Cash picker sets the funding account.
+  lookups: [
+    {
+      key: "employee",
+      label: "Employee",
+      path: "/api/finance/expenses/lookups?type=employee",
+      sourceIdColumn: "employee_id",
+      sourceNameColumn: "employee_name",
+      sourceSubColumn: "department",
+      idField: "party_id",
+      nameField: "party_name",
+      autofill: {},
+      visibleWhen: { field: "loan_type", in: ["Employee Advance"] },
+      required: true,
+    },
+    {
+      key: "vendor",
+      label: "Vendor",
+      path: "/api/finance/expenses/lookups?type=vendor",
+      sourceIdColumn: "party_id",
+      sourceNameColumn: "customer_name",
+      sourceSubColumn: "gstin",
+      idField: "party_id",
+      nameField: "party_name",
+      autofill: {},
+      visibleWhen: { field: "loan_type", in: ["Vendor Advance"] },
+      required: true,
+    },
+    {
+      key: "customer",
+      label: "Customer",
+      path: "/api/finance/expenses/lookups?type=client",
+      sourceIdColumn: "client_code",
+      sourceNameColumn: "client_name",
+      sourceSubColumn: "company_name",
+      idField: "party_id",
+      nameField: "party_name",
+      autofill: {},
+      visibleWhen: { field: "loan_type", in: ["Customer Advance"] },
+      required: true,
+    },
+    {
+      key: "bank",
+      label: "Bank / Cash account",
+      path: "/api/finance/expenses/lookups?type=bank",
+      sourceIdColumn: "finance_account_id",
+      sourceNameColumn: "account_name",
+      sourceSubColumn: "bank_name",
+      idField: "bank_account_id",
+      nameField: "bank_account_name",
+      autofill: {},
+    },
+  ],
   fields: [
-    fld("Loan information", "party_name", "Party name", "text", { required: true }),
-    fld("Loan information", "party_type", "Party type", "select", { options: ["Employee", "Vendor", "Director", "Related Party", "Bank / NBFC", "Other"], optional: true }),
-    fld("Loan information", "direction", "Direction", "select", { options: ["Loan / Advance Given", "Loan Taken"], required: true }),
-    fld("Loan information", "disbursement_date", "Disbursement date", "date", { required: true }),
-    fld("Loan information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
+    fld("Loan information", "loan_type", "Type", "select", { options: LOAN_TYPE_OPTIONS, required: true, default: "Loan" }),
+    fld("Loan information", "party_name", "Party", "text", { required: true, placeholder: "Pick from master or type" }),
+    fld("Loan information", "party_id", "Party ID", "text", { hidden: true }),
+    fld("Loan information", "party_type", "Party type", "select", { options: ["Employee", "Vendor", "Customer", "Director", "Related Party", "Bank / NBFC", "Other"], optional: true }),
+    // A plain "Loan" can be given or taken; advances derive their direction from
+    // the type on the server, so the picker only shows for "Loan".
+    fld("Loan information", "direction", "Direction", "select", { options: LOAN_DIRECTIONS, visibleWhen: { field: "loan_type", in: ["Loan"] } }),
+    fld("Loan information", "disbursement_date", "Start date", "date", { required: true }),
+    fld("Loan information", "end_date", "End date", "date", { computed: true }),
+    fld("Loan information", "financial_year", "Financial year", "text", { placeholder: "Auto from start date" }),
+    fld("Loan information", "purpose", "Purpose", "text", { placeholder: "e.g. Working capital, salary advance" }),
     fld("Loan information", "status", "Status", "select", { options: ["Active", "Closed", "Written Off"], optional: true }),
-    fld("Amounts", "principal", "Principal amount", "number", { required: true, money: true }),
-    fld("Amounts", "funding_source", "Settled via", "select", { options: CASH_SOURCES }),
-    fld("Amounts", "interest_rate", "Interest rate %", "number"),
-    fld("Amounts", "outstanding_amount", "Outstanding amount", "number", { money: true }),
-    fld("Amounts", "repayment_terms", "Repayment terms", "text", { placeholder: "e.g. 12 EMIs" }),
+    // Principal drives the balanced posting (Dr receivable / Cr bank for given,
+    // Dr bank / Cr payable for taken).
+    fld("Loan terms", "principal", "Principal", "number", { required: true, money: true }),
+    fld("Loan terms", "interest_rate", "Interest rate % p.a.", "number"),
+    fld("Loan terms", "interest_method", "Interest method", "select", { options: INTEREST_METHOD_OPTIONS, default: "Reducing Balance", optional: true }),
+    fld("Loan terms", "tenure_months", "Tenure (months)", "number"),
+    fld("Loan terms", "installment_frequency", "Installment frequency", "select", { options: INSTALLMENT_FREQ_OPTIONS, default: "Monthly", optional: true }),
+    fld("Loan terms", "emi_amount", "EMI / installment", "number", { computed: true, money: true }),
+    fld("Loan terms", "interest_total", "Total interest", "number", { computed: true, money: true }),
+    fld("Loan terms", "total_payable", "Total payable", "number", { computed: true, money: true }),
+    fld("Outstanding", "outstanding_principal", "Outstanding principal", "number", { money: true, placeholder: "Auto = principal on creation" }),
+    fld("Outstanding", "outstanding_interest", "Outstanding interest", "number", { money: true, placeholder: "Auto = total interest on creation" }),
+    fld("Outstanding", "outstanding_amount", "Total outstanding", "number", { computed: true, money: true }),
+    fld("Settlement", "funding_source", "Settled via", "select", { options: CASH_SOURCES }),
+    fld("Settlement", "bank_account_id", "Bank account ID", "text", { hidden: true }),
+    fld("Settlement", "bank_account_name", "Bank / account", "text", { hidden: true }),
+    fld("Documents", "document_url", "Document (URL)", "text", { placeholder: "Loan agreement / sanction letter" }),
     fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
     fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
     fld("Notes", "notes", "Notes", "textarea"),
   ],
+  compute: (v) => ({
+    ...computeLoanScheduleFields(v),
+    outstanding_amount: round2(num(v.outstanding_principal) + num(v.outstanding_interest)),
+  }),
   tableColumns: [
     { key: "loan_id", label: "Loan ID", mono: true },
-    { key: "party_name", label: "Party", sub: "party_type" },
+    { key: "party_name", label: "Party", sub: "loan_type" },
     { key: "direction", label: "Direction", badge: { "Loan / Advance Given": "default", "Loan Taken": "secondary" } },
     { key: "principal", label: "Principal", align: "right", money: true },
+    { key: "emi_amount", label: "EMI", align: "right", money: true },
     { key: "outstanding_amount", label: "Outstanding", align: "right", money: true },
     { key: "status", label: "Status", badge: { Active: "default", Closed: "outline", "Written Off": "destructive" } },
     POSTING_COLUMN,

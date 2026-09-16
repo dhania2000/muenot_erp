@@ -938,3 +938,53 @@ export async function ensureRegisterModuleTables() {
 
   registerTablesEnsured = true
 }
+
+/**
+ * Self-healing schema for the Phase 4 Loans & Advances build. The base
+ * `loans_advances` table predates the richer loan model (type, EMI, tenure,
+ * installment frequency, split outstanding, purpose, bank account, documents),
+ * so the new columns are added idempotently, and the dedicated amortisation
+ * schedule table is created. Runs once per process, after the register tables.
+ */
+let loansAdvancesEnsured = false
+
+export async function ensureLoansAdvancesColumns() {
+  if (loansAdvancesEnsured) return
+  await ensureRegisterModuleTables()
+
+  const t = "loans_advances"
+  await ensureColumn(t, "loan_type", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "party_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "interest_method", "VARCHAR(30) DEFAULT NULL")
+  await ensureColumn(t, "start_date", "DATE DEFAULT NULL")
+  await ensureColumn(t, "end_date", "DATE DEFAULT NULL")
+  await ensureColumn(t, "tenure_months", "INT NOT NULL DEFAULT 0")
+  await ensureColumn(t, "installment_frequency", "VARCHAR(20) DEFAULT NULL")
+  await ensureColumn(t, "emi_amount", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "interest_total", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "total_payable", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "outstanding_principal", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "outstanding_interest", "DECIMAL(16,2) NOT NULL DEFAULT 0")
+  await ensureColumn(t, "purpose", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn(t, "bank_account_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "bank_account_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "document_url", "TEXT DEFAULT NULL")
+
+  await query(`CREATE TABLE IF NOT EXISTS loans_advances_schedule (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    loan_id             VARCHAR(30) NOT NULL,
+    installment_no      INT NOT NULL DEFAULT 0,
+    due_date            DATE DEFAULT NULL,
+    opening_balance     DECIMAL(16,2) NOT NULL DEFAULT 0,
+    emi                 DECIMAL(16,2) NOT NULL DEFAULT 0,
+    principal_component DECIMAL(16,2) NOT NULL DEFAULT 0,
+    interest_component  DECIMAL(16,2) NOT NULL DEFAULT 0,
+    closing_balance     DECIMAL(16,2) NOT NULL DEFAULT 0,
+    status              VARCHAR(20) NOT NULL DEFAULT 'Due',
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_las_loan (loan_id),
+    KEY idx_las_due (due_date)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  loansAdvancesEnsured = true
+}

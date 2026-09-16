@@ -69,6 +69,11 @@ export const RECRUITMENT_PERMISSION_KEYS: Record<string, string> = {
   "recruitment-followups": "recruitment.candidates",
   "recruitment-vendors": "recruitment.requisitions",
   "recruitment-costs": "recruitment.requisitions",
+  "interview-feedback": "recruitment.interviews",
+  "background-verification": "recruitment.candidates",
+  "reference-check": "recruitment.candidates",
+  "pre-joining": "recruitment.offers",
+  "talent-pool": "recruitment.candidates",
   }
 
 /** In-process cache of table -> existing column names (information_schema). */

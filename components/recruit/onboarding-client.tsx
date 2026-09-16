@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ShieldCheck, Trash2, UserCheck } from "lucide-react"
+import { ShieldCheck, Trash2, UserCheck, UserPlus } from "lucide-react"
 import { PageHeader } from "@/components/recruit/recruit-shared"
 
 type Candidate = {
@@ -33,6 +33,7 @@ type Candidate = {
   job_title: string | null
   email: string | null
   phone: string | null
+  offer_id: string | null
   offer_status: string | null
   hired_employee_id: string | null
   bgv_total: number
@@ -66,8 +67,57 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
     fetcher,
   )
   const [active, setActive] = useState<Candidate | null>(null)
+  const [convertTarget, setConvertTarget] = useState<Candidate | null>(null)
+  const [convertForm, setConvertForm] = useState({
+    designation: "",
+    department: "",
+    joining_date: "",
+    official_email: "",
+  })
+  const [converting, setConverting] = useState(false)
+  const [convertError, setConvertError] = useState<string | null>(null)
   const candidates = data?.candidates ?? []
   const migrationPending = data?.migrationPending
+
+  function openConvert(c: Candidate) {
+    setConvertError(null)
+    setConvertForm({
+      designation: c.job_title || "",
+      department: "",
+      joining_date: "",
+      official_email: "",
+    })
+    setConvertTarget(c)
+  }
+
+  async function convert() {
+    if (!convertTarget?.offer_id) return
+    setConverting(true)
+    setConvertError(null)
+    try {
+      const res = await fetch(`/api/recruit/offers/${convertTarget.offer_id}/convert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          designation: convertForm.designation || undefined,
+          department: convertForm.department || undefined,
+          joining_date: convertForm.joining_date || undefined,
+          official_email: convertForm.official_email || undefined,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setConvertError(json?.error || "Could not create the employee record.")
+        return
+      }
+      setConvertTarget(null)
+      await mutate()
+    } catch {
+      setConvertError("Could not create the employee record.")
+    } finally {
+      setConverting(false)
+    }
+  }
 
   return (
     <main className="flex flex-col gap-6 p-6 md:p-8">
@@ -135,9 +185,16 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
                   </div>
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button variant="outline" size="sm" onClick={() => setActive(c)}>
-                    <UserCheck data-icon="inline-start" /> Open
-                  </Button>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setActive(c)}>
+                      <UserCheck data-icon="inline-start" /> Open
+                    </Button>
+                    {canManage && !c.hired_employee_id && c.offer_status === "accepted" && c.offer_id && (
+                      <Button size="sm" onClick={() => openConvert(c)}>
+                        <UserPlus data-icon="inline-start" /> Convert
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -171,6 +228,89 @@ export function OnboardingClient({ canManage }: { canManage: boolean }) {
                   <TaskPanel candidate={active} canManage={canManage} onChange={mutate} />
                 </TabsContent>
               </Tabs>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!convertTarget} onOpenChange={(o) => !o && setConvertTarget(null)}>
+        <DialogContent className="sm:max-w-lg">
+          {convertTarget && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Convert to employee</DialogTitle>
+                <DialogDescription>
+                  Create an HR employee record for {convertTarget.candidate_name || "this candidate"} from their
+                  accepted offer. This completes the recruitment handoff and can only happen once.
+                </DialogDescription>
+              </DialogHeader>
+              {(() => {
+                const bgvPending = convertTarget.bgv_total > convertTarget.bgv_cleared
+                const refPending = convertTarget.ref_total > convertTarget.ref_cleared
+                const taskPending = convertTarget.task_total > convertTarget.task_done
+                if (!bgvPending && !refPending && !taskPending) return null
+                return (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                    Onboarding is not fully complete:{" "}
+                    {[
+                      bgvPending ? `BGV ${convertTarget.bgv_cleared}/${convertTarget.bgv_total}` : null,
+                      refPending ? `References ${convertTarget.ref_cleared}/${convertTarget.ref_total}` : null,
+                      taskPending ? `Tasks ${convertTarget.task_done}/${convertTarget.task_total}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    . You can still proceed, but consider clearing these first.
+                  </div>
+                )
+              })()}
+              <div className="grid gap-4 py-1">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="oc-designation">Designation</Label>
+                    <Input
+                      id="oc-designation"
+                      value={convertForm.designation}
+                      onChange={(e) => setConvertForm((f) => ({ ...f, designation: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="oc-department">Department</Label>
+                    <Input
+                      id="oc-department"
+                      value={convertForm.department}
+                      onChange={(e) => setConvertForm((f) => ({ ...f, department: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="oc-joining">Joining date</Label>
+                  <Input
+                    id="oc-joining"
+                    type="date"
+                    value={convertForm.joining_date}
+                    onChange={(e) => setConvertForm((f) => ({ ...f, joining_date: e.target.value }))}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="oc-email">Official email</Label>
+                  <Input
+                    id="oc-email"
+                    type="email"
+                    placeholder="name@company.com"
+                    value={convertForm.official_email}
+                    onChange={(e) => setConvertForm((f) => ({ ...f, official_email: e.target.value }))}
+                  />
+                </div>
+                {convertError && <p className="text-sm text-destructive">{convertError}</p>}
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setConvertTarget(null)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={convert} disabled={converting}>
+                    <UserPlus data-icon="inline-start" /> {converting ? "Creating..." : "Create employee"}
+                  </Button>
+                </div>
+              </div>
             </>
           )}
         </DialogContent>

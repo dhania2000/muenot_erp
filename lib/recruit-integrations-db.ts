@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { nextDocumentId } from "@/lib/settings/numbering"
 import { OFFER_TRANSITIONS, type OfferAction } from "@/lib/recruit"
+import { ensureEmployeeEventsSchema, logEmployeeEvent } from "@/lib/hr-employee-events"
 
 /**
  * Cross-module recruitment integrations that sit on top of the operational
@@ -393,13 +394,25 @@ export async function convertOfferToEmployee(
     if (EMPLOYEE_COLUMNS.has(k) && v !== undefined && v !== "") base[k] = v
   }
 
+  await ensureEmployeeEventsSchema()
   const employeeId = await nextRecordId("EMP")
   const fields = ["employee_id", ...Object.keys(base)]
   const values = [employeeId, ...Object.keys(base).map((k) => base[k])]
-  await query(
+  const result = await query<any>(
     `INSERT INTO hr_employees (${fields.join(",")}, created_by) VALUES (${fields.map(() => "?").join(",")}, ?)`,
     [...values, userId],
   )
+
+  // Stamp the new hire's history so the profile Timeline/Audit isn't empty for
+  // recruitment-sourced employees (mirrors the /api/hr/employees create path).
+  await logEmployeeEvent({
+    employeeId: Number(result.insertId),
+    employeeRef: employeeId,
+    employeeName: String(base.employee_name),
+    type: "created",
+    summary: `${base.employee_name} (${employeeId}) hired from recruitment offer ${offer.offer_id}`,
+    actorId: userId,
+  })
 
   // Link back so the handoff can only happen once, and roll the hire up.
   await query("UPDATE recruit_offers SET hired_employee_id = ? WHERE offer_id = ?", [employeeId, offerId])
@@ -423,6 +436,7 @@ export type OnboardingCandidate = {
   job_title: string | null
   email: string | null
   phone: string | null
+  offer_id: string | null
   offer_status: string | null
   hired_employee_id: string | null
   bgv_total: number
@@ -439,6 +453,7 @@ export async function listOnboardingCandidates() {
       query<OnboardingCandidate[]>(
         `SELECT a.application_id, a.candidate_name, a.job_title, a.email, a.phone,
                 a.hired_employee_id,
+                o.offer_id AS offer_id,
                 o.status AS offer_status,
                 (SELECT COUNT(*) FROM recruit_bgv_checks b WHERE b.application_id = a.application_id) AS bgv_total,
                 (SELECT COUNT(*) FROM recruit_bgv_checks b WHERE b.application_id = a.application_id AND b.status = 'completed') AS bgv_cleared,

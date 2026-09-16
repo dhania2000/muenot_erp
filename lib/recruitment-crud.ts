@@ -4,6 +4,8 @@ import { getSession } from "@/lib/auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { RECRUITMENT_MODULE_CONFIGS } from "@/lib/recruitment-module-configs"
+import { applyFunnelMetrics } from "@/lib/recruit-funnel-metrics"
+import { createTalentPoolHandlers } from "@/lib/recruit-talent-pool"
 import type { FieldDef, ModuleConfig } from "@/lib/finance-schema"
 import {
   RECRUITMENT_PERMISSION_KEYS,
@@ -92,6 +94,10 @@ function buildWhere(cfg: ModuleConfig, p: URLSearchParams) {
 }
 
 export function createRecruitmentHandlers(moduleKey: string) {
+  // Phase 31: Talent Pool is served from the Candidate Master flags, not a
+  // dedicated table, so it uses purpose-built handlers instead of the factory.
+  if (moduleKey === "talent-pool") return createTalentPoolHandlers()
+
   const cfg = RECRUITMENT_MODULE_CONFIGS[moduleKey]
   if (!cfg) throw new Error(`Unknown recruitment module: ${moduleKey}`)
   const keys = inputKeys(cfg)
@@ -135,6 +141,17 @@ export function createRecruitmentHandlers(moduleKey: string) {
         )) as any[]).map((r) => r.v)
       : []
 
+    // Phase 33/34: Sources & Campaigns are true rollups of the ONE canonical
+    // application pipeline — overlay live funnel numbers instead of trusting
+    // hand-entered counts. Best-effort so a missing pipeline never breaks reads.
+    if (moduleKey === "recruitment-campaigns" || moduleKey === "recruitment-sources") {
+      try {
+        await applyFunnelMetrics(moduleKey, rows as any[], (summary ?? {}) as Record<string, any>)
+      } catch (e) {
+        console.error("[recruit-funnel] overlay failed", e)
+      }
+    }
+
     return NextResponse.json({ rows, summary: summary ?? {}, filterOptions: { statuses } })
   }
 
@@ -171,9 +188,12 @@ export function createRecruitmentHandlers(moduleKey: string) {
     // link for stage modules so this record joins the operational pipeline.
     // Best-effort — a linking failure must never block the create.
     try {
-      const { resolveStageLinks } = await import("@/lib/recruit-unification-db")
+      const { resolveStageLinks, resolveNonStageLinks } = await import("@/lib/recruit-unification-db")
       const links = await resolveStageLinks(cfg.table, record)
       Object.assign(record, links)
+      // Phase 32/40: referrals + follow-ups also join the spine.
+      const nonStage = await resolveNonStageLinks(cfg.table, record)
+      Object.assign(record, nonStage)
     } catch {}
 
     const cols = Object.keys(record)
@@ -187,6 +207,13 @@ export function createRecruitmentHandlers(moduleKey: string) {
     try {
       const { applyStageWriteBack } = await import("@/lib/recruit-unification-db")
       await applyStageWriteBack(cfg.table, record)
+    } catch {}
+
+    // Phase 38/39: record this event on the ONE central candidate timeline
+    // (recruitment_candidate_activities), idempotent per source record.
+    try {
+      const { recordActivityForModule } = await import("@/lib/recruit-unification-db")
+      await recordActivityForModule(cfg.table, record, session.userId)
     } catch {}
 
     // PHASE 16/17: reconcile the Google Calendar event + fan out candidate /
@@ -242,6 +269,13 @@ export function createRecruitmentHandlers(moduleKey: string) {
     try {
       const { applyStageWriteBack } = await import("@/lib/recruit-unification-db")
       await applyStageWriteBack(cfg.table, merged)
+    } catch {}
+
+    // Phase 38/39: keep the central candidate timeline in step on update
+    // (idempotent — updates the existing activity for this source record).
+    try {
+      const { recordActivityForModule } = await import("@/lib/recruit-unification-db")
+      await recordActivityForModule(cfg.table, merged, session.userId)
     } catch {}
 
     // PHASE 16/17: reconcile the Google Calendar event on reschedule / status

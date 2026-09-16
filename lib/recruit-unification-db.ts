@@ -114,6 +114,23 @@ export async function ensureUnificationSchema() {
     // Phase 19: full evaluation criteria on the panel feedback record.
     "ALTER TABLE recruitment_interview_feedback ADD COLUMN IF NOT EXISTS domain_knowledge_score DECIMAL(18,2) DEFAULT NULL",
     "ALTER TABLE recruitment_interview_feedback ADD COLUMN IF NOT EXISTS problem_solving_score DECIMAL(18,2) DEFAULT NULL",
+    // Phase 31: Talent Pool is a CURATED SUBSET of the Candidate Master — a set
+    // of flags on the canonical person, never a duplicate candidate store.
+    "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS in_talent_pool TINYINT(1) NOT NULL DEFAULT 0",
+    "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS talent_pool_status VARCHAR(60) DEFAULT NULL",
+    "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS talent_pool_role VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS talent_pool_owner VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS talent_pool_next_contact DATE DEFAULT NULL",
+    "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS talent_pool_notes TEXT DEFAULT NULL",
+    "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS talent_pool_added_at DATETIME DEFAULT NULL",
+    "ALTER TABLE recruitment_candidates ADD INDEX IF NOT EXISTS idx_cand_talent_pool (in_talent_pool)",
+    // Phase 37/38: calls link back to the canonical candidate + job so a logged
+    // call resolves to the spine even when placed from the aggregate dialer.
+    "ALTER TABLE recruit_calls ADD COLUMN IF NOT EXISTS candidate_master_id VARCHAR(191) DEFAULT NULL",
+    "ALTER TABLE recruit_calls ADD COLUMN IF NOT EXISTS job_id VARCHAR(40) DEFAULT NULL",
+    // Phase 32/40: referrals + follow-ups join the pipeline via application_id.
+    "ALTER TABLE recruitment_referrals ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL",
+    "ALTER TABLE recruitment_followups ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL",
   ]
   for (const sql of alters) {
     try {
@@ -1131,6 +1148,466 @@ export async function getCandidate360(candidateKey: string): Promise<Candidate36
     stage,
     stage_label: UNIFIED_STAGE_LABELS[stage],
   }
+}
+
+// ===========================================================================
+// Phase 38/39: Candidate Activities as the ONE central candidate timeline.
+//
+// Every meaningful pipeline event (application, screening, shortlist,
+// assessment, interview, feedback, offer, call, follow-up, document, BGV,
+// reference, pre-joining, joining, status change) is recorded exactly ONCE into
+// recruitment_candidate_activities, keyed by (source_type, source_ref) so it is
+// idempotent — re-saving a source record updates the same activity instead of
+// creating a duplicate.
+// ===========================================================================
+
+export type ActivityInput = {
+  candidate_id?: string | null
+  candidate_master_id?: string | null
+  application_id?: string | null
+  candidate_name?: string | null
+  job_applied?: string | null
+  requisition_id?: string | null
+  email?: string | null
+  phone?: string | null
+  activity_type: string
+  activity_date?: string | Date | null
+  performed_by?: string | null
+  subject?: string | null
+  notes?: string | null
+  outcome?: string | null
+  next_action?: string | null
+  next_action_date?: string | Date | null
+  /** Stable identity of the originating record, for idempotency. */
+  source_type?: string | null
+  source_ref?: string | null
+  created_by?: number | null
+}
+
+let activitySchemaEnsured = false
+/** Create/patch the activity timeline table. Best-effort + idempotent. */
+async function ensureActivitySchema() {
+  if (activitySchemaEnsured) return
+  try {
+    await query(
+      `CREATE TABLE IF NOT EXISTS recruitment_candidate_activities (
+         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+         activity_id VARCHAR(191) NULL,
+         activity_date DATE NULL,
+         activity_type VARCHAR(512) NULL,
+         performed_by VARCHAR(512) NULL,
+         candidate_id VARCHAR(512) NULL,
+         candidate_name VARCHAR(512) NULL,
+         job_applied VARCHAR(512) NULL,
+         requisition_id VARCHAR(512) NULL,
+         subject VARCHAR(512) NULL,
+         notes TEXT NULL,
+         outcome VARCHAR(512) NULL,
+         next_action VARCHAR(512) NULL,
+         next_action_date DATE NULL,
+         created_by BIGINT UNSIGNED NULL,
+         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+         UNIQUE KEY uq_recruitment_candidate_activities_bizid (activity_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    )
+  } catch {
+    // Table already exists in a different shape — the alters below reconcile it.
+  }
+  const alters = [
+    "ALTER TABLE recruitment_candidate_activities ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL",
+    "ALTER TABLE recruitment_candidate_activities ADD COLUMN IF NOT EXISTS source_type VARCHAR(60) DEFAULT NULL",
+    "ALTER TABLE recruitment_candidate_activities ADD COLUMN IF NOT EXISTS source_ref VARCHAR(191) DEFAULT NULL",
+    "ALTER TABLE recruitment_candidate_activities ADD INDEX IF NOT EXISTS idx_act_candidate (candidate_id)",
+    "ALTER TABLE recruitment_candidate_activities ADD INDEX IF NOT EXISTS idx_act_app (application_id)",
+    // Multiple NULLs are allowed in a MySQL UNIQUE key, so manual (source-less)
+    // activities never collide — only auto-recorded source rows are deduped.
+    "ALTER TABLE recruitment_candidate_activities ADD UNIQUE KEY uq_act_source (source_type, source_ref)",
+  ]
+  for (const sql of alters) {
+    try {
+      await query(sql)
+    } catch {
+      // already present
+    }
+  }
+  activitySchemaEnsured = true
+}
+
+function toDateOnly(d: string | Date | null | undefined): string | null {
+  if (!d) return null
+  const dt = d instanceof Date ? d : new Date(d)
+  if (Number.isNaN(dt.getTime())) return typeof d === "string" ? d.slice(0, 10) : null
+  return dt.toISOString().slice(0, 10)
+}
+
+/**
+ * Record (or update) a single activity on the central candidate timeline.
+ * Resolves the canonical candidate from whatever identity is available
+ * (explicit id, application, email/phone). Best-effort: never throws, so it can
+ * be called from any create/update path without risking the primary write.
+ * Returns true when a NEW activity row was inserted.
+ */
+export async function recordCandidateActivity(input: ActivityInput): Promise<boolean> {
+  try {
+    await ensureUnificationSchema()
+    await ensureActivitySchema()
+
+    let candidateId =
+      String(input.candidate_master_id || input.candidate_id || "").trim() || null
+    let applicationId = input.application_id ? String(input.application_id).trim() || null : null
+
+    if (applicationId && !candidateId) {
+      const rows = await safeQuery<any[]>(
+        "SELECT candidate_master_id FROM recruit_applications WHERE application_id = ? LIMIT 1",
+        [applicationId],
+      )
+      if (rows[0]?.candidate_master_id) candidateId = rows[0].candidate_master_id
+    }
+
+    // Resolve by normalized phone (calls placed from the aggregate dialer only
+    // know the number) before falling back to full resolution.
+    if (!candidateId && input.phone) {
+      const np = normalizePhone(input.phone)
+      if (np) {
+        const rows = await safeQuery<any[]>(
+          "SELECT candidate_id FROM recruitment_candidates WHERE norm_phone = ? ORDER BY id ASC LIMIT 1",
+          [np],
+        )
+        if (rows[0]?.candidate_id) candidateId = rows[0].candidate_id
+      }
+    }
+
+    if (!candidateId && (input.email || input.phone || input.candidate_name)) {
+      candidateId = await resolveCandidateMaster({
+        candidate_id: input.candidate_id,
+        candidate_name: input.candidate_name,
+        email: input.email,
+        phone: input.phone,
+        job_applied: input.job_applied,
+        requisition_id: input.requisition_id,
+        application_id: applicationId,
+      })
+    }
+
+    // Without any anchor there is nothing to hang the activity on.
+    if (!candidateId && !applicationId) return false
+
+    if (applicationId && !candidateId) {
+      const rows = await safeQuery<any[]>(
+        "SELECT candidate_master_id FROM recruit_applications WHERE application_id = ? LIMIT 1",
+        [applicationId],
+      )
+      if (rows[0]?.candidate_master_id) candidateId = rows[0].candidate_master_id
+    }
+
+    const activityDate = toDateOnly(input.activity_date) || toDateOnly(new Date())
+    const nextActionDate = toDateOnly(input.next_action_date)
+
+    // Idempotency: one activity per source record.
+    if (input.source_type && input.source_ref) {
+      const existing = await safeQuery<any[]>(
+        "SELECT id FROM recruitment_candidate_activities WHERE source_type = ? AND source_ref = ? LIMIT 1",
+        [input.source_type, input.source_ref],
+      )
+      if (existing[0]) {
+        await query(
+          `UPDATE recruitment_candidate_activities SET
+             activity_type = ?, activity_date = ?, performed_by = COALESCE(?, performed_by),
+             subject = ?, notes = ?, outcome = ?,
+             next_action = COALESCE(?, next_action), next_action_date = COALESCE(?, next_action_date),
+             candidate_id = COALESCE(candidate_id, ?), candidate_name = COALESCE(candidate_name, ?),
+             job_applied = COALESCE(job_applied, ?), application_id = COALESCE(application_id, ?)
+           WHERE source_type = ? AND source_ref = ?`,
+          [
+            input.activity_type, activityDate, input.performed_by || null,
+            input.subject || null, input.notes || null, input.outcome || null,
+            input.next_action || null, nextActionDate,
+            candidateId, input.candidate_name || null, input.job_applied || null, applicationId,
+            input.source_type, input.source_ref,
+          ],
+        )
+        return false
+      }
+    }
+
+    const activityId = await nextRecordIdForPrefix("ACT")
+    await query(
+      `INSERT INTO recruitment_candidate_activities
+        (activity_id, activity_date, activity_type, performed_by, candidate_id, candidate_name,
+         job_applied, requisition_id, subject, notes, outcome, next_action, next_action_date,
+         application_id, source_type, source_ref, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        activityId, activityDate, input.activity_type, input.performed_by || null,
+        candidateId, input.candidate_name || null, input.job_applied || null,
+        input.requisition_id || null, input.subject || null, input.notes || null,
+        input.outcome || null, input.next_action || null, nextActionDate,
+        applicationId, input.source_type || null, input.source_ref || null, input.created_by ?? null,
+      ],
+    )
+    return true
+  } catch {
+    // Timeline recording must never break the primary write.
+    return false
+  }
+}
+
+// Map a config-driven module table to how it appears on the central timeline.
+type ModuleActivitySpec = {
+  activity_type: string
+  source_type: string
+  idColumn: string
+  subject?: (r: Record<string, any>) => string | null
+  outcome?: (r: Record<string, any>) => string | null
+  date?: (r: Record<string, any>) => any
+}
+
+const MODULE_ACTIVITY_MAP: Record<string, ModuleActivitySpec> = {
+  recruitment_screening: {
+    activity_type: "Screening", source_type: "screening", idColumn: "screening_id",
+    subject: (r) => r.recruiter ? `Screened by ${r.recruiter}` : "Screening",
+    outcome: (r) => r.screening_result || r.status || null,
+    date: (r) => r.screening_date,
+  },
+  recruitment_assessments: {
+    activity_type: "Assessment", source_type: "assessment", idColumn: "assessment_id",
+    subject: (r) => r.assessment_type ? `Assessment — ${r.assessment_type}` : "Assessment",
+    outcome: (r) => r.assessment_result || r.status || null,
+    date: (r) => r.assessment_sent_date,
+  },
+  recruitment_interviews: {
+    activity_type: "Interview", source_type: "interview", idColumn: "interview_id",
+    subject: (r) => r.interview_round || "Interview",
+    outcome: (r) => r.interview_result || r.attendance || null,
+    date: (r) => r.interview_date,
+  },
+  recruitment_interview_feedback: {
+    activity_type: "Feedback", source_type: "feedback", idColumn: "feedback_id",
+    subject: (r) => r.interviewer ? `Feedback — ${r.interviewer}` : "Interview feedback",
+    outcome: (r) => r.recommendation || r.final_result || null,
+    date: (r) => r.feedback_date,
+  },
+  recruitment_selections: {
+    activity_type: "Offer", source_type: "selection", idColumn: "selection_id",
+    subject: (r) => "Selection / Offer",
+    outcome: (r) => r.offer_status || r.joining_status || null,
+    date: (r) => r.selection_date,
+  },
+  recruitment_background_verification: {
+    activity_type: "BGV", source_type: "bgv", idColumn: "bgv_id",
+    subject: (r) => r.check_type ? `BGV — ${r.check_type}` : "Background verification",
+    outcome: (r) => r.result || r.status || null,
+    date: (r) => r.initiated_date,
+  },
+  recruitment_reference_checks: {
+    activity_type: "Reference", source_type: "reference", idColumn: "reference_id",
+    subject: (r) => r.reference_name ? `Reference — ${r.reference_name}` : "Reference check",
+    outcome: (r) => r.result || r.status || null,
+    date: (r) => r.check_date,
+  },
+  recruitment_pre_joining: {
+    activity_type: "Pre-Joining", source_type: "pre_joining", idColumn: "prejoin_id",
+    subject: (r) => "Pre-joining",
+    outcome: (r) => r.status || null,
+    date: (r) => r.expected_joining_date,
+  },
+  recruitment_candidate_documents: {
+    activity_type: "Document", source_type: "document", idColumn: "document_id",
+    subject: (r) => r.document_name || r.document_type || "Document",
+    outcome: (r) => r.verification_status || null,
+    date: (r) => r.received_date,
+  },
+  recruitment_followups: {
+    activity_type: "Follow-up", source_type: "followup", idColumn: "followup_id",
+    subject: (r) => r.followup_type ? `Follow-up — ${r.followup_type}` : "Follow-up",
+    outcome: (r) => r.status || null,
+    date: (r) => r.last_contact_date || r.next_followup_date,
+  },
+}
+
+/**
+ * Auto-record a config-driven module record onto the central timeline. Called
+ * (best-effort) after a create/update in the recruitment CRUD factory. Only the
+ * tables in MODULE_ACTIVITY_MAP produce an activity; everything else is a no-op.
+ */
+export async function recordActivityForModule(
+  table: string,
+  record: Record<string, any>,
+  userId: number | null,
+): Promise<void> {
+  const spec = MODULE_ACTIVITY_MAP[table]
+  if (!spec) return
+  const sourceRef = record[spec.idColumn] ? String(record[spec.idColumn]) : null
+  if (!sourceRef) return
+  await recordCandidateActivity({
+    candidate_id: record.candidate_id,
+    application_id: record.application_id,
+    candidate_name: record.candidate_name,
+    job_applied: record.job_applied || record.job_title,
+    requisition_id: record.requisition_id,
+    email: record.email,
+    phone: record.mobile || record.phone,
+    activity_type: spec.activity_type,
+    activity_date: spec.date ? spec.date(record) : null,
+    performed_by: record.recruiter || record.interviewer || record.owner || record.performed_by || null,
+    subject: spec.subject ? spec.subject(record) : null,
+    outcome: spec.outcome ? spec.outcome(record) : null,
+    next_action: record.next_action || null,
+    next_action_date: record.next_followup_date || record.next_action_date || null,
+    source_type: spec.source_type,
+    source_ref: sourceRef,
+    created_by: userId,
+  })
+}
+
+// ===========================================================================
+// Phase 32/40: link a non-stage module record (referral / follow-up) to the
+// canonical candidate + latest application so it joins the ONE pipeline.
+// ===========================================================================
+const NON_STAGE_LINK_TABLES = new Set(["recruitment_referrals", "recruitment_followups"])
+
+export async function resolveNonStageLinks(
+  table: string,
+  record: Record<string, any>,
+): Promise<Record<string, any>> {
+  if (!NON_STAGE_LINK_TABLES.has(table)) return {}
+  await ensureUnificationSchema()
+  const out: Record<string, any> = {}
+
+  let candidateId = record.candidate_id ? String(record.candidate_id).trim() || null : null
+  let applicationId = record.application_id ? String(record.application_id).trim() || null : null
+
+  if (!candidateId) {
+    candidateId = await resolveCandidateMaster({
+      candidate_id: record.candidate_id,
+      candidate_name: record.candidate_name,
+      email: record.candidate_email || record.email,
+      phone: record.candidate_mobile || record.mobile || record.phone,
+      job_applied: record.job_title,
+      requisition_id: record.requisition_id,
+    })
+    if (candidateId) out.candidate_id = candidateId
+  }
+  if (candidateId && !applicationId) {
+    const rows = await safeQuery<any[]>(
+      "SELECT application_id FROM recruitment_candidates WHERE candidate_id = ? LIMIT 1",
+      [candidateId],
+    )
+    if (rows[0]?.application_id) applicationId = rows[0].application_id
+  }
+  if (applicationId) out.application_id = applicationId
+  return out
+}
+
+// ===========================================================================
+// Phase 31: Talent Pool — a curated view over the Candidate Master (flags), not
+// a separate candidate store. Moving a Candidate Database person into the pool
+// just sets their flags; it never copies the person.
+// ===========================================================================
+export const TALENT_POOL_STATUSES = [
+  "Active",
+  "Available",
+  "Passive",
+  "Future Opportunity",
+  "Rejected but Reusable",
+  "Hired",
+] as const
+
+export type TalentPoolInput = {
+  candidate_id?: string | null
+  candidate_name?: string | null
+  email?: string | null
+  mobile?: string | null
+  pool_status?: string | null
+  preferred_role?: string | null
+  owner?: string | null
+  next_contact_date?: string | null
+  notes?: string | null
+  added_date?: string | null
+  in_pool?: boolean
+}
+
+/** Add / update / remove a candidate in the Talent Pool by flipping flags on
+ *  their canonical Candidate Master row. Resolves (or creates) the person from
+ *  whatever identity is supplied. Returns the candidate_id touched. */
+export async function setCandidateTalentPool(input: TalentPoolInput): Promise<string | null> {
+  await ensureUnificationSchema()
+  const candidateId = await resolveCandidateMaster({
+    candidate_id: input.candidate_id,
+    candidate_name: input.candidate_name,
+    email: input.email,
+    phone: input.mobile,
+  })
+  if (!candidateId) return null
+
+  const inPool = input.in_pool === false ? 0 : 1
+  const status =
+    input.pool_status && (TALENT_POOL_STATUSES as readonly string[]).includes(input.pool_status)
+      ? input.pool_status
+      : "Available"
+  try {
+    await query(
+      `UPDATE recruitment_candidates SET
+         in_talent_pool = ?,
+         talent_pool_status = ?,
+         talent_pool_role = COALESCE(?, talent_pool_role),
+         talent_pool_owner = COALESCE(?, talent_pool_owner),
+         talent_pool_next_contact = COALESCE(?, talent_pool_next_contact),
+         talent_pool_notes = COALESCE(?, talent_pool_notes),
+         talent_pool_added_at = COALESCE(talent_pool_added_at, ?)
+       WHERE candidate_id = ?`,
+      [
+        inPool,
+        inPool ? status : null,
+        input.preferred_role || null,
+        input.owner || null,
+        input.next_contact_date || null,
+        input.notes || null,
+        input.added_date ? new Date(input.added_date) : new Date(),
+        candidateId,
+      ],
+    )
+  } catch (err) {
+    if (!isMissingSchema(err)) throw err
+  }
+  return candidateId
+}
+
+export async function listTalentPool(searchTerm?: string): Promise<any[]> {
+  await ensureUnificationSchema()
+  const rows = await safeQuery<any[]>(
+    `SELECT candidate_id, candidate_name, email, mobile, current_location, experience,
+            job_applied, source, talent_pool_status, talent_pool_role, talent_pool_owner,
+            talent_pool_next_contact, talent_pool_notes, talent_pool_added_at
+       FROM recruitment_candidates
+      WHERE in_talent_pool = 1
+      ORDER BY talent_pool_added_at DESC, id DESC
+      LIMIT 5000`,
+  )
+  const term = searchTerm?.trim().toLowerCase()
+  const mapped = rows.map((m) => ({
+    // Present the Candidate Master flags through the Talent Pool module columns.
+    pool_id: m.candidate_id,
+    candidate_id: m.candidate_id,
+    added_date: m.talent_pool_added_at,
+    candidate_name: m.candidate_name,
+    email: m.email,
+    mobile: m.mobile,
+    current_location: m.current_location,
+    preferred_role: m.talent_pool_role || m.job_applied,
+    experience: m.experience,
+    source: m.source,
+    pool_status: m.talent_pool_status || "Available",
+    next_contact_date: m.talent_pool_next_contact,
+    owner: m.talent_pool_owner,
+    remarks: m.talent_pool_notes,
+  }))
+  if (!term) return mapped
+  return mapped.filter((r) =>
+    [r.candidate_id, r.candidate_name, r.email, r.mobile, r.preferred_role]
+      .some((v) => String(v || "").toLowerCase().includes(term)),
+  )
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import "server-only"
 import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { nextDocumentId } from "@/lib/settings/numbering"
+import { OFFER_TRANSITIONS, type OfferAction } from "@/lib/recruit"
 
 /**
  * Cross-module recruitment integrations that sit on top of the operational
@@ -57,6 +58,18 @@ export async function ensureUnifiedFlowSchema() {
     "ALTER TABLE recruitment_requisitions ADD COLUMN IF NOT EXISTS designation VARCHAR(190) DEFAULT NULL",
     "ALTER TABLE recruit_jobs ADD COLUMN IF NOT EXISTS designation VARCHAR(190) DEFAULT NULL",
     "ALTER TABLE recruit_jobs ADD COLUMN IF NOT EXISTS hiring_manager VARCHAR(190) DEFAULT NULL",
+    // Phase 22: offer approval audit trail. The lifecycle itself lives in
+    // recruit_offers.status; these columns stamp who moved it and when.
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS submitted_by INT UNSIGNED DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS submitted_by_name VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS submitted_at DATETIME DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS approved_by INT UNSIGNED DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS approved_by_name VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS approved_at DATETIME DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS sent_by INT UNSIGNED DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS sent_by_name VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS sent_at DATETIME DEFAULT NULL",
+    "ALTER TABLE recruit_offers ADD COLUMN IF NOT EXISTS approval_notes VARCHAR(500) DEFAULT NULL",
   ]
   for (const sql of alters) {
     try {

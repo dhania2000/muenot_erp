@@ -2232,6 +2232,19 @@ const capitalEquity: ModuleConfig = {
     "COALESCE(SUM(CASE WHEN entry_type IN ('Capital Contribution','Share Capital','Partner Capital') THEN amount ELSE 0 END),0) total_in, COALESCE(SUM(CASE WHEN entry_type = 'Capital Withdrawal' THEN amount ELSE 0 END),0) total_out, COALESCE(SUM(CASE WHEN entry_type IN ('Capital Contribution','Share Capital','Partner Capital') THEN amount WHEN entry_type = 'Capital Withdrawal' THEN -amount ELSE 0 END),0) net_equity, COUNT(*) total_rows",
 }
 
+// AS 18 / Ind AS 24 relationship classes. These deliberately reuse the same
+// party types that already exist as masters elsewhere in the ERP (Customer,
+// Vendor, Employee, Director/Promoter, Group/Associate) — Related Parties is a
+// disclosure layer over those masters, not a new set of party records.
+const RELATED_PARTY_RELATIONSHIPS = [
+  "Customer",
+  "Vendor",
+  "Employee",
+  "Director / Promoter",
+  "Group / Associate",
+  "Other",
+]
+
 const relatedParties: ModuleConfig = {
   key: "related-parties",
   table: "related_parties",
@@ -2243,16 +2256,20 @@ const relatedParties: ModuleConfig = {
   statusColumn: "status",
   searchColumns: ["party_id", "party_name", "relationship", "pan", "gstin", "contact_person"],
   filters: [
-    { type: "select", key: "relationship", label: "Relationship", options: ["Director / KMP", "Holding Company", "Subsidiary", "Associate / JV", "Relative of KMP", "Enterprise under common control", "Other"] },
+    { type: "select", key: "relationship", label: "Relationship", options: RELATED_PARTY_RELATIONSHIPS },
     { type: "select", key: "status", label: "Status", options: ["Active", "Inactive"] },
   ],
   fields: [
-    fld("Party information", "party_name", "Party name", "text", { required: true }),
-    fld("Party information", "relationship", "Relationship", "select", { options: ["Director / KMP", "Holding Company", "Subsidiary", "Associate / JV", "Relative of KMP", "Enterprise under common control", "Other"], required: true }),
+    fld("Party information", "party_name", "Party name", "text", { required: true, placeholder: "Existing customer / vendor / employee / director" }),
+    fld("Party information", "relationship", "Relationship type", "select", { options: RELATED_PARTY_RELATIONSHIPS, required: true }),
     fld("Party information", "nature_of_relationship", "Nature of relationship", "text", { placeholder: "How the party is related" }),
     fld("Party information", "status", "Status", "select", { options: ["Active", "Inactive"], optional: true }),
-    fld("Identity", "pan", "PAN", "text"),
-    fld("Identity", "gstin", "GSTIN", "text"),
+    // AS 18 / Ind AS 24 — the period over which the relationship subsisted.
+    // Leave "Effective to" empty while the relationship is ongoing.
+    fld("Effective period", "effective_from", "Effective from", "date"),
+    fld("Effective period", "effective_to", "Effective to", "date", { placeholder: "Leave empty if still related" }),
+    fld("Identity", "pan", "PAN", "text", { placeholder: "Used to auto-match transactions" }),
+    fld("Identity", "gstin", "GSTIN", "text", { placeholder: "Used to auto-match transactions" }),
     fld("Identity", "opening_balance", "Opening balance", "number", { money: true }),
     fld("Contact", "contact_person", "Contact person", "text"),
     fld("Contact", "email", "Email", "text"),
@@ -2265,7 +2282,8 @@ const relatedParties: ModuleConfig = {
     { key: "party_name", label: "Party", sub: "nature_of_relationship" },
     { key: "relationship", label: "Relationship" },
     { key: "pan", label: "PAN", mono: true },
-    { key: "opening_balance", label: "Opening Balance", align: "right", money: true },
+    { key: "effective_from", label: "Effective From" },
+    { key: "effective_to", label: "Effective To" },
     { key: "status", label: "Status", badge: { Active: "default", Inactive: "outline" } },
   ],
   kpis: [

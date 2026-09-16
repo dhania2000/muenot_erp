@@ -923,6 +923,8 @@ export async function ensureRegisterModuleTables() {
     pan                    VARCHAR(15) DEFAULT NULL,
     gstin                  VARCHAR(20) DEFAULT NULL,
     nature_of_relationship VARCHAR(255) DEFAULT NULL,
+    effective_from         DATE DEFAULT NULL,
+    effective_to           DATE DEFAULT NULL,
     opening_balance        DECIMAL(16,2) NOT NULL DEFAULT 0,
     contact_person         VARCHAR(190) DEFAULT NULL,
     email                  VARCHAR(190) DEFAULT NULL,
@@ -943,6 +945,12 @@ export async function ensureRegisterModuleTables() {
   // the counter equity head + Increase/Decrease direction the posting engine reads.
   await ensureColumn("capital_equity", "transfer_source", "VARCHAR(60) DEFAULT NULL")
   await ensureColumn("capital_equity", "direction", "VARCHAR(20) DEFAULT NULL")
+
+  // Phase 8 — Related Parties gained an effective-from/to disclosure window
+  // after the base table shipped (AS 18 / Ind AS 24 requires the period over
+  // which a relationship subsisted). Add them idempotently for existing DBs.
+  await ensureColumn("related_parties", "effective_from", "DATE DEFAULT NULL")
+  await ensureColumn("related_parties", "effective_to", "DATE DEFAULT NULL")
 
   registerTablesEnsured = true
 }

@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS related_parties (
   pan                    VARCHAR(15) DEFAULT NULL,
   gstin                  VARCHAR(20) DEFAULT NULL,
   nature_of_relationship VARCHAR(255) DEFAULT NULL,
+  effective_from         DATE DEFAULT NULL,
+  effective_to           DATE DEFAULT NULL,
   opening_balance        DECIMAL(16,2) NOT NULL DEFAULT 0,
   contact_person         VARCHAR(190) DEFAULT NULL,
   email                  VARCHAR(190) DEFAULT NULL,

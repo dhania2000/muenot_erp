@@ -131,7 +131,7 @@ export const REGISTER_MODULES: Record<string, RegisterModule> = {
       return {
         amount,
         lines: [
-          { role: "investment", debit: amount, credit: 0 },
+          { role: "investment", accountId: r.coa_account || null, debit: amount, credit: 0 },
           { role: contraRole(r.funding_source), debit: 0, credit: amount },
         ],
         entityType: "investment",

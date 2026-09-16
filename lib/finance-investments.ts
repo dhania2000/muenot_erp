@@ -79,6 +79,7 @@ export async function ensureInvestmentSchema(): Promise<void> {
   const additions: Array<[string, string]> = [
     ["institution", "VARCHAR(190) DEFAULT NULL"],
     ["coa_account", "VARCHAR(40) DEFAULT NULL"],
+    ["coa_account_name", "VARCHAR(190) DEFAULT NULL"],
     ["documents", "TEXT DEFAULT NULL"],
     // Running lifecycle figures owned by the engine (never client-written).
     ["invested_amount", "DECIMAL(16,2) NOT NULL DEFAULT 0"],

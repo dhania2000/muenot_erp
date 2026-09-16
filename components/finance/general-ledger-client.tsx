@@ -217,7 +217,7 @@ export function GeneralLedgerClient() {
       </Card>
 
       <Tabs value={view} onValueChange={(v) => setView(v as View)}>
-        <TabsList className="flex w-full flex-nowrap justify-start overflow-x-auto">
+        <TabsList className="mb-4 flex h-auto w-full flex-nowrap justify-start gap-1 overflow-x-auto overflow-y-hidden p-1">
           <TabsTrigger value="ledger"><BookOpen data-icon="inline-start" />Ledger</TabsTrigger>
           <TabsTrigger value="account"><ListTree data-icon="inline-start" />Account Ledger</TabsTrigger>
           <TabsTrigger value="party"><Users data-icon="inline-start" />Party Ledger</TabsTrigger>

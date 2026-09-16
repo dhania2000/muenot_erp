@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import useSWR from "swr"
+import { fetcher } from "@/lib/fetcher"
 import {
   Dialog,
   DialogContent,
@@ -68,6 +70,15 @@ export function RecruitmentModuleDialog({
   const [form, setForm] = useState<FormState>(() => emptyForm(cfg))
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Phase 51: settings-driven dropdown values. Selects marked with an
+  // `optionsCategory` are populated from the Recruitment Settings master lists,
+  // falling back to the field's static `options` when none are configured.
+  const { data: optionSetData } = useSWR<{ sets: Record<string, string[]> }>(
+    open ? "/api/recruitment/option-sets" : null,
+    fetcher,
+  )
+  const optionSets = optionSetData?.sets
 
   const checkboxKeys = useMemo(
     () => new Set(cfg.fields.filter((f) => f.type === "checkbox").map((f) => f.key)),
@@ -177,7 +188,13 @@ export function RecruitmentModuleDialog({
                   <h3 className="text-sm font-semibold text-foreground">{section}</h3>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {fields.map((f) => (
-                      <FieldInput key={f.key} field={f} value={form[f.key] ?? ""} onChange={update} />
+                      <FieldInput
+                        key={f.key}
+                        field={f}
+                        value={form[f.key] ?? ""}
+                        onChange={update}
+                        optionSets={optionSets}
+                      />
                     ))}
                   </div>
                 </FieldGroup>
@@ -223,10 +240,12 @@ function FieldInput({
   field,
   value,
   onChange,
+  optionSets,
 }: {
   field: FieldDef
   value: string
   onChange: (key: string, value: string) => void
+  optionSets?: Record<string, string[]>
 }) {
   const wide = field.type === "textarea"
 
@@ -242,6 +261,13 @@ function FieldInput({
   if (field.type === "select") {
     const empty = field.optional
     const emptyValue = "__none__"
+    // Settings-driven options take precedence when configured; otherwise use the
+    // field's static list. The stored value is always kept selectable so an
+    // option later removed/deactivated in Settings never disappears from a saved record.
+    const resolved =
+      (field.optionsCategory && optionSets?.[field.optionsCategory]) || field.options || []
+    const selectableOptions =
+      value && !resolved.includes(value) ? [...resolved, value] : resolved
     return (
       <Field>
         <FieldLabel>{field.label}</FieldLabel>
@@ -255,7 +281,7 @@ function FieldInput({
           <SelectContent>
             <SelectGroup>
               {empty && <SelectItem value={emptyValue}>{field.emptyLabel ?? "—"}</SelectItem>}
-              {(field.options ?? []).map((o) => (
+              {selectableOptions.map((o) => (
                 <SelectItem key={o} value={o}>
                   {o}
                 </SelectItem>

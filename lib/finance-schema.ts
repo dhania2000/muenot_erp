@@ -7,6 +7,12 @@
 export type FieldType = "text" | "number" | "date" | "textarea" | "select" | "checkbox"
 
 /**
+ * Phases 58–60: HR Master sync sources. A field or column bound to one of these
+ * resolves against the live HR master data instead of accepting free text.
+ */
+export type HrRefSource = "hr-department" | "hr-designation" | "hr-employee"
+
+/**
  * Visibility rule for a field, section or lookup. The element renders only when
  * the current form value for `field` is one of `in`. For checkboxes the truthy
  * value is "1". Used to drive the dynamic Expense form (Phase 12).
@@ -19,6 +25,26 @@ export type FieldDef = {
   label: string
   type: FieldType
   options?: string[]
+  /**
+   * Phase 51: makes a `select` field settings-driven. Names an option-set key
+   * from `lib/recruitment-option-sets.ts`; the form dialog loads the active
+   * options for that key at runtime (from `recruitment_settings`) and falls
+   * back to the static `options` list when none are configured. The currently
+   * stored value is always kept selectable.
+   */
+  optionsCategory?: string
+  /**
+   * Phases 58–60: HR Master sync. Binds a `select` field to a live HR master
+   * list loaded at runtime from /api/recruitment/hr-refs:
+   *  - "hr-department"  → active HR Department names
+   *  - "hr-designation" → active HR Designation names
+   *  - "hr-employee"    → active employees (value = stable employee_id, label = name)
+   * The currently stored value is always kept selectable. For employee
+   * references the stable employee_id is stored and the display name is
+   * derived from the employee master at render time (legacy free-text names
+   * still display as-is).
+   */
+  referenceSource?: HrRefSource
   placeholder?: string
   required?: boolean
   /** Only render this field when the condition matches the current form. */
@@ -105,7 +131,12 @@ export type TableColumn = {
   mask?: boolean
   /** Render the cell value as a link to the href built from the row. */
   link?: (row: Record<string, any>) => string
-}
+  /**
+   * Phases 58–60: resolve a stored HR employee_id to its display name in lists
+   * and detail views. Falls back to the raw stored value (legacy names).
+   */
+  referenceSource?: HrRefSource
+  }
 
 export type Kpi = { label: string; key: string; money?: boolean; icon?: string }
 

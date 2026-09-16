@@ -14,6 +14,7 @@ import {
   canActOnRecord,
   canCreateInModule,
 } from "@/lib/permission-enforce"
+import { logRecruitmentAudit } from "@/lib/recruit-audit"
 
 /**
  * Config-driven CRUD factory for the Recruitment modules. Mirrors
@@ -197,10 +198,27 @@ export function createRecruitmentHandlers(moduleKey: string) {
     } catch {}
 
     const cols = Object.keys(record)
-    await query(
+    const insertResult = (await query(
       `INSERT INTO ${cfg.table} (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`,
       cols.map((c) => record[c]),
-    )
+    )) as any
+
+    // Phase 55: record the create on the shared recruitment audit trail.
+    // Best-effort — a logging failure must never block the create.
+    try {
+      await logRecruitmentAudit({
+        module: moduleKey,
+        table: cfg.table,
+        recordId: record[cfg.idColumn],
+        rowPk: insertResult?.insertId ?? null,
+        action: "create",
+        userId: session.userId,
+        userName: session.name,
+        newValue: record,
+      })
+    } catch (e) {
+      console.error("[recruit-audit] create log failed", e)
+    }
 
     // Push the stage record's outcome back onto the linked application so the
     // canonical pipeline advances (Screening/Assessment/Interview/Selection).
@@ -281,6 +299,24 @@ export function createRecruitmentHandlers(moduleKey: string) {
         `UPDATE ${cfg.table} SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id=?`,
         [...cols.map((c) => update[c]), id],
       )
+
+      // Phase 55: record the update on the shared audit trail. Only the
+      // fields that actually changed are stored (see logRecruitmentAudit).
+      try {
+        await logRecruitmentAudit({
+          module: moduleKey,
+          table: cfg.table,
+          recordId: existing[cfg.idColumn],
+          rowPk: id,
+          action: "update",
+          userId: session.userId,
+          userName: session.name,
+          oldValue: existing,
+          newValue: { ...existing, ...update },
+        })
+      } catch (e) {
+        console.error("[recruit-audit] update log failed", e)
+      }
     }
 
     // Reflect the updated outcome onto the linked application's canonical stage.
@@ -333,14 +369,34 @@ export function createRecruitmentHandlers(moduleKey: string) {
     await ensureRecruitmentTable(cfg)
     const id = Number(req.nextUrl.searchParams.get("id"))
     if (!id) return NextResponse.json({ error: "Record id is required" }, { status: 400 })
+    const [existing] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
     if (permissionKey) {
-      const [existing] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
       if (!existing) return NextResponse.json({ error: "Record not found" }, { status: 404 })
       if (!(await canActOnRecord(session, permissionKey, "delete", existing))) {
         return NextResponse.json({ error: "You do not have permission to delete this record." }, { status: 403 })
       }
     }
     await query(`DELETE FROM ${cfg.table} WHERE id = ?`, [id])
+
+    // Phase 55: record the delete on the shared audit trail with the pre-delete
+    // snapshot so the removed row is recoverable from history. Best-effort.
+    if (existing) {
+      try {
+        await logRecruitmentAudit({
+          module: moduleKey,
+          table: cfg.table,
+          recordId: existing[cfg.idColumn],
+          rowPk: id,
+          action: "delete",
+          userId: session.userId,
+          userName: session.name,
+          oldValue: existing,
+        })
+      } catch (e) {
+        console.error("[recruit-audit] delete log failed", e)
+      }
+    }
+
     return NextResponse.json({ ok: true })
   }
 

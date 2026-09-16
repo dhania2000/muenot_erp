@@ -1,6 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { ensureLeadLifecycleSchema, notify } from "@/lib/sales/lead-lifecycle"
+import { getWorkflowDays } from "@/lib/recruit-settings"
 
 /**
  * Phases 66-68 — Stale recruitment detection.
@@ -35,12 +36,6 @@ const CLOSED_APP_STAGES = ["hired", "rejected", "hold", "withdrawn"]
 // Requisitions in one of these states are done and never "stale".
 const CLOSED_REQ_STATUSES = ["closed", "filled", "cancelled", "rejected", "completed", "on hold"]
 
-const DEFAULTS = {
-  stale_application_days: 7,
-  stale_requisition_grace_days: 0,
-  stale_job_days: 14,
-} as const
-
 export type StaleThresholds = {
   applicationDays: number
   requisitionGraceDays: number
@@ -56,30 +51,17 @@ async function safeRows(sql: string, params: any[] = []): Promise<any[]> {
   }
 }
 
-/** Read the configurable stale thresholds from Recruitment Settings. */
+/**
+ * Read the configurable stale thresholds. Phase 96: delegates to the single
+ * Recruitment Settings source of truth (`lib/recruit-settings`) instead of
+ * re-reading the settings table with its own defaults.
+ */
 export async function getStaleThresholds(): Promise<StaleThresholds> {
-  const rows = await safeRows(
-    `SELECT LOWER(setting_name) AS name, setting_value AS value
-       FROM recruitment_settings
-      WHERE setting_name IS NOT NULL`,
-  )
-  const map = new Map<string, string>()
-  for (const r of rows) map.set(String(r.name).trim(), String(r.value ?? "").trim())
-
-  const readNum = (key: keyof typeof DEFAULTS): number => {
-    const raw = map.get(key)
-    const n = Number(raw)
-    return Number.isFinite(n) && n > 0 ? Math.round(n) : DEFAULTS[key]
-  }
-
+  const wd = await getWorkflowDays()
   return {
-    applicationDays: readNum("stale_application_days"),
-    requisitionGraceDays: (() => {
-      const raw = map.get("stale_requisition_grace_days")
-      const n = Number(raw)
-      return Number.isFinite(n) && n >= 0 ? Math.round(n) : DEFAULTS.stale_requisition_grace_days
-    })(),
-    jobDays: readNum("stale_job_days"),
+    applicationDays: wd.staleApplicationDays,
+    requisitionGraceDays: wd.staleRequisitionGraceDays,
+    jobDays: wd.staleJobDays,
   }
 }
 

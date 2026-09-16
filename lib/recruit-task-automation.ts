@@ -1,5 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { getWorkflowDays } from "@/lib/recruit-settings"
 
 /**
  * Phase 42/43 — Recruitment task automation.
@@ -121,6 +122,10 @@ export async function autoCreateTasksForModule(
   }
   const who = record.candidate_name ? ` — ${record.candidate_name}` : ""
 
+  // Phase 96: SLA offsets are configurable from Recruitment Settings (single
+  // source of truth). Registry defaults match the previously hard-coded values.
+  const sla = await getWorkflowDays()
+
   switch (table) {
     case "recruitment_interviews": {
       const iid = record.interview_id ? String(record.interview_id) : null
@@ -133,7 +138,7 @@ export async function autoCreateTasksForModule(
           task_title: `Submit interview feedback${who}`,
           task_type: "Interview",
           priority: "High",
-          due_date: addDays(record.interview_date, 1) || addDays(null, 1),
+          due_date: addDays(record.interview_date, sla.feedbackSlaDays) || addDays(null, sla.feedbackSlaDays),
           description: `Auto-created from interview ${iid}. Capture the panel feedback and outcome.`,
           ...links,
         },
@@ -152,7 +157,7 @@ export async function autoCreateTasksForModule(
           task_title: `Follow up on offer acceptance${who}`,
           task_type: "Offer",
           priority: "High",
-          due_date: addDays(record.offer_date || record.selection_date, 3) || addDays(null, 3),
+          due_date: addDays(record.offer_date || record.selection_date, sla.offerFollowupDays) || addDays(null, sla.offerFollowupDays),
           description: `Auto-created from selection ${sid}. Confirm the candidate has accepted the offer.`,
           ...links,
         },
@@ -171,7 +176,7 @@ export async function autoCreateTasksForModule(
           task_title: `Complete background verification${who}`,
           task_type: "BGV",
           priority: "Medium",
-          due_date: addDays(record.initiated_date, 7) || addDays(null, 7),
+          due_date: addDays(record.initiated_date, sla.bgvSlaDays) || addDays(null, sla.bgvSlaDays),
           description: `Auto-created from BGV ${bid}. Chase the pending checks to completion.`,
           ...links,
         },
@@ -190,7 +195,7 @@ export async function autoCreateTasksForModule(
           task_title: `Complete reference check${who}`,
           task_type: "Reference",
           priority: "Medium",
-          due_date: addDays(record.check_date, 5) || addDays(null, 5),
+          due_date: addDays(record.check_date, sla.referenceSlaDays) || addDays(null, sla.referenceSlaDays),
           description: `Auto-created from reference check ${rid}.`,
           ...links,
         },
@@ -209,7 +214,7 @@ export async function autoCreateTasksForModule(
           task_title: `Confirm joining${who}`,
           task_type: "Joining",
           priority: "High",
-          due_date: addDays(record.expected_joining_date, -3) || toDateOnly(record.expected_joining_date),
+          due_date: addDays(record.expected_joining_date, -sla.joiningConfirmLeadDays) || toDateOnly(record.expected_joining_date),
           description: `Auto-created from pre-joining ${pid}. Confirm the candidate will join on the expected date.`,
           ...links,
         },

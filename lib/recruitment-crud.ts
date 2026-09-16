@@ -68,6 +68,18 @@ async function ensureRecruitmentTable(cfg: ModuleConfig) {
   ensuredTables.add(cfg.table)
 }
 
+/**
+ * Public self-healing helper: ensure a config-driven module's table exists,
+ * addressed by its module key. Used by the automation libs (e.g. task
+ * automation) that write into a module's table without going through the CRUD
+ * factory. A no-op for an unknown key so callers stay best-effort.
+ */
+export async function ensureRecruitmentModuleTable(moduleKey: string): Promise<void> {
+  const cfg = RECRUITMENT_MODULE_CONFIGS[moduleKey]
+  if (!cfg) return
+  await ensureRecruitmentTable(cfg)
+}
+
 /** Build the shared WHERE clause + args from the request's query params. */
 function buildWhere(cfg: ModuleConfig, p: URLSearchParams) {
   const conditions: string[] = []
@@ -108,6 +120,18 @@ export function createRecruitmentHandlers(moduleKey: string) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     await ensureRecruitmentTable(cfg)
+
+    // Phase 96: opening the Recruitment Settings module seeds the canonical
+    // configurable workflow settings so an administrator always sees (and can
+    // edit) every knob. Idempotent + best-effort — never blocks the read.
+    if (moduleKey === "recruitment-settings") {
+      try {
+        const { seedRecruitmentSettings } = await import("@/lib/recruit-settings")
+        await seedRecruitmentSettings(session.userId)
+      } catch (e) {
+        console.error("[recruit-settings] seed on load failed", e)
+      }
+    }
 
     let { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
     // Record-level permission scope: an employee configured with "added"/"owned"
@@ -263,6 +287,14 @@ export function createRecruitmentHandlers(moduleKey: string) {
       }
     }
 
+    // Phase 96: a new setting must be visible to consumers immediately.
+    if (cfg.table === "recruitment_settings") {
+      try {
+        const { invalidateRecruitmentSettingsCache } = await import("@/lib/recruit-settings")
+        invalidateRecruitmentSettingsCache()
+      } catch {}
+    }
+
     return NextResponse.json({ ok: true, id: record[cfg.idColumn] }, { status: 201 })
   }
 
@@ -358,6 +390,14 @@ export function createRecruitmentHandlers(moduleKey: string) {
       } catch (e) {
         console.error("[interview-calendar] update sync failed", e)
       }
+    }
+
+    // Phase 96: an edited setting value must be read-your-writes for consumers.
+    if (cfg.table === "recruitment_settings") {
+      try {
+        const { invalidateRecruitmentSettingsCache } = await import("@/lib/recruit-settings")
+        invalidateRecruitmentSettingsCache()
+      } catch {}
     }
 
     return NextResponse.json({ ok: true })

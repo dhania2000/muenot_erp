@@ -79,7 +79,7 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
 
   // PHASE 80: export the exact filtered dataset currently on screen, using the
   // same columns/labels (and money formatting) the table renders with.
-  const exportColumns: ExportColumn<Row>[] = cfg.columns.map((col) => ({
+  const exportColumns: ExportColumn<Row>[] = cfg.tableColumns.map((col) => ({
     key: col.key,
     header: col.label,
     value: (row: Row) => (col.money ? inr(row[col.key]) : (row[col.key] ?? "")),

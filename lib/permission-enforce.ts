@@ -1,6 +1,6 @@
 import "server-only"
 import { query } from "./db"
-import { getScope } from "./permission-store"
+import { getScope, getActionScope } from "./permission-store"
 import {
   getPermissionModule,
   PERMISSION_MODULES,
@@ -261,4 +261,51 @@ export async function canCreateInModule(
   if (!mod) return true
   const scope = await getScope(session.userId, session.role, permissionKey, "add")
   return scope !== "none"
+}
+
+/**
+ * Phase 53 — coarse gate for a module-specific EXTENDED action (e.g. an
+ * interview "schedule_interview" or an offer "send_offer") at create time,
+ * before a target record exists. Any non-"none" scope allows; "none" blocks.
+ * Unconfigured accounts / unknown modules keep full access, exactly like the
+ * base CRUD gates, so this never changes behaviour for accounts without a
+ * matrix.
+ */
+export async function canPerformAction(
+  session: SessionPayload,
+  permissionKey: string,
+  actionKey: string,
+): Promise<boolean> {
+  const mod = getPermissionModule(permissionKey)
+  if (!mod) return true
+  const scope = await getActionScope(session.userId, session.role, permissionKey, actionKey)
+  return scope !== "none"
+}
+
+/**
+ * Phase 53 — whether an already-loaded record satisfies the viewer's scope for
+ * a module-specific EXTENDED action. Mirrors `canActOnRecord` but resolves the
+ * scope through the extended-action grant (which itself derives from the
+ * action's declared CRUD fallback when not set explicitly).
+ */
+export async function canActOnRecordAction(
+  session: SessionPayload,
+  permissionKey: string,
+  actionKey: string,
+  row: Record<string, any>,
+): Promise<boolean> {
+  const mod = getPermissionModule(permissionKey)
+  if (!mod) return true
+  const scope = await getActionScope(session.userId, session.role, permissionKey, actionKey)
+  if (scope === "all") return true
+  if (scope === "none") return false
+
+  const uid = String(session.userId)
+  const matchAdded = mod.scope.addedBy ? String(row[mod.scope.addedBy]) === uid : false
+  const matchOwned = mod.scope.ownedBy ? String(row[mod.scope.ownedBy]) === uid : false
+
+  if (scope === "added") return matchAdded
+  if (scope === "owned") return matchOwned
+  if (scope === "both") return matchAdded || matchOwned
+  return false
 }

@@ -541,6 +541,364 @@ const recruitmentSettings: ModuleConfig = {
     "COUNT(*) total_rows, COALESCE(SUM(active = 'YES'),0) total_active, COALESCE(SUM(active = 'NO'),0) total_inactive, COUNT(DISTINCT setting_category) total_categories",
 }
 
+// ---------------------------------------------------------------------------
+// 10. Candidate Activities — per-candidate activity timeline
+// ---------------------------------------------------------------------------
+const candidateActivities: ModuleConfig = {
+  key: "candidate-activities",
+  table: "recruitment_candidate_activities",
+  label: "Candidate Activities",
+  subtitle: "Recruitment management",
+  addLabel: "Log activity",
+  idColumn: "activity_id",
+  idPrefix: "ACT",
+  editableId: true,
+  dateColumn: "activity_date",
+  statusColumn: "activity_type",
+  searchColumns: ["activity_id", "candidate_id", "candidate_name", "job_applied", "activity_type", "performed_by", "subject"],
+  fields: [
+    fld("Activity", "activity_id", "Activity ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Activity", "activity_date", "Activity date", "date", { required: true }),
+    fld("Activity", "activity_type", "Activity type", "select", { options: ["Call", "Email", "Interview", "Follow-up", "Note", "Status Change", "Document", "Offer"], required: true }),
+    fld("Activity", "performed_by", "Performed by", "text"),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "job_applied", "Job applied", "text"),
+    fld("Candidate", "requisition_id", "Requisition ID", "text"),
+    fld("Details", "subject", "Subject", "text"),
+    fld("Details", "notes", "Notes", "textarea"),
+    fld("Details", "outcome", "Outcome", "text"),
+    fld("Follow-up", "next_action", "Next action", "text"),
+    fld("Follow-up", "next_action_date", "Next action date", "date"),
+  ],
+  tableColumns: [
+    { key: "activity_id", label: "Activity ID", mono: true },
+    { key: "activity_date", label: "Date" },
+    { key: "candidate_name", label: "Candidate", sub: "job_applied" },
+    { key: "activity_type", label: "Type", badge: { Call: "default", Email: "secondary", Interview: "default", "Follow-up": "outline", Note: "outline", "Status Change": "secondary", Document: "outline", Offer: "default" } },
+    { key: "performed_by", label: "By" },
+    { key: "next_action_date", label: "Next action" },
+  ],
+  kpis: [
+    { label: "Activities", key: "total_rows", icon: "ClipboardList" },
+    { label: "Calls", key: "total_calls", icon: "Clock" },
+    { label: "Interviews", key: "total_interviews", icon: "CalendarClock" },
+    { label: "Follow-ups", key: "total_followups", icon: "ListChecks" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(activity_type = 'Call'),0) total_calls, COALESCE(SUM(activity_type = 'Interview'),0) total_interviews, COALESCE(SUM(activity_type = 'Follow-up'),0) total_followups",
+}
+
+// ---------------------------------------------------------------------------
+// 11. Candidate Documents
+// ---------------------------------------------------------------------------
+const candidateDocuments: ModuleConfig = {
+  key: "candidate-documents",
+  table: "recruitment_candidate_documents",
+  label: "Candidate Documents",
+  subtitle: "Recruitment management",
+  addLabel: "Add document",
+  idColumn: "document_id",
+  idPrefix: "DOC",
+  editableId: true,
+  dateColumn: "received_date",
+  statusColumn: "verification_status",
+  searchColumns: ["document_id", "candidate_id", "candidate_name", "job_applied", "document_type", "document_name", "document_number"],
+  fields: [
+    fld("Document", "document_id", "Document ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Document", "received_date", "Received date", "date", { required: true }),
+    fld("Document", "document_type", "Document type", "select", { options: ["Resume", "Cover Letter", "ID Proof", "Education", "Experience", "Certificate", "Other"], required: true }),
+    fld("Document", "document_name", "Document name", "text", { required: true }),
+    fld("Document", "document_url", "Document URL", "text", { placeholder: "Link from the document store" }),
+    fld("Document", "document_number", "Document number", "text"),
+    fld("Document", "issued_by", "Issued by", "text"),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "job_applied", "Job applied", "text"),
+    fld("Candidate", "application_id", "Application ID", "text"),
+    fld("Verification", "verification_status", "Verification status", "select", { options: ["Pending", "Verified", "Rejected", "Not Required"] }),
+    fld("Verification", "verified_by", "Verified by", "text"),
+    fld("Verification", "verified_date", "Verified date", "date"),
+    fld("Verification", "remarks", "Remarks", "textarea"),
+  ],
+  tableColumns: [
+    { key: "document_id", label: "Document ID", mono: true },
+    { key: "received_date", label: "Received" },
+    { key: "candidate_name", label: "Candidate", sub: "document_type" },
+    { key: "document_name", label: "Document" },
+    { key: "verification_status", label: "Status", badge: { Verified: "default", Pending: "secondary", "Not Required": "outline", Rejected: "destructive" } },
+  ],
+  kpis: [
+    { label: "Documents", key: "total_rows", icon: "FileText" },
+    { label: "Verified", key: "total_verified", icon: "FileCheck" },
+    { label: "Pending", key: "total_pending", icon: "Clock" },
+    { label: "Document Types", key: "total_types", icon: "Layers" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(verification_status = 'Verified'),0) total_verified, COALESCE(SUM(verification_status = 'Pending'),0) total_pending, COUNT(DISTINCT document_type) total_types",
+}
+
+// ---------------------------------------------------------------------------
+// 12. Employee Referrals
+// ---------------------------------------------------------------------------
+const employeeReferrals: ModuleConfig = {
+  key: "employee-referrals",
+  table: "recruitment_referrals",
+  label: "Employee Referrals",
+  subtitle: "Recruitment management",
+  addLabel: "New referral",
+  idColumn: "referral_id",
+  idPrefix: "REF",
+  editableId: true,
+  dateColumn: "referral_date",
+  statusColumn: "status",
+  searchColumns: ["referral_id", "referrer_name", "referrer_employee_id", "candidate_name", "candidate_id", "job_title", "requisition_id"],
+  fields: [
+    fld("Referral", "referral_id", "Referral ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Referral", "referral_date", "Referral date", "date", { required: true }),
+    fld("Referrer", "referrer_employee_id", "Referrer employee ID", "text"),
+    fld("Referrer", "referrer_name", "Referrer name", "text", { required: true }),
+    fld("Referrer", "referrer_department", "Referrer department", "text"),
+    fld("Referrer", "relationship", "Relationship to candidate", "text"),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "candidate_email", "Candidate email", "text"),
+    fld("Candidate", "candidate_mobile", "Candidate mobile", "text"),
+    fld("Position", "job_title", "Job title", "text"),
+    fld("Position", "requisition_id", "Requisition ID", "text"),
+    fld("Status", "status", "Status", "select", { options: ["Submitted", "Screening", "Shortlisted", "Interviewed", "Selected", "Rejected", "Joined"] }),
+    fld("Bonus", "referral_bonus", "Referral bonus", "number", { money: true }),
+    fld("Bonus", "bonus_status", "Bonus status", "select", { options: ["Not Applicable", "Pending", "Approved", "Paid"] }),
+    fld("Status", "remarks", "Remarks", "textarea"),
+  ],
+  tableColumns: [
+    { key: "referral_id", label: "Referral ID", mono: true },
+    { key: "referral_date", label: "Date" },
+    { key: "referrer_name", label: "Referrer", sub: "referrer_department" },
+    { key: "candidate_name", label: "Candidate", sub: "job_title" },
+    { key: "status", label: "Status", badge: { Joined: "default", Selected: "default", Shortlisted: "secondary", Interviewed: "secondary", Screening: "outline", Submitted: "outline", Rejected: "destructive" } },
+    { key: "referral_bonus", label: "Bonus", align: "right", money: true },
+  ],
+  kpis: [
+    { label: "Referrals", key: "total_rows", icon: "Users" },
+    { label: "Joined", key: "total_joined", icon: "UserCheck" },
+    { label: "Bonus Payable", key: "total_bonus", money: true, icon: "Coins" },
+    { label: "Pending Bonus", key: "total_pending_bonus", icon: "Clock" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(status = 'Joined'),0) total_joined, COALESCE(SUM(referral_bonus),0) total_bonus, COALESCE(SUM(bonus_status = 'Pending'),0) total_pending_bonus",
+}
+
+// ---------------------------------------------------------------------------
+// 13. Recruitment Tasks
+// ---------------------------------------------------------------------------
+const recruitmentTasks: ModuleConfig = {
+  key: "recruitment-tasks",
+  table: "recruitment_tasks",
+  label: "Recruitment Tasks",
+  subtitle: "Recruitment management",
+  addLabel: "New task",
+  idColumn: "task_id",
+  idPrefix: "TASK",
+  editableId: true,
+  dateColumn: "due_date",
+  statusColumn: "status",
+  searchColumns: ["task_id", "task_title", "task_type", "candidate_name", "candidate_id", "job_title", "assigned_to"],
+  fields: [
+    fld("Task", "task_id", "Task ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Task", "task_title", "Task title", "text", { required: true }),
+    fld("Task", "task_type", "Task type", "select", { options: ["Candidate Call", "Interview Scheduling", "Document Collection", "Offer", "Follow-up", "Reference Check", "Other"], required: true }),
+    fld("Task", "assigned_to", "Assigned to", "text"),
+    fld("Task", "priority", "Priority", "select", { options: PRIORITIES, optional: true }),
+    fld("Linked to", "candidate_id", "Candidate ID", "text"),
+    fld("Linked to", "candidate_name", "Candidate name", "text"),
+    fld("Linked to", "job_title", "Job title", "text"),
+    fld("Linked to", "requisition_id", "Requisition ID", "text"),
+    fld("Schedule", "start_date", "Start date", "date"),
+    fld("Schedule", "due_date", "Due date", "date", { required: true }),
+    fld("Schedule", "completed_date", "Completed date", "date"),
+    fld("Status", "status", "Status", "select", { options: ["Pending", "In Progress", "Completed", "Cancelled"] }),
+    fld("Status", "description", "Description", "textarea"),
+    fld("Status", "remarks", "Remarks", "textarea"),
+  ],
+  tableColumns: [
+    { key: "task_id", label: "Task ID", mono: true },
+    { key: "due_date", label: "Due" },
+    { key: "task_title", label: "Task", sub: "task_type" },
+    { key: "assigned_to", label: "Assigned to" },
+    { key: "priority", label: "Priority", badge: { Urgent: "destructive", High: "default", Medium: "secondary", Low: "outline" } },
+    { key: "status", label: "Status", badge: { Completed: "default", "In Progress": "secondary", Pending: "outline", Cancelled: "destructive" } },
+  ],
+  kpis: [
+    { label: "Tasks", key: "total_rows", icon: "ClipboardCheck" },
+    { label: "Pending", key: "total_pending", icon: "Clock" },
+    { label: "In Progress", key: "total_inprogress", icon: "ListChecks" },
+    { label: "Completed", key: "total_completed", icon: "UserCheck" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(status = 'Pending'),0) total_pending, COALESCE(SUM(status = 'In Progress'),0) total_inprogress, COALESCE(SUM(status = 'Completed'),0) total_completed",
+}
+
+// ---------------------------------------------------------------------------
+// 14. Recruitment Follow-ups
+// ---------------------------------------------------------------------------
+const recruitmentFollowups: ModuleConfig = {
+  key: "recruitment-followups",
+  table: "recruitment_followups",
+  label: "Recruitment Follow-ups",
+  subtitle: "Recruitment management",
+  addLabel: "New follow-up",
+  idColumn: "followup_id",
+  idPrefix: "FUP",
+  editableId: true,
+  dateColumn: "next_followup_date",
+  statusColumn: "status",
+  searchColumns: ["followup_id", "candidate_name", "candidate_id", "job_title", "owner", "followup_type"],
+  fields: [
+    fld("Follow-up", "followup_id", "Follow-up ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Follow-up", "followup_type", "Follow-up type", "select", { options: ["Call", "Email", "WhatsApp", "Meeting", "Other"], optional: true }),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "job_title", "Job title", "text"),
+    fld("Candidate", "requisition_id", "Requisition ID", "text"),
+    fld("Schedule", "last_contact_date", "Last contact date", "date"),
+    fld("Schedule", "next_followup_date", "Next follow-up date", "date", { required: true }),
+    fld("Ownership", "owner", "Owner", "text"),
+    fld("Ownership", "priority", "Priority", "select", { options: PRIORITIES, optional: true }),
+    fld("Reminder", "reminder", "Reminder", "select", { options: YES_NO, optional: true }),
+    fld("Reminder", "reminder_date", "Reminder date", "date"),
+    fld("Status", "status", "Status", "select", { options: ["Open", "Scheduled", "Done", "Overdue", "Cancelled"] }),
+    fld("Status", "notes", "Notes", "textarea"),
+  ],
+  tableColumns: [
+    { key: "followup_id", label: "Follow-up ID", mono: true },
+    { key: "next_followup_date", label: "Next follow-up" },
+    { key: "candidate_name", label: "Candidate", sub: "job_title" },
+    { key: "owner", label: "Owner" },
+    { key: "priority", label: "Priority", badge: { Urgent: "destructive", High: "default", Medium: "secondary", Low: "outline" } },
+    { key: "status", label: "Status", badge: { Done: "default", Scheduled: "secondary", Open: "outline", Overdue: "destructive", Cancelled: "destructive" } },
+  ],
+  kpis: [
+    { label: "Follow-ups", key: "total_rows", icon: "CalendarClock" },
+    { label: "Open", key: "total_open", icon: "ListChecks" },
+    { label: "Done", key: "total_done", icon: "UserCheck" },
+    { label: "Overdue", key: "total_overdue", icon: "Clock" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(status = 'Open'),0) total_open, COALESCE(SUM(status = 'Done'),0) total_done, COALESCE(SUM(status = 'Overdue'),0) total_overdue",
+}
+
+// ---------------------------------------------------------------------------
+// 15. Recruitment Vendors
+// ---------------------------------------------------------------------------
+const recruitmentVendors: ModuleConfig = {
+  key: "recruitment-vendors",
+  table: "recruitment_vendors",
+  label: "Recruitment Vendors",
+  subtitle: "Recruitment management",
+  addLabel: "New vendor",
+  idColumn: "vendor_id",
+  idPrefix: "RVN",
+  editableId: true,
+  dateColumn: "agreement_date",
+  statusColumn: "status",
+  searchColumns: ["vendor_id", "vendor_name", "vendor_type", "contact_person", "contact_email", "gstin", "pan"],
+  fields: [
+    fld("Vendor", "vendor_id", "Vendor ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Vendor", "vendor_name", "Vendor name", "text", { required: true }),
+    fld("Vendor", "vendor_type", "Vendor type", "select", { options: ["Agency", "Consultant", "Job Portal", "Freelancer", "Other"], optional: true }),
+    fld("Contact", "contact_person", "Contact person", "text"),
+    fld("Contact", "contact_email", "Contact email", "text"),
+    fld("Contact", "contact_mobile", "Contact mobile", "text"),
+    fld("Contact", "address", "Address", "textarea"),
+    fld("Compliance", "gstin", "GSTIN", "text"),
+    fld("Compliance", "pan", "PAN", "text"),
+    fld("Agreement", "agreement_ref", "Agreement reference", "text"),
+    fld("Agreement", "agreement_date", "Agreement date", "date"),
+    fld("Agreement", "agreement_expiry", "Agreement expiry", "date"),
+    fld("Fee", "fee_type", "Fee type", "select", { options: ["Percentage", "Fixed", "Per Hire"], optional: true }),
+    fld("Fee", "fee_value", "Fee value", "number"),
+    fld("Performance", "candidates_submitted", "Candidates submitted", "number"),
+    fld("Performance", "candidates_placed", "Candidates placed", "number"),
+    fld("Performance", "placement_status", "Placement status", "select", { options: ["Active", "On Hold", "Terminated"], optional: true }),
+    fld("Billing", "total_billed", "Total billed", "number", { money: true }),
+    fld("Billing", "total_paid", "Total paid", "number", { money: true }),
+    fld("Billing", "payment_status", "Payment status", "select", { options: ["Pending", "Partial", "Paid", "Not Applicable"], optional: true }),
+    fld("Status", "status", "Status", "select", { options: ["Active", "Inactive"] }),
+    fld("Status", "remarks", "Remarks", "textarea"),
+  ],
+  tableColumns: [
+    { key: "vendor_id", label: "Vendor ID", mono: true },
+    { key: "vendor_name", label: "Vendor", sub: "vendor_type" },
+    { key: "candidates_submitted", label: "Submitted", align: "right" },
+    { key: "candidates_placed", label: "Placed", align: "right" },
+    { key: "placement_status", label: "Placement", badge: { Active: "default", "On Hold": "secondary", Terminated: "destructive" } },
+    { key: "status", label: "Status", badge: { Active: "default", Inactive: "outline" } },
+  ],
+  kpis: [
+    { label: "Vendors", key: "total_rows", icon: "Network" },
+    { label: "Submitted", key: "total_submitted", icon: "FileText" },
+    { label: "Placed", key: "total_placed", icon: "UserCheck" },
+    { label: "Total Billed", key: "total_billed", money: true, icon: "Coins" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(candidates_submitted),0) total_submitted, COALESCE(SUM(candidates_placed),0) total_placed, COALESCE(SUM(total_billed),0) total_billed",
+}
+
+// ---------------------------------------------------------------------------
+// 16. Recruitment Cost & Hiring Budget
+// ---------------------------------------------------------------------------
+const recruitmentCosts: ModuleConfig = {
+  key: "recruitment-costs",
+  table: "recruitment_costs",
+  label: "Recruitment Cost & Budget",
+  subtitle: "Recruitment management",
+  addLabel: "New cost entry",
+  idColumn: "cost_id",
+  idPrefix: "RCT",
+  editableId: true,
+  dateColumn: "cost_date",
+  statusColumn: "payment_status",
+  searchColumns: ["cost_id", "cost_category", "description", "requisition_id", "job_title", "vendor_name", "expense_id"],
+  fields: [
+    fld("Cost", "cost_id", "Cost ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Cost", "cost_date", "Cost date", "date", { required: true }),
+    fld("Cost", "cost_category", "Cost category", "select", { options: ["Agency Fee", "Job Portal", "Advertising", "Background Verification", "Interview Cost", "Referral Bonus", "Assessment", "Other"], required: true }),
+    fld("Cost", "description", "Description", "text"),
+    fld("Linked to", "requisition_id", "Requisition ID", "text"),
+    fld("Linked to", "job_title", "Job title", "text"),
+    fld("Linked to", "candidate_id", "Candidate ID", "text"),
+    fld("Vendor", "vendor_id", "Vendor ID", "text"),
+    fld("Vendor", "vendor_name", "Vendor name", "text"),
+    fld("Budget", "budget_amount", "Budget amount", "number", { money: true }),
+    fld("Budget", "actual_amount", "Actual amount", "number", { money: true }),
+    fld("Budget", "variance", "Variance (budget − actual)", "number", { money: true, computed: true }),
+    fld("Finance", "expense_id", "Finance expense ID", "text", { placeholder: "Link to a Finance expense" }),
+    fld("Finance", "payment_status", "Payment status", "select", { options: ["Pending", "Approved", "Paid"] }),
+    fld("Finance", "paid_date", "Paid date", "date"),
+    fld("Finance", "remarks", "Remarks", "textarea"),
+  ],
+  compute: (v) => ({
+    variance: round2(num(v.budget_amount) - num(v.actual_amount)),
+  }),
+  tableColumns: [
+    { key: "cost_id", label: "Cost ID", mono: true },
+    { key: "cost_date", label: "Date" },
+    { key: "cost_category", label: "Category", sub: "job_title" },
+    { key: "budget_amount", label: "Budget", align: "right", money: true },
+    { key: "actual_amount", label: "Actual", align: "right", money: true },
+    { key: "payment_status", label: "Payment", badge: { Paid: "default", Approved: "secondary", Pending: "outline" } },
+  ],
+  kpis: [
+    { label: "Cost Entries", key: "total_rows", icon: "ClipboardList" },
+    { label: "Total Budget", key: "total_budget", money: true, icon: "Coins" },
+    { label: "Actual Cost", key: "total_actual", money: true, icon: "FileText" },
+    { label: "Remaining Budget", key: "total_variance", money: true, icon: "Gauge" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(budget_amount),0) total_budget, COALESCE(SUM(actual_amount),0) total_actual, COALESCE(SUM(budget_amount - actual_amount),0) total_variance",
+}
+
 export const RECRUITMENT_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "job-requisitions": jobRequisitions,
   "recruitment-campaigns": recruitmentCampaigns,
@@ -551,6 +909,13 @@ export const RECRUITMENT_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "selection-offers": selectionOffers,
   "recruitment-sources": recruitmentSources,
   "recruitment-settings": recruitmentSettings,
+  "candidate-activities": candidateActivities,
+  "candidate-documents": candidateDocuments,
+  "employee-referrals": employeeReferrals,
+  "recruitment-tasks": recruitmentTasks,
+  "recruitment-followups": recruitmentFollowups,
+  "recruitment-vendors": recruitmentVendors,
+  "recruitment-costs": recruitmentCosts,
 }
 
 export const RECRUITMENT_MODULE_KEYS = Object.keys(RECRUITMENT_MODULE_CONFIGS)

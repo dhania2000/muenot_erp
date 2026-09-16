@@ -62,7 +62,14 @@ export const RECRUITMENT_PERMISSION_KEYS: Record<string, string> = {
   "interview-tracker": "recruitment.interviews",
   "assessment-tracker": "recruitment.interviews",
   "selection-offers": "recruitment.offers",
-}
+  "candidate-activities": "recruitment.candidates",
+  "candidate-documents": "recruitment.candidates",
+  "employee-referrals": "recruitment.candidates",
+  "recruitment-tasks": "recruitment.candidates",
+  "recruitment-followups": "recruitment.candidates",
+  "recruitment-vendors": "recruitment.requisitions",
+  "recruitment-costs": "recruitment.requisitions",
+  }
 
 /** In-process cache of table -> existing column names (information_schema). */
 const columnCache = new Map<string, Set<string>>()

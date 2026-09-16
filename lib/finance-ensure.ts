@@ -778,3 +778,163 @@ export async function ensureGstInputSchema() {
 
   gstInputEnsured = true
 }
+
+/**
+ * Self-healing schema for the six balance-sheet register modules — Fixed Assets,
+ * Loans & Advances, Investments, Provisions & Accruals, Capital & Equity and the
+ * Related Parties master. The five transactional tables carry the standard
+ * posting columns (voucher_no / posting_status / posted_amount / posted_snapshot)
+ * written only by the register posting engine; Related Parties is a plain
+ * disclosure master. MySQL 8 supports `CREATE TABLE IF NOT EXISTS`, so every
+ * table is idempotent. Runs once per process.
+ */
+let registerTablesEnsured = false
+
+/** Standard posting columns shared by every transactional register table. */
+const POSTING_COLS = `
+  posting_status      VARCHAR(20) NOT NULL DEFAULT 'Unposted',
+  voucher_no          VARCHAR(30) DEFAULT NULL,
+  reversal_voucher_no VARCHAR(30) DEFAULT NULL,
+  posted_amount       DECIMAL(16,2) NOT NULL DEFAULT 0,
+  posted_snapshot     LONGTEXT DEFAULT NULL,
+  posted_at           DATETIME DEFAULT NULL,`
+
+export async function ensureRegisterModuleTables() {
+  if (registerTablesEnsured) return
+
+  await query(`CREATE TABLE IF NOT EXISTS fixed_assets (
+    id                      INT AUTO_INCREMENT PRIMARY KEY,
+    asset_id                VARCHAR(30) NOT NULL,
+    asset_name              VARCHAR(255) DEFAULT NULL,
+    asset_category          VARCHAR(80) DEFAULT NULL,
+    acquisition_date        DATE DEFAULT NULL,
+    financial_year          VARCHAR(12) DEFAULT NULL,
+    cost                    DECIMAL(16,2) NOT NULL DEFAULT 0,
+    funding_source          VARCHAR(40) DEFAULT NULL,
+    depreciation_method     VARCHAR(40) DEFAULT NULL,
+    useful_life_years       DECIMAL(6,2) NOT NULL DEFAULT 0,
+    salvage_value           DECIMAL(16,2) NOT NULL DEFAULT 0,
+    accumulated_depreciation DECIMAL(16,2) NOT NULL DEFAULT 0,
+    net_book_value          DECIMAL(16,2) NOT NULL DEFAULT 0,
+    location                VARCHAR(190) DEFAULT NULL,
+    custodian               VARCHAR(190) DEFAULT NULL,
+    status                  VARCHAR(30) NOT NULL DEFAULT 'In Use',
+    notes                   TEXT DEFAULT NULL,${POSTING_COLS}
+    created_by              INT DEFAULT NULL,
+    created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_fa_id (asset_id),
+    KEY idx_fa_fy (financial_year),
+    KEY idx_fa_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS loans_advances (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    loan_id             VARCHAR(30) NOT NULL,
+    party_name          VARCHAR(255) DEFAULT NULL,
+    party_type          VARCHAR(40) DEFAULT NULL,
+    direction           VARCHAR(40) DEFAULT NULL,
+    principal           DECIMAL(16,2) NOT NULL DEFAULT 0,
+    interest_rate       DECIMAL(6,2) NOT NULL DEFAULT 0,
+    disbursement_date   DATE DEFAULT NULL,
+    financial_year      VARCHAR(12) DEFAULT NULL,
+    funding_source      VARCHAR(40) DEFAULT NULL,
+    repayment_terms     VARCHAR(255) DEFAULT NULL,
+    outstanding_amount  DECIMAL(16,2) NOT NULL DEFAULT 0,
+    status              VARCHAR(30) NOT NULL DEFAULT 'Active',
+    notes               TEXT DEFAULT NULL,${POSTING_COLS}
+    created_by          INT DEFAULT NULL,
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_la_id (loan_id),
+    KEY idx_la_fy (financial_year),
+    KEY idx_la_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS investments (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    investment_id       VARCHAR(30) NOT NULL,
+    investment_name     VARCHAR(255) DEFAULT NULL,
+    investment_type     VARCHAR(60) DEFAULT NULL,
+    acquisition_date    DATE DEFAULT NULL,
+    financial_year      VARCHAR(12) DEFAULT NULL,
+    amount              DECIMAL(16,2) NOT NULL DEFAULT 0,
+    funding_source      VARCHAR(40) DEFAULT NULL,
+    units               DECIMAL(16,4) NOT NULL DEFAULT 0,
+    expected_return_rate DECIMAL(6,2) NOT NULL DEFAULT 0,
+    maturity_date       DATE DEFAULT NULL,
+    current_value       DECIMAL(16,2) NOT NULL DEFAULT 0,
+    status              VARCHAR(30) NOT NULL DEFAULT 'Active',
+    notes               TEXT DEFAULT NULL,${POSTING_COLS}
+    created_by          INT DEFAULT NULL,
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_inv_id (investment_id),
+    KEY idx_inv_fy (financial_year),
+    KEY idx_inv_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS provisions_accruals (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    provision_id        VARCHAR(30) NOT NULL,
+    provision_name      VARCHAR(255) DEFAULT NULL,
+    provision_type      VARCHAR(60) DEFAULT NULL,
+    provision_date      DATE DEFAULT NULL,
+    financial_year      VARCHAR(12) DEFAULT NULL,
+    amount              DECIMAL(16,2) NOT NULL DEFAULT 0,
+    related_party       VARCHAR(255) DEFAULT NULL,
+    status              VARCHAR(30) NOT NULL DEFAULT 'Open',
+    notes               TEXT DEFAULT NULL,${POSTING_COLS}
+    created_by          INT DEFAULT NULL,
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_prv_id (provision_id),
+    KEY idx_prv_fy (financial_year),
+    KEY idx_prv_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS capital_equity (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    entry_id            VARCHAR(30) NOT NULL,
+    entry_type          VARCHAR(60) DEFAULT NULL,
+    contributor_name    VARCHAR(255) DEFAULT NULL,
+    entry_date          DATE DEFAULT NULL,
+    financial_year      VARCHAR(12) DEFAULT NULL,
+    amount              DECIMAL(16,2) NOT NULL DEFAULT 0,
+    mode                VARCHAR(40) DEFAULT NULL,
+    instrument          VARCHAR(120) DEFAULT NULL,
+    status              VARCHAR(30) NOT NULL DEFAULT 'Active',
+    notes               TEXT DEFAULT NULL,${POSTING_COLS}
+    created_by          INT DEFAULT NULL,
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_cap_id (entry_id),
+    KEY idx_cap_fy (financial_year),
+    KEY idx_cap_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS related_parties (
+    id                     INT AUTO_INCREMENT PRIMARY KEY,
+    party_id               VARCHAR(30) NOT NULL,
+    party_name             VARCHAR(255) DEFAULT NULL,
+    relationship           VARCHAR(80) DEFAULT NULL,
+    pan                    VARCHAR(15) DEFAULT NULL,
+    gstin                  VARCHAR(20) DEFAULT NULL,
+    nature_of_relationship VARCHAR(255) DEFAULT NULL,
+    opening_balance        DECIMAL(16,2) NOT NULL DEFAULT 0,
+    contact_person         VARCHAR(190) DEFAULT NULL,
+    email                  VARCHAR(190) DEFAULT NULL,
+    phone                  VARCHAR(40) DEFAULT NULL,
+    address                TEXT DEFAULT NULL,
+    status                 VARCHAR(30) NOT NULL DEFAULT 'Active',
+    notes                  TEXT DEFAULT NULL,
+    created_by             INT DEFAULT NULL,
+    created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_rp_id (party_id),
+    KEY idx_rp_relationship (relationship),
+    KEY idx_rp_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  registerTablesEnsured = true
+}

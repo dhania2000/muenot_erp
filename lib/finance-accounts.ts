@@ -41,6 +41,21 @@ export type AccountRole =
   | "employee_advance"
   // Opening-balance contra (requirements 14/15 — real opening-balance posting).
   | "opening_balance_equity"
+  // Balance-sheet register roles (Fixed Assets, Loans & Advances, Investments,
+  // Provisions & Accruals, Capital & Equity). Each register document posts a
+  // balanced two-leg voucher against one of these control heads and a funding
+  // contra (bank / cash / payable / capital), so the Balance Sheet, Trial
+  // Balance and the Fixed Assets Register reflect it automatically.
+  | "fixed_asset"
+  | "accumulated_depreciation"
+  | "depreciation_expense"
+  | "loan_receivable"
+  | "loan_payable"
+  | "investment"
+  | "provision_expense"
+  | "provision_liability"
+  | "share_capital"
+  | "drawings"
 
 /** Default account_code for each posting role (matches the migration seed). */
 export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
@@ -70,6 +85,17 @@ export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
   employee_advance: "1460",
   // Equity control head that balances every opening-balance voucher.
   opening_balance_equity: "3900",
+  // Balance-sheet register control heads.
+  fixed_asset: "1700",
+  accumulated_depreciation: "1710",
+  depreciation_expense: "5200",
+  loan_receivable: "1480",
+  loan_payable: "2300",
+  investment: "1600",
+  provision_expense: "5300",
+  provision_liability: "2400",
+  share_capital: "3000",
+  drawings: "3100",
 }
 
 /**
@@ -119,6 +145,26 @@ const GST_PAYMENT_ACCOUNT_SEEDS: CoaSeed[] = [
   { code: "2160", id: "COA-GST-PAY", name: "GST Payable (Net)", group: "Liability", type: "Duties & Taxes", nature: "Credit", gst: true },
 ]
 
+/**
+ * Balance-sheet register control heads. These back the Fixed Assets, Loans &
+ * Advances, Investments, Provisions & Accruals and Capital & Equity modules.
+ * Seeded on demand the first time one of those documents is posted; a company
+ * that already keeps its own head at the same code keeps its own (the resolver
+ * prefers the live chart_of_accounts row).
+ */
+const REGISTER_ACCOUNT_SEEDS: CoaSeed[] = [
+  { code: "1700", id: "COA-FIXED-ASSET", name: "Fixed Assets", group: "Asset", type: "Fixed Asset", nature: "Debit" },
+  { code: "1710", id: "COA-ACC-DEPR", name: "Accumulated Depreciation", group: "Asset", type: "Fixed Asset", nature: "Credit" },
+  { code: "5200", id: "COA-DEPR-EXP", name: "Depreciation Expense", group: "Expense", type: "Indirect Expense", nature: "Debit" },
+  { code: "1480", id: "COA-LOAN-RECV", name: "Loans & Advances (Asset)", group: "Asset", type: "Current Asset", nature: "Debit" },
+  { code: "2300", id: "COA-LOAN-PAY", name: "Loans Payable", group: "Liability", type: "Long Term Liability", nature: "Credit" },
+  { code: "1600", id: "COA-INVESTMENT", name: "Investments", group: "Asset", type: "Investment", nature: "Debit" },
+  { code: "5300", id: "COA-PROV-EXP", name: "Provisions & Accruals Expense", group: "Expense", type: "Indirect Expense", nature: "Debit" },
+  { code: "2400", id: "COA-PROV-LIAB", name: "Provisions & Accruals", group: "Liability", type: "Current Liability", nature: "Credit" },
+  { code: "3000", id: "COA-CAPITAL", name: "Share Capital & Equity", group: "Equity", type: "Capital", nature: "Credit" },
+  { code: "3100", id: "COA-DRAWINGS", name: "Drawings", group: "Equity", type: "Capital", nature: "Debit" },
+]
+
 async function seedAccounts(seeds: CoaSeed[]): Promise<void> {
   for (const a of seeds) {
     await query(
@@ -146,6 +192,22 @@ export async function ensureGstPaymentAccounts(): Promise<void> {
   if (gstPaymentAccountsEnsured) return
   await seedAccounts(GST_PAYMENT_ACCOUNT_SEEDS)
   gstPaymentAccountsEnsured = true
+}
+
+let registerAccountsEnsured = false
+
+/**
+ * Seed the balance-sheet register control heads (and the shared Accounts
+ * Payable used as a funding contra) before a Fixed Asset / Loan / Investment /
+ * Provision / Capital document is posted. Idempotent and safe to re-run.
+ */
+export async function ensureRegisterPostingAccounts(): Promise<void> {
+  if (registerAccountsEnsured) return
+  await seedAccounts(REGISTER_ACCOUNT_SEEDS)
+  // Accounts Payable (2000) is a valid funding contra for asset acquisitions on
+  // credit, so make sure the purchase-side heads exist too.
+  await seedAccounts(PURCHASE_ACCOUNT_SEEDS)
+  registerAccountsEnsured = true
 }
 
 let expenseAccountsEnsured = false

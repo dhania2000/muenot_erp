@@ -6,6 +6,7 @@ import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
+  AlertTriangle,
   Briefcase,
   CalendarClock,
   ExternalLink,
@@ -24,6 +25,12 @@ type Stats = {
   offers: { total: number; accepted: number }
   recentApplications: { application_id: string; candidate_name: string; job_title: string | null; stage: string; applied_at: string }[]
   upcomingInterviews: { interview_id: string; candidate_name: string | null; job_title: string | null; scheduled_at: string | null; mode: string | null; status: string }[]
+  stale: {
+    thresholds: { applicationDays: number; requisitionGraceDays: number; jobDays: number }
+    applications: { total: number; items: { application_id: string; candidate_name: string | null; job_title: string | null; stage: string; days_in_stage: number }[] }
+    requisitions: { total: number; items: { requisition_id: string; job_title: string | null; target_date: string | null; days_open: number; required: number; filled: number; pending: number }[] }
+    jobs: { total: number; items: { job_id: string; title: string; days_since_activity: number }[] }
+  } | null
 }
 
 export function DashboardClient({ canManage }: { canManage: boolean }) {
@@ -78,6 +85,55 @@ export function DashboardClient({ canManage }: { canManage: boolean }) {
           )
         })}
       </div>
+
+      {data?.stale && (data.stale.applications.total > 0 || data.stale.requisitions.total > 0 || data.stale.jobs.total > 0) && (
+        <Card className="border-amber-500/40">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="size-4 text-amber-500" />
+              Needs attention
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <StaleColumn
+              title="Stale applications"
+              caption={`Stuck ${data.stale.thresholds.applicationDays}+ days in a stage`}
+              total={data.stale.applications.total}
+              href="/modules/recruitment/job-applications"
+              rows={data.stale.applications.items.map((a) => ({
+                key: a.application_id,
+                primary: a.candidate_name || a.application_id,
+                secondary: `${a.job_title || "—"} · ${a.stage}`,
+                meta: `${a.days_in_stage}d`,
+              }))}
+            />
+            <StaleColumn
+              title="Stale requisitions"
+              caption="Past target date with pending roles"
+              total={data.stale.requisitions.total}
+              href="/modules/recruitment/requisition-hiring"
+              rows={data.stale.requisitions.items.map((r) => ({
+                key: r.requisition_id,
+                primary: r.job_title || r.requisition_id,
+                secondary: `Pending ${r.pending}/${r.required} · target ${r.target_date || "—"}`,
+                meta: `${r.days_open}d`,
+              }))}
+            />
+            <StaleColumn
+              title="Stale jobs"
+              caption={`No activity ${data.stale.thresholds.jobDays}+ days`}
+              total={data.stale.jobs.total}
+              href="/modules/recruitment/jobs"
+              rows={data.stale.jobs.items.map((j) => ({
+                key: j.job_id,
+                primary: j.title,
+                secondary: "No recent applications",
+                meta: `${j.days_since_activity}d`,
+              }))}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -156,5 +212,54 @@ export function DashboardClient({ canManage }: { canManage: boolean }) {
         </Card>
       </div>
     </main>
+  )
+}
+
+function StaleColumn({
+  title,
+  caption,
+  total,
+  href,
+  rows,
+}: {
+  title: string
+  caption: string
+  total: number
+  href: string
+  rows: { key: string; primary: string; secondary: string; meta: string }[]
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{title}</p>
+          <p className="truncate text-xs text-muted-foreground">{caption}</p>
+        </div>
+        <span className="shrink-0 rounded-md bg-amber-500/15 px-2 py-0.5 text-sm font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+          {total}
+        </span>
+      </div>
+      <div className="flex flex-col gap-1">
+        {rows.length === 0 && <p className="py-2 text-xs text-muted-foreground">Nothing flagged.</p>}
+        {rows.map((r) => (
+          <Link
+            key={r.key}
+            href={href}
+            className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm">{r.primary}</p>
+              <p className="truncate text-xs text-muted-foreground">{r.secondary}</p>
+            </div>
+            <span className="shrink-0 text-xs font-medium tabular-nums text-amber-600 dark:text-amber-400">{r.meta}</span>
+          </Link>
+        ))}
+      </div>
+      {total > rows.length && (
+        <Link href={href} className="text-xs font-medium text-primary hover:underline">
+          View all {total} →
+        </Link>
+      )}
+    </div>
   )
 }

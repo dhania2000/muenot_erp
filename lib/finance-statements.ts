@@ -1,5 +1,5 @@
 import "server-only"
-import { query } from "@/lib/db"
+import { query, tableColumns } from "@/lib/db"
 import { num, round2 } from "@/lib/finance-calc"
 import {
   resolveClassification,
@@ -72,17 +72,21 @@ async function ledgerTotals(opts: {
   to?: string | null
   excludeClosing?: boolean
 }): Promise<Map<string, Totals>> {
+  // Column-adaptive: only filter on transaction_date / source_module when those
+  // columns exist, so an older general_ledger schema still aggregates instead of
+  // failing the whole statement (see lib/db.ts tableColumns).
+  const cols = await tableColumns("general_ledger")
   const where: string[] = []
   const args: any[] = []
-  if (opts.from) {
+  if (opts.from && cols.has("transaction_date")) {
     where.push("transaction_date >= ?")
     args.push(opts.from)
   }
-  if (opts.to) {
+  if (opts.to && cols.has("transaction_date")) {
     where.push("transaction_date <= ?")
     args.push(opts.to)
   }
-  if (opts.excludeClosing) {
+  if (opts.excludeClosing && cols.has("source_module")) {
     where.push("(source_module IS NULL OR source_module <> ?)")
     args.push(YEAR_END_SOURCE_MODULE)
   }
@@ -113,15 +117,38 @@ type AccountRow = CoaLike & {
   active_status: string | null
 }
 
-/** Load the account master (only fields the classifier + statements need). */
+/**
+ * Load the account master (only fields the classifier + statements need).
+ *
+ * Column-adaptive: the classification/override columns (bs_group, pnl_group,
+ * cashflow_group) and merged_into_account_id are newer additions that may not
+ * exist on an older chart_of_accounts. Any absent column is selected as NULL so
+ * the statement still runs — the classifier already treats a NULL override as
+ * "auto-derive" (see lib/finance-classification.ts). Only account_id is truly
+ * required; if the table itself is missing the query raises ER_NO_SUCH_TABLE,
+ * which the run engine reports as a genuinely missing source.
+ */
 async function loadAccounts(): Promise<AccountRow[]> {
-  return (await query(
-    `SELECT id, account_id, account_code, account_name, account_group, account_type, nature,
-            gst_applicable, tds_applicable, bank_cash_account,
-            bs_group, pnl_group, cashflow_group, active_status
-       FROM chart_of_accounts
-      WHERE COALESCE(merged_into_account_id, '') = ''`,
-  )) as any[]
+  const cols = await tableColumns("chart_of_accounts")
+  const wanted = [
+    "id",
+    "account_id",
+    "account_code",
+    "account_name",
+    "account_group",
+    "account_type",
+    "nature",
+    "gst_applicable",
+    "tds_applicable",
+    "bank_cash_account",
+    "bs_group",
+    "pnl_group",
+    "cashflow_group",
+    "active_status",
+  ]
+  const select = wanted.map((c) => (cols.has(c) ? `\`${c}\`` : `NULL AS \`${c}\``)).join(", ")
+  const where = cols.has("merged_into_account_id") ? "WHERE COALESCE(merged_into_account_id, '') = ''" : ""
+  return (await query(`SELECT ${select} FROM chart_of_accounts ${where}`)) as any[]
 }
 
 const isDebitNatureRow = (acc: AccountRow): boolean => {
@@ -460,6 +487,10 @@ export async function computeCashFlow(from?: string | null, to?: string | null):
 
 /** Distinct financial years present in the ledger, newest first, for pickers. */
 export async function listLedgerFinancialYears(): Promise<string[]> {
+  // Older ledgers may not carry a financial_year column — degrade to no picker
+  // options rather than failing the caller.
+  const cols = await tableColumns("general_ledger")
+  if (!cols.has("financial_year")) return []
   const rows = (await query(
     `SELECT DISTINCT financial_year FROM general_ledger
       WHERE financial_year IS NOT NULL AND financial_year <> ''

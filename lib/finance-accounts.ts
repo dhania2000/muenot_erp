@@ -64,6 +64,15 @@ export type AccountRole =
   | "accrued_income"
   | "share_capital"
   | "drawings"
+  // Capital & Equity register heads (Phase 7 — Capital & Equity). Partners'
+  // capital and the general reserves / equity-adjustment heads sit alongside the
+  // shared Share Capital (3000) and Drawings (3100) control heads. Retained
+  // Earnings reuses the SAME 3910 head that the Year-End Closing engine posts
+  // the net result to, so a manual transfer and a year-end close never diverge.
+  | "partner_capital"
+  | "reserves"
+  | "retained_earnings"
+  | "equity_adjustment"
   // Fixed-asset disposal result heads (Phase 3 — Fixed Assets lifecycle). A
   // disposal / scrap removes the asset at cost, unwinds its accumulated
   // depreciation and books the difference against proceeds as a gain (income)
@@ -120,6 +129,12 @@ export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
   accrued_income: "4400",
   share_capital: "3000",
   drawings: "3100",
+  // Capital & Equity register heads (Phase 7). Retained Earnings (3910) is the
+  // same head the Year-End Closing engine carries the net result into.
+  partner_capital: "3010",
+  reserves: "3200",
+  retained_earnings: "3910",
+  equity_adjustment: "3920",
   // Gain / loss on sale of fixed assets.
   disposal_gain: "4200",
   disposal_loss: "5210",
@@ -212,6 +227,36 @@ const FIXED_ASSET_DISPOSAL_SEEDS: CoaSeed[] = [
   { code: "5210", id: "COA-ASSET-LOSS", name: "Loss on Sale of Fixed Assets", group: "Expense", type: "Indirect Expense", nature: "Debit" },
 ]
 
+/**
+ * Investment income / result heads (Phase — Investments lifecycle). Interest and
+ * dividend income (credit-nature income), realised gain on sale / redemption
+ * (income) and the realised loss and downward fair-value / impairment loss
+ * (expense). Seeded on demand the first time an investment lifecycle event is
+ * posted; a company that already keeps its own head at the same code keeps its
+ * own (the resolver prefers the live chart_of_accounts row).
+ */
+const INVESTMENT_INCOME_SEEDS: CoaSeed[] = [
+  { code: "4300", id: "COA-INV-INCOME", name: "Investment Income", group: "Income", type: "Indirect Income", nature: "Credit" },
+  { code: "4310", id: "COA-INV-GAIN", name: "Gain on Sale of Investments", group: "Income", type: "Indirect Income", nature: "Credit" },
+  { code: "5310", id: "COA-INV-LOSS", name: "Loss on Sale of Investments", group: "Expense", type: "Indirect Expense", nature: "Debit" },
+  { code: "5320", id: "COA-INV-IMPAIR", name: "Investment Impairment Loss", group: "Expense", type: "Indirect Expense", nature: "Debit" },
+]
+
+/**
+ * Capital & Equity heads (Phase 7 — Capital & Equity). Partners' Capital, the
+ * general Reserves & Surplus head and a manual Equity Adjustments head. The
+ * shared Share Capital (3000) and Drawings (3100) heads are already in the
+ * register seed, and Retained Earnings (3910) is seeded by the Year-End Closing
+ * engine (ensureRetainedEarningsAccount) so both features share one head.
+ * Seeded on demand the first time a capital / equity entry is posted; a company
+ * that already keeps its own head at the same code keeps its own.
+ */
+const CAPITAL_EQUITY_ACCOUNT_SEEDS: CoaSeed[] = [
+  { code: "3010", id: "COA-PARTNER-CAP", name: "Partners' Capital", group: "Equity", type: "Capital", nature: "Credit" },
+  { code: "3200", id: "COA-RESERVES", name: "Reserves & Surplus", group: "Equity", type: "Reserves & Surplus", nature: "Credit" },
+  { code: "3920", id: "COA-EQUITY-ADJ", name: "Equity Adjustments", group: "Equity", type: "Reserves & Surplus", nature: "Credit" },
+]
+
 async function seedAccounts(seeds: CoaSeed[]): Promise<void> {
   for (const a of seeds) {
     await query(
@@ -270,6 +315,39 @@ export async function ensureFixedAssetAccounts(): Promise<void> {
   await ensureRegisterPostingAccounts()
   await seedAccounts(FIXED_ASSET_DISPOSAL_SEEDS)
   fixedAssetAccountsEnsured = true
+}
+
+let investmentAccountsEnsured = false
+
+/**
+ * Seed every Chart-of-Accounts head the Investments lifecycle posts to: the
+ * register control heads (Investments 1600, funding contras bank / cash /
+ * payable) and the investment income / gain / loss / impairment result heads.
+ * Idempotent and safe to re-run.
+ */
+export async function ensureInvestmentAccounts(): Promise<void> {
+  if (investmentAccountsEnsured) return
+  await ensureRegisterPostingAccounts()
+  await seedAccounts(INVESTMENT_INCOME_SEEDS)
+  investmentAccountsEnsured = true
+}
+
+let capitalEquityAccountsEnsured = false
+
+/**
+ * Seed every Chart-of-Accounts head the Capital & Equity module posts to: the
+ * register control heads (Share Capital 1600-side contras, Share Capital 3000,
+ * Drawings 3100), the Phase 7 equity heads (Partners' Capital 3010, Reserves
+ * 3200, Equity Adjustments 3920) and — reusing the Year-End Closing engine so
+ * the two never diverge — the Retained Earnings head (3910). Idempotent.
+ */
+export async function ensureCapitalEquityAccounts(): Promise<void> {
+  if (capitalEquityAccountsEnsured) return
+  await ensureRegisterPostingAccounts()
+  await seedAccounts(CAPITAL_EQUITY_ACCOUNT_SEEDS)
+  const { ensureRetainedEarningsAccount } = await import("@/lib/finance-year-end-closing")
+  await ensureRetainedEarningsAccount()
+  capitalEquityAccountsEnsured = true
 }
 
 let expenseAccountsEnsured = false

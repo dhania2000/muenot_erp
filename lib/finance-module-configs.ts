@@ -2160,6 +2160,23 @@ const provisionsAccruals: ModuleConfig = {
     "COALESCE(SUM(amount),0) total_amount, COALESCE(SUM(CASE WHEN status = 'Open' THEN amount ELSE 0 END),0) open_amount, COALESCE(SUM(CASE WHEN status = 'Utilised' THEN amount ELSE 0 END),0) used_amount, COUNT(*) total_rows",
 }
 
+// Phase 7 — Capital & Equity. Seven entry types split into external
+// (cash-affecting) contributions / withdrawals and internal equity-to-equity
+// appropriations. The cash types show the "Settled via" bank/cash picker; the
+// transfer types show the counter equity head + Increase/Decrease direction.
+const EQUITY_ENTRY_TYPES = [
+  "Capital Contribution",
+  "Capital Withdrawal",
+  "Share Capital",
+  "Partner Capital",
+  "Reserves",
+  "Retained Earnings",
+  "Equity Adjustment",
+]
+const EQUITY_CASH_TYPES = ["Capital Contribution", "Capital Withdrawal", "Share Capital", "Partner Capital"]
+const EQUITY_TRANSFER_TYPES = ["Reserves", "Retained Earnings", "Equity Adjustment"]
+const EQUITY_SOURCE_HEADS = ["Retained Earnings", "Reserves", "Share Capital", "Partner Capital"]
+
 const capitalEquity: ModuleConfig = {
   key: "capital-equity",
   table: "capital_equity",
@@ -2173,18 +2190,22 @@ const capitalEquity: ModuleConfig = {
   statusColumn: "status",
   searchColumns: ["entry_id", "entry_type", "contributor_name", "instrument"],
   filters: [
-    { type: "select", key: "entry_type", label: "Type", options: ["Capital Contribution", "Share Issue", "Drawings", "Dividend", "Retained Earnings Transfer"] },
+    { type: "select", key: "entry_type", label: "Type", options: EQUITY_ENTRY_TYPES },
     { type: "select", key: "status", label: "Status", options: ["Active", "Reversed"] },
   ],
   fields: [
-    fld("Entry information", "entry_type", "Entry type", "select", { options: ["Capital Contribution", "Share Issue", "Drawings", "Dividend", "Retained Earnings Transfer"], required: true }),
-    fld("Entry information", "contributor_name", "Contributor / shareholder", "text", { required: true }),
+    fld("Entry information", "entry_type", "Entry type", "select", { options: EQUITY_ENTRY_TYPES, required: true }),
+    fld("Entry information", "contributor_name", "Contributor / shareholder / particulars", "text", { placeholder: "Owner, partner, shareholder or reason for the entry" }),
     fld("Entry information", "entry_date", "Entry date", "date", { required: true }),
     fld("Entry information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
     fld("Entry information", "instrument", "Instrument / reference", "text", { placeholder: "e.g. Equity shares, cheque no." }),
     fld("Entry information", "status", "Status", "select", { options: ["Active", "Reversed"], optional: true }),
     fld("Amounts", "amount", "Amount", "number", { required: true, money: true }),
-    fld("Amounts", "mode", "Settled via", "select", { options: CASH_SOURCES }),
+    // Cash-affecting entries settle through Bank / Cash …
+    fld("Amounts", "mode", "Settled via", "select", { options: CASH_SOURCES, visibleWhen: { field: "entry_type", in: EQUITY_CASH_TYPES } }),
+    // … internal appropriations move value between two equity heads instead.
+    fld("Amounts", "transfer_source", "Transfer from / to (equity head)", "select", { options: EQUITY_SOURCE_HEADS, optional: true, visibleWhen: { field: "entry_type", in: EQUITY_TRANSFER_TYPES } }),
+    fld("Amounts", "direction", "Effect on equity", "select", { options: ["Increase", "Decrease"], optional: true, visibleWhen: { field: "entry_type", in: EQUITY_TRANSFER_TYPES } }),
     fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
     fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
     fld("Notes", "notes", "Notes", "textarea"),
@@ -2199,12 +2220,16 @@ const capitalEquity: ModuleConfig = {
   ],
   kpis: [
     { label: "Contributions", key: "total_in", money: true, icon: "Banknote" },
-    { label: "Drawings / Dividends", key: "total_out", money: true, icon: "CreditCard" },
+    { label: "Withdrawals", key: "total_out", money: true, icon: "CreditCard" },
     { label: "Net Equity", key: "net_equity", money: true, icon: "Landmark" },
     { label: "Records", key: "total_rows", icon: "FileText" },
   ],
+  // Contributions (Capital Contribution / Share Capital / Partner Capital) add
+  // to equity; withdrawals reduce it. Internal transfers (Reserves / Retained
+  // Earnings / Equity Adjustment) are equity-neutral, so they sit out of the
+  // in / out / net figures.
   summarySelect:
-    "COALESCE(SUM(CASE WHEN entry_type IN ('Drawings','Dividend') THEN 0 ELSE amount END),0) total_in, COALESCE(SUM(CASE WHEN entry_type IN ('Drawings','Dividend') THEN amount ELSE 0 END),0) total_out, COALESCE(SUM(CASE WHEN entry_type IN ('Drawings','Dividend') THEN -amount ELSE amount END),0) net_equity, COUNT(*) total_rows",
+    "COALESCE(SUM(CASE WHEN entry_type IN ('Capital Contribution','Share Capital','Partner Capital') THEN amount ELSE 0 END),0) total_in, COALESCE(SUM(CASE WHEN entry_type = 'Capital Withdrawal' THEN amount ELSE 0 END),0) total_out, COALESCE(SUM(CASE WHEN entry_type IN ('Capital Contribution','Share Capital','Partner Capital') THEN amount WHEN entry_type = 'Capital Withdrawal' THEN -amount ELSE 0 END),0) net_equity, COUNT(*) total_rows",
 }
 
 const relatedParties: ModuleConfig = {

@@ -79,6 +79,10 @@ export async function ensureUnificationSchema() {
   const alters: string[] = [
     "ALTER TABLE recruit_applications ADD COLUMN IF NOT EXISTS candidate_master_id VARCHAR(191) DEFAULT NULL",
     "ALTER TABLE recruit_applications ADD INDEX IF NOT EXISTS idx_app_candidate_master (candidate_master_id)",
+    "ALTER TABLE recruit_applications ADD COLUMN IF NOT EXISTS requisition_id VARCHAR(40) DEFAULT NULL",
+    "ALTER TABLE recruit_applications ADD COLUMN IF NOT EXISTS campaign VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruit_applications ADD COLUMN IF NOT EXISTS recruiter VARCHAR(190) DEFAULT NULL",
+    "ALTER TABLE recruit_applications ADD INDEX IF NOT EXISTS idx_app_requisition (requisition_id)",
     "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL",
     "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS norm_email VARCHAR(255) DEFAULT NULL",
     "ALTER TABLE recruitment_candidates ADD COLUMN IF NOT EXISTS norm_phone VARCHAR(20) DEFAULT NULL",

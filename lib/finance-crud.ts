@@ -6,7 +6,8 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns, ensureRegisterModuleTables } from "@/lib/finance-ensure"
+import { syncRegisterPosting, reverseRegisterPosting } from "@/lib/finance-register-posting"
 import { guardChartOfAccountWrite, checkAccountDeletable } from "@/lib/finance-coa"
 import { syncOpeningBalancePosting } from "@/lib/finance-opening-balance"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
@@ -132,6 +133,22 @@ const DELETE_GUARDS: Record<string, (row: Record<string, any>) => Promise<string
  * into the GST Input / ITC register (Phase 11–20). Everything here keys off the
  * authoritative, server-recomputed row, never the raw browser payload.
  */
+// The five transactional register modules that project a balanced double-entry
+// voucher (Journal + General Ledger) through the shared register-posting engine.
+// Related Parties is a plain disclosure master and never posts. This set drives
+// both the on-demand table ensure and the generic post/reverse hooks below, so
+// the Balance Sheet, Trial Balance and Fixed Assets Register reflect them.
+const REGISTER_POSTING_KEYS = [
+  "fixed-assets",
+  "loans-advances",
+  "investments",
+  "provisions-accruals",
+  "capital-equity",
+] as const
+
+/** Every register module that owns a dedicated table (posting + the RP master). */
+const REGISTER_MODULE_KEYS = new Set<string>([...REGISTER_POSTING_KEYS, "related-parties"])
+
 const AFTER_WRITE: Record<
   string,
   (ctx: {
@@ -261,6 +278,27 @@ const AFTER_WRITE: Record<
       await logFinanceEvent({ ...base, type: "updated", summary: `Renamed to ${row.account_name}`, detail: { from: existing.account_name, to: row.account_name } })
     }
   },
+  // Fixed Assets, Loans & Advances, Investments, Provisions & Accruals and
+  // Capital & Equity all project a balanced double-entry voucher through the
+  // shared register-posting engine, so their balances flow into the Journal,
+  // General Ledger, Trial Balance, Balance Sheet and Fixed Assets Register.
+  // Posting is idempotent and failure-tolerant: only an active/approved status
+  // posts, an amount change reverses-and-reposts, and a posting error leaves the
+  // document "Unposted" for the next save to retry — it never blocks CRUD.
+  ...Object.fromEntries(
+    REGISTER_POSTING_KEYS.map((key) => [
+      key,
+      async ({ finalRow, userId }: { finalRow: Record<string, any>; userId: number }) => {
+        const businessId = finalRow[cfgIdColumn(key)]
+        if (!businessId) return
+        try {
+          await syncRegisterPosting(key, String(businessId), { createdBy: userId })
+        } catch (error) {
+          console.log(`[v0] syncRegisterPosting failed for ${key}:`, (error as Error).message)
+        }
+      },
+    ]),
+  ),
 }
 
 /** Optional per-module side effect that runs when a record is deleted. */
@@ -300,6 +338,21 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
     // Balance no longer counts the deleted movement.
     await recomputeBalancesForBankTxn(row)
   },
+  // Reverse a register document's Journal + General Ledger posting before the
+  // row leaves so the ledger stays balanced (the reversal unwinds the frozen
+  // `posted_snapshot`, never the possibly-edited live amounts).
+  ...Object.fromEntries(
+    REGISTER_POSTING_KEYS.map((key) => [
+      key,
+      async (row: Record<string, any>) => {
+        try {
+          await reverseRegisterPosting(key, row)
+        } catch (error) {
+          console.log(`[v0] reverseRegisterPosting failed for ${key}:`, (error as Error).message)
+        }
+      },
+    ]),
+  ),
 }
 
 /** Resolve a module's id column without importing the whole config graph twice. */
@@ -362,6 +415,7 @@ export function createFinanceHandlers(moduleKey: string) {
     if (moduleKey === "expenses") await ensureExpenseColumns()
     if (moduleKey === "bank-transactions") await ensureBankTransactionColumns()
     if (moduleKey === "chart-of-accounts") await ensureChartOfAccountsColumns()
+    if (REGISTER_MODULE_KEYS.has(moduleKey)) await ensureRegisterModuleTables()
   }
 
   const validate = VALIDATORS[moduleKey]

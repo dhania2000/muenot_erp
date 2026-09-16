@@ -17,7 +17,7 @@ import {
   DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog"
-import { Plus } from "lucide-react"
+import { Plus, Pencil, Trash2 } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
 import {
@@ -167,16 +167,64 @@ const configs: Record<string, { title: string; fields: string[] }> = {
   },
 }
 
-// Picks the most meaningful display label for a row across all Operations kinds.
-function recordLabel(row: any): string {
-  const candidates = [
-    row.resource_name, row.project_name, row.milestone_name, row.deliverable_name,
-    row.task_title, row.title, row.document_name, row.sop_code, row.checklist_name,
-    row.requirement_title, row.approval_item, row.approval_no, row.escalation_no,
-    row.audit_no, row.work_order_no, row.reference_no, row.vendor_name,
-    row.sla_metric, row.cost_category, row.category, row.skill_name, row.reviewer_name,
-  ]
-  return candidates.find((v) => v != null && String(v).trim() !== "") ?? "Operational record"
+// Default lifecycle statuses used when a module has no specialised set.
+const DEFAULT_STATUS = ["Active", "In Progress", "On Hold", "Completed", "Closed"]
+
+// Per-module status lifecycles. Projects use the full delivery lifecycle
+// (Phase 5): Draft → Planned → Active → On Hold → Completed → Closed → Cancelled.
+const STATUS_BY_KIND: Record<string, string[]> = {
+  projects: ["Draft", "Planned", "Active", "On Hold", "Completed", "Closed", "Cancelled"],
+  issues: ["Open", "In Progress", "Resolved", "Closed"],
+  escalations: ["Open", "In Progress", "Resolved", "Closed"],
+  approvals: ["Pending", "Approved", "Rejected"],
+  client_approvals: ["Pending", "Approved", "Rejected"],
+  tasks: ["To Do", "In Progress", "Blocked", "In Review", "Done"],
+  allocations: ["Active", "Partially Allocated", "Over Allocated", "Completed", "Released"],
+  timesheets: ["Draft", "Submitted", "Approved", "Rejected"],
+  corrective_actions: ["Open", "In Progress", "Closed", "Verified"],
+  root_cause_capa: ["Open", "In Progress", "Closed", "Verified"],
+  qa_audits: ["Planned", "In Progress", "Completed", "Closed"],
+  work_orders: ["Open", "In Progress", "On Hold", "Completed", "Cancelled"],
+  resource_requests: ["Open", "Approved", "Fulfilled", "Rejected", "Cancelled"],
+}
+
+// Fixed option lists for enum-style fields shared across modules. Any field not
+// listed here (and not "status") renders as a free text / date input.
+const ENUM_OPTIONS: Record<string, string[]> = {
+  priority: ["Low", "Medium", "High", "Critical"],
+  work_mode: ["On-site", "Hybrid", "Remote"],
+  shift: ["General", "Morning", "Evening", "Night"],
+  rate_type: ["Hourly", "Daily", "Monthly", "Fixed"],
+  resource_type: ["FTE", "Contractor", "Freelancer", "Vendor"],
+  employment_status: ["FTE", "Contractor", "Freelancer"],
+  availability_status: ["Available", "Partially Allocated", "Fully Allocated", "Unavailable"],
+  billable: ["Yes", "No"],
+  billing_model: ["Fixed", "T&M", "Milestone", "Retainer"],
+  confidentiality: ["Public", "Internal", "Confidential", "Restricted"],
+  approval_status: ["Pending", "Approved", "Rejected"],
+  acceptance_status: ["Pending", "Accepted", "Rejected", "Rework"],
+  quality_status: ["Pending", "Accepted", "Rejected", "Rework"],
+  payment_status: ["Unpaid", "Partially Paid", "Paid"],
+  severity: ["Low", "Medium", "High", "Critical"],
+  sla_status: ["Met SLA", "At Risk", "Breached SLA"],
+  escalation_level: ["L1", "L2", "L3"],
+  decision: ["Approved", "Rejected", "On Hold", "Pending"],
+  proficiency_level: ["Beginner", "Intermediate", "Advanced", "Expert"],
+  capa_type: ["Corrective", "Preventive"],
+}
+
+// Returns the select options for a field within a module, or null for a plain input.
+function optionsFor(kind: string, field: string): string[] | null {
+  if (field === "status") return STATUS_BY_KIND[kind] ?? DEFAULT_STATUS
+  return ENUM_OPTIONS[field] ?? null
+}
+
+// Columns that render as a coloured status Badge in the list view.
+const BADGE_FIELDS = new Set(["status", "sla_status", "priority", "approval_status", "payment_status", "severity"])
+
+function formatCell(value: any): string {
+  if (value == null || String(value).trim() === "") return "—"
+  return String(value).slice(0, 60)
 }
 
 function recordId(row: any): string {
@@ -366,31 +414,70 @@ function formatLabel(field: string) {
   return field.replaceAll("_", " ").replace(/\b\w/g, (ch) => ch.toUpperCase())
 }
 
+type Mode = "create" | "edit"
+
 export function OperationsDashboardClient({ initialModule = "resources" }: { initialModule?: string }) {
-  const [kind, setKind] = useState(initialModule)
+  const [kind] = useState(initialModule)
   const [form, setForm] = useState<any>({})
   const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<Mode>("create")
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const { data, mutate } = useSWR<{ rows: any[] }>(`/api/operations?kind=${kind}`, fetcher)
   const c = configs[kind]
+
+  function openCreate() {
+    setMode("create")
+    setEditingId(null)
+    setForm({})
+    setOpen(true)
+  }
+
+  function openEdit(row: any) {
+    if (!c) return
+    setMode("edit")
+    setEditingId(String(row.id))
+    const next: any = {}
+    for (const f of c.fields) next[f] = row[f] ?? ""
+    setForm(next)
+    setOpen(true)
+  }
 
   async function save() {
     setSaving(true)
     try {
+      const isEdit = mode === "edit" && editingId
       await fetch("/api/operations", {
-        method: "POST",
+        method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, ...form }),
+        body: JSON.stringify(isEdit ? { kind, id: editingId, ...form } : { kind, ...form }),
       })
       setForm({})
       setOpen(false)
+      setEditingId(null)
+      setMode("create")
       mutate()
     } finally {
       setSaving(false)
     }
   }
 
+  async function remove(row: any) {
+    const id = row?.id
+    if (id == null) return
+    if (!window.confirm("Delete this record? This action cannot be undone.")) return
+    setDeletingId(String(id))
+    try {
+      await fetch(`/api/operations?kind=${kind}&id=${encodeURIComponent(String(id))}`, { method: "DELETE" })
+      mutate()
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const rows: any[] = data?.rows || []
+  const columns = c ? c.fields.slice(0, 6) : []
 
   return (
     <main className="space-y-8 p-6">
@@ -404,49 +491,66 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
 
         {kind !== "overview" && c && (
           <div className="flex items-center gap-2">
-          <ExcelExportButton
-            rows={rows}
-            filename={kind}
-            columns={c.fields.map((f) => ({ header: formatLabel(f), value: (r: any) => r[f] }))}
-          />
-          <ImportButton moduleKey={`operations-${kind}`} onImported={() => mutate()} />
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger
-              render={
-                <Button>
-                  <Plus className="size-4" />
-                  Add {c.title}
-                </Button>
-              }
+            <ExcelExportButton
+              rows={rows}
+              filename={kind}
+              columns={c.fields.map((f) => ({ header: formatLabel(f), value: (r: any) => r[f] }))}
             />
-            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
-              <DialogHeader>
-                <DialogTitle>Add {c.title}</DialogTitle>
-              </DialogHeader>
-              <div className="grid gap-4 py-2 md:grid-cols-2">
-                {c.fields.map((field: string) => (
-                  <div key={field} className="flex flex-col gap-1.5">
-                    <Label htmlFor={field} className="text-xs text-muted-foreground">
-                      {formatLabel(field)}
-                    </Label>
-                    <Input
-                      id={field}
-                      placeholder={formatLabel(field)}
-                      type={field.includes("date") ? "date" : "text"}
-                      value={form[field] ?? ""}
-                      onChange={(e) => setForm({ ...form, [field]: e.target.value })}
-                    />
-                  </div>
-                ))}
-              </div>
-              <DialogFooter>
-                <DialogClose render={<Button variant="outline">Cancel</Button>} />
-                <Button onClick={save} disabled={saving}>
-                  {saving ? "Saving..." : "Save record"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+            <ImportButton moduleKey={`operations-${kind}`} onImported={() => mutate()} />
+            <Button onClick={openCreate}>
+              <Plus className="size-4" />
+              Add {c.title}
+            </Button>
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+                <DialogHeader>
+                  <DialogTitle>
+                    {mode === "edit" ? "Edit" : "Add"} {c.title}
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-2 md:grid-cols-2">
+                  {c.fields.map((field: string) => {
+                    const opts = optionsFor(kind, field)
+                    return (
+                      <div key={field} className="flex flex-col gap-1.5">
+                        <Label htmlFor={field} className="text-xs text-muted-foreground">
+                          {formatLabel(field)}
+                        </Label>
+                        {opts ? (
+                          <select
+                            id={field}
+                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                            value={form[field] ?? ""}
+                            onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+                          >
+                            <option value="">Select {formatLabel(field)}</option>
+                            {opts.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <Input
+                            id={field}
+                            placeholder={formatLabel(field)}
+                            type={field.includes("date") ? "date" : "text"}
+                            value={form[field] ?? ""}
+                            onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline">Cancel</Button>} />
+                  <Button onClick={save} disabled={saving}>
+                    {saving ? "Saving..." : mode === "edit" ? "Update record" : "Save record"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         )}
       </div>
@@ -458,26 +562,57 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b text-muted-foreground">
-                <th className="p-4">ID</th>
-                <th className="p-4">Record</th>
-                <th className="p-4">Status</th>
-                <th className="p-4">Created</th>
+                <th className="p-3">ID</th>
+                {columns.map((col) => (
+                  <th key={col} className="whitespace-nowrap p-3">
+                    {formatLabel(col)}
+                  </th>
+                ))}
+                <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={columns.length + 2} className="p-8 text-center text-muted-foreground">
                     No records yet. Click &quot;Add {c?.title}&quot; to create one.
                   </td>
                 </tr>
               )}
               {rows.map((row: any, i: number) => (
-                <tr key={recordId(row) || i} className="border-b last:border-0">
-                  <td className="p-4 font-mono text-xs">{recordId(row)}</td>
-                  <td className="p-4">{recordLabel(row)}</td>
-                  <td className="p-4">{row.status}</td>
-                  <td className="p-4 text-muted-foreground">{String(row.created_at || "").slice(0, 10)}</td>
+                <tr key={row.id ?? i} className="border-b transition-colors last:border-0 hover:bg-muted/40">
+                  <td className="p-3 font-mono text-xs">{row.id ?? recordId(row)}</td>
+                  {columns.map((col) => (
+                    <td key={col} className="p-3">
+                      {BADGE_FIELDS.has(col) && row[col] ? (
+                        <Badge variant={STATUS_VARIANT[row[col]] ?? "outline"}>{row[col]}</Badge>
+                      ) : (
+                        <span className="line-clamp-1">{formatCell(row[col])}</span>
+                      )}
+                    </td>
+                  ))}
+                  <td className="p-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label="Edit record"
+                        onClick={() => openEdit(row)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label="Delete record"
+                        className="text-destructive hover:text-destructive"
+                        disabled={deletingId === String(row.id)}
+                        onClick={() => remove(row)}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

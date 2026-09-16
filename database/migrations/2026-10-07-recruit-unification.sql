@@ -53,43 +53,40 @@ ALTER TABLE recruitment_candidates
 -- ---------------------------------------------------------------------------
 -- Stage tables gain an application_id link back to the operational pipeline.
 -- (They already carry candidate_id / candidate_name from their module config.)
+--
+-- These config-driven tables are created lazily by their module and may not
+-- exist yet in every database. Plain `ALTER TABLE` has no table-level
+-- IF EXISTS guard, so a missing table (e.g. recruitment_interview_feedback)
+-- would abort the whole import. We guard each one with a helper procedure that
+-- only alters the table when it actually exists — mirroring the runtime
+-- self-heal (ensureUnificationSchema), which skips tables that aren't present.
 -- ---------------------------------------------------------------------------
-ALTER TABLE recruitment_screening
-  ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL;
-ALTER TABLE recruitment_screening
-  ADD INDEX IF NOT EXISTS idx_scr_application (application_id);
+DROP PROCEDURE IF EXISTS _recruit_link_stage_table;
+DELIMITER $$
+CREATE PROCEDURE _recruit_link_stage_table(IN p_table VARCHAR(64), IN p_index VARCHAR(64))
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = p_table
+  ) THEN
+    SET @ddl = CONCAT('ALTER TABLE `', p_table,
+      '` ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL');
+    PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-ALTER TABLE recruitment_interviews
-  ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL;
-ALTER TABLE recruitment_interviews
-  ADD INDEX IF NOT EXISTS idx_rint_application (application_id);
+    SET @ddl = CONCAT('ALTER TABLE `', p_table,
+      '` ADD INDEX IF NOT EXISTS ', p_index, ' (application_id)');
+    PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+  END IF;
+END$$
+DELIMITER ;
 
-ALTER TABLE recruitment_assessments
-  ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL;
-ALTER TABLE recruitment_assessments
-  ADD INDEX IF NOT EXISTS idx_asm_application (application_id);
+CALL _recruit_link_stage_table('recruitment_screening', 'idx_scr_application');
+CALL _recruit_link_stage_table('recruitment_interviews', 'idx_rint_application');
+CALL _recruit_link_stage_table('recruitment_assessments', 'idx_asm_application');
+CALL _recruit_link_stage_table('recruitment_selections', 'idx_sel_application');
+CALL _recruit_link_stage_table('recruitment_interview_feedback', 'idx_ifb_application');
+CALL _recruit_link_stage_table('recruitment_background_verification', 'idx_rbgv_application');
+CALL _recruit_link_stage_table('recruitment_reference_checks', 'idx_rref_application');
+CALL _recruit_link_stage_table('recruitment_pre_joining', 'idx_prj_application');
 
-ALTER TABLE recruitment_selections
-  ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL;
-ALTER TABLE recruitment_selections
-  ADD INDEX IF NOT EXISTS idx_sel_application (application_id);
-
-ALTER TABLE recruitment_interview_feedback
-  ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL;
-ALTER TABLE recruitment_interview_feedback
-  ADD INDEX IF NOT EXISTS idx_ifb_application (application_id);
-
-ALTER TABLE recruitment_background_verification
-  ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL;
-ALTER TABLE recruitment_background_verification
-  ADD INDEX IF NOT EXISTS idx_rbgv_application (application_id);
-
-ALTER TABLE recruitment_reference_checks
-  ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL;
-ALTER TABLE recruitment_reference_checks
-  ADD INDEX IF NOT EXISTS idx_rref_application (application_id);
-
-ALTER TABLE recruitment_pre_joining
-  ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL;
-ALTER TABLE recruitment_pre_joining
-  ADD INDEX IF NOT EXISTS idx_prj_application (application_id);
+DROP PROCEDURE IF EXISTS _recruit_link_stage_table;

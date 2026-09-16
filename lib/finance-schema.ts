@@ -19,6 +19,14 @@ export type FieldDef = {
   label: string
   type: FieldType
   options?: string[]
+  /**
+   * Phase 51: makes a `select` field settings-driven. Names an option-set key
+   * from `lib/recruitment-option-sets.ts`; the form dialog loads the active
+   * options for that key at runtime (from `recruitment_settings`) and falls
+   * back to the static `options` list when none are configured. The currently
+   * stored value is always kept selectable.
+   */
+  optionsCategory?: string
   placeholder?: string
   required?: boolean
   /** Only render this field when the condition matches the current form. */

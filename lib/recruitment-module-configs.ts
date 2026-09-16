@@ -10,15 +10,13 @@
  */
 import { num, round2 } from "@/lib/finance-calc"
 import type { FieldDef, FieldType, ModuleConfig } from "@/lib/finance-schema"
+import { EMPLOYMENT_TYPES, PRIORITIES, WORK_MODES } from "@/lib/recruitment-option-sets"
 
 /** Terse field builder. */
 function fld(section: string, key: string, label: string, type: FieldType = "text", extra: Partial<FieldDef> = {}): FieldDef {
   return { section, key, label, type, ...extra }
 }
 
-const EMPLOYMENT_TYPES = ["Full Time", "Part Time", "Contract", "Internship", "Freelance", "Temporary"]
-const PRIORITIES = ["Low", "Medium", "High", "Urgent"]
-const WORK_MODES = ["On-site", "Hybrid", "Remote"]
 const YES_NO = ["Yes", "No"]
 
 const TRACKING_FIELDS = (section: string): FieldDef[] => [
@@ -50,21 +48,21 @@ const jobRequisitions: ModuleConfig = {
     fld("Requisition", "job_title", "Job title", "text", { required: true }),
     fld("Requisition", "department", "Department", "text"),
     fld("Requisition", "project", "Project", "text"),
-    fld("Requisition", "employment_type", "Employment type", "select", { options: EMPLOYMENT_TYPES, optional: true }),
+    fld("Requisition", "employment_type", "Employment type", "select", { options: EMPLOYMENT_TYPES, optionsCategory: "employment_type", optional: true }),
     fld("Resources", "required_resources", "Required resources", "number"),
     fld("Resources", "filled_resources", "Filled resources", "number"),
     fld("Resources", "pending_resources", "Pending resources", "number", { computed: true }),
-    fld("Resources", "priority", "Priority", "select", { options: PRIORITIES, optional: true }),
+    fld("Resources", "priority", "Priority", "select", { options: PRIORITIES, optionsCategory: "priority", optional: true }),
     fld("Requirements", "required_qualification", "Required qualification", "text"),
     fld("Requirements", "required_skills", "Required skills", "textarea"),
     fld("Requirements", "experience_required", "Experience required", "text"),
     fld("Requirements", "location", "Location", "text"),
-    fld("Requirements", "work_mode", "Work mode", "select", { options: WORK_MODES, optional: true }),
+    fld("Requirements", "work_mode", "Work mode", "select", { options: WORK_MODES, optionsCategory: "work_mode", optional: true }),
     fld("Requirements", "rate_salary", "Rate / Salary", "text", { placeholder: "e.g. ₹8-10 LPA" }),
     fld("Ownership", "hiring_manager", "Hiring manager", "text"),
     fld("Ownership", "recruiter", "Recruiter", "text"),
     fld("Ownership", "target_date", "Target date", "date"),
-    fld("Ownership", "status", "Status", "select", { options: ["Open", "On Hold", "Closed", "Cancelled", "Filled"] }),
+    fld("Ownership", "status", "Status", "select", { options: ["Open", "On Hold", "Closed", "Cancelled", "Filled"], optionsCategory: "requisition_status" }),
     fld("Ownership", "remarks", "Remarks", "textarea"),
   ],
   compute: (v) => ({
@@ -122,7 +120,7 @@ const recruitmentCampaigns: ModuleConfig = {
     fld("Funnel", "interviewed", "Interviewed", "number"),
     fld("Funnel", "selected", "Selected", "number"),
     fld("Funnel", "joined", "Joined", "number"),
-    fld("Status", "campaign_status", "Campaign status", "select", { options: ["Planned", "Active", "Paused", "Completed", "Cancelled"] }),
+    fld("Status", "campaign_status", "Campaign status", "select", { options: ["Planned", "Active", "Paused", "Completed", "Cancelled"], optionsCategory: "campaign_status" }),
     fld("Status", "remarks", "Remarks", "textarea"),
   ],
   tableColumns: [
@@ -173,7 +171,7 @@ const candidateMaster: ModuleConfig = {
     fld("Application", "source", "Source", "text"),
     fld("Application", "form_link", "Form link", "text"),
     fld("Application", "form_response_link", "Form response link", "text"),
-    fld("Application", "employment_type", "Employment type", "select", { options: EMPLOYMENT_TYPES, optional: true }),
+    fld("Application", "employment_type", "Employment type", "select", { options: EMPLOYMENT_TYPES, optionsCategory: "employment_type", optional: true }),
     fld("Profile", "experience", "Experience", "text"),
     fld("Profile", "highest_qualification", "Highest qualification", "text"),
     fld("Profile", "primary_skills", "Primary skills", "textarea"),
@@ -239,7 +237,7 @@ const screening: ModuleConfig = {
     fld("Scores", "availability", "Availability", "number"),
     fld("Scores", "rate_salary_fit", "Rate / Salary fit", "number"),
     fld("Scores", "overall_score", "Overall score", "number", { computed: true }),
-    fld("Outcome", "screening_result", "Screening result", "select", { options: ["Shortlisted", "On Hold", "Rejected"] }),
+    fld("Outcome", "screening_result", "Screening result", "select", { options: ["Shortlisted", "On Hold", "Rejected"], optionsCategory: "screening_result" }),
     fld("Outcome", "status", "Status", "select", { options: ["Pending", "Completed", "In Progress"] }),
     fld("Outcome", "reason_for_rejection", "Reason for rejection", "text"),
     fld("Outcome", "next_action", "Next action", "text"),
@@ -293,8 +291,8 @@ const interviewTracker: ModuleConfig = {
     fld("Interview", "job_applied", "Job applied", "text"),
     fld("Interview", "requisition_id", "Requisition ID", "text"),
     fld("Interview", "interview_round", "Interview round", "text"),
-    fld("Interview", "interview_type", "Interview type", "select", { options: ["Telephonic", "Video", "In-person", "Technical", "HR", "Managerial"], optional: true }),
-    fld("Interview", "interview_mode", "Mode", "select", { options: ["Telephonic", "Video", "In-person", "Onsite"], optional: true }),
+    fld("Interview", "interview_type", "Interview type", "select", { options: ["Telephonic", "Video", "In-person", "Technical", "HR", "Managerial"], optionsCategory: "interview_type", optional: true }),
+    fld("Interview", "interview_mode", "Mode", "select", { options: ["Telephonic", "Video", "In-person", "Onsite"], optionsCategory: "interview_mode", optional: true }),
     fld("Interview", "interviewer", "Interviewer", "text"),
     fld("Interview", "interviewer_email", "Interviewer email", "text", { placeholder: "Used for the calendar invite" }),
     fld("Interview", "candidate_email", "Candidate email", "text", { placeholder: "Used for the calendar invite" }),
@@ -314,7 +312,7 @@ const interviewTracker: ModuleConfig = {
     fld("Scores", "communication_score", "Communication score", "number"),
     fld("Scores", "subject_score", "Subject score", "number"),
     fld("Scores", "overall_score", "Overall score", "number", { computed: true }),
-    fld("Outcome", "interview_result", "Interview result", "select", { options: ["Selected", "On Hold", "Rejected", "Pending"] }),
+    fld("Outcome", "interview_result", "Interview result", "select", { options: ["Selected", "On Hold", "Rejected", "Pending"], optionsCategory: "interview_result" }),
     fld("Outcome", "feedback", "Feedback", "textarea"),
     fld("Outcome", "next_round", "Next round", "text"),
     fld("Outcome", "next_interview_date", "Next interview date", "date"),

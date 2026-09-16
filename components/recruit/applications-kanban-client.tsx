@@ -143,6 +143,66 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
     }
   }
 
+  const visibleIds = useMemo(() => tableRows.map((a) => a.application_id), [tableRows])
+  const selectedVisibleCount = useMemo(
+    () => visibleIds.filter((id) => selected.has(id)).length,
+    [visibleIds, selected],
+  )
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
+
+  function toggleOne(id: string, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  function toggleAllVisible(checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of visibleIds) {
+        if (checked) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }
+
+  async function runBulk(action: "shortlist" | "reject" | "hold" | "advance", targetStage?: StageKey) {
+    const applicationIds = visibleIds.filter((id) => selected.has(id))
+    if (applicationIds.length === 0) return
+    setBulkBusy(true)
+    try {
+      const res = await fetch("/api/recruit/shortlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, applicationIds, targetStage }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        const verb =
+          action === "shortlist"
+            ? "Shortlisted"
+            : action === "reject"
+              ? "Rejected"
+              : action === "hold"
+                ? "Put on hold"
+                : `Moved to ${APPLICATION_STAGES.find((s) => s.key === targetStage)?.label ?? targetStage}`
+        toast.success(`${verb}: ${json.updated ?? applicationIds.length} updated, ${json.skipped ?? 0} skipped`)
+        setSelected(new Set())
+        mutate()
+      } else {
+        toast.error(json.error || "Bulk action failed")
+      }
+    } catch {
+      toast.error("Bulk action failed")
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const questions = active ? safeParse<any[]>(active.answers, []) : []
 
   return (
@@ -212,10 +272,54 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
             ? `All applications (${tableRows.length})`
             : `${APPLICATION_STAGES.find((s) => s.key === stageFilter)?.label} (${tableRows.length})`}
         </h2>
+
+        {canManage && selectedVisibleCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 p-2">
+            <span className="px-1 text-sm font-medium">{selectedVisibleCount} selected</span>
+            <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => runBulk("shortlist")}>
+              <CheckCircle2 data-icon="inline-start" /> Shortlist
+            </Button>
+            <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => runBulk("hold")}>
+              <PauseCircle data-icon="inline-start" /> Hold
+            </Button>
+            <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => runBulk("reject")}>
+              <XCircle data-icon="inline-start" /> Reject
+            </Button>
+            <Select
+              value=""
+              onValueChange={(v) => v && runBulk("advance", v as StageKey)}
+              disabled={bulkBusy}
+            >
+              <SelectTrigger size="sm" className="w-44">
+                <SelectValue placeholder="Move to stage…" />
+              </SelectTrigger>
+              <SelectContent>
+                {APPLICATION_STAGES.map((s) => (
+                  <SelectItem key={s.key} value={s.key}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => setSelected(new Set())}>
+              Clear
+            </Button>
+          </div>
+        )}
+
         <div className="overflow-x-auto rounded-md border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
+                {canManage && (
+                  <TableHead className="w-10">
+                    <Checkbox
+                      aria-label="Select all applications"
+                      checked={allVisibleSelected}
+                      onCheckedChange={(c) => toggleAllVisible(c === true)}
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Candidate</TableHead>
                 <TableHead>Job</TableHead>
                 <TableHead>Applied</TableHead>
@@ -239,7 +343,16 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
                 </TableRow>
               )}
               {tableRows.map((app) => (
-                <TableRow key={app.application_id}>
+                <TableRow key={app.application_id} data-state={selected.has(app.application_id) ? "selected" : undefined}>
+                  {canManage && (
+                    <TableCell className="w-10">
+                      <Checkbox
+                        aria-label={`Select ${app.candidate_name}`}
+                        checked={selected.has(app.application_id)}
+                        onCheckedChange={(c) => toggleOne(app.application_id, c === true)}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell>
                     <button type="button" onClick={() => setActive(app)} className="flex flex-col text-left">
                       <span className="font-medium">{app.candidate_name}</span>

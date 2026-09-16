@@ -4,7 +4,7 @@ import { getSession } from "@/lib/auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { RECRUITMENT_MODULE_CONFIGS } from "@/lib/recruitment-module-configs"
-import type { ModuleConfig } from "@/lib/finance-schema"
+import type { FieldDef, ModuleConfig } from "@/lib/finance-schema"
 import {
   RECRUITMENT_PERMISSION_KEYS,
   scopeWhereForModule,
@@ -23,6 +23,46 @@ import {
 /** Column keys a client is allowed to write (everything except computed fields). */
 function inputKeys(cfg: ModuleConfig) {
   return cfg.fields.filter((f) => !f.computed).map((f) => f.key)
+}
+
+/** MySQL column type for a config field. */
+function columnType(f: FieldDef, cfg: ModuleConfig): string {
+  if (f.key === cfg.idColumn) return "VARCHAR(191) NULL"
+  if (f.money || f.type === "number") return "DECIMAL(18,2) NULL"
+  if (f.type === "date") return "DATE NULL"
+  if (f.type === "textarea") return "TEXT NULL"
+  return "VARCHAR(512) NULL"
+}
+
+/**
+ * Self-healing schema: create the module's table (with its business-id unique
+ * key + system columns) if it does not already exist. `CREATE TABLE IF NOT
+ * EXISTS` is a no-op for the modules whose tables ship in the SQL migrations,
+ * and it lets the newer operational sub-modules (candidate activities,
+ * documents, referrals, tasks, follow-ups, vendors, costs) come online against
+ * the live database without a manual migration step. Runs once per table per
+ * process. The business-id UNIQUE key also gives duplicate protection.
+ */
+const ensuredTables = new Set<string>()
+async function ensureRecruitmentTable(cfg: ModuleConfig) {
+  if (ensuredTables.has(cfg.table)) return
+  const RESERVED = new Set(["id", "created_by", "created_at", "updated_at"])
+  const cols: string[] = ["`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY"]
+  const seen = new Set<string>()
+  for (const f of cfg.fields) {
+    if (RESERVED.has(f.key) || seen.has(f.key)) continue
+    seen.add(f.key)
+    cols.push(`\`${f.key}\` ${columnType(f, cfg)}`)
+  }
+  if (!seen.has(cfg.idColumn)) cols.push(`\`${cfg.idColumn}\` VARCHAR(191) NULL`)
+  cols.push("`created_by` BIGINT UNSIGNED NULL")
+  cols.push("`created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP")
+  cols.push("`updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
+  cols.push(`UNIQUE KEY \`uq_${cfg.table}_bizid\` (\`${cfg.idColumn}\`)`)
+  await query(
+    `CREATE TABLE IF NOT EXISTS \`${cfg.table}\` (${cols.join(", ")}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  )
+  ensuredTables.add(cfg.table)
 }
 
 /** Build the shared WHERE clause + args from the request's query params. */
@@ -60,6 +100,7 @@ export function createRecruitmentHandlers(moduleKey: string) {
   async function GET(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    await ensureRecruitmentTable(cfg)
 
     let { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
     // Record-level permission scope: an employee configured with "added"/"owned"
@@ -100,6 +141,7 @@ export function createRecruitmentHandlers(moduleKey: string) {
   async function POST(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    await ensureRecruitmentTable(cfg)
 
     if (permissionKey && !(await canCreateInModule(session, permissionKey))) {
       return NextResponse.json({ error: "You do not have permission to create this record." }, { status: 403 })
@@ -137,6 +179,7 @@ export function createRecruitmentHandlers(moduleKey: string) {
   async function PATCH(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    await ensureRecruitmentTable(cfg)
 
     const body = await req.json()
     const id = Number(body.id)
@@ -174,6 +217,7 @@ export function createRecruitmentHandlers(moduleKey: string) {
   async function DELETE(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    await ensureRecruitmentTable(cfg)
     const id = Number(req.nextUrl.searchParams.get("id"))
     if (!id) return NextResponse.json({ error: "Record id is required" }, { status: 400 })
     if (permissionKey) {

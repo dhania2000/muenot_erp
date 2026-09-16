@@ -944,6 +944,15 @@ export async function ensureRegisterModuleTables() {
   await ensureColumn("capital_equity", "transfer_source", "VARCHAR(60) DEFAULT NULL")
   await ensureColumn("capital_equity", "direction", "VARCHAR(20) DEFAULT NULL")
 
+  // Phase 8 — Related Parties link to an existing master (customer / vendor /
+  // employee) instead of duplicating it, and carry an effective window. These
+  // columns are added idempotently so an existing `related_parties` table picks
+  // up the source link + effective dates the picker and transaction matcher use.
+  await ensureColumn("related_parties", "source_type", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("related_parties", "source_id", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn("related_parties", "effective_from", "DATE DEFAULT NULL")
+  await ensureColumn("related_parties", "effective_to", "DATE DEFAULT NULL")
+
   registerTablesEnsured = true
 }
 

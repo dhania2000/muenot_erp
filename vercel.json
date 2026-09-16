@@ -39,6 +39,22 @@
     {
       "path": "/api/cron/provisions-periodic",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/fixed-assets-depreciation",
+      "schedule": "0 9 1 * *"
+    },
+    {
+      "path": "/api/cron/loan-reminders",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/investment-reminders",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/related-party-scan",
+      "schedule": "0 8 * * *"
     }
   ]
 }

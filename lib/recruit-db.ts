@@ -4,7 +4,7 @@ import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { nextDocumentId } from "@/lib/settings/numbering"
 import type { JobQuestion, StageKey } from "@/lib/recruit"
-import { normalizeStage } from "@/lib/recruitment-stages"
+import { normalizeStage, stageRank, isTerminalStage, type CanonicalStage } from "@/lib/recruitment-stages"
 
 // Phase 54: record-level permission scope fragment produced by
 // scopeWhereForModule() in lib/permission-enforce.ts. The legacy recruit_*
@@ -407,6 +407,28 @@ export async function deleteSkill(skillId: string) {
 // ---------------------------------------------------------------------------
 // Dashboard + report
 // ---------------------------------------------------------------------------
+/**
+ * Run a scalar-count query that may hit an optional / not-yet-migrated table.
+ * Returns 0 instead of throwing so the dashboard always renders. This is how the
+ * Phase 73 counters read straight from the real onboarding tables (BGV, reference
+ * checks, follow-ups) without assuming every migration has been applied.
+ */
+async function safeCount(sql: string, args: any[] = []): Promise<number> {
+  try {
+    const [row] = await query<any[]>(sql, args)
+    return Number(row?.c || 0)
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * PHASE 73/74: the Recruit dashboard reads every counter and the funnel from the
+ * ONE canonical pipeline (recruit_applications, normalised to canonical stages)
+ * plus the real stage tables (interviews, offers, BGV, reference checks,
+ * follow-ups). No hand-entered totals — advancing a candidate updates the
+ * numbers automatically.
+ */
 export async function getDashboardStats() {
   const [jobAgg] = await query<any[]>(
     "SELECT COUNT(*) AS total, SUM(status='open') AS open_jobs, COALESCE(SUM(positions),0) AS positions FROM recruit_jobs",
@@ -425,8 +447,88 @@ export async function getDashboardStats() {
   const upcomingInterviews = await query<any[]>(
     "SELECT interview_id, candidate_name, job_title, scheduled_at, mode, status FROM recruit_interviews WHERE status='scheduled' ORDER BY scheduled_at ASC LIMIT 6",
   )
+
+  // Collapse every raw/legacy stage value into the single canonical vocabulary
+  // so "screening", "phone_screen", "Offer Accepted" etc. all land in one bucket.
   const stageCounts: Record<string, number> = {}
-  for (const r of stageRows) stageCounts[r.stage] = Number(r.count)
+  for (const r of stageRows) {
+    const key = normalizeStage(r.stage)
+    stageCounts[key] = (stageCounts[key] || 0) + Number(r.count)
+  }
+  const atStage = (s: CanonicalStage) => stageCounts[s] || 0
+
+  // PHASE 74 funnel: cumulative "reached at least this stage" counts derived from
+  // each application's CURRENT canonical stage. Terminal stages (rejected/hold/
+  // withdrawn) count only as an application — we don't know how far they got.
+  const funnelSteps: { key: string; label: string; rank: number }[] = [
+    { key: "applications", label: "Applications", rank: 0 },
+    { key: "screening", label: "Screening", rank: 1 },
+    { key: "shortlisted", label: "Shortlisted", rank: 2 },
+    { key: "assessment", label: "Assessment", rank: 3 },
+    { key: "interview", label: "Interview", rank: 4 },
+    { key: "selected", label: "Selected", rank: 5 },
+    { key: "offer", label: "Offer", rank: 6 },
+    { key: "accepted", label: "Accepted", rank: 7 },
+    { key: "joined", label: "Joined", rank: 9 },
+  ]
+  const funnelCounts = new Map<string, number>(funnelSteps.map((s) => [s.key, 0]))
+  for (const [stageKey, count] of Object.entries(stageCounts)) {
+    const stage = stageKey as CanonicalStage
+    // Everyone is an application.
+    funnelCounts.set("applications", (funnelCounts.get("applications") || 0) + count)
+    if (isTerminalStage(stage)) continue
+    const r = stageRank(stage)
+    for (const step of funnelSteps) {
+      if (step.key === "applications") continue
+      if (r >= step.rank) funnelCounts.set(step.key, (funnelCounts.get(step.key) || 0) + count)
+    }
+  }
+  const funnel = funnelSteps.map((s) => ({ key: s.key, label: s.label, count: funnelCounts.get(s.key) || 0 }))
+
+  // PHASE 73 counters. Optional tables are read best-effort (safeCount) so an
+  // un-migrated database still renders the dashboard with zeros.
+  const [
+    openRequisitions,
+    upcomingJoining,
+    pendingBgv,
+    pendingReference,
+    pendingFeedback,
+    dueFollowups,
+  ] = await Promise.all([
+    safeCount(
+      "SELECT COUNT(*) AS c FROM recruitment_requisitions WHERE LOWER(COALESCE(status,'')) NOT IN ('closed','filled','cancelled','rejected','completed','on hold')",
+    ),
+    safeCount(
+      "SELECT COUNT(*) AS c FROM recruit_offers WHERE status='accepted' AND joining_date IS NOT NULL AND joining_date >= CURDATE()",
+    ),
+    safeCount("SELECT COUNT(*) AS c FROM recruit_bgv_checks WHERE LOWER(COALESCE(status,'')) NOT IN ('completed','cleared','passed')"),
+    safeCount("SELECT COUNT(*) AS c FROM recruit_reference_checks WHERE LOWER(COALESCE(status,'')) NOT IN ('completed','cleared','passed')"),
+    safeCount(
+      "SELECT COUNT(*) AS c FROM recruit_interviews WHERE LOWER(COALESCE(status,''))='completed' AND (feedback IS NULL OR feedback='')",
+    ),
+    safeCount(
+      "SELECT COUNT(*) AS c FROM recruitment_followups WHERE next_followup_date IS NOT NULL AND next_followup_date <= CURDATE() AND LOWER(COALESCE(status,'')) NOT IN ('done','closed','completed','cancelled')",
+    ),
+  ])
+
+  const pipeline = {
+    openJobs: Number(jobAgg?.open_jobs || 0),
+    openRequisitions,
+    applications: Number(appAgg?.total || 0),
+    screening: atStage("screening"),
+    shortlisted: atStage("shortlisted"),
+    assessments: atStage("assessment"),
+    interviews: Number(intAgg?.total || 0),
+    selected: atStage("selected"),
+    offers: Number(offerAgg?.total || 0),
+    acceptedOffers: Number(offerAgg?.accepted || 0),
+    upcomingJoining,
+    joined: atStage("hired"),
+    pendingBgv,
+    pendingReference,
+    pendingFeedback,
+    dueFollowups,
+  }
 
   // Phases 66-68: surface stalled pipeline work (stale applications /
   // requisitions / jobs) right on the dashboard. Best-effort so the dashboard
@@ -439,6 +541,8 @@ export async function getDashboardStats() {
     applications: { total: Number(appAgg?.total || 0), byStage: stageCounts },
     interviews: { total: Number(intAgg?.total || 0), upcoming: Number(intAgg?.upcoming || 0) },
     offers: { total: Number(offerAgg?.total || 0), accepted: Number(offerAgg?.accepted || 0) },
+    pipeline,
+    funnel,
     recentApplications,
     upcomingInterviews,
     stale,

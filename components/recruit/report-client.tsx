@@ -28,9 +28,94 @@ type ReportRow = {
   rejected: number
 }
 
+type Perf = {
+  key: string
+  applications: number
+  screened: number
+  shortlisted: number
+  interviewed: number
+  selected: number
+  offers: number
+  joined: number
+  conversion: number
+}
+
+type Insights = {
+  kpis: {
+    timeToHire: number | null
+    timeToFill: number | null
+    offerAcceptanceRate: number
+    joiningRatio: number
+    screeningConversion: number
+    interviewConversion: number
+    sourceConversion: number
+    requisitionAging: number | null
+    jobAging: number | null
+    applicationAging: number | null
+  }
+  totals: Perf
+  analytics: { source: Perf[]; campaign: Perf[]; recruiter: Perf[] }
+}
+
+const DAYS = (v: number | null) => (v === null ? "—" : `${v}d`)
+const PCT = (v: number) => `${v}%`
+
+function KpiCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <Card size="sm">
+      <CardContent className="flex flex-col gap-1 py-1">
+        <span className="text-2xl font-semibold tabular-nums">{value}</span>
+        <span className="text-xs font-medium leading-tight">{label}</span>
+        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+      </CardContent>
+    </Card>
+  )
+}
+
+function PerfTable({ title, label, rows }: { title: string; label: string; rows: Perf[] }) {
+  return (
+    <Card>
+      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      <CardContent className="px-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{label}</TableHead>
+              <TableHead className="text-right">Applications</TableHead>
+              <TableHead className="text-right">Shortlisted</TableHead>
+              <TableHead className="text-right">Interviewed</TableHead>
+              <TableHead className="text-right">Selected</TableHead>
+              <TableHead className="text-right">Joined</TableHead>
+              <TableHead className="text-right">Conv.</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 && (
+              <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">No data yet.</TableCell></TableRow>
+            )}
+            {rows.map((r) => (
+              <TableRow key={r.key}>
+                <TableCell className="font-medium">{r.key}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.applications}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.shortlisted}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.interviewed}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.selected}</TableCell>
+                <TableCell className="text-right tabular-nums font-medium text-emerald-600 dark:text-emerald-400">{r.joined}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{r.conversion}%</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function ReportClient() {
   const { data, isLoading } = useSWR<{ report: ReportRow[] }>("/api/recruit/report", fetcher)
+  const { data: insights } = useSWR<Insights>("/api/recruit/report/insights", fetcher)
   const rows = data?.report ?? []
+  const k = insights?.kpis
 
   const totals = rows.reduce(
     (acc, r) => ({
@@ -87,6 +172,32 @@ export function ReportClient() {
           </Card>
         ))}
       </div>
+
+      {k && (
+        <Card>
+          <CardHeader><CardTitle>Recruitment KPIs</CardTitle></CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <KpiCard label="Time to hire" value={DAYS(k.timeToHire)} hint="applied → hired, avg" />
+            <KpiCard label="Time to fill" value={DAYS(k.timeToFill)} hint="requisition → filled, avg" />
+            <KpiCard label="Offer acceptance" value={PCT(k.offerAcceptanceRate)} hint="accepted / offers" />
+            <KpiCard label="Joining ratio" value={PCT(k.joiningRatio)} hint="joined / accepted" />
+            <KpiCard label="Source conversion" value={PCT(k.sourceConversion)} hint="joined / applications" />
+            <KpiCard label="Screening conversion" value={PCT(k.screeningConversion)} hint="shortlisted / screened" />
+            <KpiCard label="Interview conversion" value={PCT(k.interviewConversion)} hint="selected / interviewed" />
+            <KpiCard label="Application aging" value={DAYS(k.applicationAging)} hint="active apps, avg age" />
+            <KpiCard label="Job aging" value={DAYS(k.jobAging)} hint="open jobs, avg age" />
+            <KpiCard label="Requisition aging" value={DAYS(k.requisitionAging)} hint="open reqs, avg age" />
+          </CardContent>
+        </Card>
+      )}
+
+      {insights && (
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <PerfTable title="Source performance" label="Source" rows={insights.analytics.source} />
+          <PerfTable title="Campaign performance" label="Campaign" rows={insights.analytics.campaign} />
+          <PerfTable title="Recruiter performance" label="Recruiter" rows={insights.analytics.recruiter} />
+        </div>
+      )}
 
       <Card>
         <CardHeader><CardTitle>Job-wise funnel</CardTitle></CardHeader>

@@ -79,11 +79,11 @@ const configs: Record<string, { title: string; fields: string[] }> = {
   },
   tasks: {
     title: "Tasks",
-    fields: ["project_id", "project_name", "task_title", "description", "task_type", "assigned_to", "reporter", "priority", "start_date", "due_date", "estimated_hours", "actual_hours", "completion_percent", "board_stage", "status", "remarks"],
+    fields: ["project_id", "project_name", "client_name", "task_title", "description", "task_type", "assigned_to", "resource_id", "resource_name", "milestone_id", "milestone_name", "reporter", "priority", "start_date", "due_date", "estimated_hours", "actual_hours", "completion_percent", "board_stage", "status", "remarks"],
   },
   work_orders: {
     title: "Work Orders",
-    fields: ["work_order_no", "project_id", "client_name", "title", "description", "work_type", "assigned_to", "requested_by", "priority", "start_date", "due_date", "estimated_cost", "actual_cost", "status", "remarks"],
+    fields: ["work_order_no", "project_id", "task_id", "client_name", "title", "description", "instructions", "work_type", "assigned_to", "resource_id", "resource_name", "requested_by", "priority", "start_date", "due_date", "estimated_cost", "actual_cost", "status", "remarks"],
   },
   resource_requests: {
     title: "Resource Requests",
@@ -192,6 +192,7 @@ const STATUS_BY_KIND: Record<string, string[]> = {
 // listed here (and not "status") renders as a free text / date input.
 const ENUM_OPTIONS: Record<string, string[]> = {
   priority: ["Low", "Medium", "High", "Critical"],
+  board_stage: ["Backlog", "To Do", "In Progress", "In Review", "Done"],
   work_mode: ["On-site", "Hybrid", "Remote"],
   shift: ["General", "Morning", "Evening", "Night"],
   rate_type: ["Hourly", "Daily", "Monthly", "Fixed"],

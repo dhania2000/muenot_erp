@@ -54,6 +54,14 @@ export type AccountRole =
   | "investment"
   | "provision_expense"
   | "provision_liability"
+  // Provisions & Accruals extended heads (Phase 6). Prepaid expenses sit as a
+  // current asset that is amortised into expense over its period; accrued
+  // expenses raise a current liability, accrued income a current asset with the
+  // matching income head.
+  | "prepaid_asset"
+  | "accrued_liability"
+  | "accrued_asset"
+  | "accrued_income"
   | "share_capital"
   | "drawings"
   // Fixed-asset disposal result heads (Phase 3 — Fixed Assets lifecycle). A
@@ -106,6 +114,10 @@ export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
   investment: "1600",
   provision_expense: "5300",
   provision_liability: "2400",
+  prepaid_asset: "1470",
+  accrued_liability: "2410",
+  accrued_asset: "1490",
+  accrued_income: "4400",
   share_capital: "3000",
   drawings: "3100",
   // Gain / loss on sale of fixed assets.
@@ -181,6 +193,10 @@ const REGISTER_ACCOUNT_SEEDS: CoaSeed[] = [
   { code: "1600", id: "COA-INVESTMENT", name: "Investments", group: "Asset", type: "Investment", nature: "Debit" },
   { code: "5300", id: "COA-PROV-EXP", name: "Provisions & Accruals Expense", group: "Expense", type: "Indirect Expense", nature: "Debit" },
   { code: "2400", id: "COA-PROV-LIAB", name: "Provisions & Accruals", group: "Liability", type: "Current Liability", nature: "Credit" },
+  { code: "1470", id: "COA-PREPAID", name: "Prepaid Expenses", group: "Asset", type: "Current Asset", nature: "Debit" },
+  { code: "2410", id: "COA-ACCRUED-LIAB", name: "Accrued Expenses / Liabilities", group: "Liability", type: "Current Liability", nature: "Credit" },
+  { code: "1490", id: "COA-ACCRUED-ASSET", name: "Accrued Income (Asset)", group: "Asset", type: "Current Asset", nature: "Debit" },
+  { code: "4400", id: "COA-ACCRUED-INC", name: "Accrued Income", group: "Income", type: "Indirect Income", nature: "Credit" },
   { code: "3000", id: "COA-CAPITAL", name: "Share Capital & Equity", group: "Equity", type: "Capital", nature: "Credit" },
   { code: "3100", id: "COA-DRAWINGS", name: "Drawings", group: "Equity", type: "Capital", nature: "Debit" },
 ]

@@ -212,6 +212,21 @@ const FIXED_ASSET_DISPOSAL_SEEDS: CoaSeed[] = [
   { code: "5210", id: "COA-ASSET-LOSS", name: "Loss on Sale of Fixed Assets", group: "Expense", type: "Indirect Expense", nature: "Debit" },
 ]
 
+/**
+ * Investment income / result heads (Phase — Investments lifecycle). Interest and
+ * dividend income (credit-nature income), realised gain on sale / redemption
+ * (income) and the realised loss and downward fair-value / impairment loss
+ * (expense). Seeded on demand the first time an investment lifecycle event is
+ * posted; a company that already keeps its own head at the same code keeps its
+ * own (the resolver prefers the live chart_of_accounts row).
+ */
+const INVESTMENT_INCOME_SEEDS: CoaSeed[] = [
+  { code: "4300", id: "COA-INV-INCOME", name: "Investment Income", group: "Income", type: "Indirect Income", nature: "Credit" },
+  { code: "4310", id: "COA-INV-GAIN", name: "Gain on Sale of Investments", group: "Income", type: "Indirect Income", nature: "Credit" },
+  { code: "5310", id: "COA-INV-LOSS", name: "Loss on Sale of Investments", group: "Expense", type: "Indirect Expense", nature: "Debit" },
+  { code: "5320", id: "COA-INV-IMPAIR", name: "Investment Impairment Loss", group: "Expense", type: "Indirect Expense", nature: "Debit" },
+]
+
 async function seedAccounts(seeds: CoaSeed[]): Promise<void> {
   for (const a of seeds) {
     await query(
@@ -270,6 +285,21 @@ export async function ensureFixedAssetAccounts(): Promise<void> {
   await ensureRegisterPostingAccounts()
   await seedAccounts(FIXED_ASSET_DISPOSAL_SEEDS)
   fixedAssetAccountsEnsured = true
+}
+
+let investmentAccountsEnsured = false
+
+/**
+ * Seed every Chart-of-Accounts head the Investments lifecycle posts to: the
+ * register control heads (Investments 1600, funding contras bank / cash /
+ * payable) and the investment income / gain / loss / impairment result heads.
+ * Idempotent and safe to re-run.
+ */
+export async function ensureInvestmentAccounts(): Promise<void> {
+  if (investmentAccountsEnsured) return
+  await ensureRegisterPostingAccounts()
+  await seedAccounts(INVESTMENT_INCOME_SEEDS)
+  investmentAccountsEnsured = true
 }
 
 let expenseAccountsEnsured = false

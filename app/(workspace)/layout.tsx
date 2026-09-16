@@ -115,6 +115,7 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
 
 const RECRUITMENT_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Recruit Dashboard", href: "/modules/recruitment", feature: "recruitment.view_dashboard" },
+  { label: "Candidate 360", href: "/modules/recruitment/candidate-360", feature: "recruitment.view_candidates" },
   // Requisitions & jobs
   { label: "Requisition Hiring", href: "/modules/recruitment/requisition-hiring", feature: "recruitment.requisitions" },
   { label: "Job Requisitions", href: "/modules/recruitment/job-requisitions", feature: "recruitment.requisitions" },

@@ -167,6 +167,15 @@ export function createRecruitmentHandlers(moduleKey: string) {
 
     record.created_by = session.userId
 
+    // Unified spine: resolve the canonical Candidate Master + application_id
+    // link for stage modules so this record joins the operational pipeline.
+    // Best-effort — a linking failure must never block the create.
+    try {
+      const { resolveStageLinks } = await import("@/lib/recruit-unification-db")
+      const links = await resolveStageLinks(cfg.table, record)
+      Object.assign(record, links)
+    } catch {}
+
     const cols = Object.keys(record)
     await query(
       `INSERT INTO ${cfg.table} (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`,

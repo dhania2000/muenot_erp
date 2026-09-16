@@ -192,6 +192,12 @@ export async function createApplication(data: any, userId: number | null) {
   try {
     await upsertCandidateProfile(data)
   } catch {}
+  // Link the application into the unified candidate spine (canonical Candidate
+  // Master + cross-links). Best-effort: never block the application on this.
+  try {
+    const { linkApplicationToMaster } = await import("@/lib/recruit-unification-db")
+    await linkApplicationToMaster(applicationId, { ...data, job_title: jobTitle })
+  } catch {}
   return { application_id: applicationId }
 }
 

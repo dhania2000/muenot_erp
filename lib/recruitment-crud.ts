@@ -351,6 +351,34 @@ export function createRecruitmentHandlers(moduleKey: string) {
       }
     }
 
+    // Re-resolve the canonical Candidate Master / application_id links on update
+    // too. A stage record created before its candidate could be matched (missing
+    // email/phone, or the candidate created later) is otherwise stuck with NULL
+    // link columns forever — this lets it join the spine once the identifying
+    // fields are edited in, and persists the resolved links onto the row so the
+    // Candidate 360 timeline and every join that reads the stored columns work.
+    // Best-effort — a linking failure must never block the update.
+    try {
+      const { resolveStageLinks, resolveNonStageLinks } = await import("@/lib/recruit-unification-db")
+      const resolved: Record<string, any> = {
+        ...(await resolveStageLinks(cfg.table, merged)),
+        ...(await resolveNonStageLinks(cfg.table, merged)),
+      }
+      // Only persist newly-resolved link columns that aren't already stored.
+      const newLinks: Record<string, any> = {}
+      for (const [k, v] of Object.entries(resolved)) {
+        if (v != null && v !== "" && (existing[k] == null || existing[k] === "")) newLinks[k] = v
+      }
+      const linkCols = Object.keys(newLinks)
+      if (linkCols.length) {
+        await query(
+          `UPDATE ${cfg.table} SET ${linkCols.map((c) => `${c}=?`).join(",")} WHERE id=?`,
+          [...linkCols.map((c) => newLinks[c]), id],
+        )
+        Object.assign(merged, newLinks)
+      }
+    } catch {}
+
     // Reflect the updated outcome onto the linked application's canonical stage.
     try {
       const { applyStageWriteBack } = await import("@/lib/recruit-unification-db")

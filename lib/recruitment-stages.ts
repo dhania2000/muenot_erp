@@ -181,3 +181,31 @@ export function selectionResultToStage(record: Record<string, any>): CanonicalSt
   if (offer === "on hold" || offer === "hold") return "hold"
   return "selected"
 }
+
+/**
+ * Background Verification (Phase 18) write-back. A BGV runs post-selection and
+ * is decisive only on the downside: a `Failed` check ends candidacy, mirroring
+ * how a rejected screening/assessment propagates. A `Verified` result does NOT
+ * leapfrog the candidate to hired — joining is the gating event handled by
+ * Pre-Joining — and in-flight states never move the pipeline, so those return
+ * null and the caller skips the advance.
+ */
+export function bgvResultToStage(status: unknown): CanonicalStage | null {
+  const v = String(status ?? "").trim().toLowerCase()
+  if (v === "failed") return "rejected"
+  return null
+}
+
+/**
+ * Pre-Joining (Phase 20) write-back. This is the joining record, so it owns the
+ * final transitions: `Joined` completes the hire, `Dropped` withdraws the
+ * candidate, and `Ready to Join` advances to the Pre-Joining stage. Earlier
+ * checklist states (Pending / In Progress) do not move the pipeline.
+ */
+export function preJoiningResultToStage(record: Record<string, any>): CanonicalStage | null {
+  const v = String(record?.status ?? "").trim().toLowerCase()
+  if (v === "joined") return "hired"
+  if (v === "dropped") return "withdrawn"
+  if (v === "ready to join") return "pre_joining"
+  return null
+}

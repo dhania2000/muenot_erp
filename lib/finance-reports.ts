@@ -3802,30 +3802,35 @@ export const FINANCE_ONLY_REPORTS: ReportDef[] = [
     key: "ca-fixed-assets",
     label: "Fixed Assets Register",
     group: "CA / Audit",
-    description: "Fixed-asset ledger accounts with additions (debit), disposals/depreciation (credit) and net book movement, from the posted General Ledger.",
-    dateColumn: "transaction_date",
+    description: "Asset-by-asset register from the Fixed Assets source module — acquisition cost, accumulated depreciation and net book value per asset, with category and custodian.",
+    dateColumn: "acquisition_date",
     periodMode: "range",
     sql: `
-      SELECT COALESCE(NULLIF(account_name,''),'Unclassified asset') AS account,
-             COALESCE(NULLIF(account_group,''),'Fixed Assets') AS account_group,
-             COUNT(*) AS entries,
-             COALESCE(SUM(debit),0) AS additions,
-             COALESCE(SUM(credit),0) AS disposals,
-             COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS net_movement
-      FROM general_ledger
-      WHERE (account_group LIKE '%Fixed Asset%'
-             OR account_type LIKE '%Fixed Asset%'
-             OR account_name REGEXP 'plant|machinery|building|vehicle|furniture|equipment|depreciat')
+      SELECT asset_id AS asset,
+             COALESCE(NULLIF(asset_name,''),'(Unnamed asset)') AS asset_name,
+             COALESCE(NULLIF(asset_category,''),'Unclassified') AS asset_category,
+             acquisition_date,
+             COALESCE(NULLIF(depreciation_method,''),'—') AS depreciation_method,
+             COALESCE(NULLIF(custodian,''),'—') AS custodian,
+             COALESCE(status,'In Use') AS status,
+             COALESCE(cost,0) AS cost,
+             COALESCE(accumulated_depreciation,0) AS accumulated_depreciation,
+             COALESCE(net_book_value, COALESCE(cost,0) - COALESCE(accumulated_depreciation,0)) AS net_book_value
+      FROM fixed_assets
+      WHERE 1=1
         {{range}}
-      GROUP BY account, account_group
-      ORDER BY net_movement DESC`,
+      ORDER BY acquisition_date DESC, asset_id DESC`,
     columns: [
-      { key: "account", label: "Asset Account" },
-      { key: "account_group", label: "Group" },
-      { key: "entries", label: "Entries", align: "right" },
-      { key: "additions", label: "Additions (Dr)", align: "right", money: true },
-      { key: "disposals", label: "Disposals / Depr. (Cr)", align: "right", money: true },
-      { key: "net_movement", label: "Net Movement", align: "right", money: true },
+      { key: "asset", label: "Asset ID" },
+      { key: "asset_name", label: "Asset" },
+      { key: "asset_category", label: "Category" },
+      { key: "acquisition_date", label: "Acquired" },
+      { key: "depreciation_method", label: "Method" },
+      { key: "custodian", label: "Custodian" },
+      { key: "status", label: "Status" },
+      { key: "cost", label: "Cost", align: "right", money: true },
+      { key: "accumulated_depreciation", label: "Accum. Depr.", align: "right", money: true },
+      { key: "net_book_value", label: "Net Book Value", align: "right", money: true },
     ],
   },
 

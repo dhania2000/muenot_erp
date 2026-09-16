@@ -118,6 +118,35 @@ export const REPORTS_EXTRA_ACTIONS: ExtendedAction[] = [
   { key: "email_report", label: "Email Report", fallback: "view", scoped: false, description: "Email a report snapshot to a recipient." },
 ]
 
+/**
+ * Phase 53 — Interviews & Assessments granular action permissions. These live
+ * ALONGSIDE the module's Add/View/Update/Delete and carve the scheduling
+ * lifecycle out of the generic verbs, so a plain Update can neither reschedule
+ * nor cancel an interview and a plain Add cannot silently push calendar invites.
+ * They are `scoped` because interviews carry a real per-user owner (created_by),
+ * so an admin can e.g. let a coordinator reschedule only interviews they own.
+ * Destructive/irreversible steps fall back to `delete`; preparatory ones to the
+ * base verb they extend (`add`/`update`).
+ */
+export const INTERVIEW_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "schedule_interview", label: "Schedule Interview", fallback: "add", scoped: true, description: "Schedule an interview and issue the calendar invite / notifications." },
+  { key: "reschedule_interview", label: "Reschedule Interview", fallback: "update", scoped: true, description: "Move a scheduled interview to a new date/time and re-issue invites." },
+  { key: "cancel_interview", label: "Cancel Interview", fallback: "delete", scoped: true, description: "Cancel a scheduled interview and withdraw its calendar invite." },
+  { key: "record_outcome", label: "Record Interview Outcome", fallback: "update", scoped: true, description: "Record a pass/fail outcome that advances or rejects the candidate." },
+]
+
+/**
+ * Phase 53 — Selection & Offers granular action permissions. Sending, revoking
+ * and (irreversibly) converting an accepted offer into an employee are gated
+ * separately from a plain Update/Delete. `convert_offer` creates HR + onboarding
+ * data, so it falls back to `delete`; `send_offer` falls back to `update`.
+ */
+export const OFFER_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "send_offer", label: "Send Offer", fallback: "update", scoped: true, description: "Issue / release an offer to a candidate." },
+  { key: "revoke_offer", label: "Revoke Offer", fallback: "delete", scoped: true, description: "Withdraw or rescind a live offer." },
+  { key: "convert_offer", label: "Convert Offer to Employee", fallback: "delete", scoped: true, description: "Convert an accepted offer into an employee record (creates HR + onboarding data)." },
+]
+
 export type ModulePermission = {
   add: PermissionScope
   view: PermissionScope
@@ -231,8 +260,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "recruitment.dashboard", label: "Recruitment Dashboard", group: "recruitment", aliases: ["dashboard"], scope: { table: "recruit_jobs" } },
       { key: "recruitment.requisitions", label: "Job Requisitions", group: "recruitment", aliases: ["requisition", "job", "application"], scope: { table: "recruitment_requisitions", addedBy: "created_by" } },
       { key: "recruitment.candidates", label: "Candidates", group: "recruitment", aliases: ["candidate", "screening", "source", "call"], scope: { table: "recruitment_candidates", addedBy: "created_by", ownedBy: "assigned_to" } },
-      { key: "recruitment.interviews", label: "Interviews & Assessments", group: "recruitment", aliases: ["interview", "assessment"], scope: { table: "recruitment_interviews", addedBy: "created_by" } },
-      { key: "recruitment.offers", label: "Selection & Offers", group: "recruitment", aliases: ["offer", "selection"], scope: { table: "recruitment_offers", addedBy: "created_by" } },
+      { key: "recruitment.interviews", label: "Interviews & Assessments", group: "recruitment", aliases: ["interview", "assessment"], scope: { table: "recruitment_interviews", addedBy: "created_by" }, extraActions: INTERVIEW_EXTRA_ACTIONS },
+      { key: "recruitment.offers", label: "Selection & Offers", group: "recruitment", aliases: ["offer", "selection"], scope: { table: "recruitment_offers", addedBy: "created_by" }, extraActions: OFFER_EXTRA_ACTIONS },
       { key: "recruitment.skills", label: "Job Skills", group: "recruitment", aliases: ["skill"], scope: { table: "recruit_job_skills", addedBy: "created_by" } },
       { key: "recruitment.reports", label: "Recruitment Reports", group: "recruitment", aliases: ["report"], scope: { table: "recruit_jobs" } },
       { key: "recruitment.email_templates", label: "Recruitment Email Templates", group: "recruitment", aliases: ["email_template"], scope: { table: "recruit_email_templates", addedBy: "created_by" } },

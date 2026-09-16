@@ -216,6 +216,24 @@ export function createRecruitmentHandlers(moduleKey: string) {
       await recordActivityForModule(cfg.table, record, session.userId)
     } catch {}
 
+    // Phase 43: auto-create the follow-on task this workflow step implies
+    // (interview -> feedback, offer -> acceptance, BGV/joining follow-ups).
+    try {
+      const { autoCreateTasksForModule } = await import("@/lib/recruit-task-automation")
+      await autoCreateTasksForModule(cfg.table, record, session.userId)
+    } catch {}
+
+    // Phase 47/48/50: mirror a recruitment cost into Finance Expenses so hiring
+    // spend flows through the same accounting ledger (no duplicate entry).
+    if (cfg.table === "recruitment_costs") {
+      try {
+        const { syncRecruitmentCostToExpense } = await import("@/lib/recruit-finance-sync")
+        await syncRecruitmentCostToExpense(record, session.userId)
+      } catch (e) {
+        console.error("[recruit-finance-sync] create sync failed", e)
+      }
+    }
+
     // PHASE 16/17: reconcile the Google Calendar event + fan out candidate /
     // interviewer notifications for the interview tracker. Best-effort.
     if (cfg.key === "interview-tracker") {
@@ -277,6 +295,22 @@ export function createRecruitmentHandlers(moduleKey: string) {
       const { recordActivityForModule } = await import("@/lib/recruit-unification-db")
       await recordActivityForModule(cfg.table, merged, session.userId)
     } catch {}
+
+    // Phase 43: keep the auto-generated follow-on task in step on update.
+    try {
+      const { autoCreateTasksForModule } = await import("@/lib/recruit-task-automation")
+      await autoCreateTasksForModule(cfg.table, merged, session.userId)
+    } catch {}
+
+    // Phase 47/48/50: keep the mirrored Finance Expense in step with the cost.
+    if (cfg.table === "recruitment_costs") {
+      try {
+        const { syncRecruitmentCostToExpense } = await import("@/lib/recruit-finance-sync")
+        await syncRecruitmentCostToExpense(merged, session.userId)
+      } catch (e) {
+        console.error("[recruit-finance-sync] update sync failed", e)
+      }
+    }
 
     // PHASE 16/17: reconcile the Google Calendar event on reschedule / status
     // change and re-notify. `existing` lets the sync detect a schedule change and

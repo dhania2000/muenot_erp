@@ -1424,6 +1424,12 @@ const MODULE_ACTIVITY_MAP: Record<string, ModuleActivitySpec> = {
     outcome: (r) => r.status || null,
     date: (r) => r.last_contact_date || r.next_followup_date,
   },
+  recruitment_tasks: {
+    activity_type: "Task", source_type: "task", idColumn: "task_id",
+    subject: (r) => r.task_title || (r.task_type ? `Task — ${r.task_type}` : "Task"),
+    outcome: (r) => r.status || null,
+    date: (r) => r.due_date || r.start_date,
+  },
 }
 
 /**
@@ -1465,7 +1471,12 @@ export async function recordActivityForModule(
 // Phase 32/40: link a non-stage module record (referral / follow-up) to the
 // canonical candidate + latest application so it joins the ONE pipeline.
 // ===========================================================================
-const NON_STAGE_LINK_TABLES = new Set(["recruitment_referrals", "recruitment_followups"])
+const NON_STAGE_LINK_TABLES = new Set([
+  "recruitment_referrals",
+  "recruitment_followups",
+  "recruitment_tasks",
+  "recruitment_costs",
+])
 
 export async function resolveNonStageLinks(
   table: string,

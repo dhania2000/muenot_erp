@@ -428,6 +428,12 @@ export async function getDashboardStats() {
   const stageCounts: Record<string, number> = {}
   for (const r of stageRows) stageCounts[r.stage] = Number(r.count)
 
+  // Phases 66-68: surface stalled pipeline work (stale applications /
+  // requisitions / jobs) right on the dashboard. Best-effort so the dashboard
+  // still renders on a not-yet-migrated database.
+  const { getStaleSummary } = await import("@/lib/recruit-stale-detection")
+  const stale = await getStaleSummary().catch(() => null)
+
   return {
     jobs: { total: Number(jobAgg?.total || 0), open: Number(jobAgg?.open_jobs || 0), positions: Number(jobAgg?.positions || 0) },
     applications: { total: Number(appAgg?.total || 0), byStage: stageCounts },
@@ -435,6 +441,7 @@ export async function getDashboardStats() {
     offers: { total: Number(offerAgg?.total || 0), accepted: Number(offerAgg?.accepted || 0) },
     recentApplications,
     upcomingInterviews,
+    stale,
   }
 }
 

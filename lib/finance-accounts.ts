@@ -56,6 +56,12 @@ export type AccountRole =
   | "provision_liability"
   | "share_capital"
   | "drawings"
+  // Fixed-asset disposal result heads (Phase 3 — Fixed Assets lifecycle). A
+  // disposal / scrap removes the asset at cost, unwinds its accumulated
+  // depreciation and books the difference against proceeds as a gain (income)
+  // or loss (expense) on sale of assets.
+  | "disposal_gain"
+  | "disposal_loss"
 
 /** Default account_code for each posting role (matches the migration seed). */
 export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
@@ -96,6 +102,9 @@ export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
   provision_liability: "2400",
   share_capital: "3000",
   drawings: "3100",
+  // Gain / loss on sale of fixed assets.
+  disposal_gain: "4200",
+  disposal_loss: "5210",
 }
 
 /**
@@ -165,6 +174,17 @@ const REGISTER_ACCOUNT_SEEDS: CoaSeed[] = [
   { code: "3100", id: "COA-DRAWINGS", name: "Drawings", group: "Equity", type: "Capital", nature: "Debit" },
 ]
 
+/**
+ * Fixed-asset disposal result heads (Phase 3). The gain head is an income
+ * account (credit nature), the loss head an expense account (debit nature).
+ * Seeded on demand the first time an asset is disposed / scrapped; a company
+ * that already keeps its own head at the same code keeps its own.
+ */
+const FIXED_ASSET_DISPOSAL_SEEDS: CoaSeed[] = [
+  { code: "4200", id: "COA-ASSET-GAIN", name: "Gain on Sale of Fixed Assets", group: "Income", type: "Indirect Income", nature: "Credit" },
+  { code: "5210", id: "COA-ASSET-LOSS", name: "Loss on Sale of Fixed Assets", group: "Expense", type: "Indirect Expense", nature: "Debit" },
+]
+
 async function seedAccounts(seeds: CoaSeed[]): Promise<void> {
   for (const a of seeds) {
     await query(
@@ -208,6 +228,21 @@ export async function ensureRegisterPostingAccounts(): Promise<void> {
   // credit, so make sure the purchase-side heads exist too.
   await seedAccounts(PURCHASE_ACCOUNT_SEEDS)
   registerAccountsEnsured = true
+}
+
+let fixedAssetAccountsEnsured = false
+
+/**
+ * Seed every Chart-of-Accounts head the Fixed Assets lifecycle posts to: the
+ * register control heads (Fixed Assets 1700, Accumulated Depreciation 1710,
+ * Depreciation Expense 5200), the funding contras (bank / cash / payable) and
+ * the disposal gain / loss heads. Idempotent and safe to re-run.
+ */
+export async function ensureFixedAssetAccounts(): Promise<void> {
+  if (fixedAssetAccountsEnsured) return
+  await ensureRegisterPostingAccounts()
+  await seedAccounts(FIXED_ASSET_DISPOSAL_SEEDS)
+  fixedAssetAccountsEnsured = true
 }
 
 let expenseAccountsEnsured = false

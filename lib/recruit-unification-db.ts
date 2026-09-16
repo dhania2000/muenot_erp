@@ -465,6 +465,179 @@ export async function listUnifiedCandidates(searchTerm?: string): Promise<Unifie
   return filtered
 }
 
+// ---------------------------------------------------------------------------
+// Candidate Database (single source): the canonical Candidate Master, enriched
+// with live application stats. Replaces the old parallel recruit_candidates
+// profile store — every real person appears exactly once, keyed on candidate_id.
+// ---------------------------------------------------------------------------
+export type CandidateDbRow = {
+  candidate_id: string | null
+  candidate_name: string
+  email: string | null
+  phone: string | null
+  location: string | null
+  current_company: string | null
+  experience: string | null
+  applications_count: number
+  jobs: string | null
+  rating: number
+  last_applied: string | null
+}
+
+export async function listCandidateDatabase(): Promise<CandidateDbRow[]> {
+  await ensureUnificationSchema()
+
+  const masters = await safeQuery<any[]>(
+    `SELECT candidate_id, candidate_name, email, mobile, norm_email, norm_phone,
+            current_location, current_company, experience, job_applied, application_id,
+            application_date, created_at
+       FROM recruitment_candidates
+      LIMIT 5000`,
+  )
+  const apps = await safeQuery<any[]>(
+    `SELECT application_id, candidate_master_id, candidate_name, email, phone, location,
+            current_company, experience, job_title, rating, applied_at
+       FROM recruit_applications
+      ORDER BY applied_at DESC
+      LIMIT 10000`,
+  )
+
+  // Attach applications to their Candidate Master — first by the explicit
+  // candidate_master_id link, then (for not-yet-linked rows) by normalized
+  // identity. Anything still unmatched is an orphan grouped separately so no
+  // real person silently disappears before the backfill runs.
+  const appsByMaster = new Map<string, any[]>()
+  const masterByEmail = new Map<string, any>()
+  const masterByPhone = new Map<string, any>()
+  for (const m of masters) {
+    if (m.norm_email && !masterByEmail.has(m.norm_email)) masterByEmail.set(m.norm_email, m)
+    if (m.norm_phone && !masterByPhone.has(m.norm_phone)) masterByPhone.set(m.norm_phone, m)
+  }
+  const pushApp = (cid: string, a: any) => {
+    const l = appsByMaster.get(cid) || []
+    l.push(a)
+    appsByMaster.set(cid, l)
+  }
+  const orphanApps: any[] = []
+  for (const a of apps) {
+    if (a.candidate_master_id) {
+      pushApp(a.candidate_master_id, a)
+      continue
+    }
+    const m =
+      (normalizeEmail(a.email) && masterByEmail.get(normalizeEmail(a.email)!)) ||
+      (normalizePhone(a.phone) && masterByPhone.get(normalizePhone(a.phone)!)) ||
+      null
+    if (m) pushApp(m.candidate_id, a)
+    else orphanApps.push(a)
+  }
+
+  const rows: CandidateDbRow[] = []
+  for (const m of masters) {
+    const linked = appsByMaster.get(m.candidate_id) || []
+    const jobs = new Set<string>()
+    if (m.job_applied) jobs.add(m.job_applied)
+    let rating = 0
+    let lastApplied: string | null = m.application_date ? String(m.application_date) : m.created_at ? String(m.created_at) : null
+    for (const a of linked) {
+      if (a.job_title) jobs.add(a.job_title)
+      rating = Math.max(rating, Number(a.rating) || 0)
+      const ts = a.applied_at ? String(a.applied_at) : null
+      if (ts && (!lastApplied || ts > lastApplied)) lastApplied = ts
+    }
+    rows.push({
+      candidate_id: m.candidate_id,
+      candidate_name: m.candidate_name || linked[0]?.candidate_name || "—",
+      email: m.email || linked[0]?.email || null,
+      phone: m.mobile || linked[0]?.phone || null,
+      location: m.current_location || linked[0]?.location || null,
+      current_company: m.current_company || linked[0]?.current_company || null,
+      experience: m.experience || linked[0]?.experience || null,
+      applications_count: linked.length,
+      jobs: jobs.size ? Array.from(jobs).join(", ") : null,
+      rating,
+      last_applied: lastApplied,
+    })
+  }
+
+  if (orphanApps.length) rows.push(...groupOrphanApplications(orphanApps))
+
+  return rows.sort((a, b) => String(b.last_applied || "").localeCompare(String(a.last_applied || "")))
+}
+
+/** Fold orphan applications (no Candidate Master yet) into one row per person. */
+function groupOrphanApplications(apps: any[]): CandidateDbRow[] {
+  const parent = apps.map((_, i) => i)
+  const find = (x: number): number => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]]
+      x = parent[x]
+    }
+    return x
+  }
+  const union = (a: number, b: number) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent[ra] = rb
+  }
+  const emailOwner = new Map<string, number>()
+  const phoneOwner = new Map<string, number>()
+  apps.forEach((a, i) => {
+    const e = normalizeEmail(a.email)
+    if (e) {
+      const prev = emailOwner.get(e)
+      if (prev === undefined) emailOwner.set(e, i)
+      else union(prev, i)
+    }
+    const p = normalizePhone(a.phone)
+    if (p) {
+      const prev = phoneOwner.get(p)
+      if (prev === undefined) phoneOwner.set(p, i)
+      else union(prev, i)
+    }
+  })
+
+  const groups = new Map<number, CandidateDbRow & { _jobs: Set<string> }>()
+  for (let i = 0; i < apps.length; i++) {
+    const a = apps[i]
+    const root = find(i)
+    let g = groups.get(root)
+    if (!g) {
+      g = {
+        candidate_id: null,
+        candidate_name: a.candidate_name || "—",
+        email: a.email || null,
+        phone: a.phone || null,
+        location: a.location || null,
+        current_company: a.current_company || null,
+        experience: a.experience || null,
+        applications_count: 0,
+        jobs: null,
+        rating: 0,
+        last_applied: a.applied_at ? String(a.applied_at) : null,
+        _jobs: new Set<string>(),
+      }
+      groups.set(root, g)
+    }
+    g.applications_count += 1
+    if (!g.candidate_name || g.candidate_name === "—") g.candidate_name = a.candidate_name || g.candidate_name
+    if (!g.email && a.email) g.email = a.email
+    if (!g.phone && a.phone) g.phone = a.phone
+    if (!g.location && a.location) g.location = a.location
+    if (!g.current_company && a.current_company) g.current_company = a.current_company
+    if (!g.experience && a.experience) g.experience = a.experience
+    if (a.job_title) g._jobs.add(a.job_title)
+    g.rating = Math.max(g.rating, Number(a.rating) || 0)
+    const ts = a.applied_at ? String(a.applied_at) : null
+    if (ts && (!g.last_applied || ts > g.last_applied)) g.last_applied = ts
+  }
+
+  return Array.from(groups.values()).map(({ _jobs, ...rest }) => ({
+    ...rest,
+    jobs: _jobs.size ? Array.from(_jobs).join(", ") : null,
+  }))
+}
+
 /** Furthest-stage funnel counts for the whole unified pipeline. */
 export async function getUnifiedFunnel(): Promise<{ stage: UnifiedStage; label: string; count: number }[]> {
   const candidates = await listUnifiedCandidates()

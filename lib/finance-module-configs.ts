@@ -1,6 +1,6 @@
 import { num, round2, financialYearFor, autoPaymentStatus, computePurchaseBill, computeExpense, accountingPeriodFor, fiscalQuarterFor } from "@/lib/finance-calc"
 import { EMPLOYEE_EXPENSE_TYPES, VENDOR_EXPENSE_TYPES } from "@/lib/finance-expense-types"
-import type { FieldDef, FieldType, ModuleConfig } from "@/lib/finance-schema"
+import type { FieldDef, FieldType, ModuleConfig, TableColumn } from "@/lib/finance-schema"
 
 /** Terse field builder. */
 function fld(section: string, key: string, label: string, type: FieldType = "text", extra: Partial<FieldDef> = {}): FieldDef {
@@ -1786,7 +1786,323 @@ const orders: ModuleConfig = {
     "COALESCE(SUM(total_amount),0) total_value, COALESCE(SUM(amount_received),0) total_received, COALESCE(SUM(outstanding_amount),0) total_outstanding, COUNT(*) total_rows",
 }
 
+// ---------------------------------------------------------------------------
+// Balance-sheet registers (Fixed Assets, Loans & Advances, Investments,
+// Provisions & Accruals, Capital & Equity) and the Related Parties master.
+// Each transactional register posts a balanced two-leg voucher through the
+// register posting engine (see lib/finance-register-posting), so the Balance
+// Sheet, Trial Balance and Fixed Assets Register reflect it automatically. The
+// `voucher_no` / `posting_status` columns are server-owned and shown read-only.
+// ---------------------------------------------------------------------------
+
+const FUNDING_SOURCES = ["Bank", "Cash", "Accounts Payable", "Owner Capital"]
+const CASH_SOURCES = ["Bank", "Cash"]
+const POSTING_COLUMN: TableColumn = { key: "posting_status", label: "Posting", badge: { Posted: "default", Unposted: "outline" } }
+
+const fixedAssets: ModuleConfig = {
+  key: "fixed-assets",
+  table: "fixed_assets",
+  label: "Fixed Assets",
+  subtitle: "Asset register",
+  addLabel: "New asset",
+  idColumn: "asset_id",
+  idPrefix: "FA",
+  dateColumn: "acquisition_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "status",
+  searchColumns: ["asset_id", "asset_name", "asset_category", "location", "custodian"],
+  filters: [
+    { type: "select", key: "status", label: "Status", options: ["In Use", "Under Repair", "Idle", "Disposed"] },
+    { type: "select", key: "asset_category", label: "Category", options: ["Plant & Machinery", "Buildings", "Vehicles", "Furniture & Fixtures", "Computers & IT", "Office Equipment", "Intangible Assets", "Other"] },
+  ],
+  fields: [
+    fld("Asset information", "asset_name", "Asset name", "text", { required: true }),
+    fld("Asset information", "asset_category", "Category", "select", { options: ["Plant & Machinery", "Buildings", "Vehicles", "Furniture & Fixtures", "Computers & IT", "Office Equipment", "Intangible Assets", "Other"] }),
+    fld("Asset information", "acquisition_date", "Acquisition date", "date", { required: true }),
+    fld("Asset information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
+    fld("Asset information", "location", "Location", "text"),
+    fld("Asset information", "custodian", "Custodian", "text"),
+    fld("Asset information", "status", "Status", "select", { options: ["In Use", "Under Repair", "Idle", "Disposed"], optional: true }),
+    // Acquisition cost drives the posting (Dr Fixed Assets, Cr funding source).
+    fld("Valuation", "cost", "Acquisition cost", "number", { required: true, money: true }),
+    fld("Valuation", "funding_source", "Funding source", "select", { options: FUNDING_SOURCES }),
+    fld("Depreciation", "depreciation_method", "Depreciation method", "select", { options: ["Straight Line", "Written Down Value", "None"], optional: true }),
+    fld("Depreciation", "useful_life_years", "Useful life (years)", "number"),
+    fld("Depreciation", "salvage_value", "Salvage value", "number", { money: true }),
+    fld("Depreciation", "accumulated_depreciation", "Accumulated depreciation", "number", { money: true }),
+    fld("Depreciation", "net_book_value", "Net book value", "number", { computed: true, money: true }),
+    fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
+    fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
+    fld("Notes", "notes", "Notes", "textarea"),
+  ],
+  compute: (v) => ({ net_book_value: round2(num(v.cost) - num(v.accumulated_depreciation)) }),
+  tableColumns: [
+    { key: "asset_id", label: "Asset ID", mono: true },
+    { key: "asset_name", label: "Asset", sub: "asset_category" },
+    { key: "acquisition_date", label: "Acquired" },
+    { key: "cost", label: "Cost", align: "right", money: true },
+    { key: "accumulated_depreciation", label: "Acc. Depr.", align: "right", money: true },
+    { key: "net_book_value", label: "Net Book Value", align: "right", money: true },
+    { key: "status", label: "Status", badge: { "In Use": "default", "Under Repair": "secondary", Idle: "outline", Disposed: "destructive" } },
+    POSTING_COLUMN,
+  ],
+  kpis: [
+    { label: "Total Cost", key: "total_cost", money: true, icon: "Landmark" },
+    { label: "Accumulated Depreciation", key: "total_depr", money: true, icon: "Clock" },
+    { label: "Net Book Value", key: "total_nbv", money: true, icon: "Coins" },
+    { label: "Assets", key: "total_rows", icon: "FileText" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(cost),0) total_cost, COALESCE(SUM(accumulated_depreciation),0) total_depr, COALESCE(SUM(net_book_value),0) total_nbv, COUNT(*) total_rows",
+}
+
+const loansAdvances: ModuleConfig = {
+  key: "loans-advances",
+  table: "loans_advances",
+  label: "Loans & Advances",
+  subtitle: "Loan register",
+  addLabel: "New loan / advance",
+  idColumn: "loan_id",
+  idPrefix: "LA",
+  dateColumn: "disbursement_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "status",
+  searchColumns: ["loan_id", "party_name", "party_type", "direction"],
+  filters: [
+    { type: "select", key: "direction", label: "Direction", options: ["Loan / Advance Given", "Loan Taken"] },
+    { type: "select", key: "status", label: "Status", options: ["Active", "Closed", "Written Off"] },
+  ],
+  fields: [
+    fld("Loan information", "party_name", "Party name", "text", { required: true }),
+    fld("Loan information", "party_type", "Party type", "select", { options: ["Employee", "Vendor", "Director", "Related Party", "Bank / NBFC", "Other"], optional: true }),
+    fld("Loan information", "direction", "Direction", "select", { options: ["Loan / Advance Given", "Loan Taken"], required: true }),
+    fld("Loan information", "disbursement_date", "Disbursement date", "date", { required: true }),
+    fld("Loan information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
+    fld("Loan information", "status", "Status", "select", { options: ["Active", "Closed", "Written Off"], optional: true }),
+    fld("Amounts", "principal", "Principal amount", "number", { required: true, money: true }),
+    fld("Amounts", "funding_source", "Settled via", "select", { options: CASH_SOURCES }),
+    fld("Amounts", "interest_rate", "Interest rate %", "number"),
+    fld("Amounts", "outstanding_amount", "Outstanding amount", "number", { money: true }),
+    fld("Amounts", "repayment_terms", "Repayment terms", "text", { placeholder: "e.g. 12 EMIs" }),
+    fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
+    fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
+    fld("Notes", "notes", "Notes", "textarea"),
+  ],
+  tableColumns: [
+    { key: "loan_id", label: "Loan ID", mono: true },
+    { key: "party_name", label: "Party", sub: "party_type" },
+    { key: "direction", label: "Direction", badge: { "Loan / Advance Given": "default", "Loan Taken": "secondary" } },
+    { key: "principal", label: "Principal", align: "right", money: true },
+    { key: "outstanding_amount", label: "Outstanding", align: "right", money: true },
+    { key: "status", label: "Status", badge: { Active: "default", Closed: "outline", "Written Off": "destructive" } },
+    POSTING_COLUMN,
+  ],
+  kpis: [
+    { label: "Given", key: "total_given", money: true, icon: "TrendingUp" },
+    { label: "Taken", key: "total_taken", money: true, icon: "Banknote" },
+    { label: "Outstanding", key: "total_outstanding", money: true, icon: "Clock" },
+    { label: "Records", key: "total_rows", icon: "FileText" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(CASE WHEN direction LIKE '%Given%' THEN principal ELSE 0 END),0) total_given, COALESCE(SUM(CASE WHEN direction LIKE '%Taken%' THEN principal ELSE 0 END),0) total_taken, COALESCE(SUM(outstanding_amount),0) total_outstanding, COUNT(*) total_rows",
+}
+
+const investments: ModuleConfig = {
+  key: "investments",
+  table: "investments",
+  label: "Investments",
+  subtitle: "Investment register",
+  addLabel: "New investment",
+  idColumn: "investment_id",
+  idPrefix: "INVST",
+  dateColumn: "acquisition_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "status",
+  searchColumns: ["investment_id", "investment_name", "investment_type"],
+  filters: [
+    { type: "select", key: "investment_type", label: "Type", options: ["Fixed Deposit", "Mutual Fund", "Equity Shares", "Bonds", "Property", "Subsidiary / Associate", "Other"] },
+    { type: "select", key: "status", label: "Status", options: ["Active", "Matured", "Sold", "Impaired"] },
+  ],
+  fields: [
+    fld("Investment information", "investment_name", "Investment name", "text", { required: true }),
+    fld("Investment information", "investment_type", "Type", "select", { options: ["Fixed Deposit", "Mutual Fund", "Equity Shares", "Bonds", "Property", "Subsidiary / Associate", "Other"] }),
+    fld("Investment information", "acquisition_date", "Acquisition date", "date", { required: true }),
+    fld("Investment information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
+    fld("Investment information", "status", "Status", "select", { options: ["Active", "Matured", "Sold", "Impaired"], optional: true }),
+    fld("Amounts", "amount", "Invested amount", "number", { required: true, money: true }),
+    fld("Amounts", "funding_source", "Funded via", "select", { options: CASH_SOURCES }),
+    fld("Amounts", "units", "Units / quantity", "number"),
+    fld("Amounts", "expected_return_rate", "Expected return %", "number"),
+    fld("Amounts", "maturity_date", "Maturity date", "date"),
+    fld("Amounts", "current_value", "Current value", "number", { money: true }),
+    fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
+    fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
+    fld("Notes", "notes", "Notes", "textarea"),
+  ],
+  tableColumns: [
+    { key: "investment_id", label: "Investment ID", mono: true },
+    { key: "investment_name", label: "Investment", sub: "investment_type" },
+    { key: "acquisition_date", label: "Acquired" },
+    { key: "amount", label: "Invested", align: "right", money: true },
+    { key: "current_value", label: "Current Value", align: "right", money: true },
+    { key: "status", label: "Status", badge: { Active: "default", Matured: "secondary", Sold: "outline", Impaired: "destructive" } },
+    POSTING_COLUMN,
+  ],
+  kpis: [
+    { label: "Invested", key: "total_invested", money: true, icon: "Coins" },
+    { label: "Current Value", key: "total_current", money: true, icon: "TrendingUp" },
+    { label: "Active", key: "active_rows", icon: "BookOpen" },
+    { label: "Records", key: "total_rows", icon: "FileText" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(amount),0) total_invested, COALESCE(SUM(current_value),0) total_current, COALESCE(SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END),0) active_rows, COUNT(*) total_rows",
+}
+
+const provisionsAccruals: ModuleConfig = {
+  key: "provisions-accruals",
+  table: "provisions_accruals",
+  label: "Provisions & Accruals",
+  subtitle: "Provision register",
+  addLabel: "New provision",
+  idColumn: "provision_id",
+  idPrefix: "PRV",
+  dateColumn: "provision_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "status",
+  searchColumns: ["provision_id", "provision_name", "provision_type", "related_party"],
+  filters: [
+    { type: "select", key: "provision_type", label: "Type", options: ["Provision for Expense", "Accrued Expense", "Provision for Tax", "Provision for Doubtful Debts", "Warranty", "Gratuity / Leave", "Other"] },
+    { type: "select", key: "status", label: "Status", options: ["Open", "Utilised", "Reversed"] },
+  ],
+  fields: [
+    fld("Provision information", "provision_name", "Provision name", "text", { required: true }),
+    fld("Provision information", "provision_type", "Type", "select", { options: ["Provision for Expense", "Accrued Expense", "Provision for Tax", "Provision for Doubtful Debts", "Warranty", "Gratuity / Leave", "Other"] }),
+    fld("Provision information", "provision_date", "Provision date", "date", { required: true }),
+    fld("Provision information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
+    fld("Provision information", "related_party", "Related party / counterparty", "text"),
+    fld("Provision information", "status", "Status", "select", { options: ["Open", "Utilised", "Reversed"], optional: true }),
+    fld("Amounts", "amount", "Provision amount", "number", { required: true, money: true }),
+    fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
+    fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
+    fld("Notes", "notes", "Notes", "textarea"),
+  ],
+  tableColumns: [
+    { key: "provision_id", label: "Provision ID", mono: true },
+    { key: "provision_name", label: "Provision", sub: "provision_type" },
+    { key: "provision_date", label: "Date" },
+    { key: "amount", label: "Amount", align: "right", money: true },
+    { key: "status", label: "Status", badge: { Open: "default", Utilised: "secondary", Reversed: "destructive" } },
+    POSTING_COLUMN,
+  ],
+  kpis: [
+    { label: "Total Provisions", key: "total_amount", money: true, icon: "Wallet" },
+    { label: "Open", key: "open_amount", money: true, icon: "Clock" },
+    { label: "Utilised", key: "used_amount", money: true, icon: "Coins" },
+    { label: "Records", key: "total_rows", icon: "FileText" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(amount),0) total_amount, COALESCE(SUM(CASE WHEN status = 'Open' THEN amount ELSE 0 END),0) open_amount, COALESCE(SUM(CASE WHEN status = 'Utilised' THEN amount ELSE 0 END),0) used_amount, COUNT(*) total_rows",
+}
+
+const capitalEquity: ModuleConfig = {
+  key: "capital-equity",
+  table: "capital_equity",
+  label: "Capital & Equity",
+  subtitle: "Equity register",
+  addLabel: "New equity entry",
+  idColumn: "entry_id",
+  idPrefix: "CAP",
+  dateColumn: "entry_date",
+  financialYearColumn: "financial_year",
+  statusColumn: "status",
+  searchColumns: ["entry_id", "entry_type", "contributor_name", "instrument"],
+  filters: [
+    { type: "select", key: "entry_type", label: "Type", options: ["Capital Contribution", "Share Issue", "Drawings", "Dividend", "Retained Earnings Transfer"] },
+    { type: "select", key: "status", label: "Status", options: ["Active", "Reversed"] },
+  ],
+  fields: [
+    fld("Entry information", "entry_type", "Entry type", "select", { options: ["Capital Contribution", "Share Issue", "Drawings", "Dividend", "Retained Earnings Transfer"], required: true }),
+    fld("Entry information", "contributor_name", "Contributor / shareholder", "text", { required: true }),
+    fld("Entry information", "entry_date", "Entry date", "date", { required: true }),
+    fld("Entry information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
+    fld("Entry information", "instrument", "Instrument / reference", "text", { placeholder: "e.g. Equity shares, cheque no." }),
+    fld("Entry information", "status", "Status", "select", { options: ["Active", "Reversed"], optional: true }),
+    fld("Amounts", "amount", "Amount", "number", { required: true, money: true }),
+    fld("Amounts", "mode", "Settled via", "select", { options: CASH_SOURCES }),
+    fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
+    fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
+    fld("Notes", "notes", "Notes", "textarea"),
+  ],
+  tableColumns: [
+    { key: "entry_id", label: "Entry ID", mono: true },
+    { key: "entry_type", label: "Type", sub: "contributor_name" },
+    { key: "entry_date", label: "Date" },
+    { key: "amount", label: "Amount", align: "right", money: true },
+    { key: "status", label: "Status", badge: { Active: "default", Reversed: "destructive" } },
+    POSTING_COLUMN,
+  ],
+  kpis: [
+    { label: "Contributions", key: "total_in", money: true, icon: "Banknote" },
+    { label: "Drawings / Dividends", key: "total_out", money: true, icon: "CreditCard" },
+    { label: "Net Equity", key: "net_equity", money: true, icon: "Landmark" },
+    { label: "Records", key: "total_rows", icon: "FileText" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(CASE WHEN entry_type IN ('Drawings','Dividend') THEN 0 ELSE amount END),0) total_in, COALESCE(SUM(CASE WHEN entry_type IN ('Drawings','Dividend') THEN amount ELSE 0 END),0) total_out, COALESCE(SUM(CASE WHEN entry_type IN ('Drawings','Dividend') THEN -amount ELSE amount END),0) net_equity, COUNT(*) total_rows",
+}
+
+const relatedParties: ModuleConfig = {
+  key: "related-parties",
+  table: "related_parties",
+  label: "Related Parties",
+  subtitle: "Disclosure master",
+  addLabel: "New related party",
+  idColumn: "party_id",
+  idPrefix: "RP",
+  statusColumn: "status",
+  searchColumns: ["party_id", "party_name", "relationship", "pan", "gstin", "contact_person"],
+  filters: [
+    { type: "select", key: "relationship", label: "Relationship", options: ["Director / KMP", "Holding Company", "Subsidiary", "Associate / JV", "Relative of KMP", "Enterprise under common control", "Other"] },
+    { type: "select", key: "status", label: "Status", options: ["Active", "Inactive"] },
+  ],
+  fields: [
+    fld("Party information", "party_name", "Party name", "text", { required: true }),
+    fld("Party information", "relationship", "Relationship", "select", { options: ["Director / KMP", "Holding Company", "Subsidiary", "Associate / JV", "Relative of KMP", "Enterprise under common control", "Other"], required: true }),
+    fld("Party information", "nature_of_relationship", "Nature of relationship", "text", { placeholder: "How the party is related" }),
+    fld("Party information", "status", "Status", "select", { options: ["Active", "Inactive"], optional: true }),
+    fld("Identity", "pan", "PAN", "text"),
+    fld("Identity", "gstin", "GSTIN", "text"),
+    fld("Identity", "opening_balance", "Opening balance", "number", { money: true }),
+    fld("Contact", "contact_person", "Contact person", "text"),
+    fld("Contact", "email", "Email", "text"),
+    fld("Contact", "phone", "Phone", "text"),
+    fld("Contact", "address", "Address", "textarea"),
+    fld("Notes", "notes", "Notes", "textarea"),
+  ],
+  tableColumns: [
+    { key: "party_id", label: "Party ID", mono: true },
+    { key: "party_name", label: "Party", sub: "nature_of_relationship" },
+    { key: "relationship", label: "Relationship" },
+    { key: "pan", label: "PAN", mono: true },
+    { key: "opening_balance", label: "Opening Balance", align: "right", money: true },
+    { key: "status", label: "Status", badge: { Active: "default", Inactive: "outline" } },
+  ],
+  kpis: [
+    { label: "Related Parties", key: "total_rows", icon: "Users" },
+    { label: "Active", key: "active_rows", icon: "BookOpen" },
+    { label: "Opening Balance", key: "total_opening", money: true, icon: "Coins" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END),0) active_rows, COALESCE(SUM(opening_balance),0) total_opening",
+}
+
 export const FINANCE_MODULE_CONFIGS: Record<string, ModuleConfig> = {
+  "fixed-assets": fixedAssets,
+  "loans-advances": loansAdvances,
+  "investments": investments,
+  "provisions-accruals": provisionsAccruals,
+  "capital-equity": capitalEquity,
+  "related-parties": relatedParties,
   "purchase-bills": purchaseBills,
   "expenses": expenses,
   "fte-invoices": fteInvoices,

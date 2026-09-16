@@ -490,9 +490,7 @@ function NavGroup({
 
       {open && (
         <div className="mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-3 ml-4">
-          {item.children!.map((child) => (
-            <NavChildNode key={child.href ?? child.label} child={child} pathname={pathname} />
-          ))}
+          <NavChildList items={item.children!} pathname={pathname} />
         </div>
       )}
     </div>

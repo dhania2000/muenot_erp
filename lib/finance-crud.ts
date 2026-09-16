@@ -454,6 +454,10 @@ export function createFinanceHandlers(moduleKey: string) {
     if (moduleKey === "chart-of-accounts") await ensureChartOfAccountsColumns()
     if (REGISTER_MODULE_KEYS.has(moduleKey)) await ensureRegisterModuleTables()
     if (moduleKey === "loans-advances") await ensureLoansAdvancesColumns()
+    if (moduleKey === "investments") {
+      const { ensureInvestmentSchema } = await import("@/lib/finance-investments")
+      await ensureInvestmentSchema()
+    }
   }
 
   const validate = VALIDATORS[moduleKey]

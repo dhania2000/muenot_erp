@@ -62,6 +62,12 @@ export type AccountRole =
   // or loss (expense) on sale of assets.
   | "disposal_gain"
   | "disposal_loss"
+  // Investment income (interest / dividend), realised gain / loss on sale or
+  // redemption, and downward fair-value / impairment loss on investments.
+  | "investment_income"
+  | "investment_gain"
+  | "investment_loss"
+  | "investment_impairment"
 
 /** Default account_code for each posting role (matches the migration seed). */
 export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
@@ -105,6 +111,11 @@ export const ROLE_DEFAULT_CODE: Record<AccountRole, string> = {
   // Gain / loss on sale of fixed assets.
   disposal_gain: "4200",
   disposal_loss: "5210",
+  // Investment income and realised / unrealised gain-loss heads.
+  investment_income: "4300",
+  investment_gain: "4310",
+  investment_loss: "5310",
+  investment_impairment: "5320",
 }
 
 /**

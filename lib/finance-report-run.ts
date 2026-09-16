@@ -10,6 +10,7 @@ import {
   computeReportDiagnostics,
   EMPTY_HEALTH,
   type ReportDiagnostics,
+  type ReportSourceError,
   type SourceHealth,
 } from "@/lib/finance-report-diagnostics"
 import { getScope } from "@/lib/permission-store"
@@ -174,7 +175,12 @@ export async function runFinanceReport(input: RunReportInput): Promise<ReportRun
 
   const reportMeta = buildReportMeta(def)
 
-  const diagnose = (rows: Record<string, any>[], available: boolean, health: SourceHealth) =>
+  const diagnose = (
+    rows: Record<string, any>[],
+    available: boolean,
+    health: SourceHealth,
+    sourceError?: ReportSourceError,
+  ) =>
     computeReportDiagnostics({
       columns: def.columns,
       rows,
@@ -187,6 +193,7 @@ export async function runFinanceReport(input: RunReportInput): Promise<ReportRun
       to: input.to,
       config: def.diagnostics,
       health,
+      sourceError,
     })
 
   // Statement reports (Trial Balance, P&L, Balance Sheet, Cash Flow) carry no
@@ -222,13 +229,18 @@ export async function runFinanceReport(input: RunReportInput): Promise<ReportRun
       }
     } catch (err) {
       console.log("[v0] statement report failed for", input.reportKey, (err as Error).message)
+      // Statement reports are computed from the Chart of Accounts + posted
+      // General Ledger; classify the failure against those source tables so the
+      // banner names the genuinely missing source (Phase 23) rather than
+      // reporting a blanket "no data source".
+      const sourceError = classifyDbError(err, ["chart_of_accounts", "general_ledger"], "General Ledger / Chart of Accounts")
       return {
         ok: true,
         status: 200,
         reportMeta,
         rows: [],
         available: false,
-        diagnostics: diagnose([], false, EMPTY_HEALTH),
+        diagnostics: diagnose([], false, EMPTY_HEALTH, sourceError),
       }
     }
   }
@@ -277,8 +289,70 @@ export async function runFinanceReport(input: RunReportInput): Promise<ReportRun
     return { ok: true, status: 200, reportMeta, rows, available: true, diagnostics: diagnose(rows, true, health) }
   } catch (err) {
     console.log("[v0] report query failed for", input.reportKey, (err as Error).message)
-    return { ok: true, status: 200, reportMeta, rows: [], available: false, diagnostics: diagnose([], false, EMPTY_HEALTH) }
+    // The report IS wired to a source — the failure is either a genuinely
+    // missing table (needs setting up) or a broken query (needs fixing). Name
+    // the report's own FROM table so the banner is specific (Phases 23/31).
+    const tables = collectFromTables(def.sql ?? "")
+    const sourceError = classifyDbError(err, tables, humaniseSource(tables[0]))
+    return {
+      ok: true,
+      status: 200,
+      reportMeta,
+      rows: [],
+      available: false,
+      diagnostics: diagnose([], false, EMPTY_HEALTH, sourceError),
+    }
   }
+}
+
+// ---------------------------------------------------------------------------
+// DB error classification (Phases 23/31)
+// ---------------------------------------------------------------------------
+// Turn a raw mysql2 error into an actionable verdict: a genuinely missing
+// source table ("Required source is not available") versus a query that
+// references a column the (existing) source no longer has ("query needs
+// updating") versus any other failure. The raw reason is always carried
+// through for on-screen + log debugging so nothing fails silently.
+
+/** Every table named after a FROM / JOIN in a report's SQL. */
+function collectFromTables(sql: string): string[] {
+  const tables: string[] = []
+  const re = /\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(sql))) {
+    const t = m[1].toLowerCase()
+    // Skip the derived-subquery alias `x`/`t` and duplicates.
+    if (t.length > 2 && !tables.includes(t)) tables.push(t)
+  }
+  return tables
+}
+
+/** Turn a snake_case table name into a readable source label. */
+function humaniseSource(table?: string): string | undefined {
+  if (!table) return undefined
+  return table
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function classifyDbError(err: unknown, candidateTables: string[], sourceLabel?: string): ReportSourceError {
+  const code = (err as { code?: string })?.code || ""
+  const detail = (err as Error)?.message || String(err)
+
+  // A missing table means the source module has not been set up yet.
+  if (code === "ER_NO_SUCH_TABLE" || /doesn't exist|Table '.*' doesn't/i.test(detail)) {
+    // Prefer the specific table named in the DB error, else the first FROM table.
+    const named = detail.match(/Table '(?:[^.']*\.)?([^']+)'/i)?.[1]
+    const missing = named || candidateTables[0]
+    return { kind: "missing", source: humaniseSource(missing) || sourceLabel, detail }
+  }
+
+  // A bad field / unknown column means the source exists but the query drifted.
+  if (code === "ER_BAD_FIELD_ERROR" || /Unknown column/i.test(detail)) {
+    return { kind: "broken", source: sourceLabel, detail }
+  }
+
+  return { kind: "unknown", source: sourceLabel, detail }
 }
 
 /**

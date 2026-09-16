@@ -1,6 +1,6 @@
 import { query } from "@/lib/db"
 import { postLines, type PostingLine } from "@/lib/finance-posting"
-import { ensureRegisterPostingAccounts, type AccountRole } from "@/lib/finance-accounts"
+import { ensureRegisterPostingAccounts, ensureCapitalEquityAccounts, type AccountRole } from "@/lib/finance-accounts"
 import { provisionKind } from "@/lib/finance-provisions"
 
 // ---------------------------------------------------------------------------
@@ -37,6 +37,22 @@ function contraRole(source: string | null | undefined): AccountRole {
     default:
       return "bank"
   }
+}
+
+/**
+ * Map a user-facing equity head name (the Capital & Equity "Transfer from / to"
+ * picker) to its posting role for the counter leg of an internal appropriation.
+ */
+function equityRole(name: string | null | undefined): AccountRole | null {
+  const s = String(name || "").trim().toLowerCase()
+  if (!s) return null
+  if (s.includes("retained")) return "retained_earnings"
+  if (s.includes("reserve")) return "reserves"
+  if (s.includes("partner")) return "partner_capital"
+  if (s.includes("drawing")) return "drawings"
+  if (s.includes("adjust")) return "equity_adjustment"
+  if (s.includes("share") || s.includes("capital") || s.includes("equity")) return "share_capital"
+  return null
 }
 
 /** Statuses that must NOT hold an active posting for any register module. */
@@ -200,31 +216,73 @@ export const REGISTER_MODULES: Record<string, RegisterModule> = {
       }
     },
   },
-  // Contribution / Share Issue: Dr bank/cash ; Cr Share Capital & Equity
-  // Drawings / Dividend:        Dr Drawings   ; Cr bank/cash
+  // Capital & Equity (Phase 7). Seven entry types, each a balanced two-leg
+  // voucher through the shared engine — no separate accounting store:
+  //   External (cash-affecting):
+  //     Capital Contribution / Share Capital → Dr Bank/Cash ; Cr Share Capital
+  //     Partner Capital                      → Dr Bank/Cash ; Cr Partners' Capital
+  //     Capital Withdrawal                   → Dr Drawings   ; Cr Bank/Cash
+  //   Internal appropriation / transfer (equity-to-equity, no cash):
+  //     Reserves          → Dr Retained Earnings ; Cr Reserves            (Increase)
+  //     Retained Earnings → Dr Reserves          ; Cr Retained Earnings   (Increase)
+  //     Equity Adjustment → Dr Retained Earnings ; Cr Equity Adjustments  (Increase)
+  //   `direction` (Increase / Decrease) flips the two legs; `transfer_source`
+  //   overrides the counter equity head. Retained Earnings reuses the SAME 3910
+  //   head as the Year-End Closing engine.
   "capital-equity": {
     table: "capital_equity",
     idColumn: "entry_id",
     build: (r) => {
       const amount = round2(num(r.amount))
-      const kind = String(r.entry_type || "").toLowerCase()
-      const isWithdrawal = kind.includes("drawing") || kind.includes("dividend")
+      const type = String(r.entry_type || "").trim()
+      const key = type.toLowerCase()
       const contra = contraRole(r.mode)
-      const lines: PostingLine[] = isWithdrawal
-        ? [
-            { role: "drawings", debit: amount, credit: 0 },
-            { role: contra, debit: 0, credit: amount },
-          ]
-        : [
-            { role: contra, debit: amount, credit: 0 },
-            { role: "share_capital", debit: 0, credit: amount },
-          ]
+
+      let lines: PostingLine[]
+      if (key.includes("withdrawal") || key.includes("drawing") || key.includes("dividend")) {
+        // Owner / partner takes value out of the business.
+        lines = [
+          { role: "drawings", debit: amount, credit: 0 },
+          { role: contra, debit: 0, credit: amount },
+        ]
+      } else if (key.includes("partner")) {
+        lines = [
+          { role: contra, debit: amount, credit: 0 },
+          { role: "partner_capital", debit: 0, credit: amount },
+        ]
+      } else if (key.includes("share") || key.includes("contribution")) {
+        lines = [
+          { role: contra, debit: amount, credit: 0 },
+          { role: "share_capital", debit: 0, credit: amount },
+        ]
+      } else {
+        // Internal equity appropriation / transfer (Reserves, Retained Earnings,
+        // Equity Adjustment): both legs are equity heads, no cash moves.
+        const primary: AccountRole = key.includes("reserve")
+          ? "reserves"
+          : key.includes("retained")
+            ? "retained_earnings"
+            : "equity_adjustment"
+        const defaultSource: AccountRole = primary === "retained_earnings" ? "reserves" : "retained_earnings"
+        const source = equityRole(r.transfer_source) ?? defaultSource
+        const decrease = String(r.direction || "").trim().toLowerCase().startsWith("decrease")
+        lines = decrease
+          ? [
+              { role: primary, debit: amount, credit: 0 },
+              { role: source, debit: 0, credit: amount },
+            ]
+          : [
+              { role: source, debit: amount, credit: 0 },
+              { role: primary, debit: 0, credit: amount },
+            ]
+      }
+
       return {
         amount,
         lines,
         entityType: "capital_equity",
-        voucherType: r.entry_type || "Capital",
-        narration: `${r.entry_type || "Capital"} ${r.entry_id}${r.contributor_name ? ` — ${r.contributor_name}` : ""}`,
+        voucherType: type || "Capital",
+        narration: `${type || "Capital"} ${r.entry_id}${r.contributor_name ? ` — ${r.contributor_name}` : ""}`,
         sourceModule: "Capital & Equity",
         date: dateOf(r.entry_date),
         financialYear: r.financial_year ?? null,
@@ -240,6 +298,10 @@ async function postSpec(
   opts: { createdBy?: number | null; reverse?: boolean } = {},
 ) {
   await ensureRegisterPostingAccounts()
+  // Capital & Equity posts to the extended equity heads (partners' capital,
+  // reserves, retained earnings, equity adjustments) that are not in the base
+  // register seed, so make sure they exist before the voucher is posted.
+  if (mod.table === "capital_equity") await ensureCapitalEquityAccounts()
   const spec = mod.build(row)
   return postLines(spec.lines, {
     entityType: spec.entityType,

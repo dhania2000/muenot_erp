@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS capital_equity (
   financial_year      VARCHAR(12) DEFAULT NULL,
   amount              DECIMAL(16,2) NOT NULL DEFAULT 0,
   mode                VARCHAR(40) DEFAULT NULL,
+  transfer_source     VARCHAR(60) DEFAULT NULL,
+  direction           VARCHAR(20) DEFAULT NULL,
   instrument          VARCHAR(120) DEFAULT NULL,
   status              VARCHAR(30) NOT NULL DEFAULT 'Active',
   notes               TEXT DEFAULT NULL,

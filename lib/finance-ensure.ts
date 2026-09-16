@@ -902,6 +902,8 @@ export async function ensureRegisterModuleTables() {
     financial_year      VARCHAR(12) DEFAULT NULL,
     amount              DECIMAL(16,2) NOT NULL DEFAULT 0,
     mode                VARCHAR(40) DEFAULT NULL,
+    transfer_source     VARCHAR(60) DEFAULT NULL,
+    direction           VARCHAR(20) DEFAULT NULL,
     instrument          VARCHAR(120) DEFAULT NULL,
     status              VARCHAR(30) NOT NULL DEFAULT 'Active',
     notes               TEXT DEFAULT NULL,${POSTING_COLS}
@@ -935,6 +937,12 @@ export async function ensureRegisterModuleTables() {
     KEY idx_rp_relationship (relationship),
     KEY idx_rp_status (status)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  // Phase 7 — Capital & Equity gained the internal-transfer columns after the
+  // base table shipped. Add them idempotently so an existing database picks up
+  // the counter equity head + Increase/Decrease direction the posting engine reads.
+  await ensureColumn("capital_equity", "transfer_source", "VARCHAR(60) DEFAULT NULL")
+  await ensureColumn("capital_equity", "direction", "VARCHAR(20) DEFAULT NULL")
 
   registerTablesEnsured = true
 }

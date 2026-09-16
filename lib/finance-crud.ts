@@ -375,6 +375,21 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
       },
     ]),
   ),
+  // Loans & Advances additionally owns a persisted amortisation schedule, so its
+  // delete must unwind the ledger posting AND drop the schedule rows. Declared
+  // after the generic register spread above so it wins. Failure-tolerant.
+  "loans-advances": async (row) => {
+    try {
+      await reverseRegisterPosting("loans-advances", row)
+    } catch (error) {
+      console.log("[v0] reverseRegisterPosting failed for loans-advances:", (error as Error).message)
+    }
+    try {
+      await deleteLoanSchedule(String(row?.loan_id ?? ""))
+    } catch (error) {
+      console.log("[v0] deleteLoanSchedule failed:", (error as Error).message)
+    }
+  },
 }
 
 /** Resolve a module's id column without importing the whole config graph twice. */

@@ -210,6 +210,29 @@ export async function createApplication(data: any, userId: number | null) {
     const { linkApplicationToMaster } = await import("@/lib/recruit-unification-db")
     await linkApplicationToMaster(applicationId, { ...data, job_title: jobTitle })
   } catch {}
+  // Phase 39: the application itself is the first event on the ONE central
+  // candidate timeline. Record it (best-effort, idempotent per application) so
+  // every candidate — including Careers Site applicants — starts with an
+  // "Application" activity that the rest of the pipeline then builds on.
+  try {
+    const { recordCandidateActivity } = await import("@/lib/recruit-unification-db")
+    await recordCandidateActivity({
+      application_id: applicationId,
+      candidate_name: data.candidate_name,
+      job_applied: jobTitle,
+      requisition_id: requisitionId,
+      email: data.email,
+      phone: data.phone,
+      activity_type: "Application",
+      activity_date: data.applied_at || null,
+      subject: jobTitle ? `Applied — ${jobTitle}` : "Application received",
+      outcome: data.stage || "applied",
+      notes: data.source ? `Source: ${data.source}` : null,
+      source_type: "application",
+      source_ref: applicationId,
+      created_by: userId,
+    })
+  } catch {}
   return { application_id: applicationId }
 }
 

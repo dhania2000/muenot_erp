@@ -21,7 +21,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { KanbanSquare, Mail, MapPin, Phone, Plus, Trash2 } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { CheckCircle2, KanbanSquare, Mail, MapPin, PauseCircle, Phone, Plus, Trash2, XCircle } from "lucide-react"
 import { PageHeader, RatingStars } from "@/components/recruit/recruit-shared"
 import { CallDialer, type CallTarget } from "@/components/shared/call-dialer"
 import { RecruitComposeEmailDialog, type ComposeTarget } from "@/components/recruit/recruit-compose-email-dialog"
@@ -70,6 +71,8 @@ export function ApplicationsKanbanClient({ canManage, canCall = false }: { canMa
   const [stageFilter, setStageFilter] = useState<string>("all")
   const [composeOpen, setComposeOpen] = useState(false)
   const [composeTarget, setComposeTarget] = useState<ComposeTarget | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   function startCall(app: Application) {
     setCallTarget({ id: app.id, name: app.candidate_name, number: app.phone })

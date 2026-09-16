@@ -1,6 +1,16 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
+import {
+  normalizeStage,
+  stageRank,
+  isTerminalStage,
+  screeningResultToStage,
+  assessmentResultToStage,
+  interviewResultToStage,
+  selectionResultToStage,
+  type CanonicalStage,
+} from "@/lib/recruitment-stages"
 
 /**
  * Recruitment unification layer.
@@ -93,6 +103,13 @@ export async function ensureUnificationSchema() {
       `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS application_id VARCHAR(40) DEFAULT NULL`,
       `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_${t.slice(0, 20)}_app (application_id)`,
     ]),
+    // Phase 14: Assessment links up to the Requisition -> Job spine.
+    "ALTER TABLE recruitment_assessments ADD COLUMN IF NOT EXISTS requisition_id VARCHAR(40) DEFAULT NULL",
+    "ALTER TABLE recruitment_assessments ADD COLUMN IF NOT EXISTS job_id VARCHAR(40) DEFAULT NULL",
+    // Phase 15: unified interview record carries panel + explicit mode + job link.
+    "ALTER TABLE recruitment_interviews ADD COLUMN IF NOT EXISTS panel VARCHAR(512) DEFAULT NULL",
+    "ALTER TABLE recruitment_interviews ADD COLUMN IF NOT EXISTS interview_mode VARCHAR(64) DEFAULT NULL",
+    "ALTER TABLE recruitment_interviews ADD COLUMN IF NOT EXISTS job_id VARCHAR(40) DEFAULT NULL",
   ]
   for (const sql of alters) {
     try {
@@ -316,6 +333,179 @@ export async function resolveStageLinks(
   if (applicationId) out.application_id = applicationId
 
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Stage write-back (Phases 12-15): saving a stage record moves the linked
+// operational application through the ONE canonical pipeline.
+// ---------------------------------------------------------------------------
+
+/**
+ * Advance an application to `target` following the canonical stage rules:
+ *  - a hired application is final and never changes,
+ *  - an existing terminal state (rejected/hold/withdrawn) is never overwritten
+ *    by a forward-progression stage,
+ *  - forward progression only ever moves forward (a later screening "On Hold"
+ *    can't drag a candidate already at Interview backwards),
+ *  - terminal targets can be applied from any non-hired state.
+ * Returns true when the row's stage actually changed.
+ */
+export async function advanceApplicationStage(
+  applicationId: string | null | undefined,
+  target: CanonicalStage | null,
+): Promise<boolean> {
+  if (!applicationId || !target) return false
+  await ensureUnificationSchema()
+  const rows = await safeQuery<any[]>(
+    "SELECT stage FROM recruit_applications WHERE application_id = ? LIMIT 1",
+    [applicationId],
+  )
+  if (!rows[0]) return false
+  const current = normalizeStage(rows[0].stage)
+  if (current === "hired") return false
+  if (isTerminalStage(current) && !isTerminalStage(target)) return false
+  if (isTerminalStage(target)) {
+    if (current === target) return false
+  } else if (stageRank(target) <= stageRank(current)) {
+    return false
+  }
+  try {
+    await query("UPDATE recruit_applications SET stage = ? WHERE application_id = ?", [target, applicationId])
+    return true
+  } catch (err) {
+    if (isMissingSchema(err)) return false
+    throw err
+  }
+}
+
+/**
+ * After a config-driven stage record is created/updated, push its outcome onto
+ * the linked application so the operational pipeline stays in lock-step with
+ * Screening / Assessment / Interview / Selection.
+ */
+export async function applyStageWriteBack(table: string, record: Record<string, any>): Promise<boolean> {
+  try {
+    let appId: string | null = record.application_id ? String(record.application_id).trim() || null : null
+    if (!appId) {
+      const links = await resolveStageLinks(table, record)
+      appId = links.application_id ? String(links.application_id) : null
+    }
+    if (!appId) return false
+
+    let target: CanonicalStage | null = null
+    switch (table) {
+      case "recruitment_screening":
+        target = screeningResultToStage(record.screening_result)
+        break
+      case "recruitment_assessments":
+        target = assessmentResultToStage(record.assessment_result)
+        break
+      case "recruitment_interviews":
+        target = interviewResultToStage(record.interview_result)
+        break
+      case "recruitment_selections":
+        target = selectionResultToStage(record)
+        break
+      default:
+        return false
+    }
+    return await advanceApplicationStage(appId, target)
+  } catch (err) {
+    if (isMissingSchema(err)) return false
+    throw err
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13: shortlisting actions on real Application records.
+// ---------------------------------------------------------------------------
+export type BulkApplicationAction = "shortlist" | "reject" | "hold" | "advance"
+
+export type BulkActionResult = { updated: number; skipped: number; total: number }
+
+/**
+ * Apply a shortlist-style action to one or many applications. Operates on the
+ * real recruit_applications rows (never a detached copy) and, for shortlisting,
+ * writes a single canonical Screening record per application — re-running the
+ * action never creates a duplicate shortlist row.
+ */
+export async function bulkApplicationAction(
+  action: BulkApplicationAction,
+  applicationIds: string[],
+  opts: { targetStage?: string; recruiter?: string | null; userId?: number | null } = {},
+): Promise<BulkActionResult> {
+  await ensureUnificationSchema()
+  const ids = Array.from(new Set((applicationIds || []).map((s) => String(s).trim()).filter(Boolean)))
+  const result: BulkActionResult = { updated: 0, skipped: 0, total: ids.length }
+
+  const target: CanonicalStage | null =
+    action === "shortlist"
+      ? "shortlisted"
+      : action === "reject"
+        ? "rejected"
+        : action === "hold"
+          ? "hold"
+          : opts.targetStage
+            ? normalizeStage(opts.targetStage)
+            : null
+
+  for (const appId of ids) {
+    let changed = await advanceApplicationStage(appId, target)
+    if (action === "shortlist") {
+      // Attach exactly one Screening record marking the shortlist decision.
+      const created = await ensureShortlistScreening(appId, opts)
+      changed = changed || created
+    }
+    if (changed) result.updated++
+    else result.skipped++
+  }
+  return result
+}
+
+/** Create a Shortlisted screening row for an application only if none exists. */
+async function ensureShortlistScreening(
+  applicationId: string,
+  opts: { recruiter?: string | null; userId?: number | null },
+): Promise<boolean> {
+  try {
+    const existing = await safeQuery<any[]>(
+      "SELECT id FROM recruitment_screening WHERE application_id = ? LIMIT 1",
+      [applicationId],
+    )
+    if (existing.length > 0) return false
+
+    const app = await safeQuery<any[]>(
+      `SELECT application_id, candidate_master_id, candidate_name, email, phone, job_title, requisition_id
+         FROM recruit_applications WHERE application_id = ? LIMIT 1`,
+      [applicationId],
+    )
+    if (!app[0]) return false
+    const a = app[0]
+
+    const screeningId = await nextRecordIdForPrefix("SCR")
+    await query(
+      `INSERT INTO recruitment_screening
+        (screening_id, candidate_id, application_id, candidate_name, email, job_applied,
+         requisition_id, screening_result, recruiter, screening_date)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [
+        screeningId,
+        a.candidate_master_id || null,
+        applicationId,
+        a.candidate_name || null,
+        a.email || null,
+        a.job_title || null,
+        a.requisition_id || null,
+        "Shortlisted",
+        opts.recruiter || null,
+        new Date(),
+      ],
+    )
+    return true
+  } catch (err) {
+    if (isMissingSchema(err)) return false
+    throw err
+  }
 }
 
 // ---------------------------------------------------------------------------

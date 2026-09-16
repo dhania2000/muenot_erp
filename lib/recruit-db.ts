@@ -4,6 +4,7 @@ import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { nextDocumentId } from "@/lib/settings/numbering"
 import type { JobQuestion, StageKey } from "@/lib/recruit"
+import { normalizeStage } from "@/lib/recruitment-stages"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -161,10 +162,13 @@ export async function deleteJob(jobId: string) {
 // Applications
 // ---------------------------------------------------------------------------
 export async function listApplications(jobId?: string) {
-  if (jobId) {
-    return query<any[]>("SELECT * FROM recruit_applications WHERE job_id = ? ORDER BY applied_at DESC", [jobId])
-  }
-  return query<any[]>("SELECT * FROM recruit_applications ORDER BY applied_at DESC LIMIT 1000")
+  const rows = jobId
+    ? await query<any[]>("SELECT * FROM recruit_applications WHERE job_id = ? ORDER BY applied_at DESC", [jobId])
+    : await query<any[]>("SELECT * FROM recruit_applications ORDER BY applied_at DESC LIMIT 1000")
+  // Phase 11: surface every row in the one canonical stage vocabulary so legacy
+  // values (e.g. "phone_screen", "offered") render correctly in the pipeline UI.
+  for (const r of rows) r.stage = normalizeStage(r.stage)
+  return rows
 }
 
 export async function createApplication(data: any, userId: number | null) {
@@ -215,7 +219,10 @@ export async function updateApplication(applicationId: string, data: any) {
   const allowed = ["candidate_name", "email", "phone", "location", "experience", "current_company",
     "expected_salary", "resume_url", "cover_letter", "source", "stage", "rating", "job_id", "job_title"]
   for (const key of allowed) {
-    if (key in data) { fields.push(`${key} = ?`); values.push(data[key]) }
+    if (key in data) {
+      fields.push(`${key} = ?`)
+      values.push(key === "stage" ? normalizeStage(data[key]) : data[key])
+    }
   }
   if (fields.length === 0) return
   values.push(applicationId)
@@ -223,7 +230,7 @@ export async function updateApplication(applicationId: string, data: any) {
 }
 
 export async function updateApplicationStage(applicationId: string, stage: StageKey) {
-  await query("UPDATE recruit_applications SET stage = ? WHERE application_id = ?", [stage, applicationId])
+  await query("UPDATE recruit_applications SET stage = ? WHERE application_id = ?", [normalizeStage(stage), applicationId])
 }
 
 export async function deleteApplication(applicationId: string) {
@@ -377,9 +384,9 @@ export async function getJobReport() {
         j.job_id, j.title, j.department, j.status, j.positions,
         COUNT(a.id) AS applications,
         SUM(a.stage='interview') AS interviews,
-        SUM(a.stage='offered') AS offered,
-        SUM(a.stage='hired') AS hired,
-        SUM(a.stage='rejected') AS rejected
+        SUM(a.stage IN ('offer','offered','offer_accepted')) AS offered,
+        SUM(a.stage IN ('hired','joined')) AS hired,
+        SUM(a.stage IN ('rejected','withdrawn')) AS rejected
      FROM recruit_jobs j
      LEFT JOIN recruit_applications a ON a.job_id = j.job_id
      GROUP BY j.id

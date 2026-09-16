@@ -182,6 +182,13 @@ export function createRecruitmentHandlers(moduleKey: string) {
       cols.map((c) => record[c]),
     )
 
+    // Push the stage record's outcome back onto the linked application so the
+    // canonical pipeline advances (Screening/Assessment/Interview/Selection).
+    try {
+      const { applyStageWriteBack } = await import("@/lib/recruit-unification-db")
+      await applyStageWriteBack(cfg.table, record)
+    } catch {}
+
     return NextResponse.json({ ok: true, id: record[cfg.idColumn] }, { status: 201 })
   }
 
@@ -219,6 +226,12 @@ export function createRecruitmentHandlers(moduleKey: string) {
         [...cols.map((c) => update[c]), id],
       )
     }
+
+    // Reflect the updated outcome onto the linked application's canonical stage.
+    try {
+      const { applyStageWriteBack } = await import("@/lib/recruit-unification-db")
+      await applyStageWriteBack(cfg.table, merged)
+    } catch {}
 
     return NextResponse.json({ ok: true })
   }

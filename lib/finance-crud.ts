@@ -6,8 +6,9 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns, ensureRegisterModuleTables } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns, ensureRegisterModuleTables, ensureLoansAdvancesColumns } from "@/lib/finance-ensure"
 import { syncRegisterPosting, reverseRegisterPosting } from "@/lib/finance-register-posting"
+import { augmentLoanAdvance, syncLoanSchedule, deleteLoanSchedule } from "@/lib/finance-loans"
 import { guardChartOfAccountWrite, checkAccountDeletable } from "@/lib/finance-coa"
 import { syncOpeningBalancePosting } from "@/lib/finance-opening-balance"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
@@ -48,6 +49,9 @@ const SERVER_AUGMENT: Record<
 > = {
   "purchase-bills": computePurchaseBillServerFields,
   expenses: computeExpenseServerFields,
+  // Phase 4 — fill the type-implied direction, EMI / end date / total interest
+  // and seed the split outstanding balances authoritatively.
+  "loans-advances": augmentLoanAdvance,
 }
 
 /** Optional per-module custom business-key generator (Phase 1: PB-2026-000001). */
@@ -299,6 +303,24 @@ const AFTER_WRITE: Record<
       },
     ]),
   ),
+  // Loans & Advances posts its principal like the other registers, and then
+  // regenerates its persisted amortisation schedule (EMI + principal/interest
+  // split + running outstanding) from the recomputed row. Overrides the generic
+  // register hook above (declared later, so it wins). Failure-tolerant.
+  "loans-advances": async ({ finalRow, userId }) => {
+    const loanId = finalRow[cfgIdColumn("loans-advances")]
+    if (!loanId) return
+    try {
+      await syncRegisterPosting("loans-advances", String(loanId), { createdBy: userId })
+    } catch (error) {
+      console.log("[v0] syncRegisterPosting failed for loans-advances:", (error as Error).message)
+    }
+    try {
+      await syncLoanSchedule(String(loanId))
+    } catch (error) {
+      console.log("[v0] syncLoanSchedule failed:", (error as Error).message)
+    }
+  },
 }
 
 /** Optional per-module side effect that runs when a record is deleted. */
@@ -416,6 +438,7 @@ export function createFinanceHandlers(moduleKey: string) {
     if (moduleKey === "bank-transactions") await ensureBankTransactionColumns()
     if (moduleKey === "chart-of-accounts") await ensureChartOfAccountsColumns()
     if (REGISTER_MODULE_KEYS.has(moduleKey)) await ensureRegisterModuleTables()
+    if (moduleKey === "loans-advances") await ensureLoansAdvancesColumns()
   }
 
   const validate = VALIDATORS[moduleKey]

@@ -189,6 +189,17 @@ export function createRecruitmentHandlers(moduleKey: string) {
       await applyStageWriteBack(cfg.table, record)
     } catch {}
 
+    // PHASE 16/17: reconcile the Google Calendar event + fan out candidate /
+    // interviewer notifications for the interview tracker. Best-effort.
+    if (cfg.key === "interview-tracker") {
+      try {
+        const { syncInterviewCalendar } = await import("@/lib/recruit-interview-calendar")
+        await syncInterviewCalendar({ record, existing: null, actorId: session.userId, isUpdate: false })
+      } catch (e) {
+        console.error("[interview-calendar] create sync failed", e)
+      }
+    }
+
     return NextResponse.json({ ok: true, id: record[cfg.idColumn] }, { status: 201 })
   }
 
@@ -232,6 +243,18 @@ export function createRecruitmentHandlers(moduleKey: string) {
       const { applyStageWriteBack } = await import("@/lib/recruit-unification-db")
       await applyStageWriteBack(cfg.table, merged)
     } catch {}
+
+    // PHASE 16/17: reconcile the Google Calendar event on reschedule / status
+    // change and re-notify. `existing` lets the sync detect a schedule change and
+    // reuse the stored event id so no duplicate event is created. Best-effort.
+    if (cfg.key === "interview-tracker") {
+      try {
+        const { syncInterviewCalendar } = await import("@/lib/recruit-interview-calendar")
+        await syncInterviewCalendar({ record: merged, existing, actorId: session.userId, isUpdate: true })
+      } catch (e) {
+        console.error("[interview-calendar] update sync failed", e)
+      }
+    }
 
     return NextResponse.json({ ok: true })
   }

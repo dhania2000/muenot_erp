@@ -1,4 +1,8 @@
-import { OperationsFeaturePage } from "@/components/operations/operations-feature-page"
-// Task Board is an alternate lens over the same Tasks pipeline — it intentionally
-// reuses the `tasks` records instead of creating a duplicate data source.
-export default function TaskBoardPage() { return <OperationsFeaturePage module="tasks" /> }
+import { OperationsTaskBoard } from "@/components/operations/operations-task-board"
+
+// Task Board is an alternate lens over the same Tasks pipeline — it renders the
+// `tasks` records as a drag-and-drop Kanban grouped by board_stage instead of a
+// duplicate table, and never creates a separate data source.
+export default function TaskBoardPage() {
+  return <OperationsTaskBoard />
+}

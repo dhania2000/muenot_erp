@@ -232,6 +232,7 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
       { label: "Skill Matrix", href: "/modules/operations/skill-matrix", feature: "operations.view_skill_matrix" },
       { label: "Capacity Planning", href: "/modules/operations/capacity-planning", feature: "operations.view_capacity_planning" },
       { label: "Utilization", href: "/modules/operations/utilization", feature: "operations.view_utilization" },
+      { label: "Resource Conflict", href: "/modules/operations/resource-conflict", feature: "operations.view_allocations" },
     ],
   },
   {

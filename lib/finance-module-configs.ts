@@ -2004,6 +2004,15 @@ const loansAdvances: ModuleConfig = {
     "COALESCE(SUM(CASE WHEN direction LIKE '%Given%' THEN principal ELSE 0 END),0) total_given, COALESCE(SUM(CASE WHEN direction LIKE '%Taken%' THEN principal ELSE 0 END),0) total_taken, COALESCE(SUM(outstanding_amount),0) total_outstanding, COUNT(*) total_rows",
 }
 
+// Phase 5 — Investments. The initial Purchase posts through the register engine
+// (Dr Investment / Cr funding contra); every subsequent lifecycle event
+// (Additional Investment, Interest, Dividend, Valuation Adjustment, Sale,
+// Redemption, Maturity) is driven from the detail view via lib/finance-investments,
+// each a balanced Journal → GL voucher. The COA account picker lets a holding
+// post to a specific investment head instead of the default control account.
+const INVESTMENT_TYPE_OPTIONS = ["Fixed Deposit", "Bonds", "Mutual Funds", "Shares", "Government Securities", "Other Investments"]
+const INVESTMENT_STATUS_OPTIONS = ["Active", "Matured", "Sold", "Redeemed", "Impaired"]
+
 const investments: ModuleConfig = {
   key: "investments",
   table: "investments",
@@ -2015,34 +2024,55 @@ const investments: ModuleConfig = {
   dateColumn: "acquisition_date",
   financialYearColumn: "financial_year",
   statusColumn: "status",
-  searchColumns: ["investment_id", "investment_name", "investment_type"],
+  detailPath: "/modules/finance/investments",
+  searchColumns: ["investment_id", "investment_name", "investment_type", "institution"],
   filters: [
-    { type: "select", key: "investment_type", label: "Type", options: ["Fixed Deposit", "Mutual Fund", "Equity Shares", "Bonds", "Property", "Subsidiary / Associate", "Other"] },
-    { type: "select", key: "status", label: "Status", options: ["Active", "Matured", "Sold", "Impaired"] },
+    { type: "select", key: "investment_type", label: "Type", options: INVESTMENT_TYPE_OPTIONS },
+    { type: "select", key: "status", label: "Status", options: INVESTMENT_STATUS_OPTIONS },
+  ],
+  // COA account picker — resolves to a Chart of Accounts head so a holding can
+  // post to its own investment account instead of the default control head.
+  lookups: [
+    {
+      key: "coa",
+      label: "COA account",
+      path: "/api/finance/expenses/lookups?type=coa",
+      sourceIdColumn: "account_id",
+      sourceNameColumn: "account_name",
+      sourceSubColumn: "account_group",
+      idField: "coa_account",
+      nameField: "coa_account_name",
+      autofill: {},
+    },
   ],
   fields: [
     fld("Investment information", "investment_name", "Investment name", "text", { required: true }),
-    fld("Investment information", "investment_type", "Type", "select", { options: ["Fixed Deposit", "Mutual Fund", "Equity Shares", "Bonds", "Property", "Subsidiary / Associate", "Other"] }),
-    fld("Investment information", "acquisition_date", "Acquisition date", "date", { required: true }),
+    fld("Investment information", "investment_type", "Type", "select", { options: INVESTMENT_TYPE_OPTIONS }),
+    fld("Investment information", "institution", "Institution", "text", { placeholder: "Bank / AMC / broker / issuer" }),
+    fld("Investment information", "acquisition_date", "Purchase date", "date", { required: true }),
     fld("Investment information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
-    fld("Investment information", "status", "Status", "select", { options: ["Active", "Matured", "Sold", "Impaired"], optional: true }),
-    fld("Amounts", "amount", "Invested amount", "number", { required: true, money: true }),
-    fld("Amounts", "funding_source", "Funded via", "select", { options: CASH_SOURCES }),
-    fld("Amounts", "units", "Units / quantity", "number"),
-    fld("Amounts", "expected_return_rate", "Expected return %", "number"),
+    fld("Investment information", "status", "Status", "select", { options: INVESTMENT_STATUS_OPTIONS, optional: true }),
+    fld("Amounts", "amount", "Purchase value", "number", { required: true, money: true }),
+    fld("Amounts", "funding_source", "Funded via", "select", { options: FUNDING_SOURCES }),
+    fld("Amounts", "units", "Quantity / units", "number"),
+    fld("Amounts", "expected_return_rate", "Interest rate %", "number"),
     fld("Amounts", "maturity_date", "Maturity date", "date"),
     fld("Amounts", "current_value", "Current value", "number", { money: true }),
+    fld("Accounting", "coa_account_name", "COA account", "text", { placeholder: "Pick investment head from Chart of Accounts" }),
+    fld("Accounting", "coa_account", "COA account ID", "text", { hidden: true }),
     fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
     fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
+    fld("Documents", "documents", "Documents (URL)", "text", { placeholder: "Certificate / statement / contract note link" }),
     fld("Notes", "notes", "Notes", "textarea"),
   ],
   tableColumns: [
     { key: "investment_id", label: "Investment ID", mono: true },
     { key: "investment_name", label: "Investment", sub: "investment_type" },
-    { key: "acquisition_date", label: "Acquired" },
+    { key: "institution", label: "Institution" },
+    { key: "acquisition_date", label: "Purchased" },
     { key: "amount", label: "Invested", align: "right", money: true },
     { key: "current_value", label: "Current Value", align: "right", money: true },
-    { key: "status", label: "Status", badge: { Active: "default", Matured: "secondary", Sold: "outline", Impaired: "destructive" } },
+    { key: "status", label: "Status", badge: { Active: "default", Matured: "secondary", Sold: "outline", Redeemed: "outline", Impaired: "destructive" } },
     POSTING_COLUMN,
   ],
   kpis: [

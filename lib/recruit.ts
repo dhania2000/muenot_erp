@@ -3,21 +3,18 @@
 
 import { inr0 } from "@/lib/finance-calc"
 import { rtFormatDate, rtFormatDateTime } from "@/lib/settings/runtime"
+import { CANONICAL_STAGES, STAGE_LABELS as CANONICAL_STAGE_LABELS, type CanonicalStage } from "@/lib/recruitment-stages"
 
-export type StageKey = "applied" | "phone_screen" | "interview" | "offered" | "hired" | "rejected"
+// Phase 11: the application pipeline speaks the one canonical stage vocabulary.
+// StageKey and APPLICATION_STAGES are now thin re-exports of the shared system
+// so the operational UI and the config-driven modules never diverge.
+export type StageKey = CanonicalStage
 
-export const APPLICATION_STAGES: { key: StageKey; label: string; tone: string }[] = [
-  { key: "applied", label: "Applied", tone: "bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30" },
-  { key: "phone_screen", label: "Phone Screen", tone: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30" },
-  { key: "interview", label: "Interview", tone: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30" },
-  { key: "offered", label: "Offered", tone: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30" },
-  { key: "hired", label: "Hired", tone: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" },
-  { key: "rejected", label: "Rejected", tone: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30" },
-]
-
-export const STAGE_LABELS: Record<string, string> = Object.fromEntries(
-  APPLICATION_STAGES.map((s) => [s.key, s.label]),
+export const APPLICATION_STAGES: { key: StageKey; label: string; tone: string }[] = CANONICAL_STAGES.map(
+  ({ key, label, tone }) => ({ key, label, tone }),
 )
+
+export const STAGE_LABELS: Record<string, string> = CANONICAL_STAGE_LABELS
 
 export const JOB_TYPES = [
   { value: "full_time", label: "Full Time" },

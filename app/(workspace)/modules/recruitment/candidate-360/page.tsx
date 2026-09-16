@@ -1,3 +1,4 @@
+import { Suspense } from "react"
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { userHasFeature } from "@/lib/permissions"
@@ -10,5 +11,9 @@ export default async function Candidate360Page() {
   const canView =
     canManage || (await userHasFeature(session.userId, session.role, "recruitment.view_candidates"))
   if (!canView) redirect("/modules/recruitment")
-  return <Candidate360Client canManage={canManage} />
+  return (
+    <Suspense>
+      <Candidate360Client canManage={canManage} />
+    </Suspense>
+  )
 }

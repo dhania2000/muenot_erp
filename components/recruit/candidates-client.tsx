@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import Link from "next/link"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { Input } from "@/components/ui/input"
@@ -20,6 +21,7 @@ import { CallDialer, type CallTarget } from "@/components/shared/call-dialer"
 import { formatDate } from "@/lib/recruit"
 
 type Candidate = {
+  candidate_id: string | null
   candidate_name: string
   email: string | null
   phone: string | null
@@ -101,10 +103,19 @@ export function CandidatesClient({ canCall = false }: { canCall?: boolean }) {
             {isLoading && <TableRow><TableCell colSpan={colSpan} className="py-10 text-center text-sm text-muted-foreground">Loading candidates...</TableCell></TableRow>}
             {!isLoading && filtered.length === 0 && <TableRow><TableCell colSpan={colSpan} className="py-10 text-center text-sm text-muted-foreground">No candidates yet.</TableCell></TableRow>}
             {filtered.map((c) => (
-              <TableRow key={`${c.candidate_name}-${c.email}`}>
+              <TableRow key={c.candidate_id || `${c.candidate_name}-${c.email}`}>
                 <TableCell>
                   <div className="flex flex-col">
-                    <span className="font-medium">{c.candidate_name}</span>
+                    {c.candidate_id ? (
+                      <Link
+                        href={`/modules/recruitment/candidate-360?id=${encodeURIComponent(c.candidate_id)}`}
+                        className="font-medium text-primary hover:underline"
+                      >
+                        {c.candidate_name}
+                      </Link>
+                    ) : (
+                      <span className="font-medium">{c.candidate_name}</span>
+                    )}
                     <span className="text-xs text-muted-foreground">{c.location || "—"}</span>
                   </div>
                 </TableCell>

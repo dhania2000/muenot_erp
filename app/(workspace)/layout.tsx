@@ -113,48 +113,86 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Email Templates", href: "/modules/finance/email-templates", feature: "finance.view_email_templates" },
 ]
 
-const RECRUITMENT_CHILDREN: { label: string; href: string; feature: string }[] = [
-  { label: "Recruit Dashboard", href: "/modules/recruitment", feature: "recruitment.view_dashboard" },
-  { label: "Candidate 360", href: "/modules/recruitment/candidate-360", feature: "recruitment.view_candidates" },
-  // Requisitions & jobs
-  { label: "Requisition Hiring", href: "/modules/recruitment/requisition-hiring", feature: "recruitment.requisitions" },
-  { label: "Job Requisitions", href: "/modules/recruitment/job-requisitions", feature: "recruitment.requisitions" },
-  { label: "Jobs", href: "/modules/recruitment/jobs", feature: "recruitment.view_jobs" },
-  { label: "Job Skills", href: "/modules/recruitment/job-skills", feature: "recruitment.view_skills" },
-  { label: "Recruitment Campaigns", href: "/modules/recruitment/recruitment-campaigns", feature: "recruitment.requisitions" },
-  { label: "Recruitment Sources", href: "/modules/recruitment/recruitment-sources", feature: "recruitment.candidates" },
-  // Candidates
-  { label: "Job Applications", href: "/modules/recruitment/job-applications", feature: "recruitment.view_applications" },
-  { label: "Candidate Database", href: "/modules/recruitment/candidate-database", feature: "recruitment.view_candidates" },
-  { label: "Candidate Master", href: "/modules/recruitment/candidate-master", feature: "recruitment.candidates" },
-  { label: "Screening", href: "/modules/recruitment/screening", feature: "recruitment.candidates" },
-  { label: "Talent Pool", href: "/modules/recruitment/talent-pool", feature: "recruitment.candidates" },
-  { label: "Candidate Activities", href: "/modules/recruitment/candidate-activities", feature: "recruitment.candidates" },
-  { label: "Candidate Documents", href: "/modules/recruitment/candidate-documents", feature: "recruitment.candidates" },
-  { label: "Employee Referrals", href: "/modules/recruitment/employee-referrals", feature: "recruitment.candidates" },
-  // Interviews
-  { label: "Interview Schedule", href: "/modules/recruitment/interview-schedule", feature: "recruitment.schedule_interviews" },
-  { label: "Interview Tracker", href: "/modules/recruitment/interview-tracker", feature: "recruitment.interviews" },
-  { label: "Interview Feedback", href: "/modules/recruitment/interview-feedback", feature: "recruitment.interviews" },
-  { label: "Assessment Tracker", href: "/modules/recruitment/assessment-tracker", feature: "recruitment.interviews" },
-  // Selection, offers & joining
-  { label: "Selection & Offers", href: "/modules/recruitment/selection-offers", feature: "recruitment.offers" },
-  { label: "Job Offer Letter", href: "/modules/recruitment/job-offer-letter", feature: "recruitment.manage_offers" },
-  { label: "Background Verification", href: "/modules/recruitment/background-verification", feature: "recruitment.candidates" },
-  { label: "Reference Check", href: "/modules/recruitment/reference-check", feature: "recruitment.candidates" },
-  { label: "Pre-Joining", href: "/modules/recruitment/pre-joining", feature: "recruitment.offers" },
-  { label: "Onboarding", href: "/modules/recruitment/onboarding", feature: "recruitment.manage_offers" },
-  // Coordination & cost
-  { label: "Recruitment Tasks", href: "/modules/recruitment/recruitment-tasks", feature: "recruitment.candidates" },
-  { label: "Recruitment Follow-ups", href: "/modules/recruitment/recruitment-followups", feature: "recruitment.candidates" },
-  { label: "Recruitment Vendors", href: "/modules/recruitment/recruitment-vendors", feature: "recruitment.requisitions" },
-  { label: "Recruitment Costs", href: "/modules/recruitment/recruitment-costs", feature: "recruitment.requisitions" },
-  // Communication, reports & settings
-  { label: "Email", href: "/modules/recruitment/emails", feature: "recruitment.view_emails" },
-  { label: "Email Templates", href: "/modules/recruitment/email-templates", feature: "recruitment.view_email_templates" },
-  { label: "Recruit Report", href: "/modules/recruitment/recruit-job-report", feature: "recruitment.view_reports" },
-  { label: "Recruitment Settings", href: "/modules/recruitment/recruitment-settings", feature: "recruitment.requisitions" },
-  { label: "Career Site", href: "/modules/recruitment/career-site", feature: "recruitment.view_jobs" },
+// Recruitment sidebar organised as a hierarchical ERP structure. Parent groups
+// are collapsible; every leaf keeps its original route and permission slug so
+// existing pages, URLs and permissions are preserved. "Candidate Master" is
+// intentionally omitted — Candidate Database is the single candidate registry
+// and Candidate 360 opens the unified profile from it.
+const RECRUITMENT_CHILDREN: FeatureChild[] = [
+  {
+    label: "Dashboard",
+    children: [
+      { label: "Recruit Dashboard", href: "/modules/recruitment", feature: "recruitment.view_dashboard" },
+    ],
+  },
+  {
+    label: "Hiring",
+    children: [
+      { label: "Requisition Hiring", href: "/modules/recruitment/requisition-hiring", feature: "recruitment.requisitions" },
+      { label: "Job Requisitions", href: "/modules/recruitment/job-requisitions", feature: "recruitment.requisitions" },
+      { label: "Jobs", href: "/modules/recruitment/jobs", feature: "recruitment.view_jobs" },
+      { label: "Job Skills", href: "/modules/recruitment/job-skills", feature: "recruitment.view_skills" },
+      { label: "Recruitment Sources", href: "/modules/recruitment/recruitment-sources", feature: "recruitment.candidates" },
+      { label: "Recruitment Campaigns", href: "/modules/recruitment/recruitment-campaigns", feature: "recruitment.requisitions" },
+    ],
+  },
+  {
+    label: "Candidates",
+    children: [
+      { label: "Candidate Database", href: "/modules/recruitment/candidate-database", feature: "recruitment.view_candidates" },
+      { label: "Job Applications", href: "/modules/recruitment/job-applications", feature: "recruitment.view_applications" },
+      { label: "Screening", href: "/modules/recruitment/screening", feature: "recruitment.candidates" },
+      { label: "Talent Pool", href: "/modules/recruitment/talent-pool", feature: "recruitment.candidates" },
+      { label: "Candidate Activities", href: "/modules/recruitment/candidate-activities", feature: "recruitment.candidates" },
+      { label: "Candidate Documents", href: "/modules/recruitment/candidate-documents", feature: "recruitment.candidates" },
+      { label: "Employee Referrals", href: "/modules/recruitment/employee-referrals", feature: "recruitment.candidates" },
+      { label: "Candidate 360", href: "/modules/recruitment/candidate-360", feature: "recruitment.view_candidates" },
+    ],
+  },
+  {
+    label: "Interviews",
+    children: [
+      { label: "Interview Schedule", href: "/modules/recruitment/interview-schedule", feature: "recruitment.schedule_interviews" },
+      { label: "Interview Tracker", href: "/modules/recruitment/interview-tracker", feature: "recruitment.interviews" },
+      { label: "Interview Feedback", href: "/modules/recruitment/interview-feedback", feature: "recruitment.interviews" },
+      { label: "Assessment Tracker", href: "/modules/recruitment/assessment-tracker", feature: "recruitment.interviews" },
+    ],
+  },
+  {
+    label: "Selection & Onboarding",
+    children: [
+      { label: "Selection & Offers", href: "/modules/recruitment/selection-offers", feature: "recruitment.offers" },
+      { label: "Job Offer Letter", href: "/modules/recruitment/job-offer-letter", feature: "recruitment.manage_offers" },
+      { label: "Background Verification", href: "/modules/recruitment/background-verification", feature: "recruitment.candidates" },
+      { label: "Reference Check", href: "/modules/recruitment/reference-check", feature: "recruitment.candidates" },
+      { label: "Pre-Joining", href: "/modules/recruitment/pre-joining", feature: "recruitment.offers" },
+      { label: "Onboarding", href: "/modules/recruitment/onboarding", feature: "recruitment.manage_offers" },
+    ],
+  },
+  {
+    label: "Recruitment Operations",
+    children: [
+      { label: "Recruitment Tasks", href: "/modules/recruitment/recruitment-tasks", feature: "recruitment.candidates" },
+      { label: "Recruitment Follow-ups", href: "/modules/recruitment/recruitment-followups", feature: "recruitment.candidates" },
+      { label: "Recruitment Vendors", href: "/modules/recruitment/recruitment-vendors", feature: "recruitment.requisitions" },
+      { label: "Recruitment Costs", href: "/modules/recruitment/recruitment-costs", feature: "recruitment.requisitions" },
+    ],
+  },
+  {
+    label: "Communication",
+    children: [
+      { label: "Email", href: "/modules/recruitment/emails", feature: "recruitment.view_emails" },
+      { label: "Email Templates", href: "/modules/recruitment/email-templates", feature: "recruitment.view_email_templates" },
+    ],
+  },
+  {
+    label: "Reports & Settings",
+    children: [
+      { label: "Recruit Report", href: "/modules/recruitment/recruit-job-report", feature: "recruitment.view_reports" },
+      { label: "Recruitment Settings", href: "/modules/recruitment/recruitment-settings", feature: "recruitment.requisitions" },
+      { label: "Career Site", href: "/modules/recruitment/career-site", feature: "recruitment.view_jobs" },
+    ],
+  },
 ]
 
 const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = [

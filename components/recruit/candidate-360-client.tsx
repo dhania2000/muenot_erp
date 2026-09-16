@@ -1,7 +1,8 @@
 "use client"
 
 import useSWR, { mutate } from "swr"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -89,9 +90,18 @@ function StageBadge({ stage, label }: { stage: Stage; label: string }) {
 }
 
 export function Candidate360Client({ canManage }: { canManage: boolean }) {
+  const searchParams = useSearchParams()
   const [search, setSearch] = useState("")
   const [selected, setSelected] = useState<string | null>(null)
   const [backfilling, setBackfilling] = useState(false)
+
+  // Deep-link: open a candidate directly when arriving with ?id= (e.g. from the
+  // Candidate Database). The detail sheet fetches by id, so it works even when
+  // the candidate isn't in the current (unsearched) list.
+  useEffect(() => {
+    const id = searchParams.get("id")
+    if (id) setSelected(id)
+  }, [searchParams])
 
   const key = `/api/recruit/candidate-360${search ? `?search=${encodeURIComponent(search)}` : ""}`
   const { data, isLoading } = useSWR<ListResponse>(key, fetcher)

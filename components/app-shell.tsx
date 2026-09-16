@@ -484,7 +484,7 @@ function NavGroup({
         )}
       >
         <span className="size-4 shrink-0">{item.icon}</span>
-        {item.label}
+        <span className="whitespace-nowrap">{item.label}</span>
         <ChevronDown className={cn("ml-auto size-4 shrink-0 transition-transform", open && "rotate-180")} />
       </button>
 
@@ -588,7 +588,7 @@ export function AppShell({
                   className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
                 >
                   <span className="size-4 shrink-0">{item.icon}</span>
-                  {item.label}
+                  <span className="whitespace-nowrap">{item.label}</span>
                 </a>
               )
             }
@@ -605,7 +605,7 @@ export function AppShell({
                 )}
               >
                 <span className="size-4 shrink-0">{item.icon}</span>
-                {item.label}
+                <span className="whitespace-nowrap">{item.label}</span>
               </Link>
             )
           })}

@@ -899,6 +899,277 @@ const recruitmentCosts: ModuleConfig = {
     "COUNT(*) total_rows, COALESCE(SUM(budget_amount),0) total_budget, COALESCE(SUM(actual_amount),0) total_actual, COALESCE(SUM(budget_amount - actual_amount),0) total_variance",
 }
 
+// ---------------------------------------------------------------------------
+// 17. Interview Feedback (per-interviewer, panel-aware)
+// ---------------------------------------------------------------------------
+// Extends the interview process with one traceable feedback record per
+// interviewer / panel member, kept separate from the Interview Tracker so a
+// single interview can hold several independent evaluations.
+const interviewFeedback: ModuleConfig = {
+  key: "interview-feedback",
+  table: "recruitment_interview_feedback",
+  label: "Interview Feedback",
+  subtitle: "Recruitment management",
+  addLabel: "New feedback",
+  idColumn: "feedback_id",
+  idPrefix: "IFB",
+  editableId: true,
+  dateColumn: "feedback_date",
+  statusColumn: "final_result",
+  searchColumns: ["feedback_id", "interview_id", "candidate_id", "candidate_name", "job_applied", "interviewer", "interview_panel"],
+  fields: [
+    fld("Feedback", "feedback_id", "Feedback ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Feedback", "feedback_date", "Feedback date", "date", { required: true }),
+    fld("Feedback", "interview_id", "Interview ID", "text", { placeholder: "Link to the interview" }),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "job_applied", "Job applied", "text"),
+    fld("Candidate", "requisition_id", "Requisition ID", "text"),
+    fld("Interview", "interview_round", "Interview round", "text"),
+    fld("Interview", "interview_type", "Interview type", "select", { options: ["Telephonic", "Video", "In-person", "Technical", "HR", "Managerial"], optional: true }),
+    fld("Interview", "interview_date", "Interview date", "date"),
+    fld("Interview", "interview_time", "Interview time", "text"),
+    fld("Panel", "interviewer", "Interviewer", "text", { required: true }),
+    fld("Panel", "interview_panel", "Interview panel", "text", { placeholder: "Panel name / other members" }),
+    fld("Scores", "technical_score", "Technical score", "number"),
+    fld("Scores", "communication_score", "Communication score", "number"),
+    fld("Scores", "role_fit_score", "Role fit score", "number"),
+    fld("Scores", "overall_score", "Overall score", "number", { computed: true }),
+    fld("Outcome", "recommendation", "Recommendation", "select", { options: ["Strong Hire", "Hire", "Neutral", "No Hire", "Strong No Hire"], optional: true }),
+    fld("Outcome", "final_result", "Final result", "select", { options: ["Pending", "Next Round", "Selected", "Rejected", "Hold"] }),
+    fld("Outcome", "comments", "Comments", "textarea"),
+  ],
+  compute: (v) => {
+    const parts = [v.technical_score, v.communication_score, v.role_fit_score]
+    const given = parts.filter((p) => p !== undefined && p !== null && p !== "")
+    const overall = given.length ? round2(given.reduce((s, p) => s + num(p), 0) / given.length) : 0
+    return { overall_score: overall }
+  },
+  tableColumns: [
+    { key: "feedback_id", label: "Feedback ID", mono: true },
+    { key: "feedback_date", label: "Date" },
+    { key: "candidate_name", label: "Candidate", sub: "interview_round" },
+    { key: "interviewer", label: "Interviewer", sub: "interview_panel" },
+    { key: "overall_score", label: "Score", align: "right" },
+    { key: "recommendation", label: "Recommendation", badge: { "Strong Hire": "default", Hire: "default", Neutral: "secondary", "No Hire": "destructive", "Strong No Hire": "destructive" } },
+    { key: "final_result", label: "Result", badge: { Selected: "default", "Next Round": "secondary", Pending: "outline", Hold: "outline", Rejected: "destructive" } },
+  ],
+  kpis: [
+    { label: "Feedback Records", key: "total_rows", icon: "ClipboardCheck" },
+    { label: "Selected", key: "total_selected", icon: "UserCheck" },
+    { label: "Rejected", key: "total_rejected", icon: "UserX" },
+    { label: "Avg Score", key: "avg_score", icon: "Gauge" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(final_result = 'Selected'),0) total_selected, COALESCE(SUM(final_result = 'Rejected'),0) total_rejected, ROUND(COALESCE(AVG(NULLIF(overall_score,0)),0),1) avg_score",
+}
+
+// ---------------------------------------------------------------------------
+// 18. Background Verification
+// ---------------------------------------------------------------------------
+const backgroundVerification: ModuleConfig = {
+  key: "background-verification",
+  table: "recruitment_background_verification",
+  label: "Background Verification",
+  subtitle: "Recruitment management",
+  addLabel: "New verification",
+  idColumn: "bgv_id",
+  idPrefix: "BGV",
+  editableId: true,
+  dateColumn: "initiated_date",
+  statusColumn: "status",
+  searchColumns: ["bgv_id", "candidate_id", "candidate_name", "job_applied", "requisition_id", "vendor_name", "check_type"],
+  fields: [
+    fld("Verification", "bgv_id", "Verification ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Verification", "initiated_date", "Initiated date", "date", { required: true }),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "job_applied", "Job applied", "text"),
+    fld("Candidate", "requisition_id", "Requisition ID", "text"),
+    fld("Checks", "check_type", "Check type", "select", { options: ["Identity", "Employment", "Education", "Reference", "Criminal", "Address", "Other"], required: true }),
+    fld("Checks", "vendor_name", "Verification vendor", "text"),
+    fld("Checks", "reference_number", "Reference / case number", "text"),
+    fld("Checks", "document_url", "Supporting document URL", "text", { placeholder: "Link from the document store" }),
+    fld("Result", "status", "Status", "select", { options: ["Initiated", "In Progress", "Verified", "Failed", "Requires Review"] }),
+    fld("Result", "completed_date", "Completed date", "date"),
+    fld("Result", "verified_by", "Verified by", "text"),
+    fld("Result", "findings", "Findings", "textarea"),
+    fld("Result", "remarks", "Remarks", "textarea"),
+  ],
+  tableColumns: [
+    { key: "bgv_id", label: "Verification ID", mono: true },
+    { key: "initiated_date", label: "Initiated" },
+    { key: "candidate_name", label: "Candidate", sub: "job_applied" },
+    { key: "check_type", label: "Check", sub: "vendor_name" },
+    { key: "status", label: "Status", badge: { Verified: "default", "In Progress": "secondary", Initiated: "outline", "Requires Review": "outline", Failed: "destructive" } },
+  ],
+  kpis: [
+    { label: "Verifications", key: "total_rows", icon: "ClipboardCheck" },
+    { label: "Verified", key: "total_verified", icon: "UserCheck" },
+    { label: "In Progress", key: "total_progress", icon: "Clock" },
+    { label: "Failed / Review", key: "total_failed", icon: "UserX" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(status = 'Verified'),0) total_verified, COALESCE(SUM(status IN ('Initiated','In Progress')),0) total_progress, COALESCE(SUM(status IN ('Failed','Requires Review')),0) total_failed",
+}
+
+// ---------------------------------------------------------------------------
+// 19. Reference Check
+// ---------------------------------------------------------------------------
+const referenceCheck: ModuleConfig = {
+  key: "reference-check",
+  table: "recruitment_reference_checks",
+  label: "Reference Check",
+  subtitle: "Recruitment management",
+  addLabel: "New reference check",
+  idColumn: "reference_id",
+  idPrefix: "RFC",
+  editableId: true,
+  dateColumn: "check_date",
+  statusColumn: "result",
+  searchColumns: ["reference_id", "candidate_id", "candidate_name", "reference_name", "reference_company", "job_applied"],
+  fields: [
+    fld("Reference", "reference_id", "Reference ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Reference", "check_date", "Check date", "date", { required: true }),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "job_applied", "Job applied", "text"),
+    fld("Candidate", "requisition_id", "Requisition ID", "text"),
+    fld("Referee", "reference_name", "Reference name", "text", { required: true }),
+    fld("Referee", "reference_company", "Company", "text"),
+    fld("Referee", "reference_designation", "Designation", "text"),
+    fld("Referee", "relationship", "Relationship", "text"),
+    fld("Referee", "reference_contact", "Contact", "text"),
+    fld("Referee", "reference_email", "Email", "text"),
+    fld("Outcome", "conducted_by", "Conducted by", "text"),
+    fld("Outcome", "result", "Result", "select", { options: ["Pending", "Positive", "Negative", "Neutral", "Unable to Reach"] }),
+    fld("Outcome", "feedback", "Feedback", "textarea"),
+    fld("Outcome", "remarks", "Remarks", "textarea"),
+  ],
+  tableColumns: [
+    { key: "reference_id", label: "Reference ID", mono: true },
+    { key: "check_date", label: "Date" },
+    { key: "candidate_name", label: "Candidate", sub: "job_applied" },
+    { key: "reference_name", label: "Reference", sub: "reference_company" },
+    { key: "result", label: "Result", badge: { Positive: "default", Neutral: "secondary", Pending: "outline", "Unable to Reach": "outline", Negative: "destructive" } },
+  ],
+  kpis: [
+    { label: "Reference Checks", key: "total_rows", icon: "ClipboardCheck" },
+    { label: "Positive", key: "total_positive", icon: "UserCheck" },
+    { label: "Pending", key: "total_pending", icon: "Clock" },
+    { label: "Negative", key: "total_negative", icon: "UserX" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(result = 'Positive'),0) total_positive, COALESCE(SUM(result = 'Pending'),0) total_pending, COALESCE(SUM(result = 'Negative'),0) total_negative",
+}
+
+// ---------------------------------------------------------------------------
+// 20. Pre-Joining (checklist with completion %)
+// ---------------------------------------------------------------------------
+const PRE_JOIN_STEPS = ["offer_accepted", "documents_collected", "background_verification", "reference_check", "joining_confirmation", "hr_handoff"] as const
+const preJoining: ModuleConfig = {
+  key: "pre-joining",
+  table: "recruitment_pre_joining",
+  label: "Pre-Joining",
+  subtitle: "Recruitment management",
+  addLabel: "New pre-joining",
+  idColumn: "prejoin_id",
+  idPrefix: "PRJ",
+  editableId: true,
+  dateColumn: "expected_joining_date",
+  statusColumn: "status",
+  searchColumns: ["prejoin_id", "candidate_id", "candidate_name", "job_applied", "requisition_id", "offer_id"],
+  fields: [
+    fld("Pre-Joining", "prejoin_id", "Pre-joining ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "job_applied", "Job applied", "text"),
+    fld("Candidate", "requisition_id", "Requisition ID", "text"),
+    fld("Candidate", "offer_id", "Offer ID", "text"),
+    fld("Schedule", "expected_joining_date", "Expected joining date", "date", { required: true }),
+    fld("Schedule", "coordinator", "Coordinator", "text"),
+    fld("Checklist", "offer_accepted", "Offer accepted", "select", { options: YES_NO, optional: true }),
+    fld("Checklist", "documents_collected", "Documents collected", "select", { options: YES_NO, optional: true }),
+    fld("Checklist", "background_verification", "Background verification", "select", { options: YES_NO, optional: true }),
+    fld("Checklist", "reference_check", "Reference check", "select", { options: YES_NO, optional: true }),
+    fld("Checklist", "joining_confirmation", "Joining confirmation", "select", { options: YES_NO, optional: true }),
+    fld("Checklist", "hr_handoff", "HR handoff", "select", { options: YES_NO, optional: true }),
+    fld("Status", "completion_percent", "Completion %", "number", { computed: true }),
+    fld("Status", "status", "Status", "select", { options: ["Pending", "In Progress", "Ready to Join", "Joined", "Dropped"] }),
+    fld("Status", "remarks", "Remarks", "textarea"),
+  ],
+  compute: (v) => {
+    const done = PRE_JOIN_STEPS.filter((s) => String((v as any)[s] || "").toLowerCase() === "yes").length
+    return { completion_percent: Math.round((done / PRE_JOIN_STEPS.length) * 100) }
+  },
+  tableColumns: [
+    { key: "prejoin_id", label: "Pre-joining ID", mono: true },
+    { key: "candidate_name", label: "Candidate", sub: "job_applied" },
+    { key: "expected_joining_date", label: "Joining" },
+    { key: "completion_percent", label: "Checklist %", align: "right" },
+    { key: "status", label: "Status", badge: { Joined: "default", "Ready to Join": "default", "In Progress": "secondary", Pending: "outline", Dropped: "destructive" } },
+  ],
+  kpis: [
+    { label: "Pre-Joining", key: "total_rows", icon: "ClipboardCheck" },
+    { label: "Ready to Join", key: "total_ready", icon: "UserCheck" },
+    { label: "Joined", key: "total_joined", icon: "Users" },
+    { label: "Avg Checklist %", key: "avg_completion", icon: "Gauge" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(status = 'Ready to Join'),0) total_ready, COALESCE(SUM(status = 'Joined'),0) total_joined, ROUND(COALESCE(AVG(completion_percent),0),0) avg_completion",
+}
+
+// ---------------------------------------------------------------------------
+// 21. Talent Pool
+// ---------------------------------------------------------------------------
+const talentPool: ModuleConfig = {
+  key: "talent-pool",
+  table: "recruitment_talent_pool",
+  label: "Talent Pool",
+  subtitle: "Recruitment management",
+  addLabel: "Add to talent pool",
+  idColumn: "pool_id",
+  idPrefix: "TAL",
+  editableId: true,
+  dateColumn: "added_date",
+  statusColumn: "pool_status",
+  searchColumns: ["pool_id", "candidate_id", "candidate_name", "email", "mobile", "primary_skills", "preferred_role"],
+  fields: [
+    fld("Talent", "pool_id", "Pool ID", "text", { placeholder: "Auto-generated if left blank" }),
+    fld("Talent", "added_date", "Added date", "date", { required: true }),
+    fld("Candidate", "candidate_id", "Candidate ID", "text"),
+    fld("Candidate", "candidate_name", "Candidate name", "text", { required: true }),
+    fld("Candidate", "email", "Email", "text"),
+    fld("Candidate", "mobile", "Mobile", "text"),
+    fld("Candidate", "current_location", "Current location", "text"),
+    fld("Profile", "preferred_role", "Preferred role", "text"),
+    fld("Profile", "experience", "Experience", "text"),
+    fld("Profile", "primary_skills", "Primary skills", "textarea"),
+    fld("Profile", "expected_ctc_rate", "Expected CTC / Rate", "text"),
+    fld("Profile", "notice_period", "Notice period", "text"),
+    fld("Profile", "source", "Source", "text"),
+    fld("Status", "pool_status", "Pool status", "select", { options: ["Available", "Future Opportunity", "Passive", "Rejected but Reusable", "Placed"] }),
+    fld("Status", "next_contact_date", "Next contact date", "date"),
+    fld("Status", "owner", "Owner", "text"),
+    fld("Status", "remarks", "Remarks", "textarea"),
+  ],
+  tableColumns: [
+    { key: "pool_id", label: "Pool ID", mono: true },
+    { key: "added_date", label: "Added" },
+    { key: "candidate_name", label: "Candidate", sub: "preferred_role" },
+    { key: "experience", label: "Experience" },
+    { key: "pool_status", label: "Status", badge: { Available: "default", "Future Opportunity": "secondary", Passive: "outline", "Rejected but Reusable": "outline", Placed: "secondary" } },
+  ],
+  kpis: [
+    { label: "Talent Pool", key: "total_rows", icon: "Users" },
+    { label: "Available", key: "total_available", icon: "UserCheck" },
+    { label: "Future Opportunity", key: "total_future", icon: "Clock" },
+    { label: "Passive", key: "total_passive", icon: "UserPlus" },
+  ],
+  summarySelect:
+    "COUNT(*) total_rows, COALESCE(SUM(pool_status = 'Available'),0) total_available, COALESCE(SUM(pool_status = 'Future Opportunity'),0) total_future, COALESCE(SUM(pool_status = 'Passive'),0) total_passive",
+}
+
 export const RECRUITMENT_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "job-requisitions": jobRequisitions,
   "recruitment-campaigns": recruitmentCampaigns,
@@ -916,6 +1187,11 @@ export const RECRUITMENT_MODULE_CONFIGS: Record<string, ModuleConfig> = {
   "recruitment-followups": recruitmentFollowups,
   "recruitment-vendors": recruitmentVendors,
   "recruitment-costs": recruitmentCosts,
+  "interview-feedback": interviewFeedback,
+  "background-verification": backgroundVerification,
+  "reference-check": referenceCheck,
+  "pre-joining": preJoining,
+  "talent-pool": talentPool,
 }
 
 export const RECRUITMENT_MODULE_KEYS = Object.keys(RECRUITMENT_MODULE_CONFIGS)

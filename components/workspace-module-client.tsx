@@ -4,7 +4,7 @@ import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { CalendarDays, ChevronLeft, ChevronRight, Download, FileText, Newspaper, Package, Plus, Search, Settings2, Ticket, Upload, Users } from "lucide-react"
+import { CalendarDays, ChevronLeft, ChevronRight, CreditCard, Download, FileText, Newspaper, Package, Plus, Search, Settings2, Ticket, Upload, Users } from "lucide-react"
 
 type Props = { slug: string; name: string; description: string }
 type Config = { icon: typeof CalendarDays; accent: string; fields: string[]; columns: string[] }
@@ -15,10 +15,12 @@ const configs: Record<string, Config> = {
   "notice-board": { icon: Newspaper, accent: "Announcements", fields: ["Notice heading", "Publish date", "Department", "Notice details"], columns: ["Notice", "Date", "To", "Action"] },
   "knowledge-base": { icon: FileText, accent: "Company knowledge", fields: ["Article heading", "Category", "Description"], columns: ["#", "Article heading", "Article category", "To", "Action"] },
   assets: { icon: Package, accent: "Asset register", fields: ["Asset name", "Asset type", "Serial number", "Value", "Location", "Description"], columns: ["Id", "Asset picture", "Asset name", "Lent To", "Status", "Date", "Action"] },
+  subscriptions: { icon: CreditCard, accent: "Subscription register", fields: ["Service name", "Vendor", "Plan", "Cost", "Billing cycle", "Renewal date"], columns: ["Service", "Vendor", "Cost", "Renewal Date", "Status", "Action"] },
 }
 
 const samples = {
   assets: ["Suscipit Non", "Neque Praesentium", "Occaecati Beatae", "Non Autem", "Exercitationem Et"],
+  subscriptions: ["Google Workspace", "Microsoft 365", "Adobe Creative Cloud", "Slack", "Zoom"],
   "notice-board": ["Annual leave policy update", "Quarterly town hall announcement", "Office maintenance notice", "Welcome to the team"],
   "knowledge-base": ["Getting started with WorkSuite", "Expense policy and approvals", "Project handover checklist"],
   events: ["Team planning session", "Client kickoff", "Quarterly review"],
@@ -171,7 +173,7 @@ export function WorkspaceModuleClient({ slug, name, description }: Props) {
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={() => setShowForm(!showForm)}>
               <Plus className="mr-2 size-4" />
-              {slug === "assets" ? "Add New Asset" : slug === "notice-board" ? "Add New Notice" : slug === "knowledge-base" ? "Add New Article" : "Add Event"}
+              {slug === "assets" ? "Add New Asset" : slug === "subscriptions" ? "Add New Subscription" : slug === "notice-board" ? "Add New Notice" : slug === "knowledge-base" ? "Add New Article" : "Add Event"}
             </Button>
             <Button variant="outline"><Download className="mr-2 size-4" />Export</Button>
             {slug === "assets" && <Button variant="outline" size="icon" className="ml-auto"><Settings2 className="size-4" /></Button>}
@@ -200,9 +202,11 @@ export function WorkspaceModuleClient({ slug, name, description }: Props) {
                                 ? "-"
                                 : j === 3 && slug === "assets"
                                   ? <span className="inline-flex items-center gap-1.5 text-emerald-600"><span className="size-1.5 rounded-full bg-emerald-600" />Available</span>
-                                  : j === 1
-                                    ? "08-09-2026"
-                                    : "Employee"}
+                                  : slug === "subscriptions"
+                                    ? (j === 1 ? "—" : j === 2 ? "₹0" : j === 3 ? "01-10-2026" : <span className="inline-flex items-center gap-1.5 text-emerald-600"><span className="size-1.5 rounded-full bg-emerald-600" />Active</span>)
+                                    : j === 1
+                                      ? "08-09-2026"
+                                      : "Employee"}
                       </span>
                     ))}
                   </div>

@@ -223,6 +223,11 @@ const LEGAL_CHILDREN = [
   { label: "Esign", href: "/modules/legal/esign", feature: "legal.view_esign" },
 ]
 
+const ASSETS_CHILDREN = [
+  { label: "Employee Assets", href: "/modules/assets/employee-assets" },
+  { label: "Company Subscriptions", href: "/modules/assets/company-subscriptions" },
+]
+
 const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Dashboard", href: "/modules/sales/dashboard", feature: "sales.view_dashboard" },
   { label: "Leads", href: "/modules/sales/leads", feature: "sales.view_leads" },
@@ -261,12 +266,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
       : []),
     ...modules.map((m) => {
       const item: NavItem = {
-        label: m.name,
+        label: m.slug === "assets" ? "Assets & Subscriptions" : m.name,
         href: `/modules/${m.slug}`,
         icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
       }
-      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products", "legal"].includes(m.slug)) {
-        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : m.slug === "legal" ? LEGAL_CHILDREN : SALES_CHILDREN
+      if (["hr", "sales", "finance", "recruitment", "operations", "clients", "products", "legal", "assets"].includes(m.slug)) {
+        const source = m.slug === "hr" ? HR_CHILDREN : m.slug === "finance" ? FINANCE_CHILDREN : m.slug === "recruitment" ? RECRUITMENT_CHILDREN : m.slug === "operations" ? OPERATIONS_CHILDREN : m.slug === "clients" ? CLIENTS_CHILDREN : m.slug === "products" ? PRODUCTS_CHILDREN : m.slug === "legal" ? LEGAL_CHILDREN : m.slug === "assets" ? ASSETS_CHILDREN : SALES_CHILDREN
         // Recursively keep only accessible leaves; drop groups that end up empty.
         const buildChildren = (nodes: FeatureChild[]): NavChild[] =>
           nodes.flatMap<NavChild>((c) => {

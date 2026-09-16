@@ -195,15 +195,100 @@ const RECRUITMENT_CHILDREN: FeatureChild[] = [
   },
 ]
 
-const OPERATIONS_CHILDREN: { label: string; href: string; feature: string }[] = [
-  { label: "Operations Dashboard", href: "/modules/operations", feature: "operations.view_dashboard" },
-  { label: "Resources", href: "/modules/operations/resources", feature: "operations.view_resources" },
-  { label: "Projects", href: "/modules/operations/projects", feature: "operations.view_projects" },
-  { label: "Allocations", href: "/modules/operations/allocations", feature: "operations.view_allocations" },
-  { label: "Quality & SLA Reviews", href: "/modules/operations/quality", feature: "operations.view_quality" },
-  { label: "Issues", href: "/modules/operations/issues", feature: "operations.view_issues" },
-  { label: "Emails", href: "/modules/operations/emails", feature: "operations.send_emails" },
-  { label: "Email Templates", href: "/modules/operations/email-templates", feature: "operations.view_email_templates" },
+// Operations sidebar organised as a hierarchical ERP structure. Parent groups
+// are collapsible; every existing leaf keeps its original route + permission
+// slug so current pages, URLs and permissions keep working. New sub-modules
+// slot into their group and are gated by their own operations.view_* feature.
+const OPERATIONS_CHILDREN: FeatureChild[] = [
+  {
+    label: "Dashboard",
+    children: [
+      { label: "Operations Dashboard", href: "/modules/operations", feature: "operations.view_dashboard" },
+    ],
+  },
+  {
+    label: "Projects",
+    children: [
+      { label: "Project Management", href: "/modules/operations/projects", feature: "operations.view_projects" },
+      { label: "Project Milestones", href: "/modules/operations/milestones", feature: "operations.view_milestones" },
+      { label: "Project Deliverables", href: "/modules/operations/deliverables", feature: "operations.view_deliverables" },
+      { label: "Project Documents", href: "/modules/operations/project-documents", feature: "operations.view_project_documents" },
+    ],
+  },
+  {
+    label: "Work Management",
+    children: [
+      { label: "Tasks", href: "/modules/operations/tasks", feature: "operations.view_tasks" },
+      { label: "Task Board", href: "/modules/operations/task-board", feature: "operations.view_tasks" },
+      { label: "Work Orders", href: "/modules/operations/work-orders", feature: "operations.view_work_orders" },
+    ],
+  },
+  {
+    label: "Resources",
+    children: [
+      { label: "Resources", href: "/modules/operations/resources", feature: "operations.view_resources" },
+      { label: "Resource Requests", href: "/modules/operations/resource-requests", feature: "operations.view_resource_requests" },
+      { label: "Allocations", href: "/modules/operations/allocations", feature: "operations.view_allocations" },
+      { label: "Skill Matrix", href: "/modules/operations/skill-matrix", feature: "operations.view_skill_matrix" },
+      { label: "Capacity Planning", href: "/modules/operations/capacity-planning", feature: "operations.view_capacity_planning" },
+      { label: "Utilization", href: "/modules/operations/utilization", feature: "operations.view_utilization" },
+    ],
+  },
+  {
+    label: "Timesheets",
+    children: [
+      { label: "Timesheet Management", href: "/modules/operations/timesheets", feature: "operations.view_timesheets" },
+    ],
+  },
+  {
+    label: "Quality & SLA",
+    children: [
+      { label: "Quality Reviews", href: "/modules/operations/quality", feature: "operations.view_quality" },
+      { label: "QA Audits", href: "/modules/operations/qa-audits", feature: "operations.view_qa_audits" },
+      { label: "SLA Monitoring", href: "/modules/operations/sla-monitoring", feature: "operations.view_sla_monitoring" },
+      { label: "Corrective Actions", href: "/modules/operations/corrective-actions", feature: "operations.view_corrective_actions" },
+    ],
+  },
+  {
+    label: "Issues",
+    children: [
+      { label: "Issue Register", href: "/modules/operations/issues", feature: "operations.view_issues" },
+      { label: "Escalations", href: "/modules/operations/escalations", feature: "operations.view_escalations" },
+      { label: "Root Cause / CAPA", href: "/modules/operations/root-cause-capa", feature: "operations.view_root_cause_capa" },
+    ],
+  },
+  {
+    label: "Process Management",
+    children: [
+      { label: "SOPs", href: "/modules/operations/sops", feature: "operations.view_sops" },
+      { label: "Checklists", href: "/modules/operations/checklists", feature: "operations.view_checklists" },
+      { label: "Approvals", href: "/modules/operations/approvals", feature: "operations.view_approvals" },
+    ],
+  },
+  {
+    label: "Client Operations",
+    children: [
+      { label: "Client Requirements", href: "/modules/operations/client-requirements", feature: "operations.view_client_requirements" },
+      { label: "Client Deliverables", href: "/modules/operations/client-deliverables", feature: "operations.view_client_deliverables" },
+      { label: "Client Approvals", href: "/modules/operations/client-approvals", feature: "operations.view_client_approvals" },
+    ],
+  },
+  {
+    label: "Finance",
+    children: [
+      { label: "Project Cost", href: "/modules/operations/project-cost", feature: "operations.view_project_cost" },
+      { label: "Resource Cost", href: "/modules/operations/resource-cost", feature: "operations.view_resource_cost" },
+      { label: "Vendor Cost", href: "/modules/operations/vendor-cost", feature: "operations.view_vendor_cost" },
+      { label: "Budget vs Actual", href: "/modules/operations/budget-vs-actual", feature: "operations.view_budget_vs_actual" },
+    ],
+  },
+  {
+    label: "Communication",
+    children: [
+      { label: "Emails", href: "/modules/operations/emails", feature: "operations.send_emails" },
+      { label: "Email Templates", href: "/modules/operations/email-templates", feature: "operations.view_email_templates" },
+    ],
+  },
 ]
 
 const CLIENTS_CHILDREN = [

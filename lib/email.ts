@@ -213,7 +213,49 @@ export async function ensureRecruitEmailTables() {
       KEY idx_recruit_emails_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  // Phase 45: RFC 5322 threading so every email to the same candidate /
+  // application stacks into one conversation in the recipient's mail client.
+  // thread_id groups the conversation; message_id / in_reply_to /
+  // references_header carry the headers mail clients thread on.
+  await ensureColumn("recruit_emails", "message_id", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("recruit_emails", "in_reply_to", "VARCHAR(255) DEFAULT NULL")
+  await ensureColumn("recruit_emails", "references_header", "TEXT DEFAULT NULL")
+  await ensureColumn("recruit_emails", "thread_id", "VARCHAR(190) DEFAULT NULL")
+  await ensureIndex("recruit_emails", "idx_recruit_emails_thread", "thread_id")
   recruitTablesEnsured = true
+}
+
+/**
+ * Stable conversation key for a recruitment email. Every email tied to the same
+ * application shares a thread; when there is no application we fall back to the
+ * recipient's address so ad-hoc emails to the same person still group.
+ */
+export function buildRecruitThreadId(applicationId: string | null | undefined, toEmail: string) {
+  if (applicationId) return `app:${String(applicationId).trim()}`
+  return `addr:${toEmail.trim().toLowerCase()}`
+}
+
+/**
+ * Prior messages in a recruitment email thread so a follow-up can reference
+ * them (mirrors getThreadContext but scoped to recruit_emails). Returns null
+ * for the first email in the thread. Only successful sends anchor the thread.
+ */
+export async function getRecruitThreadContext(threadId: string): Promise<ThreadContext | null> {
+  const rows = await query<any[]>(
+    `SELECT message_id, subject FROM recruit_emails
+     WHERE thread_id = ? AND status = 'Sent' AND message_id IS NOT NULL
+     ORDER BY sent_at ASC, id ASC`,
+    [threadId],
+  )
+  if (rows.length === 0) return null
+  const messageIds = rows.map((r) => r.message_id).filter(Boolean)
+  const last = rows[rows.length - 1]
+  return {
+    inReplyTo: last.message_id,
+    references: messageIds.join(" "),
+    rootSubject: rows[0].subject,
+    providerThreadId: null,
+  }
 }
 
 /** Add a column only if it doesn't already exist (MySQL has no ADD COLUMN IF NOT EXISTS). */

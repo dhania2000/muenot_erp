@@ -12,7 +12,7 @@ import {
   sendEmail,
 } from "@/lib/email"
 import { recordCandidateActivity } from "@/lib/recruit-unification-db"
-import { buildRecruitEmailVars } from "@/lib/recruit-email-vars"
+import { buildRecruitEmailVars } from "@/lib/recruit-email-vars.server"
 import { query } from "@/lib/db"
 
 export async function GET() {

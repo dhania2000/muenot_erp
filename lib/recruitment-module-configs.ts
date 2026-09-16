@@ -948,13 +948,21 @@ const interviewFeedback: ModuleConfig = {
     fld("Scores", "technical_score", "Technical score", "number"),
     fld("Scores", "communication_score", "Communication score", "number"),
     fld("Scores", "role_fit_score", "Role fit score", "number"),
+    fld("Scores", "domain_knowledge_score", "Domain knowledge score", "number"),
+    fld("Scores", "problem_solving_score", "Problem solving score", "number"),
     fld("Scores", "overall_score", "Overall score", "number", { computed: true }),
     fld("Outcome", "recommendation", "Recommendation", "select", { options: ["Strong Hire", "Hire", "Neutral", "No Hire", "Strong No Hire"], optional: true }),
     fld("Outcome", "final_result", "Final result", "select", { options: ["Pending", "Next Round", "Selected", "Rejected", "Hold"] }),
     fld("Outcome", "comments", "Comments", "textarea"),
   ],
   compute: (v) => {
-    const parts = [v.technical_score, v.communication_score, v.role_fit_score]
+    const parts = [
+      v.technical_score,
+      v.communication_score,
+      v.role_fit_score,
+      v.domain_knowledge_score,
+      v.problem_solving_score,
+    ]
     const given = parts.filter((p) => p !== undefined && p !== null && p !== "")
     const overall = given.length ? round2(given.reduce((s, p) => s + num(p), 0) / given.length) : 0
     return { overall_score: overall }

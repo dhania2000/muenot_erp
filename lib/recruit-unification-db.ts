@@ -9,6 +9,7 @@ import {
   assessmentResultToStage,
   interviewResultToStage,
   selectionResultToStage,
+  feedbackResultToStage,
   type CanonicalStage,
 } from "@/lib/recruitment-stages"
 
@@ -110,6 +111,9 @@ export async function ensureUnificationSchema() {
     "ALTER TABLE recruitment_interviews ADD COLUMN IF NOT EXISTS panel VARCHAR(512) DEFAULT NULL",
     "ALTER TABLE recruitment_interviews ADD COLUMN IF NOT EXISTS interview_mode VARCHAR(64) DEFAULT NULL",
     "ALTER TABLE recruitment_interviews ADD COLUMN IF NOT EXISTS job_id VARCHAR(40) DEFAULT NULL",
+    // Phase 19: full evaluation criteria on the panel feedback record.
+    "ALTER TABLE recruitment_interview_feedback ADD COLUMN IF NOT EXISTS domain_knowledge_score DECIMAL(18,2) DEFAULT NULL",
+    "ALTER TABLE recruitment_interview_feedback ADD COLUMN IF NOT EXISTS problem_solving_score DECIMAL(18,2) DEFAULT NULL",
   ]
   for (const sql of alters) {
     try {
@@ -405,6 +409,9 @@ export async function applyStageWriteBack(table: string, record: Record<string, 
         break
       case "recruitment_selections":
         target = selectionResultToStage(record)
+        break
+      case "recruitment_interview_feedback":
+        target = feedbackResultToStage(record)
         break
       default:
         return false

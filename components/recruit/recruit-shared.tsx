@@ -87,10 +87,13 @@ const STATUS_TONE: Record<string, string> = {
   completed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   no_show: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   draft: "bg-muted text-muted-foreground border-border",
+  pending_approval: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  approved: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30",
   sent: "bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30",
   accepted: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   rejected: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   expired: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  withdrawn: "bg-muted text-muted-foreground border-border",
 }
 
 export function StatusPill({ status, kind }: { status: string; kind?: "job" | "offer" | "interview" }) {

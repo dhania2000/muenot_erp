@@ -53,11 +53,60 @@ export const INTERVIEW_STATUSES = [
 
 export const OFFER_STATUSES = [
   { value: "draft", label: "Draft" },
+  { value: "pending_approval", label: "Pending Approval" },
+  { value: "approved", label: "Approved" },
   { value: "sent", label: "Sent" },
   { value: "accepted", label: "Accepted" },
   { value: "rejected", label: "Rejected" },
   { value: "expired", label: "Expired" },
+  { value: "withdrawn", label: "Withdrawn" },
 ]
+
+/**
+ * Offer approval lifecycle (Phase 22). The offer's `status` column carries the
+ * full lifecycle; each action is only valid from one of its `from` states and
+ * moves the offer to `to`. Actions flagged `approval: true` (approve / reject /
+ * send) require the `recruitment.approve_offers` permission — everything else
+ * only needs `recruitment.manage_offers`.
+ */
+export type OfferAction =
+  | "submit"
+  | "approve"
+  | "reject"
+  | "send"
+  | "accept"
+  | "decline"
+  | "expire"
+  | "withdraw"
+  | "reset"
+
+export const OFFER_TRANSITIONS: Record<
+  OfferAction,
+  { from: string[]; to: string; label: string; approval?: boolean; destructive?: boolean }
+> = {
+  submit: { from: ["draft", "rejected", "withdrawn"], to: "pending_approval", label: "Submit for approval" },
+  approve: { from: ["pending_approval"], to: "approved", label: "Approve", approval: true },
+  reject: { from: ["pending_approval"], to: "rejected", label: "Reject", approval: true, destructive: true },
+  send: { from: ["approved"], to: "sent", label: "Send to candidate", approval: true },
+  accept: { from: ["sent"], to: "accepted", label: "Mark accepted" },
+  decline: { from: ["sent"], to: "rejected", label: "Mark declined", destructive: true },
+  expire: { from: ["approved", "sent"], to: "expired", label: "Mark expired" },
+  withdraw: {
+    from: ["draft", "pending_approval", "approved", "sent"],
+    to: "withdrawn",
+    label: "Withdraw offer",
+    destructive: true,
+  },
+  reset: { from: ["pending_approval", "approved", "rejected", "expired", "withdrawn"], to: "draft", label: "Reset to draft" },
+}
+
+/** Actions currently allowed from a given offer status, in menu order. */
+export function offerActionsFor(status: string | null | undefined): OfferAction[] {
+  const current = status || "draft"
+  return (Object.keys(OFFER_TRANSITIONS) as OfferAction[]).filter((a) =>
+    OFFER_TRANSITIONS[a].from.includes(current),
+  )
+}
 
 export const QUESTION_TYPES = [
   { value: "text", label: "Short text" },

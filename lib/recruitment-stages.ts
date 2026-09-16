@@ -156,6 +156,20 @@ export function interviewResultToStage(result: unknown): CanonicalStage {
   return "interview"
 }
 
+/**
+ * Interview Feedback (Phase 19) write-back. The panel's decision lives in
+ * `final_result`; a still-`Pending` (or blank) evaluation must NOT move the
+ * pipeline, so this returns null in that case and the caller skips the advance.
+ */
+export function feedbackResultToStage(record: Record<string, any>): CanonicalStage | null {
+  const v = String(record?.final_result ?? "").trim().toLowerCase()
+  if (v === "selected") return "selected"
+  if (v === "rejected") return "rejected"
+  if (v === "hold" || v === "on hold") return "hold"
+  if (v === "next round") return "interview"
+  return null
+}
+
 export function selectionResultToStage(record: Record<string, any>): CanonicalStage {
   const joining = String(record?.joining_status ?? "").trim().toLowerCase()
   const offer = String(record?.offer_status ?? "").trim().toLowerCase()

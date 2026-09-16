@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
+import { RecruitEmailVarsHint } from "@/components/recruit/recruit-email-vars-hint"
 import { Send } from "lucide-react"
 
 export type ComposeTarget = {
@@ -203,6 +204,8 @@ export function RecruitComposeEmailDialog({
             <Label>Attachment</Label>
             <EmailAttachmentPicker value={attachment} onChange={setAttachment} />
           </div>
+
+          <RecruitEmailVarsHint />
         </div>
 
         <DialogFooter>

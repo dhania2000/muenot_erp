@@ -9,20 +9,49 @@ import {
   AlertTriangle,
   Briefcase,
   CalendarClock,
+  ClipboardCheck,
+  ClipboardList,
+  Clock,
   ExternalLink,
+  Filter,
   FileText,
   LayoutDashboard,
+  ListChecks,
+  MessageSquare,
   Plus,
+  ShieldCheck,
+  UserCheck,
   Users,
 } from "lucide-react"
 import { PageHeader, StageBadge, StatusPill } from "@/components/recruit/recruit-shared"
-import { APPLICATION_STAGES, formatDate, formatDateTime, labelFor, INTERVIEW_MODES } from "@/lib/recruit"
+import { formatDate, formatDateTime, labelFor, INTERVIEW_MODES } from "@/lib/recruit"
+
+type Pipeline = {
+  openJobs: number
+  openRequisitions: number
+  applications: number
+  screening: number
+  shortlisted: number
+  assessments: number
+  interviews: number
+  selected: number
+  offers: number
+  acceptedOffers: number
+  upcomingJoining: number
+  joined: number
+  pendingBgv: number
+  pendingReference: number
+  pendingFeedback: number
+  dueFollowups: number
+}
 
 type Stats = {
   jobs: { total: number; open: number; positions: number }
   applications: { total: number; byStage: Record<string, number> }
   interviews: { total: number; upcoming: number }
   offers: { total: number; accepted: number }
+  pipeline?: Pipeline
+  funnel?: { key: string; label: string; count: number }[]
   recentApplications: { application_id: string; candidate_name: string; job_title: string | null; stage: string; applied_at: string }[]
   upcomingInterviews: { interview_id: string; candidate_name: string | null; job_title: string | null; scheduled_at: string | null; mode: string | null; status: string }[]
   stale: {
@@ -36,15 +65,28 @@ type Stats = {
 export function DashboardClient({ canManage }: { canManage: boolean }) {
   const { data, isLoading } = useSWR<Stats>("/api/recruit/dashboard", fetcher)
 
-  const stats = [
-    { label: "Open jobs", value: data?.jobs.open ?? 0, sub: `${data?.jobs.total ?? 0} total`, icon: Briefcase, href: "/modules/recruitment/jobs" },
-    { label: "Open positions", value: data?.jobs.positions ?? 0, sub: "across all jobs", icon: LayoutDashboard, href: "/modules/recruitment/jobs" },
-    { label: "Applications", value: data?.applications.total ?? 0, sub: "in the pipeline", icon: Users, href: "/modules/recruitment/job-applications" },
-    { label: "Upcoming interviews", value: data?.interviews.upcoming ?? 0, sub: `${data?.interviews.total ?? 0} total`, icon: CalendarClock, href: "/modules/recruitment/interview-schedule" },
-    { label: "Offers accepted", value: data?.offers.accepted ?? 0, sub: `${data?.offers.total ?? 0} sent`, icon: FileText, href: "/modules/recruitment/job-offer-letter" },
+  const p = data?.pipeline
+  const stats: { label: string; value: number; icon: typeof Briefcase; href: string }[] = [
+    { label: "Open jobs", value: p?.openJobs ?? data?.jobs.open ?? 0, icon: Briefcase, href: "/modules/recruitment/jobs" },
+    { label: "Open requisitions", value: p?.openRequisitions ?? 0, icon: ClipboardList, href: "/modules/recruitment/requisition-hiring" },
+    { label: "Applications", value: p?.applications ?? data?.applications.total ?? 0, icon: Users, href: "/modules/recruitment/job-applications" },
+    { label: "Screening", value: p?.screening ?? 0, icon: Filter, href: "/modules/recruitment/job-applications" },
+    { label: "Shortlisted", value: p?.shortlisted ?? 0, icon: ListChecks, href: "/modules/recruitment/job-applications" },
+    { label: "Assessments", value: p?.assessments ?? 0, icon: ClipboardCheck, href: "/modules/recruitment/job-applications" },
+    { label: "Interviews", value: p?.interviews ?? data?.interviews.total ?? 0, icon: CalendarClock, href: "/modules/recruitment/interview-schedule" },
+    { label: "Selected", value: p?.selected ?? 0, icon: UserCheck, href: "/modules/recruitment/job-applications" },
+    { label: "Offers", value: p?.offers ?? data?.offers.total ?? 0, icon: FileText, href: "/modules/recruitment/job-offer-letter" },
+    { label: "Accepted offers", value: p?.acceptedOffers ?? data?.offers.accepted ?? 0, icon: FileText, href: "/modules/recruitment/job-offer-letter" },
+    { label: "Upcoming joining", value: p?.upcomingJoining ?? 0, icon: CalendarClock, href: "/modules/recruitment/onboarding" },
+    { label: "Joined", value: p?.joined ?? 0, icon: UserCheck, href: "/modules/recruitment/onboarding" },
+    { label: "Pending BGV", value: p?.pendingBgv ?? 0, icon: ShieldCheck, href: "/modules/recruitment/onboarding" },
+    { label: "Pending reference", value: p?.pendingReference ?? 0, icon: ShieldCheck, href: "/modules/recruitment/onboarding" },
+    { label: "Pending feedback", value: p?.pendingFeedback ?? 0, icon: MessageSquare, href: "/modules/recruitment/interview-schedule" },
+    { label: "Due follow-ups", value: p?.dueFollowups ?? 0, icon: Clock, href: "/modules/recruitment/job-applications" },
   ]
 
-  const totalApps = data?.applications.total ?? 0
+  const funnel = data?.funnel ?? []
+  const funnelMax = funnel.reduce((m, s) => Math.max(m, s.count), 0)
 
   return (
     <main className="flex flex-col gap-6 p-6 md:p-8">
@@ -66,19 +108,18 @@ export function DashboardClient({ canManage }: { canManage: boolean }) {
         }
       />
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
         {stats.map((s) => {
           const Icon = s.icon
           return (
             <Link key={s.label} href={s.href} className="group">
               <Card size="sm" className="h-full transition-colors group-hover:border-primary/50">
-                <CardContent className="flex flex-col gap-1.5 py-1">
-                  <span className="flex size-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <CardContent className="flex flex-col gap-1 py-1">
+                  <span className="flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
                     <Icon className="size-4" />
                   </span>
-                  <span className="mt-1 text-2xl font-semibold tabular-nums">{isLoading ? "—" : s.value}</span>
-                  <span className="text-xs font-medium">{s.label}</span>
-                  <span className="text-xs text-muted-foreground">{s.sub}</span>
+                  <span className="mt-1 text-xl font-semibold tabular-nums">{isLoading ? "—" : s.value}</span>
+                  <span className="text-xs font-medium leading-tight">{s.label}</span>
                 </CardContent>
               </Card>
             </Link>
@@ -137,21 +178,25 @@ export function DashboardClient({ canManage }: { canManage: boolean }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Application pipeline</CardTitle>
+          <CardTitle>Recruitment funnel</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {APPLICATION_STAGES.map((stage) => {
-            const count = data?.applications.byStage[stage.key] ?? 0
-            const pct = totalApps > 0 ? Math.round((count / totalApps) * 100) : 0
+          {isLoading && <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>}
+          {!isLoading && funnel.length === 0 && (
+            <p className="py-6 text-center text-sm text-muted-foreground">No applications yet.</p>
+          )}
+          {funnel.map((step) => {
+            const barPct = funnelMax > 0 ? Math.round((step.count / funnelMax) * 100) : 0
+            const convPct =
+              funnel[0]?.count > 0 ? Math.round((step.count / funnel[0].count) * 100) : 0
             return (
-              <div key={stage.key} className="flex items-center gap-3">
-                <div className="w-28 shrink-0">
-                  <StageBadge stage={stage.key} />
-                </div>
+              <div key={step.key} className="flex items-center gap-3">
+                <div className="w-28 shrink-0 text-sm font-medium">{step.label}</div>
                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                  <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${barPct}%` }} />
                 </div>
-                <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground">{count}</span>
+                <span className="w-12 shrink-0 text-right text-sm font-semibold tabular-nums">{step.count}</span>
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{convPct}%</span>
               </div>
             )
           })}

@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { RECRUITMENT_OPTION_SETS } from "@/lib/recruitment-option-sets"
+import { getHrMasterOptionSets } from "@/lib/recruit-hr-masters"
 
 /**
  * Phase 51 — Settings-driven dropdown values.
@@ -70,6 +71,15 @@ export async function GET() {
     }
     // Dedupe while preserving order; fall back to built-in defaults.
     sets[key] = opts.length ? Array.from(new Set(opts)) : defaults
+  }
+
+  // Phases 58-60 — bind org/people dropdowns to the HR masters (departments,
+  // employees) so recruitment stays in sync with the org's source of truth.
+  // Best-effort: a missing HR table must never break the settings-driven sets.
+  try {
+    Object.assign(sets, await getHrMasterOptionSets())
+  } catch (e) {
+    console.error("[recruit-option-sets] hr master load failed", e)
   }
 
   return NextResponse.json({ sets })

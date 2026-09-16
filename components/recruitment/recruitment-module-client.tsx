@@ -24,6 +24,8 @@ import { inr, inr0 } from "@/lib/finance-calc"
 import { RECRUITMENT_MODULE_CONFIGS } from "@/lib/recruitment-module-configs"
 import { RecruitmentModuleDialog } from "@/components/recruitment/recruitment-module-dialog"
 import { ImportButton } from "@/components/import-button"
+import { ExcelExportButton } from "@/components/excel-export-button"
+import type { ExportColumn } from "@/lib/excel-export"
 import type { BadgeVariant, ModuleConfig, TableColumn } from "@/lib/finance-schema"
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -75,6 +77,14 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
   const statuses: string[] = data?.filterOptions?.statuses ?? []
   const activeFilterCount = Object.values(filters).filter(Boolean).length
 
+  // PHASE 80: export the exact filtered dataset currently on screen, using the
+  // same columns/labels (and money formatting) the table renders with.
+  const exportColumns: ExportColumn<Row>[] = cfg.columns.map((col) => ({
+    key: col.key,
+    header: col.label,
+    value: (row: Row) => (col.money ? inr(row[col.key]) : (row[col.key] ?? "")),
+  }))
+
   const hasDate = !!cfg.dateColumn
   const hasStatus = !!cfg.statusColumn
 
@@ -101,6 +111,12 @@ function ModuleView({ cfg }: { cfg: ModuleConfig }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ImportButton moduleKey={`recruit-${cfg.key}`} onImported={() => mutate()} />
+          <ExcelExportButton
+            rows={rows}
+            filename={`recruit-${cfg.key}`}
+            columns={exportColumns}
+            disabled={rows.length === 0}
+          />
           <Button onClick={openNew}>
             <Plus data-icon="inline-start" />
             {cfg.addLabel}

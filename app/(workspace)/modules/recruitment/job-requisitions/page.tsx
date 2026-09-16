@@ -1,11 +1,8 @@
-import { redirect } from "next/navigation"
+import { RecruitmentModuleClient } from "@/components/recruitment/recruitment-module-client"
 
-// Unified flow: "Job Requisitions" and "Requisition & Hiring" used to be two
-// parallel pipelines writing the same recruitment_requisitions table, but the
-// generic config-driven Job Requisitions page bypassed the approval workflow.
-// requisition-hiring is now canonical (approval + job creation + headcount
-// auto-calc), so this route permanently redirects onto it. All existing
-// requisition data still shows there since both read the same table.
+// "Job Requisitions" renders its own config-driven requisition register.
+// It reads the same recruitment_requisitions table as "Requisition Hiring",
+// so data stays in sync; that page remains the canonical approval + hiring flow.
 export default function Page() {
-  redirect("/modules/recruitment/requisition-hiring")
+  return <RecruitmentModuleClient moduleKey="job-requisitions" />
 }

@@ -179,7 +179,10 @@ export async function runFinanceReport(input: RunReportInput): Promise<ReportRun
       columns: def.columns,
       rows,
       available,
-      hasSql: !!def.sql,
+      // A report is "sourced" when it has raw SQL OR is computed by the
+      // classification statement engine (Trial Balance, P&L, Balance Sheet,
+      // Cash Flow). Only reports with neither are genuine placeholders.
+      hasSql: !!def.sql || !!def.statement,
       from: input.from,
       to: input.to,
       config: def.diagnostics,

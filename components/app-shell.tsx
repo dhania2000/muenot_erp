@@ -378,17 +378,54 @@ function childActive(child: NavChild, pathname: string): boolean {
   return (child.children ?? []).some((c) => childActive(c, pathname))
 }
 
+/**
+ * Renders a list of sibling nav children as an accordion: at most one nested
+ * sub-group is expanded at a time, so opening another sub-module auto-collapses
+ * the previously open one. Leaf links do not affect the accordion state.
+ */
+function NavChildList({ items, pathname }: { items: NavChild[]; pathname: string }) {
+  const [openKey, setOpenKey] = useState<string | null>(
+    () => items.find((c) => c.children?.length && childActive(c, pathname))?.label ?? null,
+  )
+  return (
+    <>
+      {items.map((child) => {
+        const key = child.href ?? child.label
+        const hasChildren = !!child.children && child.children.length > 0
+        return (
+          <NavChildNode
+            key={key}
+            child={child}
+            pathname={pathname}
+            open={hasChildren ? openKey === key : undefined}
+            onToggle={hasChildren ? () => setOpenKey((cur) => (cur === key ? null : key)) : undefined}
+          />
+        )
+      })}
+    </>
+  )
+}
+
 /** Renders a single leaf link or a nested collapsible sub-group within the sidebar. */
-function NavChildNode({ child, pathname }: { child: NavChild; pathname: string }) {
+function NavChildNode({
+  child,
+  pathname,
+  open,
+  onToggle,
+}: {
+  child: NavChild
+  pathname: string
+  open?: boolean
+  onToggle?: () => void
+}) {
   const hasChildren = !!child.children && child.children.length > 0
-  const [open, setOpen] = useState(() => (child.children ?? []).some((c) => childActive(c, pathname)))
 
   if (hasChildren) {
     return (
       <div className="flex flex-col">
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={onToggle}
           aria-expanded={open}
           className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
         >
@@ -397,9 +434,7 @@ function NavChildNode({ child, pathname }: { child: NavChild; pathname: string }
         </button>
         {open && (
           <div className="mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-3 ml-2">
-            {child.children!.map((c) => (
-              <NavChildNode key={c.href ?? c.label} child={c} pathname={pathname} />
-            ))}
+            <NavChildList items={child.children!} pathname={pathname} />
           </div>
         )}
       </div>

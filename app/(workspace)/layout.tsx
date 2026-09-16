@@ -94,6 +94,7 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Expenses", href: "/modules/finance/expenses", feature: "finance.view_expenses" },
   { label: "FTE Invoices", href: "/modules/finance/fte-invoices", feature: "finance.view_fte_invoices" },
   { label: "Freelance Invoices", href: "/modules/finance/freelance-invoices", feature: "finance.view_freelance_invoices" },
+  { label: "Vendors", href: "/modules/finance/customers-vendors", feature: "finance.view_customers_vendors" },
   { label: "Bank Transactions", href: "/modules/finance/bank-transactions", feature: "finance.view_bank_transactions" },
   { label: "Bank & Cash", href: "/modules/finance/bank-cash", feature: "finance.view_bank_cash" },
   { label: "Chart of Accounts", href: "/modules/finance/chart-of-accounts", feature: "finance.view_chart_of_accounts" },

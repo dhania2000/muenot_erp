@@ -988,3 +988,47 @@ export async function ensureLoansAdvancesColumns() {
 
   loansAdvancesEnsured = true
 }
+
+/**
+ * Self-healing schema for the Phase 6 Provisions & Accruals build. The base
+ * `provisions_accruals` table predates the richer model (a general Type of
+ * Provision / Accrual / Prepaid Expense, the P&L / balance-sheet account, the
+ * start / end date, the periodicity + recurring flag, the funding source and a
+ * document link), so the new columns are added idempotently, and the dedicated
+ * periodic-posting schedule table is created. Runs once per process, after the
+ * register tables.
+ */
+let provisionsAccrualsEnsured = false
+
+export async function ensureProvisionsAccrualsColumns() {
+  if (provisionsAccrualsEnsured) return
+  await ensureRegisterModuleTables()
+
+  const t = "provisions_accruals"
+  await ensureColumn(t, "account_id", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "account_name", "VARCHAR(190) DEFAULT NULL")
+  await ensureColumn(t, "accrual_nature", "VARCHAR(20) DEFAULT NULL")
+  await ensureColumn(t, "funding_source", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn(t, "start_date", "DATE DEFAULT NULL")
+  await ensureColumn(t, "end_date", "DATE DEFAULT NULL")
+  await ensureColumn(t, "period", "VARCHAR(20) DEFAULT NULL")
+  await ensureColumn(t, "recurring", "VARCHAR(10) DEFAULT NULL")
+  await ensureColumn(t, "document_url", "TEXT DEFAULT NULL")
+
+  await query(`CREATE TABLE IF NOT EXISTS provisions_accruals_schedule (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    provision_id        VARCHAR(30) NOT NULL,
+    installment_no      INT NOT NULL DEFAULT 0,
+    period_date         DATE DEFAULT NULL,
+    amount              DECIMAL(16,2) NOT NULL DEFAULT 0,
+    voucher_no          VARCHAR(40) DEFAULT NULL,
+    posting_status      VARCHAR(20) NOT NULL DEFAULT 'Pending',
+    posted_at           DATETIME DEFAULT NULL,
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_pas (provision_id, installment_no),
+    KEY idx_pas_prov (provision_id),
+    KEY idx_pas_date (period_date)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  provisionsAccrualsEnsured = true
+}

@@ -1,6 +1,7 @@
 import { query } from "@/lib/db"
 import { postLines, type PostingLine } from "@/lib/finance-posting"
 import { ensureRegisterPostingAccounts, type AccountRole } from "@/lib/finance-accounts"
+import { provisionKind } from "@/lib/finance-provisions"
 
 // ---------------------------------------------------------------------------
 // Balance-sheet register posting engine (server-only).
@@ -143,23 +144,57 @@ export const REGISTER_MODULES: Record<string, RegisterModule> = {
       }
     },
   },
-  // Dr Provisions & Accruals Expense ; Cr Provisions & Accruals (liability)
+  // Type-aware initial recognition (Phase 6):
+  //   Provision       → Dr Expense            ; Cr Provision Liability
+  //   Accrual (exp)    → Dr Expense            ; Cr Accrued Liability
+  //   Accrual (income) → Dr Accrued Asset      ; Cr Income
+  //   Prepaid Expense  → Dr Prepaid Asset      ; Cr funding (bank/cash/payable)
+  // For a recurring provision/accrual `amount` is the per-period charge and this
+  // recognition posts the first period; later periods are booked by the
+  // periodic-posting engine. For a prepaid, `amount` is the total and this
+  // recognition books the asset, which is then amortised into expense.
   "provisions-accruals": {
     table: "provisions_accruals",
     idColumn: "provision_id",
     build: (r) => {
       const amount = round2(num(r.amount))
+      const kind = provisionKind(r)
+      const acct = r.account_id || null
+      let lines: PostingLine[]
+      let voucherType: string
+      if (kind === "prepaid") {
+        lines = [
+          { role: "prepaid_asset", debit: amount, credit: 0 },
+          { role: contraRole(r.funding_source), debit: 0, credit: amount },
+        ]
+        voucherType = "Prepaid Expense"
+      } else if (kind === "accrual") {
+        const income = String(r.accrual_nature || "").trim().toLowerCase() === "income"
+        lines = income
+          ? [
+              { role: "accrued_asset", debit: amount, credit: 0 },
+              { role: "accrued_income", accountId: acct, debit: 0, credit: amount },
+            ]
+          : [
+              { role: "provision_expense", accountId: acct, debit: amount, credit: 0 },
+              { role: "accrued_liability", debit: 0, credit: amount },
+            ]
+        voucherType = income ? "Accrued Income" : "Accrued Expense"
+      } else {
+        lines = [
+          { role: "provision_expense", accountId: acct, debit: amount, credit: 0 },
+          { role: "provision_liability", debit: 0, credit: amount },
+        ]
+        voucherType = "Provision"
+      }
       return {
         amount,
-        lines: [
-          { role: "provision_expense", debit: amount, credit: 0 },
-          { role: "provision_liability", debit: 0, credit: amount },
-        ],
+        lines,
         entityType: "provision_accrual",
-        voucherType: "Provision",
-        narration: `Provision / accrual ${r.provision_id}${r.provision_name ? ` — ${r.provision_name}` : ""}`,
+        voucherType,
+        narration: `${voucherType} ${r.provision_id}${r.provision_name ? ` — ${r.provision_name}` : ""}`,
         sourceModule: "Provisions & Accruals",
-        date: dateOf(r.provision_date),
+        date: dateOf(r.provision_date || r.start_date),
         financialYear: r.financial_year ?? null,
         partyName: r.related_party || null,
       }

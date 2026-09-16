@@ -9,6 +9,7 @@ import type { ModuleConfig } from "@/lib/finance-schema"
 import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns, ensureRegisterModuleTables, ensureLoansAdvancesColumns } from "@/lib/finance-ensure"
 import { syncRegisterPosting, reverseRegisterPosting } from "@/lib/finance-register-posting"
 import { augmentLoanAdvance, syncLoanSchedule, deleteLoanSchedule } from "@/lib/finance-loans"
+import { syncProvisionSchedule, deleteProvisionSchedule } from "@/lib/finance-provisions"
 import { guardChartOfAccountWrite, checkAccountDeletable } from "@/lib/finance-coa"
 import { syncOpeningBalancePosting } from "@/lib/finance-opening-balance"
 import { nextPurchaseBillId, computePurchaseBillServerFields } from "@/lib/finance-purchase-bills"
@@ -321,6 +322,24 @@ const AFTER_WRITE: Record<
       console.log("[v0] syncLoanSchedule failed:", (error as Error).message)
     }
   },
+  // Provisions & Accruals posts its one-off recognition like the other
+  // registers, then (re)builds its periodic-posting schedule — prepaid
+  // amortisation and recurring provision/accrual installments — from the
+  // recomputed row. Overrides the generic register hook above. Failure-tolerant.
+  "provisions-accruals": async ({ finalRow, userId }) => {
+    const provisionId = finalRow[cfgIdColumn("provisions-accruals")]
+    if (!provisionId) return
+    try {
+      await syncRegisterPosting("provisions-accruals", String(provisionId), { createdBy: userId })
+    } catch (error) {
+      console.log("[v0] syncRegisterPosting failed for provisions-accruals:", (error as Error).message)
+    }
+    try {
+      await syncProvisionSchedule(String(provisionId))
+    } catch (error) {
+      console.log("[v0] syncProvisionSchedule failed:", (error as Error).message)
+    }
+  },
 }
 
 /** Optional per-module side effect that runs when a record is deleted. */
@@ -388,6 +407,21 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
       await deleteLoanSchedule(String(row?.loan_id ?? ""))
     } catch (error) {
       console.log("[v0] deleteLoanSchedule failed:", (error as Error).message)
+    }
+  },
+  // Provisions & Accruals additionally owns a periodic-posting schedule, so its
+  // delete must unwind the recognition posting AND reverse + drop every posted
+  // periodic voucher. Declared after the generic register spread. Failure-tolerant.
+  "provisions-accruals": async (row) => {
+    try {
+      await reverseRegisterPosting("provisions-accruals", row)
+    } catch (error) {
+      console.log("[v0] reverseRegisterPosting failed for provisions-accruals:", (error as Error).message)
+    }
+    try {
+      await deleteProvisionSchedule(String(row?.provision_id ?? ""))
+    } catch (error) {
+      console.log("[v0] deleteProvisionSchedule failed:", (error as Error).message)
     }
   },
 }

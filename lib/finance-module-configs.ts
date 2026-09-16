@@ -1803,6 +1803,9 @@ const orders: ModuleConfig = {
 
 const FUNDING_SOURCES = ["Bank", "Cash", "Accounts Payable", "Owner Capital"]
 const CASH_SOURCES = ["Bank", "Cash"]
+// Phase 6 Provisions & Accruals — the three supported document types drive the
+// posting shape (provision liability, accrued liability/asset, prepaid asset).
+const PROVISION_TYPE_OPTIONS = ["Provision", "Accrual", "Prepaid Expense"]
 const POSTING_COLUMN: TableColumn = { key: "posting_status", label: "Posting", badge: { Posted: "default", Unposted: "outline" } }
 
 const fixedAssets: ModuleConfig = {
@@ -2096,21 +2099,46 @@ const provisionsAccruals: ModuleConfig = {
   dateColumn: "provision_date",
   financialYearColumn: "financial_year",
   statusColumn: "status",
-  searchColumns: ["provision_id", "provision_name", "provision_type", "related_party"],
+  searchColumns: ["provision_id", "provision_name", "provision_type", "related_party", "account_name"],
   filters: [
-    { type: "select", key: "provision_type", label: "Type", options: ["Provision for Expense", "Accrued Expense", "Provision for Tax", "Provision for Doubtful Debts", "Warranty", "Gratuity / Leave", "Other"] },
+    { type: "select", key: "provision_type", label: "Type", options: PROVISION_TYPE_OPTIONS },
     { type: "select", key: "status", label: "Status", options: ["Open", "Utilised", "Reversed"] },
+  ],
+  // Chart-of-Accounts picker for the P&L / income head that the provision,
+  // accrual or prepaid amortisation posts against (falls back to the module
+  // default control head when left blank).
+  lookups: [
+    {
+      key: "coa",
+      label: "Account (Chart of Accounts)",
+      path: "/api/finance/expenses/lookups?type=coa",
+      sourceIdColumn: "account_id",
+      sourceNameColumn: "account_name",
+      sourceSubColumn: "account_group",
+      idField: "account_id",
+      nameField: "account_name",
+      autofill: {},
+    },
   ],
   fields: [
     fld("Provision information", "provision_name", "Provision name", "text", { required: true }),
-    fld("Provision information", "provision_type", "Type", "select", { options: ["Provision for Expense", "Accrued Expense", "Provision for Tax", "Provision for Doubtful Debts", "Warranty", "Gratuity / Leave", "Other"] }),
+    fld("Provision information", "provision_type", "Type", "select", { options: PROVISION_TYPE_OPTIONS, required: true }),
+    fld("Provision information", "accrual_nature", "Accrual nature (accruals only)", "select", { options: ["Expense", "Income"], optional: true }),
     fld("Provision information", "provision_date", "Provision date", "date", { required: true }),
     fld("Provision information", "financial_year", "Financial year", "text", { placeholder: "e.g. 2026-27" }),
     fld("Provision information", "related_party", "Related party / counterparty", "text"),
     fld("Provision information", "status", "Status", "select", { options: ["Open", "Utilised", "Reversed"], optional: true }),
-    fld("Amounts", "amount", "Provision amount", "number", { required: true, money: true }),
+    fld("Account", "account_name", "Account", "text", { placeholder: "Pick expense / income head from Chart of Accounts" }),
+    fld("Account", "account_id", "Account ID", "text", { hidden: true }),
+    fld("Amounts", "amount", "Amount (per period for recurring)", "number", { required: true, money: true }),
+    fld("Amounts", "funding_source", "Prepaid funded via", "select", { options: ["Bank", "Cash", "Accounts Payable"], optional: true }),
+    fld("Schedule", "start_date", "Start date", "date", { optional: true }),
+    fld("Schedule", "end_date", "End date", "date", { optional: true }),
+    fld("Schedule", "period", "Period", "select", { options: ["One-time", "Monthly", "Quarterly", "Half-Yearly", "Yearly"], optional: true }),
+    fld("Schedule", "recurring", "Recurring", "select", { options: ["No", "Yes"], optional: true }),
     fld("Accounting", "posting_status", "Posting status", "text", { computed: true }),
     fld("Accounting", "voucher_no", "Journal voucher no.", "text", { computed: true }),
+    fld("Documents", "document_url", "Documents (URL)", "text", { placeholder: "Supporting document / agreement link" }),
     fld("Notes", "notes", "Notes", "textarea"),
   ],
   tableColumns: [
@@ -2118,6 +2146,7 @@ const provisionsAccruals: ModuleConfig = {
     { key: "provision_name", label: "Provision", sub: "provision_type" },
     { key: "provision_date", label: "Date" },
     { key: "amount", label: "Amount", align: "right", money: true },
+    { key: "period", label: "Period" },
     { key: "status", label: "Status", badge: { Open: "default", Utilised: "secondary", Reversed: "destructive" } },
     POSTING_COLUMN,
   ],

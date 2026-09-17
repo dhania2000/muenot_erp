@@ -313,6 +313,7 @@ const PRODUCTS_CHILDREN = [
 
 const LEGAL_CHILDREN = [
   { label: "Contracts", href: "/modules/legal/contracts", feature: "legal.view_contracts" },
+  { label: "Templates", href: "/modules/legal/templates", feature: "legal.view_contract_templates" },
   { label: "Esign", href: "/modules/legal/esign", feature: "legal.view_esign" },
 ]
 

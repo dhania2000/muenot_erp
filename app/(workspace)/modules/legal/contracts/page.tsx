@@ -1,5 +1,5 @@
-import { LegalWorkspace } from "@/components/legal/legal-workspace"
+import { ContractsClient } from "@/components/legal/contracts-client"
 
 export default function LegalContractsPage() {
-  return <LegalWorkspace kind="contracts" />
+  return <ContractsClient />
 }

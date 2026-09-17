@@ -322,7 +322,7 @@ export function LibraryUploadDialog({
             {busy && <Loader2 className="size-4 animate-spin" />}
             Upload {queue.filter((q) => q.status !== "done").length || ""}
           </Button>
-        </DialogФooter>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

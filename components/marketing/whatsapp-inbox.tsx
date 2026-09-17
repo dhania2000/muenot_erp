@@ -17,6 +17,7 @@ import {
   X,
   Inbox as InboxIcon,
   FileText,
+  MessageSquarePlus,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -168,14 +169,22 @@ export function WhatsAppInbox() {
         )}
       >
         <div className="flex flex-col gap-3 border-b p-3">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, number or lead"
-              className="pl-8"
-              aria-label="Search conversations"
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, number or lead"
+                className="pl-8"
+                aria-label="Search conversations"
+              />
+            </div>
+            <NewConversationDialog
+              onStarted={(conversationId) => {
+                setSelectedId(conversationId)
+                void mutate()
+              }}
             />
           </div>
           <Tabs value={filter} onValueChange={(v) => setFilter(v as "all" | "unread")}>
@@ -235,6 +244,183 @@ export function WhatsAppInbox() {
         )}
       </div>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* New conversation (message any number)                               */
+/* ------------------------------------------------------------------ */
+
+function NewConversationDialog({ onStarted }: { onStarted: (conversationId: number) => void }) {
+  const [open, setOpen] = React.useState(false)
+  const [phone, setPhone] = React.useState("")
+  const [mode, setMode] = React.useState<"text" | "template">("text")
+  const [text, setText] = React.useState("")
+  const [selected, setSelected] = React.useState<Template | null>(null)
+  const [sending, setSending] = React.useState(false)
+
+  const { data, isLoading } = useSWR<{ templates: Template[] }>(
+    open ? "/api/marketing/whatsapp/templates" : null,
+    fetcher,
+  )
+  const templates = (data?.templates ?? []).filter((t) => t.status.toUpperCase() === "APPROVED")
+
+  const digits = phone.replace(/[^\d]/g, "")
+  const canSend =
+    digits.length >= 8 && (mode === "text" ? text.trim().length > 0 : selected !== null)
+
+  React.useEffect(() => {
+    if (!open) {
+      setPhone("")
+      setMode("text")
+      setText("")
+      setSelected(null)
+    }
+  }, [open])
+
+  async function send() {
+    if (!canSend) return
+    setSending(true)
+    try {
+      const payload =
+        mode === "template"
+          ? {
+              to: digits,
+              mode: "template" as const,
+              templateName: selected!.name,
+              languageCode: selected!.language,
+            }
+          : { to: digits, mode: "text" as const, message: text.trim() }
+
+      const res = await fetch("/api/marketing/whatsapp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error || "Failed to send message")
+      toast.success("Message sent")
+      setOpen(false)
+      if (json.conversationId) onStarted(Number(json.conversationId))
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <Button size="icon" className="size-10 shrink-0 bg-[#25D366] text-white hover:bg-[#1FAF54]" aria-label="New message">
+            <MessageSquarePlus className="size-4" />
+          </Button>
+        }
+      />
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New message</DialogTitle>
+          <DialogDescription>
+            Start a WhatsApp conversation with any number. Include the country code.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4 py-1">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="new-wa-phone">Phone number</Label>
+            <Input
+              id="new-wa-phone"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              inputMode="tel"
+              placeholder="e.g. 91 98765 43210"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Digits with country code, no leading + needed.
+            </p>
+          </div>
+
+          <Tabs value={mode} onValueChange={(v) => setMode(v as "text" | "template")}>
+            <TabsList className="w-full">
+              <TabsTrigger value="text" className="flex-1">
+                Text
+              </TabsTrigger>
+              <TabsTrigger value="template" className="flex-1">
+                Template
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {mode === "text" ? (
+            <div className="flex flex-col gap-1.5">
+              <Textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={3}
+                placeholder="Type a message"
+                className="resize-none"
+                aria-label="Message"
+              />
+              <div className="flex items-start gap-2 rounded-lg bg-muted p-2.5 text-[11px] text-muted-foreground">
+                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                <p className="text-pretty">
+                  Free-text only reaches numbers that messaged you in the last 24 hours. For a brand-new
+                  contact, use an approved template.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="max-h-[40vh] overflow-y-auto">
+              {isLoading ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" /> Loading templates…
+                </div>
+              ) : templates.length === 0 ? (
+                <p className="px-1 py-6 text-center text-sm text-muted-foreground text-pretty">
+                  No approved templates found. Create and get templates approved in the Meta WhatsApp
+                  Manager.
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {templates.map((t) => (
+                    <li key={`${t.name}:${t.language}`}>
+                      <button
+                        type="button"
+                        onClick={() => setSelected(t)}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent/60",
+                          selected?.name === t.name &&
+                            selected?.language === t.language &&
+                            "border-[#25D366] bg-[#25D366]/5",
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{t.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {t.language}
+                            {t.category ? ` · ${t.category}` : ""}
+                          </p>
+                        </div>
+                        {selected?.name === t.name && selected?.language === t.language ? (
+                          <Check className="size-4 shrink-0 text-[#128C4A]" />
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline">Cancel</Button>} />
+          <Button onClick={send} disabled={sending || !canSend}>
+            {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+            Send
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

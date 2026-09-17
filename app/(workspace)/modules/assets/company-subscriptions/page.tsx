@@ -1,5 +1,5 @@
-import { WorkspaceModuleClient } from "@/components/workspace-module-client"
+import { CompanySubscriptionsClient } from "@/components/assets/company-subscriptions-client"
 
 export default function CompanySubscriptionsPage() {
-  return <WorkspaceModuleClient slug="subscriptions" name="Company Subscriptions" description="Company subscription register" />
+  return <CompanySubscriptionsClient />
 }

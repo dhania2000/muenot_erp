@@ -135,6 +135,21 @@ export const EMPLOYEE_ASSET_EXTRA_ACTIONS: ExtendedAction[] = [
 ]
 
 /**
+ * Company Subscriptions granular actions. The base Add/View/Update/Delete scopes
+ * govern the subscription records; these separate the recurring-service
+ * lifecycle (seat assign/revoke, renew, cancel/suspend) and CSV export so they
+ * can be granted independently of a plain Update.
+ */
+export const COMPANY_SUBSCRIPTION_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "assign_seat", label: "Assign Seat", fallback: "add", scoped: true, description: "Allocate a subscription seat/license to an employee." },
+  { key: "revoke_seat", label: "Revoke Seat", fallback: "update", scoped: true, description: "Revoke a subscription seat from an employee." },
+  { key: "renew", label: "Renew Subscription", fallback: "update", scoped: true, description: "Renew a subscription for another billing cycle." },
+  { key: "cancel", label: "Cancel / Suspend", fallback: "delete", scoped: true, description: "Cancel, suspend or reactivate a subscription." },
+  { key: "manage_documents", label: "Manage Documents", fallback: "update", scoped: true, description: "Attach or remove subscription documents." },
+  { key: "export", label: "Export Register", fallback: "view", scoped: false, description: "Export the company subscription register as CSV." },
+]
+
+/**
  * Phase 53 — Interviews & Assessments granular action permissions. These live
  * ALONGSIDE the module's Add/View/Update/Delete and carve the scheduling
  * lifecycle out of the generic verbs, so a plain Update can neither reschedule
@@ -438,6 +453,18 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         aliases: ["employee_asset", "employee_assets", "asset", "assignment"],
         scope: { table: "employee_asset_assignments", addedBy: "created_by" },
         extraActions: EMPLOYEE_ASSET_EXTRA_ACTIONS,
+      },
+      // Company Subscriptions — the SaaS / license / recurring-service register.
+      // Vendors come from Finance → Customers/Vendors; seats reference HR
+      // employees. Base scopes govern the subscription records; extended actions
+      // separate seat allocation, renewals, cancel/suspend, documents and export.
+      {
+        key: "assets.company_subscriptions",
+        label: "Company Subscriptions",
+        group: "assets",
+        aliases: ["subscription", "subscriptions", "company_subscription", "company_subscriptions", "saas", "license"],
+        scope: { table: "company_subscriptions", addedBy: "created_by" },
+        extraActions: COMPANY_SUBSCRIPTION_EXTRA_ACTIONS,
       },
     ],
   },

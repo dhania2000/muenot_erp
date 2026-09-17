@@ -1,0 +1,79 @@
+/**
+ * SPEC 2 — Tenant-owned entity registry (single source of truth).
+ * ---------------------------------------------------------------------------
+ * A table is "tenant-owned" when its rows belong to exactly one customer
+ * organization and must never be visible to another. This registry is the ONE
+ * place that enumerates those tables. It drives three things so they can never
+ * drift apart:
+ *
+ *   1. The isolation migration + runtime self-heal (add `tenant_id`, index, FK).
+ *   2. The fail-closed data-layer guard (lib/tenant-guard.ts) that rejects /
+ *      reports any query touching one of these tables without a tenant filter.
+ *   3. The tenant-scoped query helpers (lib/tenant-scope.ts).
+ *
+ * Extending isolation to a new entity is intentionally a one-line change here:
+ * add the table name and the migration, self-heal, guard, and helpers all pick
+ * it up automatically.
+ *
+ * NOT tenant-owned (deliberately excluded):
+ *   - `tenants`                     : the tenant directory itself.
+ *   - `users`                       : already carries tenant_id (SPEC 1) and is
+ *                                     scoped by the auth layer, but is listed in
+ *                                     TENANT_SCOPED_IDENTITY below so the guard
+ *                                     still protects direct user reads.
+ *   - `modules` / `features`        : global catalog shared by every tenant.
+ *   - `environment_variables`       : platform-level configuration.
+ *   - `information_schema.*`         : never guarded.
+ */
+
+/** The tenant discriminator column used across the app. */
+export const TENANT_COLUMN = "tenant_id"
+
+/**
+ * Core tenant-owned business tables. These receive a `tenant_id` column, a
+ * covering index, and a foreign key to `tenants(id)`, and are enforced by the
+ * data-layer guard.
+ *
+ * Kept to entities whose schema is verified (database/schema.sql) or that
+ * self-heal at runtime (lib/clients-db.ts). Adding more is a one-line change.
+ */
+export const TENANT_OWNED_TABLES = [
+  // Sales CRM
+  "sales_leads",
+  "sales_companies",
+  "sales_meetings",
+  "sales_quotations",
+  "sales_contracts",
+  "sales_onboarding",
+  "sales_revenue_forecast",
+  // Clients master
+  "clients",
+] as const
+
+export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]
+
+/**
+ * Identity tables that already carry `tenant_id` from SPEC 1. The guard also
+ * protects these, but the migration does NOT try to add the column (SPEC 1
+ * owns it).
+ */
+export const TENANT_SCOPED_IDENTITY = ["users"] as const
+
+/** Every table the guard should protect (owned business tables + identity). */
+export const ALL_TENANT_SCOPED_TABLES: readonly string[] = [
+  ...TENANT_OWNED_TABLES,
+  ...TENANT_SCOPED_IDENTITY,
+]
+
+const OWNED = new Set<string>(TENANT_OWNED_TABLES)
+const SCOPED = new Set<string>(ALL_TENANT_SCOPED_TABLES)
+
+/** True when the table gets a tenant_id column from the isolation migration. */
+export function isTenantOwnedTable(table: string): boolean {
+  return OWNED.has(table.toLowerCase())
+}
+
+/** True when the guard must enforce a tenant predicate on the table. */
+export function isTenantScopedTable(table: string): boolean {
+  return SCOPED.has(table.toLowerCase())
+}

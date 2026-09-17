@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose"
 import { cookies } from "next/headers"
 import { setCurrentActor } from "./actor-context"
+import { setCurrentTenant } from "./tenant-context"
 
 export const SESSION_COOKIE = "ems_session"
 const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7 // 7 days
@@ -21,6 +22,12 @@ export type SessionPayload = {
   email: string
   name: string
   role: "admin" | "employee"
+  /**
+   * The tenant this user belongs to, captured at login from users.tenant_id.
+   * Optional so JWTs issued before the multi-tenant rollout still verify;
+   * `getSession()` backfills the default tenant for those legacy tokens.
+   */
+  tenantId?: number
 }
 
 export async function createSessionToken(
@@ -58,6 +65,24 @@ export async function getSession(): Promise<SessionPayload | null> {
       email: session.email,
       role: session.role,
     })
+
+    // Populate the per-request tenant context so the data layer can scope
+    // reads/writes to the acting tenant. The tenant is derived from the
+    // verified token (never client input). Legacy tokens without a tenantId
+    // are backfilled to the default tenant from the DB source of truth.
+    let tenantId = session.tenantId
+    if (tenantId == null) {
+      try {
+        const { resolveTenantIdForUser } = await import("./tenant-service")
+        tenantId = (await resolveTenantIdForUser(session.userId)) ?? undefined
+        if (tenantId != null) session.tenantId = tenantId
+      } catch (err) {
+        console.error("[v0] tenant resolution failed:", err)
+      }
+    }
+    if (tenantId != null) {
+      setCurrentTenant({ tenantId })
+    }
   }
   return session
 }

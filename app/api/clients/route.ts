@@ -4,6 +4,8 @@ import { requireFeature } from "@/lib/api-auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { recordAudit } from "@/lib/sales/lead-lifecycle"
 import { scopeWhereForModule, mergeScopeIntoWhere, canCreateInModule } from "@/lib/permission-enforce"
+import { currentTenantId } from "@/lib/tenant-scope"
+import { ensureTenantIsolation } from "@/lib/tenant-ensure"
 import {
   ensureClientTables,
   findClientDuplicates,
@@ -31,6 +33,7 @@ const ALLOWED = new Set([
 
 export async function GET(request: Request) {
   await ensureClientTables()
+  await ensureTenantIsolation()
   const session = await requireFeature("clients.view_clients")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
@@ -39,8 +42,13 @@ export async function GET(request: Request) {
 
   // Record-level scope by the clients matrix (owned = account_manager_id).
   const scoped = await scopeWhereForModule(session, "clients.clients", "view", "clients", "c")
-  const baseWhere = includeArchived ? "" : "WHERE c.archived_at IS NULL"
-  const { where, args } = mergeScopeIntoWhere(baseWhere, [], scoped)
+  // Tenant isolation ALWAYS constrains the query first; the permission scope is
+  // ANDed on top. Derived server-side — never from request input.
+  const tenantId = currentTenantId()
+  const baseWhere = includeArchived
+    ? "WHERE c.tenant_id = ?"
+    : "WHERE c.tenant_id = ? AND c.archived_at IS NULL"
+  const { where, args } = mergeScopeIntoWhere(baseWhere, [tenantId], scoped)
 
   const clients = await query(
     `SELECT c.*,
@@ -152,9 +160,11 @@ export async function POST(request: Request) {
   const fields = ["client_code", ...Object.keys(payload)]
   const values = [clientCode, ...Object.keys(payload).map((k) => payload[k])]
 
+  // Stamp the acting tenant (server-derived) so the new row is owned by, and
+  // only visible to, the caller's tenant.
   await query(
-    `INSERT INTO clients (${fields.join(",")},created_by) VALUES (${fields.map(() => "?").join(",")},?)`,
-    [...values, session.userId],
+    `INSERT INTO clients (${fields.join(",")},created_by,tenant_id) VALUES (${fields.map(() => "?").join(",")},?,?)`,
+    [...values, session.userId, currentTenantId()],
   )
 
   await recordAudit(null, {

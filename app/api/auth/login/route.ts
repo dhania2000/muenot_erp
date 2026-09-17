@@ -4,6 +4,7 @@ import { verifyPassword } from "@/lib/password"
 import { createSessionToken, setSessionCookie } from "@/lib/auth"
 import { getNum } from "@/lib/settings/server"
 import { recordActivity } from "@/lib/notifications"
+import { resolveTenantIdForUser } from "@/lib/tenant-service"
 
 type UserRow = {
   id: number
@@ -55,6 +56,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
 
+    // Resolve the tenant this user belongs to (source of truth: users.tenant_id).
+    // Baked into the session token so every subsequent request derives its
+    // tenant from the verified session, never from client input.
+    const tenantId = (await resolveTenantIdForUser(user.id)) ?? undefined
+
     // Session lifetime is configurable in Settings → Security (minutes).
     const timeoutMinutes = await getNum("security.session_timeout", 480)
     const durationSeconds = Math.max(60, Math.round(timeoutMinutes * 60))
@@ -64,6 +70,7 @@ export async function POST(request: Request) {
         email: user.email,
         name: user.name,
         role: user.role,
+        tenantId,
       },
       durationSeconds,
     )

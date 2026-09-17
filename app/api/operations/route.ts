@@ -13,6 +13,8 @@ import {
   spawnQualityActions,
   syncScorecardCriteria,
   recalcScorecard,
+  syncIssue,
+  syncSlaBreach,
 } from "@/lib/operations-sync"
 
 const tables = {
@@ -140,6 +142,8 @@ async function runSyncHooks(selected: Kind, row: Record<string, any>): Promise<v
     else if (selected === "quality") await spawnQualityActions(row, row.id)
     else if (selected === "scorecard_criteria") await syncScorecardCriteria(row, row.id)
     else if (selected === "scorecards") await recalcScorecard(row.id)
+    else if (selected === "issues") await syncIssue(row, row.id)
+    else if (selected === "sla_monitoring") await syncSlaBreach(row, row.id)
   } catch (error) {
     console.log("[v0] operations sync hook failed:", (error as Error).message)
   }

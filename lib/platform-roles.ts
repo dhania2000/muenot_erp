@@ -277,4 +277,48 @@ export async function assignTenantRole(
   })
 }
 
+// ---------------------------------------------------------------------------
+// Access directory (platform operators + tenant users)
+// ---------------------------------------------------------------------------
+
+export type AccessUser = {
+  id: number
+  name: string
+  email: string
+  status: string
+  tenantId: number | null
+  tenantName: string | null
+  platformRole: PlatformRole
+  tenantRole: TenantRole
+}
+
+/**
+ * List users for the Access & support screen. Platform operators are surfaced
+ * first so support staff can review who holds platform authority. Read-only
+ * aggregation; role changes go through assignPlatformRole/assignTenantRole.
+ */
+export async function listAccessUsers(limit = 200): Promise<AccessUser[]> {
+  await ensurePlatformRoleSchema()
+  const rows = await query<any[]>(
+    `SELECT u.id, u.name, u.email, u.status, u.tenant_id,
+            u.platform_role, u.tenant_role, u.role,
+            t.name AS tenant_name
+       FROM \`users\` u
+       LEFT JOIN \`tenants\` t ON t.id = u.tenant_id
+      ORDER BY (u.platform_role <> 'none') DESC, u.platform_role DESC, u.name ASC
+      LIMIT ?`,
+    [Math.max(1, Math.min(500, limit))],
+  )
+  return rows.map((r) => ({
+    id: Number(r.id),
+    name: r.name ?? "",
+    email: r.email ?? "",
+    status: r.status ?? "active",
+    tenantId: r.tenant_id != null ? Number(r.tenant_id) : null,
+    tenantName: r.tenant_name ?? null,
+    platformRole: toPlatformRole(r.platform_role),
+    tenantRole: toTenantRole(r.tenant_role || (r.role === "admin" ? "tenant_admin" : "employee")),
+  }))
+}
+
 export { DEFAULT_TENANT_SLUG }

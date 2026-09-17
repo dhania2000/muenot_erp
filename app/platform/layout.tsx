@@ -3,9 +3,10 @@ import Link from "next/link"
 import { ShieldCheck } from "lucide-react"
 import { requirePlatformStaff } from "@/lib/platform-guard"
 import { platformRoleLabel } from "@/lib/role-model"
+import { PlatformNav } from "@/components/platform/platform-nav"
 
 /**
- * SPEC 3 — The Muenot PLATFORM console shell. Access is gated on the platform
+ * SPEC 3/4 — The Muenot PLATFORM console shell. Access is gated on the platform
  * axis ALONE (`requirePlatformStaff`); a customer's tenant_owner/tenant_admin
  * can never reach it. This is deliberately a separate route tree from the
  * tenant workspace so operating the platform and operating a tenant are
@@ -21,8 +22,8 @@ export default async function PlatformLayout({ children }: { children: React.Rea
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <header className="border-b border-border bg-background">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
+      <header className="sticky top-0 z-30 border-b border-border bg-background">
+        <div className="mx-auto flex max-w-[90rem] items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <Link href="/platform" className="flex items-center gap-2.5">
             <span className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
               <ShieldCheck className="size-5" />
@@ -38,7 +39,15 @@ export default async function PlatformLayout({ children }: { children: React.Rea
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+
+      <div className="mx-auto flex max-w-[90rem] gap-8 px-4 py-6 sm:px-6 lg:py-8">
+        <aside className="hidden w-56 shrink-0 lg:block">
+          <div className="sticky top-[4.5rem]">
+            <PlatformNav />
+          </div>
+        </aside>
+        <main className="min-w-0 flex-1">{children}</main>
+      </div>
     </div>
   )
 }

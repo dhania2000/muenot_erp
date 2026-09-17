@@ -136,6 +136,7 @@ export async function POST(request: Request) {
         // identical X-Entity-Ref-ID and Gmail groups it into this conversation.
         headers: { "X-Entity-Ref-ID": threadId },
         department,
+        senderUserId: session.userId ?? null,
         attachments: outgoingAttachment ? [outgoingAttachment] : undefined,
       })
       providerThreadId = sendResult.providerThreadId ?? null

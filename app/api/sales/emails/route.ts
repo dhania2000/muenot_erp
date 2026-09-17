@@ -369,6 +369,7 @@ export async function POST(request: Request) {
       references: references || undefined,
       headers: { "X-Entity-Ref-ID": entityRefId },
       department,
+      senderUserId: session.userId ?? null,
       attachments: outgoingAttachment ? [outgoingAttachment] : undefined,
       // On a follow-up this is the original conversation's Gmail thread id, which
       // makes Gmail keep the reply in the same thread instead of starting a new one.

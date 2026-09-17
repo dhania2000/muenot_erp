@@ -3,6 +3,7 @@ import { useState } from "react"
 import useSWR from "swr"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ConnectEmailPanel } from "@/components/connect-email-panel"
 const fetcher=(u:string)=>fetch(u).then(r=>r.json())
 export function ModuleEmailCenter({ module, mode = "emails" }: { module: "finance" | "operations"; mode?: "emails" | "templates" }) {
   const isTemplates = mode === "templates"
@@ -39,6 +40,7 @@ export function ModuleEmailCenter({ module, mode = "emails" }: { module: "financ
             ]}
       />
     </div>
+    {!isTemplates && <ConnectEmailPanel returnPath={`/modules/${module}/emails`} />}
     <section className="grid gap-3 rounded-xl border p-4">
       {isTemplates ? <input className="rounded border bg-background p-2" placeholder="Template name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /> : <input className="rounded border bg-background p-2" placeholder="Recipient email" value={form.to} onChange={e => setForm({ ...form, to: e.target.value })} />}
       <input className="rounded border bg-background p-2" placeholder="Subject" value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} />

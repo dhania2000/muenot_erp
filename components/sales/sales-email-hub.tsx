@@ -30,6 +30,7 @@ import { SalesEmailAnalytics } from "@/components/sales/sales-email-analytics"
 import { SalesEmailAutomationSettings } from "@/components/sales/sales-email-automation-settings"
 import { SalesEmailStatusBadge } from "@/components/sales/sales-email-status-badge"
 import { EmailDetailDialog } from "@/components/sales/email-detail-dialog"
+import { ConnectEmailPanel } from "@/components/connect-email-panel"
 
 type EmailRow = {
   id: number
@@ -138,6 +139,8 @@ export function SalesEmailHub({
           </AlertDescription>
         </Alert>
       )}
+
+      <ConnectEmailPanel returnPath="/modules/sales/emails" />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

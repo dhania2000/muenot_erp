@@ -36,7 +36,9 @@ type EmailsResponse = {
   pageSize: number
   configured: boolean
   summary: Summary
-}
+  }
+
+import { ConnectEmailPanel } from "@/components/connect-email-panel"
 
 const PAGE_SIZE = 25
 
@@ -84,6 +86,8 @@ export function HrEmailHub() {
           Compose, schedule and track every HR email from one place.
         </p>
       </header>
+
+      <ConnectEmailPanel returnPath="/modules/hr/emails" />
 
       {data && !data.configured && (
         <p className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">

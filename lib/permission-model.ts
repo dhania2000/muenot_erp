@@ -73,6 +73,21 @@ export const GST_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
 ]
 
 /**
+ * Product & Inventory extended actions (Phase 44). They live ALONGSIDE the base
+ * Add/View/Update/Delete on the Products module and gate the sensitive or
+ * high-impact operations: moving stock, seeing cost/margin, and bulk data ops.
+ */
+export const PRODUCT_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "adjust_stock", label: "Adjust Stock", fallback: "update", scoped: false, description: "Manually increase, decrease or set on-hand stock with a reason." },
+  { key: "view_cost", label: "View Cost Price", fallback: "view", scoped: false, description: "View purchase / cost price and inventory cost valuation." },
+  { key: "view_margin", label: "View Margin", fallback: "view", scoped: false, description: "View profit margin between cost and selling price." },
+  { key: "change_status", label: "Change Status", fallback: "delete", scoped: false, description: "Activate, deactivate or discontinue a product." },
+  { key: "manage_categories", label: "Manage Categories", fallback: "update", scoped: false, description: "Add or retire product categories and subcategories." },
+  { key: "import_export", label: "Import / Export", fallback: "delete", scoped: false, description: "Bulk import products and export the catalog." },
+  { key: "manage_settings", label: "Manage Settings", fallback: "delete", scoped: false, description: "Tune module defaults such as negative-stock policy and reorder thresholds." },
+]
+
+/**
  * TDS Filing granular action permissions — the compliance chain that follows
  * deduction (liability → challan → return → certificate → reconciliation).
  * Like the GST set, these live ALONGSIDE Add/View/Update/Delete and gate the
@@ -382,7 +397,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     label: "Products",
     modules: [
       { key: "products.dashboard", label: "Products Dashboard", group: "products", aliases: ["dashboard"], scope: { table: "products" } },
-      { key: "products.products", label: "Products", group: "products", aliases: ["product"], scope: { table: "products", addedBy: "created_by" } },
+      { key: "products.products", label: "Products", group: "products", aliases: ["product", "catalog", "inventory"], scope: { table: "products", addedBy: "created_by" }, extraActions: PRODUCT_EXTRA_ACTIONS },
     ],
   },
   {

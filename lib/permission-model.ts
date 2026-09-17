@@ -119,6 +119,22 @@ export const REPORTS_EXTRA_ACTIONS: ExtendedAction[] = [
 ]
 
 /**
+ * Employee Assets granular actions. The base Add/View/Update/Delete scopes
+ * govern the assignment records themselves; these carve the asset lifecycle
+ * operations out of a plain Update so an admin can e.g. let someone assign and
+ * return assets but not mark them lost/damaged, or grant export independently.
+ * Assign falls back to `add`; return / reassign / repair fall back to `update`;
+ * the loss events fall back to `delete`; export falls back to `view`.
+ */
+export const EMPLOYEE_ASSET_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "assign", label: "Assign Asset", fallback: "add", scoped: true, description: "Assign a company fixed asset to an employee." },
+  { key: "return_asset", label: "Return Asset", fallback: "update", scoped: true, description: "Record the return of an assigned asset." },
+  { key: "reassign", label: "Reassign Asset", fallback: "update", scoped: true, description: "Return the current holder and reassign the asset to another employee." },
+  { key: "mark_status", label: "Mark Lost / Damaged / Repair", fallback: "delete", scoped: true, description: "Flag an assigned asset as lost, damaged or under repair." },
+  { key: "export", label: "Export Assignments", fallback: "view", scoped: false, description: "Export the employee-asset assignment register as CSV." },
+]
+
+/**
  * Phase 53 — Interviews & Assessments granular action permissions. These live
  * ALONGSIDE the module's Add/View/Update/Delete and carve the scheduling
  * lifecycle out of the generic verbs, so a plain Update can neither reschedule
@@ -404,6 +420,25 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       // participant management, QR generate/revoke). The public gate-scan page
       // needs no session and is intentionally not gated by this matrix.
       { key: "events.events", label: "Events", group: "events", aliases: ["event"], scope: { table: "hr_events", addedBy: "created_by" } },
+    ],
+  },
+  {
+    slug: "assets",
+    label: "Assets & Subscriptions",
+    modules: [
+      // Employee Assets is an ASSIGNMENT layer over Finance → Fixed Assets (the
+      // asset master / source of truth). The base Add/View/Update/Delete scopes
+      // govern the assignment records; the extended actions separate the asset
+      // lifecycle operations (assign/return/reassign/mark lost or damaged) and
+      // export from a plain Update, so they can be granted / revoked on their own.
+      {
+        key: "assets.employee_assets",
+        label: "Employee Assets",
+        group: "assets",
+        aliases: ["employee_asset", "employee_assets", "asset", "assignment"],
+        scope: { table: "employee_asset_assignments", addedBy: "created_by" },
+        extraActions: EMPLOYEE_ASSET_EXTRA_ACTIONS,
+      },
     ],
   },
 ]

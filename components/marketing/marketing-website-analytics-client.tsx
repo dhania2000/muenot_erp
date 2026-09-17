@@ -6,11 +6,17 @@ import { fetcher } from "@/lib/fetcher"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
-import { Eye, Users, Timer, MoveDownRight, Target, RefreshCw, Settings, Code2, Download, Radio } from "lucide-react"
+import { Eye, Users, Timer, MoveDownRight, Target, RefreshCw, Settings, Code2, Download, Radio, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
 import { BreakdownList, PanelCard, formatCompact, formatDuration, deltaLabel } from "@/components/marketing/website-analytics/wa-shared"
 import { InstallDialog, NewPropertyDialog, GoalsDialog, SettingsDialog } from "@/components/marketing/website-analytics/wa-manage"
@@ -49,8 +55,8 @@ export function MarketingWebsiteAnalyticsClient() {
 
   const activePropertyId = property?.id ?? null
 
-  function exportCsv(dataset: string) {
-    const p = new URLSearchParams({ range, dataset })
+  function exportData(dataset: string, format: "csv" | "xlsx" | "pdf" = "csv") {
+    const p = new URLSearchParams({ range, dataset, format })
     if (activePropertyId) p.set("propertyId", String(activePropertyId))
     window.open(`/api/marketing/website-analytics/export?${p.toString()}`, "_blank")
   }
@@ -102,6 +108,11 @@ export function MarketingWebsiteAnalyticsClient() {
                 ))}
               </SelectContent>
             </Select>
+            {property ? (
+              <Button variant="outline" size="sm" onClick={() => exportData("topPages", "pdf")}>
+                <FileText className="size-4" /> Report
+              </Button>
+            ) : null}
             {canManage ? <NewPropertyDialog onCreated={(id) => setPropertyId(id)} /> : null}
             <Button variant="outline" size="icon" onClick={() => mutate()} aria-label="Refresh">
               <RefreshCw className="size-4" />
@@ -284,11 +295,7 @@ export function MarketingWebsiteAnalyticsClient() {
                 </PanelCard>
                 <PanelCard
                   title="Top Pages"
-                  action={
-                    <Button variant="ghost" size="sm" onClick={() => exportCsv("topPages")}>
-                      <Download className="size-4" /> CSV
-                    </Button>
-                  }
+                  action={<ExportMenu onSelect={(f) => exportData("topPages", f)} />}
                 >
                   <TopPagesTable rows={analytics?.topPages ?? []} />
                 </PanelCard>
@@ -297,32 +304,32 @@ export function MarketingWebsiteAnalyticsClient() {
 
             {/* Acquisition */}
             <TabsContent value="acquisition" className="grid grid-cols-1 gap-4 pt-4 lg:grid-cols-2">
-              <PanelCard title="Channels" action={<CsvBtn onClick={() => exportCsv("channels")} />}>
+              <PanelCard title="Channels" action={<ExportMenu onSelect={(f) => exportData("channels", f)} />}>
                 <BreakdownList rows={analytics?.channels ?? []} labelKey="channel" valueKey="sessions" formatValue={(n) => `${n.toLocaleString()} sessions`} />
               </PanelCard>
-              <PanelCard title="Referrers" action={<CsvBtn onClick={() => exportCsv("referrers")} />}>
+              <PanelCard title="Referrers" action={<ExportMenu onSelect={(f) => exportData("referrers", f)} />}>
                 <BreakdownList rows={analytics?.referrers ?? []} labelKey="domain" valueKey="sessions" emptyText="No referral traffic yet." />
               </PanelCard>
-              <PanelCard title="UTM Performance" action={<CsvBtn onClick={() => exportCsv("utm")} />}>
+              <PanelCard title="UTM Performance" action={<ExportMenu onSelect={(f) => exportData("utm", f)} />}>
                 <UtmTable rows={analytics?.utmPerformance ?? []} />
               </PanelCard>
-              <PanelCard title="Campaign Attribution" action={<CsvBtn onClick={() => exportCsv("campaigns")} />}>
+              <PanelCard title="Campaign Attribution" action={<ExportMenu onSelect={(f) => exportData("campaigns", f)} />}>
                 <CampaignTable rows={analytics?.campaigns ?? []} />
               </PanelCard>
             </TabsContent>
 
             {/* Behavior */}
             <TabsContent value="behavior" className="grid grid-cols-1 gap-4 pt-4 lg:grid-cols-2">
-              <PanelCard title="Top Pages" action={<CsvBtn onClick={() => exportCsv("topPages")} />}>
+              <PanelCard title="Top Pages" action={<ExportMenu onSelect={(f) => exportData("topPages", f)} />}>
                 <TopPagesTable rows={analytics?.topPages ?? []} />
               </PanelCard>
-              <PanelCard title="Landing Pages" action={<CsvBtn onClick={() => exportCsv("landingPages")} />}>
+              <PanelCard title="Landing Pages" action={<ExportMenu onSelect={(f) => exportData("landingPages", f)} />}>
                 <BreakdownList rows={analytics?.landingPages ?? []} labelKey="path" valueKey="sessions" emptyText="No landing pages yet." />
               </PanelCard>
-              <PanelCard title="Exit Pages">
+              <PanelCard title="Exit Pages" action={<ExportMenu onSelect={(f) => exportData("exitPages", f)} />}>
                 <BreakdownList rows={analytics?.exitPages ?? []} labelKey="path" valueKey="exits" emptyText="No exit data yet." />
               </PanelCard>
-              <PanelCard title="Events" action={<CsvBtn onClick={() => exportCsv("events")} />}>
+              <PanelCard title="Events" action={<ExportMenu onSelect={(f) => exportData("events", f)} />}>
                 <BreakdownList rows={analytics?.events ?? []} labelKey="type" valueKey="count" emptyText="No events yet." formatValue={(n) => n.toLocaleString()} />
               </PanelCard>
             </TabsContent>
@@ -354,16 +361,16 @@ export function MarketingWebsiteAnalyticsClient() {
 
             {/* Audience */}
             <TabsContent value="audience" className="grid grid-cols-1 gap-4 pt-4 lg:grid-cols-2">
-              <PanelCard title="Devices" action={<CsvBtn onClick={() => exportCsv("devices")} />}>
+              <PanelCard title="Devices" action={<ExportMenu onSelect={(f) => exportData("devices", f)} />}>
                 <BreakdownList rows={analytics?.devices ?? []} labelKey="device" valueKey="sessions" />
               </PanelCard>
-              <PanelCard title="Browsers" action={<CsvBtn onClick={() => exportCsv("browsers")} />}>
+              <PanelCard title="Browsers" action={<ExportMenu onSelect={(f) => exportData("browsers", f)} />}>
                 <BreakdownList rows={analytics?.browsers ?? []} labelKey="browser" valueKey="sessions" />
               </PanelCard>
               <PanelCard title="Operating Systems">
                 <BreakdownList rows={analytics?.operatingSystems ?? []} labelKey="os" valueKey="sessions" />
               </PanelCard>
-              <PanelCard title="Countries" action={<CsvBtn onClick={() => exportCsv("countries")} />}>
+              <PanelCard title="Countries" action={<ExportMenu onSelect={(f) => exportData("countries", f)} />}>
                 <BreakdownList rows={analytics?.countries ?? []} labelKey="country" valueKey="sessions" emptyText="No geo data yet." />
               </PanelCard>
             </TabsContent>
@@ -374,11 +381,19 @@ export function MarketingWebsiteAnalyticsClient() {
   )
 }
 
-function CsvBtn({ onClick }: { onClick: () => void }) {
+function ExportMenu({ onSelect }: { onSelect: (format: "csv" | "xlsx") => void }) {
   return (
-    <Button variant="ghost" size="sm" onClick={onClick}>
-      <Download className="size-4" /> CSV
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm">
+          <Download className="size-4" /> Export
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => onSelect("csv")}>CSV</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onSelect("xlsx")}>Excel (.xlsx)</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

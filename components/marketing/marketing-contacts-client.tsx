@@ -33,6 +33,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
   Plus,
   Search,
   Users,
@@ -45,6 +55,7 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  Trash2,
 } from "lucide-react"
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
 import { ContactDialog, type OwnerOption } from "@/components/marketing/marketing-contact-dialog"
@@ -80,6 +91,8 @@ export function MarketingContactsClient({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const params = new URLSearchParams()
   if (q) params.set("q", q)
@@ -399,9 +412,12 @@ export function MarketingContactsClient({
                                 toast.success("Contact archived")
                                 refresh()
                               }}
-                              className="text-destructive"
                             >
                               Archive
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setDeleteTarget(c)} className="text-destructive">
+                              <Trash2 className="size-4" />
+                              Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -455,6 +471,50 @@ export function MarketingContactsClient({
       />
       <ContactDrawer contactId={drawerId} open={drawerOpen} onOpenChange={setDrawerOpen} onEdit={openEdit} />
       <ImportDialog open={importOpen} onOpenChange={setImportOpen} onImported={refresh} />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete contact?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete{" "}
+              <span className="font-medium text-foreground">{deleteTarget?.full_name}</span> and all associated tags,
+              segment memberships, and activity history. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault()
+                if (!deleteTarget) return
+                setDeleting(true)
+                const res = await fetch(`/api/marketing/contacts/${deleteTarget.id}?permanent=true`, {
+                  method: "DELETE",
+                })
+                setDeleting(false)
+                if (!res.ok) {
+                  const result = await res.json().catch(() => ({}))
+                  toast.error(result.error || "Failed to delete contact")
+                  return
+                }
+                toast.success("Contact deleted")
+                setSelected((prev) => {
+                  const next = new Set(prev)
+                  next.delete(deleteTarget.id)
+                  return next
+                })
+                setDeleteTarget(null)
+                refresh()
+              }}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   )
 }

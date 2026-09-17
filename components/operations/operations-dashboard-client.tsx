@@ -51,7 +51,7 @@ const configs: Record<string, { title: string; fields: string[] }> = {
   },
   projects: {
     title: "Projects",
-    fields: ["client_id", "client_name", "project_name", "service_vertical", "project_type", "project_manager", "operations_manager", "start_date", "end_date", "status", "billing_model", "required_resources", "allocated_resources", "resources_deficiency", "sla_target", "priority", "shift", "work_mode", "client_poc", "client_email", "client_contact", "remarks"],
+    fields: ["client_id", "client_name", "project_name", "service_vertical", "project_type", "project_manager", "operations_manager", "start_date", "end_date", "status", "billing_model", "budget_amount", "required_resources", "allocated_resources", "resources_deficiency", "sla_target", "priority", "shift", "work_mode", "client_poc", "client_email", "client_contact", "remarks"],
   },
   allocations: {
     title: "Allocations",

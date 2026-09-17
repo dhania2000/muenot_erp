@@ -620,6 +620,143 @@ export async function syncSlaBreach(row: Record<string, any>, slaId: number | st
   }
 }
 
+// --- Phase 33: SOP version history -----------------------------------------
+
+/** Actor identity captured on an audited change (SOP snapshot, approval stamp). */
+export type Actor = { id?: number | null; name?: string | null }
+
+/**
+ * Snapshot an SOP's current field values into operations_sop_versions so every
+ * create/edit preserves an immutable historical version. The live SOP row stays
+ * the single latest record; old versions are never overwritten or lost.
+ */
+export async function snapshotSop(
+  row: Record<string, any>,
+  sopId: number | string,
+  changeType: "Created" | "Updated",
+  actor?: Actor,
+): Promise<void> {
+  try {
+    const idNum = Number(sopId)
+    if (!Number.isFinite(idNum) || idNum <= 0) return
+    const cols = await tableColumns("operations_sop_versions")
+    if (!cols.size) return
+    const data: Record<string, unknown> = {
+      sop_id: idNum,
+      sop_code: row.sop_code ?? null,
+      version: row.version ?? null,
+      title: row.title ?? null,
+      category: row.category ?? null,
+      department: row.department ?? null,
+      description: row.description ?? null,
+      owner: row.owner ?? null,
+      effective_date: row.effective_date ?? null,
+      review_date: row.review_date ?? null,
+      next_review_date: row.next_review_date ?? null,
+      approval_status: row.approval_status ?? null,
+      document_url: row.document_url ?? null,
+      status: row.status ?? null,
+      remarks: row.remarks ?? null,
+      change_type: changeType,
+      snapshot_by: actor?.id ?? null,
+      snapshot_by_name: actor?.name ?? null,
+    }
+    await insert("operations_sop_versions", cols, data)
+  } catch (error) {
+    console.log("[v0] operations-sync snapshotSop failed:", (error as Error).message)
+  }
+}
+
+// --- Phase 40: Client approval decision audit ------------------------------
+
+/**
+ * When a client approval carries a final decision (Approved / Rejected / On
+ * Hold) and has not yet been stamped, record the acting user and timestamp
+ * automatically. Uses the existing approval flow — no separate audit store.
+ */
+export async function stampClientApprovalDecision(
+  approvalId: number | string,
+  actor?: Actor,
+): Promise<void> {
+  try {
+    const idNum = Number(approvalId)
+    if (!Number.isFinite(idNum) || idNum <= 0) return
+    const cols = await tableColumns("operations_client_approvals")
+    if (!cols.has("decided_by") || !cols.has("decided_at")) return
+
+    const rows = await query<any[]>(
+      `SELECT decision, decision_date, decided_at FROM operations_client_approvals WHERE id = ? LIMIT 1`,
+      [idNum],
+    )
+    if (!rows.length) return
+    const decision = String(rows[0].decision ?? "").toLowerCase()
+    const isFinal = ["approved", "rejected", "on hold"].includes(decision)
+    if (!isFinal) return
+    // Only stamp the first time a decision is recorded so the original decision
+    // time/user is preserved across later unrelated edits.
+    if (rows[0].decided_at) return
+
+    const sets = ["decided_by = ?", "decided_at = NOW()"]
+    const args: any[] = [actor?.name ?? null]
+    if (cols.has("decision_date") && !rows[0].decision_date) {
+      sets.push("decision_date = CURDATE()")
+    }
+    args.push(idNum)
+    await query(`UPDATE operations_client_approvals SET ${sets.join(", ")} WHERE id = ?`, args)
+  } catch (error) {
+    console.log("[v0] operations-sync stampClientApprovalDecision failed:", (error as Error).message)
+  }
+}
+
+// --- Phases 34-35: Checklist completion from items -------------------------
+
+/**
+ * Recompute a checklist's total_items / completed_items / completion_percent
+ * from its item rows. "Not Applicable" items are excluded from the denominator
+ * so completion reflects only actionable work. Status is auto-advanced to
+ * Completed / In Progress based on the derived percentage.
+ */
+export async function recomputeChecklistFromItems(checklistId: number | string): Promise<void> {
+  try {
+    const idNum = Number(checklistId)
+    if (!Number.isFinite(idNum) || idNum <= 0) return
+    const itemCols = await tableColumns("operations_checklist_items")
+    const listCols = await tableColumns("operations_checklists")
+    if (!itemCols.size || !listCols.size) return
+
+    const rows = await query<any[]>(
+      `SELECT item_status, COUNT(*) c FROM operations_checklist_items
+        WHERE checklist_id = ? GROUP BY item_status`,
+      [idNum],
+    )
+    let applicable = 0
+    let completed = 0
+    for (const r of rows) {
+      const st = String(r.item_status ?? "").toLowerCase()
+      const c = toNumber(r.c)
+      if (st === "not applicable") continue
+      applicable += c
+      if (st === "completed") completed += c
+    }
+    const percent = clampPercent(applicable > 0 ? (completed / applicable) * 100 : 0)
+
+    const sets: string[] = []
+    const args: any[] = []
+    if (listCols.has("total_items")) { sets.push("total_items = ?"); args.push(applicable) }
+    if (listCols.has("completed_items")) { sets.push("completed_items = ?"); args.push(completed) }
+    if (listCols.has("completion_percent")) { sets.push("completion_percent = ?"); args.push(percent) }
+    if (listCols.has("status")) {
+      const status = applicable === 0 ? "Not Started" : percent >= 100 ? "Completed" : completed > 0 ? "In Progress" : "Not Started"
+      sets.push("status = ?"); args.push(status)
+    }
+    if (!sets.length) return
+    args.push(idNum)
+    await query(`UPDATE operations_checklists SET ${sets.join(", ")} WHERE id = ?`, args)
+  } catch (error) {
+    console.log("[v0] operations-sync recomputeChecklistFromItems failed:", (error as Error).message)
+  }
+}
+
 // --- generic write helpers (column-filtered) -------------------------------
 
 /** Insert `data`, keeping only keys that exist as columns on `table`. */

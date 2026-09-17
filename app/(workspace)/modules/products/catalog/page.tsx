@@ -1,5 +1,5 @@
-import { SimpleModuleDashboard } from "@/components/simple-module-dashboard"
+import { ProductCatalogClient } from "@/components/products/product-catalog-client"
 
 export default function ProductCatalogPage() {
-  return <SimpleModuleDashboard module="products" />
+  return <ProductCatalogClient />
 }

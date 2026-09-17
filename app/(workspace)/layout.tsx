@@ -7,6 +7,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem, type NavChild } from "@/components/app-shell"
+import { ImpersonationBanner } from "@/components/platform/impersonation-banner"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2, ShieldCheck, BriefcaseBusiness, TicketCheck, Package, Scale, ExternalLink, Megaphone, MessageCircle, LayoutDashboard } from "lucide-react"
 
 function settingEnabled(v: string | undefined, fallback = true) {
@@ -441,6 +442,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <SettingsBranding />
       <CallProvider currentUserId={session.userId} permissions={callPerms}>
         <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
+          <ImpersonationBanner />
           {children}
         </AppShell>
       </CallProvider>

@@ -312,6 +312,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "operations.issues", label: "Issues", group: "operations", aliases: ["issue"], scope: { table: "operations_issues", addedBy: "created_by", ownedBy: "assigned_to" } },
       { key: "operations.email_templates", label: "Operations Email Templates", group: "operations", aliases: ["email_template"], scope: { table: "operations_email_templates" } },
       { key: "operations.emails", label: "Operations Emails", group: "operations", aliases: ["email"], scope: { table: "operations_emails", addedBy: "created_by" } },
+      { key: "operations.meetings", label: "Operations Meetings", group: "operations", aliases: ["meeting"], scope: { table: "operations_meetings", addedBy: "created_by" } },
+      { key: "operations.analytics", label: "Operations Analytics", group: "operations", aliases: ["analytics"], scope: { table: "operations_projects" } },
     ],
   },
   {

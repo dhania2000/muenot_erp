@@ -28,6 +28,21 @@ export type SessionPayload = {
    * `getSession()` backfills the default tenant for those legacy tokens.
    */
   tenantId?: number
+  /**
+   * SPEC 3 — platform/tenant role axes, captured at login from the DB. Optional
+   * so pre-SPEC-3 tokens still verify; guards re-resolve from the DB source of
+   * truth (lib/platform-roles.ts) rather than trusting these for authorization.
+   * They are carried in the token only for cheap, allocation-free UI hints.
+   */
+  platformRole?: "none" | "platform_staff" | "platform_super_admin"
+  tenantRole?: "employee" | "module_admin" | "tenant_admin" | "tenant_owner"
+  /**
+   * The customer tenant a platform operator has EXPLICITLY entered. Set only by
+   * the audited impersonation endpoint, which re-mints the token; never accepted
+   * from client input. When present, `getSession()` scopes the data layer to
+   * this tenant instead of the operator's home tenant.
+   */
+  impersonatedTenantId?: number | null
 }
 
 export async function createSessionToken(
@@ -80,8 +95,20 @@ export async function getSession(): Promise<SessionPayload | null> {
         console.error("[v0] tenant resolution failed:", err)
       }
     }
-    if (tenantId != null) {
-      setCurrentTenant({ tenantId })
+    // SPEC 3 — when a platform operator is actively impersonating a customer
+    // tenant, the data layer must scope to THAT tenant, not their home tenant.
+    // The impersonation id is carried in the verified (signed) token and is
+    // only ever set by the audited impersonation endpoint. It is honored here
+    // only for a genuine platform operator, so a forged/leftover field on a
+    // non-platform token can never redirect scoping to another tenant.
+    const effectiveTenantId =
+      session.impersonatedTenantId != null &&
+      session.platformRole != null &&
+      session.platformRole !== "none"
+        ? session.impersonatedTenantId
+        : tenantId
+    if (effectiveTenantId != null) {
+      setCurrentTenant({ tenantId: effectiveTenantId })
     }
   }
   return session

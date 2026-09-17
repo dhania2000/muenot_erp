@@ -427,9 +427,9 @@ function NavChildNode({
           type="button"
           onClick={onToggle}
           aria-expanded={open}
-          className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
         >
-          {child.label}
+          <span className="min-w-0 flex-1 text-left leading-snug">{child.label}</span>
           <ChevronDown className={cn("ml-auto size-3.5 shrink-0 transition-transform", open && "rotate-180")} />
         </button>
         {open && (

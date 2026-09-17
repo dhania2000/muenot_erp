@@ -190,6 +190,13 @@ function CampaignDialog({ onSaved }: { onSaved: () => void }) {
   )
   const audiences = audienceData?.audiences ?? []
 
+  const { data: tplData } = useSWR<{ templates: { id: number; name: string; language: string; status: string }[] }>(
+    open ? "/api/marketing/whatsapp/templates" : null,
+    fetcher,
+  )
+  // Only APPROVED templates can actually be delivered by WhatsApp.
+  const approvedTemplates = (tplData?.templates ?? []).filter((t) => (t.status || "").toUpperCase() === "APPROVED")
+
   const [form, setForm] = React.useState({
     name: "",
     type: "promotional",
@@ -263,15 +270,30 @@ function CampaignDialog({ onSaved }: { onSaved: () => void }) {
               </NativeSelect>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cp-tpl" className="text-xs text-muted-foreground">Template name</Label>
-              <Input id="cp-tpl" placeholder="diwali_offer" value={form.templateName} onChange={(e) => setForm((f) => ({ ...f, templateName: e.target.value }))} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cp-lang" className="text-xs text-muted-foreground">Language</Label>
-              <Input id="cp-lang" value={form.templateLanguage} onChange={(e) => setForm((f) => ({ ...f, templateLanguage: e.target.value }))} />
-            </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="cp-tpl" className="text-xs text-muted-foreground">Template</Label>
+            <NativeSelect
+              id="cp-tpl"
+              value={form.templateName ? `${form.templateName}|||${form.templateLanguage}` : ""}
+              onChange={(e) => {
+                const [name, language] = e.target.value.split("|||")
+                setForm((f) => ({ ...f, templateName: name || "", templateLanguage: language || "en_US" }))
+              }}
+            >
+              <option value="">Select an approved template…</option>
+              {approvedTemplates.map((t) => (
+                <option key={t.id} value={`${t.name}|||${t.language}`}>
+                  {t.name} ({t.language})
+                </option>
+              ))}
+            </NativeSelect>
+            {approvedTemplates.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No approved templates yet. Create one in the Templates tab and wait for Meta approval.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Only Meta-approved templates can be broadcast.</p>
+            )}
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="cp-when" className="text-xs text-muted-foreground">Schedule (optional)</Label>

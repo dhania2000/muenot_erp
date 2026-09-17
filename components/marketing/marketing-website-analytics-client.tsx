@@ -1,137 +1,524 @@
 "use client"
 
+import { useState } from "react"
+import useSWR from "swr"
+import { fetcher } from "@/lib/fetcher"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
-import { Eye, Users, Timer, MoveDownRight } from "lucide-react"
+import { Eye, Users, Timer, MoveDownRight, Target, RefreshCw, Settings, Code2, Download, Radio } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
-
-const traffic = [
-  { day: "Mon", visitors: 3200, pageviews: 8100 },
-  { day: "Tue", visitors: 3800, pageviews: 9400 },
-  { day: "Wed", visitors: 4100, pageviews: 10200 },
-  { day: "Thu", visitors: 3600, pageviews: 8800 },
-  { day: "Fri", visitors: 4700, pageviews: 11900 },
-  { day: "Sat", visitors: 2900, pageviews: 6700 },
-  { day: "Sun", visitors: 2600, pageviews: 6100 },
-]
-
-const topPages = [
-  { path: "/", views: 24800, avg: "2m 14s" },
-  { path: "/pricing", views: 12100, avg: "3m 02s" },
-  { path: "/blog/growth-guide", views: 9400, avg: "4m 41s" },
-  { path: "/product/features", views: 7300, avg: "2m 58s" },
-  { path: "/contact", views: 4100, avg: "1m 22s" },
-]
-
-const sources = [
-  { source: "Organic Search", share: 38 },
-  { source: "Direct", share: 24 },
-  { source: "Social", share: 19 },
-  { source: "Referral", share: 12 },
-  { source: "Paid", share: 7 },
-]
+import { BreakdownList, PanelCard, formatCompact, formatDuration, deltaLabel } from "@/components/marketing/website-analytics/wa-shared"
+import { InstallDialog, NewPropertyDialog, GoalsDialog, SettingsDialog } from "@/components/marketing/website-analytics/wa-manage"
 
 const trafficConfig: ChartConfig = {
   visitors: { label: "Visitors", color: "var(--chart-1)" },
   pageviews: { label: "Pageviews", color: "var(--chart-2)" },
 }
 
+const RANGE_OPTIONS = [
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+  { value: "month", label: "This month" },
+  { value: "quarter", label: "This quarter" },
+  { value: "year", label: "This year" },
+]
+
 export function MarketingWebsiteAnalyticsClient() {
-  const kpis = [
-    { label: "Visitors", value: "24.9K", hint: "This week", icon: Users },
-    { label: "Pageviews", value: "61.2K", hint: "This week", icon: Eye },
-    { label: "Avg. Session", value: "2m 47s", hint: "+12s vs last week", icon: Timer },
-    { label: "Bounce Rate", value: "41.3%", hint: "-2.1 pts", icon: MoveDownRight },
-  ]
+  const [propertyId, setPropertyId] = useState<number | null>(null)
+  const [range, setRange] = useState("30d")
+
+  const params = new URLSearchParams({ range, compare: "1" })
+  if (propertyId) params.set("propertyId", String(propertyId))
+  const key = `/api/marketing/website-analytics?${params.toString()}`
+  const { data, isLoading, mutate } = useSWR(key, fetcher, { refreshInterval: 30_000, keepPreviousData: true })
+
+  const property = data?.property ?? null
+  const analytics = data?.analytics ?? null
+  const realtime = data?.realtime ?? null
+  const health = data?.health ?? null
+  const goals = data?.goals ?? []
+  const canManage = !!data?.can?.manage
+  const install = data?.install ?? null
+
+  const activePropertyId = property?.id ?? null
+
+  function exportCsv(dataset: string) {
+    const p = new URLSearchParams({ range, dataset })
+    if (activePropertyId) p.set("propertyId", String(activePropertyId))
+    window.open(`/api/marketing/website-analytics/export?${p.toString()}`, "_blank")
+  }
+
+  const kpis = analytics?.kpis
+  const prev = analytics?.previous
+
+  const healthTone =
+    health?.status === "connected"
+      ? { label: "Receiving data", cls: "bg-emerald-500" }
+      : health?.status === "warning"
+        ? { label: "No recent data", cls: "bg-amber-500" }
+        : { label: "Not installed", cls: "bg-muted-foreground" }
 
   return (
     <main className="flex flex-col gap-6 p-6">
       <MarketingHeader
         eyebrow="Marketing"
         title="Website Analytics"
-        description="Understand how visitors find and move through your website, and which pages drive the most engagement."
+        description="Understand how visitors find and move through your website, which channels convert, and how tracking is performing — all from live tracked events."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {data?.properties?.length ? (
+              <Select
+                value={activePropertyId ? String(activePropertyId) : undefined}
+                onValueChange={(v) => setPropertyId(Number(v))}
+              >
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Select website" />
+                </SelectTrigger>
+                <SelectContent>
+                  {data.properties.map((p: any) => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            <Select value={range} onValueChange={setRange}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {RANGE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {canManage ? <NewPropertyDialog onCreated={(id) => setPropertyId(id)} /> : null}
+            <Button variant="outline" size="icon" onClick={() => mutate()} aria-label="Refresh">
+              <RefreshCw className="size-4" />
+            </Button>
+          </div>
+        }
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {kpis.map((k) => (
-          <StatCard key={k.label} {...k} />
-        ))}
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Traffic Overview</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ChartContainer config={trafficConfig} className="h-[300px] w-full">
-            <AreaChart data={traffic}>
-              <defs>
-                <linearGradient id="fillVisitors" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="var(--color-visitors)" stopOpacity={0.7} />
-                  <stop offset="95%" stopColor="var(--color-visitors)" stopOpacity={0.05} />
-                </linearGradient>
-                <linearGradient id="fillPageviews" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="var(--color-pageviews)" stopOpacity={0.6} />
-                  <stop offset="95%" stopColor="var(--color-pageviews)" stopOpacity={0.05} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" />
-              <XAxis dataKey="day" tickLine={false} axisLine={false} tickMargin={8} />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Area dataKey="pageviews" type="natural" fill="url(#fillPageviews)" stroke="var(--color-pageviews)" stackId="a" />
-              <Area dataKey="visitors" type="natural" fill="url(#fillVisitors)" stroke="var(--color-visitors)" stackId="b" />
-            </AreaChart>
-          </ChartContainer>
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {!isLoading && !property ? (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Top Pages</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground">
-                  <th className="pb-3 font-medium">Page</th>
-                  <th className="pb-3 text-right font-medium">Views</th>
-                  <th className="pb-3 text-right font-medium">Avg. Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topPages.map((p) => (
-                  <tr key={p.path} className="border-b last:border-0">
-                    <td className="py-3 font-mono text-xs">{p.path}</td>
-                    <td className="py-3 text-right tabular-nums">{p.views.toLocaleString()}</td>
-                    <td className="py-3 text-right text-muted-foreground">{p.avg}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+            <p className="text-sm text-muted-foreground">No websites are being tracked yet.</p>
+            {canManage ? <NewPropertyDialog onCreated={(id) => setPropertyId(id)} /> : null}
           </CardContent>
         </Card>
+      ) : null}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Traffic Sources</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 pt-2">
-            {sources.map((s) => (
-              <div key={s.source} className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between text-sm">
-                  <span>{s.source}</span>
-                  <span className="font-medium tabular-nums">{s.share}%</span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary" style={{ width: `${s.share}%` }} />
-                </div>
+      {property ? (
+        <>
+          {/* Tracking health + quick actions */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
+            <div className="flex items-center gap-3">
+              <span className={`size-2.5 rounded-full ${healthTone.cls}`} aria-hidden />
+              <div className="flex flex-col">
+                <span className="text-sm font-medium">{healthTone.label}</span>
+                <span className="text-xs text-muted-foreground">
+                  Tracking ID <code className="font-mono">{property.tracking_id}</code>
+                  {health?.lastEventAt ? ` · last event ${new Date(health.lastEventAt.replace(" ", "T")).toLocaleString()}` : ""}
+                  {typeof health?.eventsToday === "number" ? ` · ${health.eventsToday.toLocaleString()} events today` : ""}
+                </span>
               </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {install ? (
+                <InstallDialog
+                  install={install}
+                  trackingId={property.tracking_id}
+                  trigger={
+                    <Button variant="outline" size="sm">
+                      <Code2 className="size-4" /> Install
+                    </Button>
+                  }
+                />
+              ) : null}
+              <GoalsDialog
+                propertyId={property.id}
+                goals={goals}
+                canManage={canManage}
+                onChange={() => mutate()}
+                trigger={
+                  <Button variant="outline" size="sm">
+                    <Target className="size-4" /> Goals
+                  </Button>
+                }
+              />
+              <SettingsDialog
+                property={property}
+                canManage={canManage}
+                onSaved={() => mutate()}
+                trigger={
+                  <Button variant="outline" size="sm">
+                    <Settings className="size-4" /> Settings
+                  </Button>
+                }
+              />
+            </div>
+          </div>
+
+          {/* Zero-data onboarding */}
+          {analytics && !analytics.hasData ? (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
+                <Code2 className="size-8 text-muted-foreground" />
+                <p className="text-sm font-medium">No analytics data yet for this range</p>
+                <p className="max-w-md text-sm text-muted-foreground">
+                  Install the tracking snippet on {property.name} to start collecting real visitor, pageview and
+                  conversion data. Metrics below update automatically as events arrive.
+                </p>
+                {install ? (
+                  <InstallDialog
+                    install={install}
+                    trackingId={property.tracking_id}
+                    trigger={<Button size="sm">Get tracking snippet</Button>}
+                  />
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {/* KPIs */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Visitors" value={formatCompact(kpis?.visitors ?? 0)} hint={deltaLabel(kpis?.visitors ?? 0, prev?.visitors)?.text} icon={Users} />
+            <StatCard label="Pageviews" value={formatCompact(kpis?.pageviews ?? 0)} hint={deltaLabel(kpis?.pageviews ?? 0, prev?.pageviews)?.text} icon={Eye} />
+            <StatCard label="Avg. Session" value={formatDuration(kpis?.avgSessionSeconds ?? 0)} hint={`${kpis?.sessions ?? 0} sessions`} icon={Timer} />
+            <StatCard label="Bounce Rate" value={`${kpis?.bounceRate ?? 0}%`} hint={`${kpis?.conversions ?? 0} conversions · ${kpis?.conversionRate ?? 0}% CVR`} icon={MoveDownRight} />
+          </div>
+
+          {/* Real-time strip */}
+          {realtime ? (
+            <div className="flex flex-wrap items-center gap-4 rounded-lg border bg-card p-4">
+              <div className="flex items-center gap-2">
+                <Radio className="size-4 text-emerald-500" />
+                <span className="text-sm font-medium">Real-time</span>
+              </div>
+              <div className="flex items-center gap-6 text-sm">
+                <div className="flex flex-col">
+                  <span className="text-lg font-semibold tabular-nums">{realtime.activeVisitors}</span>
+                  <span className="text-xs text-muted-foreground">Active visitors (5m)</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-lg font-semibold tabular-nums">{realtime.activeSessions}</span>
+                  <span className="text-xs text-muted-foreground">Active sessions</span>
+                </div>
+                {realtime.currentPages?.length ? (
+                  <div className="hidden flex-1 flex-col gap-1 sm:flex">
+                    <span className="text-xs text-muted-foreground">Top live pages</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {realtime.currentPages.slice(0, 4).map((p: any) => (
+                        <Badge key={p.path} variant="secondary" className="font-mono text-xs">
+                          {p.path} · {p.visitors}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          <Tabs defaultValue="overview">
+            <TabsList>
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="acquisition">Acquisition</TabsTrigger>
+              <TabsTrigger value="behavior">Behavior</TabsTrigger>
+              <TabsTrigger value="conversions">Conversions</TabsTrigger>
+              <TabsTrigger value="audience">Audience</TabsTrigger>
+            </TabsList>
+
+            {/* Overview */}
+            <TabsContent value="overview" className="flex flex-col gap-4 pt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Traffic Overview</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {analytics?.traffic?.length ? (
+                    <ChartContainer config={trafficConfig} className="h-[300px] w-full">
+                      <AreaChart data={analytics.traffic}>
+                        <defs>
+                          <linearGradient id="fillVisitors" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="var(--color-visitors)" stopOpacity={0.7} />
+                            <stop offset="95%" stopColor="var(--color-visitors)" stopOpacity={0.05} />
+                          </linearGradient>
+                          <linearGradient id="fillPageviews" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="var(--color-pageviews)" stopOpacity={0.6} />
+                            <stop offset="95%" stopColor="var(--color-pageviews)" stopOpacity={0.05} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="d"
+                          tickLine={false}
+                          axisLine={false}
+                          tickMargin={8}
+                          tickFormatter={(v) => new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                        />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Area dataKey="pageviews" type="natural" fill="url(#fillPageviews)" stroke="var(--color-pageviews)" stackId="a" />
+                        <Area dataKey="visitors" type="natural" fill="url(#fillVisitors)" stroke="var(--color-visitors)" stackId="b" />
+                      </AreaChart>
+                    </ChartContainer>
+                  ) : (
+                    <p className="py-12 text-center text-sm text-muted-foreground">No traffic recorded in this range.</p>
+                  )}
+                </CardContent>
+              </Card>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <PanelCard title="Channels">
+                  <BreakdownList rows={analytics?.channels ?? []} labelKey="channel" valueKey="sessions" formatValue={(n) => `${n.toLocaleString()} sessions`} />
+                </PanelCard>
+                <PanelCard
+                  title="Top Pages"
+                  action={
+                    <Button variant="ghost" size="sm" onClick={() => exportCsv("topPages")}>
+                      <Download className="size-4" /> CSV
+                    </Button>
+                  }
+                >
+                  <TopPagesTable rows={analytics?.topPages ?? []} />
+                </PanelCard>
+              </div>
+            </TabsContent>
+
+            {/* Acquisition */}
+            <TabsContent value="acquisition" className="grid grid-cols-1 gap-4 pt-4 lg:grid-cols-2">
+              <PanelCard title="Channels" action={<CsvBtn onClick={() => exportCsv("channels")} />}>
+                <BreakdownList rows={analytics?.channels ?? []} labelKey="channel" valueKey="sessions" formatValue={(n) => `${n.toLocaleString()} sessions`} />
+              </PanelCard>
+              <PanelCard title="Referrers" action={<CsvBtn onClick={() => exportCsv("referrers")} />}>
+                <BreakdownList rows={analytics?.referrers ?? []} labelKey="domain" valueKey="sessions" emptyText="No referral traffic yet." />
+              </PanelCard>
+              <PanelCard title="UTM Performance" action={<CsvBtn onClick={() => exportCsv("utm")} />}>
+                <UtmTable rows={analytics?.utmPerformance ?? []} />
+              </PanelCard>
+              <PanelCard title="Campaign Attribution" action={<CsvBtn onClick={() => exportCsv("campaigns")} />}>
+                <CampaignTable rows={analytics?.campaigns ?? []} />
+              </PanelCard>
+            </TabsContent>
+
+            {/* Behavior */}
+            <TabsContent value="behavior" className="grid grid-cols-1 gap-4 pt-4 lg:grid-cols-2">
+              <PanelCard title="Top Pages" action={<CsvBtn onClick={() => exportCsv("topPages")} />}>
+                <TopPagesTable rows={analytics?.topPages ?? []} />
+              </PanelCard>
+              <PanelCard title="Landing Pages" action={<CsvBtn onClick={() => exportCsv("landingPages")} />}>
+                <BreakdownList rows={analytics?.landingPages ?? []} labelKey="path" valueKey="sessions" emptyText="No landing pages yet." />
+              </PanelCard>
+              <PanelCard title="Exit Pages">
+                <BreakdownList rows={analytics?.exitPages ?? []} labelKey="path" valueKey="exits" emptyText="No exit data yet." />
+              </PanelCard>
+              <PanelCard title="Events" action={<CsvBtn onClick={() => exportCsv("events")} />}>
+                <BreakdownList rows={analytics?.events ?? []} labelKey="type" valueKey="count" emptyText="No events yet." formatValue={(n) => n.toLocaleString()} />
+              </PanelCard>
+            </TabsContent>
+
+            {/* Conversions */}
+            <TabsContent value="conversions" className="flex flex-col gap-4 pt-4">
+              <PanelCard title="Conversion Funnel">
+                <Funnel funnel={analytics?.funnel} />
+              </PanelCard>
+              <PanelCard
+                title="Goals"
+                action={
+                  <GoalsDialog
+                    propertyId={property.id}
+                    goals={goals}
+                    canManage={canManage}
+                    onChange={() => mutate()}
+                    trigger={
+                      <Button variant="ghost" size="sm">
+                        <Target className="size-4" /> Manage
+                      </Button>
+                    }
+                  />
+                }
+              >
+                <GoalsTable rows={analytics?.goals ?? []} />
+              </PanelCard>
+            </TabsContent>
+
+            {/* Audience */}
+            <TabsContent value="audience" className="grid grid-cols-1 gap-4 pt-4 lg:grid-cols-2">
+              <PanelCard title="Devices" action={<CsvBtn onClick={() => exportCsv("devices")} />}>
+                <BreakdownList rows={analytics?.devices ?? []} labelKey="device" valueKey="sessions" />
+              </PanelCard>
+              <PanelCard title="Browsers" action={<CsvBtn onClick={() => exportCsv("browsers")} />}>
+                <BreakdownList rows={analytics?.browsers ?? []} labelKey="browser" valueKey="sessions" />
+              </PanelCard>
+              <PanelCard title="Operating Systems">
+                <BreakdownList rows={analytics?.operatingSystems ?? []} labelKey="os" valueKey="sessions" />
+              </PanelCard>
+              <PanelCard title="Countries" action={<CsvBtn onClick={() => exportCsv("countries")} />}>
+                <BreakdownList rows={analytics?.countries ?? []} labelKey="country" valueKey="sessions" emptyText="No geo data yet." />
+              </PanelCard>
+            </TabsContent>
+          </Tabs>
+        </>
+      ) : null}
     </main>
+  )
+}
+
+function CsvBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <Button variant="ghost" size="sm" onClick={onClick}>
+      <Download className="size-4" /> CSV
+    </Button>
+  )
+}
+
+function TopPagesTable({ rows }: { rows: any[] }) {
+  if (!rows.length) return <p className="py-6 text-center text-sm text-muted-foreground">No page views yet.</p>
+  return (
+    <table className="w-full text-left text-sm">
+      <thead>
+        <tr className="border-b text-muted-foreground">
+          <th className="pb-3 font-medium">Page</th>
+          <th className="pb-3 text-right font-medium">Views</th>
+          <th className="pb-3 text-right font-medium">Visitors</th>
+          <th className="pb-3 text-right font-medium">Avg. Time</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((p) => (
+          <tr key={p.path} className="border-b last:border-0">
+            <td className="max-w-[220px] truncate py-3 font-mono text-xs">{p.path}</td>
+            <td className="py-3 text-right tabular-nums">{Number(p.views).toLocaleString()}</td>
+            <td className="py-3 text-right tabular-nums">{Number(p.uniques).toLocaleString()}</td>
+            <td className="py-3 text-right text-muted-foreground">{formatDuration(Number(p.avg_seconds) || 0)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function UtmTable({ rows }: { rows: any[] }) {
+  if (!rows.length) return <p className="py-6 text-center text-sm text-muted-foreground">No UTM-tagged traffic yet.</p>
+  return (
+    <table className="w-full text-left text-sm">
+      <thead>
+        <tr className="border-b text-muted-foreground">
+          <th className="pb-3 font-medium">Source / Medium</th>
+          <th className="pb-3 font-medium">Campaign</th>
+          <th className="pb-3 text-right font-medium">Sessions</th>
+          <th className="pb-3 text-right font-medium">Conv.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i} className="border-b last:border-0">
+            <td className="py-3 text-xs">{r.source} / {r.medium}</td>
+            <td className="py-3 text-xs">{r.campaign}</td>
+            <td className="py-3 text-right tabular-nums">{Number(r.sessions).toLocaleString()}</td>
+            <td className="py-3 text-right tabular-nums">{Number(r.conversions).toLocaleString()}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function CampaignTable({ rows }: { rows: any[] }) {
+  if (!rows.length)
+    return (
+      <p className="py-6 text-center text-sm text-muted-foreground">
+        No sessions matched an existing campaign. Tag links with{" "}
+        <code className="font-mono text-xs">utm_campaign</code> matching a campaign code or name.
+      </p>
+    )
+  return (
+    <table className="w-full text-left text-sm">
+      <thead>
+        <tr className="border-b text-muted-foreground">
+          <th className="pb-3 font-medium">Campaign</th>
+          <th className="pb-3 text-right font-medium">Sessions</th>
+          <th className="pb-3 text-right font-medium">Visitors</th>
+          <th className="pb-3 text-right font-medium">Conv.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.id} className="border-b last:border-0">
+            <td className="py-3">
+              <span className="font-medium">{r.name}</span> <span className="text-xs text-muted-foreground">{r.code}</span>
+            </td>
+            <td className="py-3 text-right tabular-nums">{Number(r.sessions).toLocaleString()}</td>
+            <td className="py-3 text-right tabular-nums">{Number(r.visitors).toLocaleString()}</td>
+            <td className="py-3 text-right tabular-nums">{Number(r.conversions).toLocaleString()}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function GoalsTable({ rows }: { rows: any[] }) {
+  if (!rows.length) return <p className="py-6 text-center text-sm text-muted-foreground">No active goals. Add one to start measuring conversions.</p>
+  return (
+    <div className="flex flex-col gap-3">
+      {rows.map((g) => (
+        <div key={g.id} className="flex items-center justify-between rounded-md border px-3 py-2.5 text-sm">
+          <div className="flex flex-col">
+            <span className="font-medium">{g.name}</span>
+            <span className="text-xs text-muted-foreground">
+              {g.match_type === "url" ? `URL = ${g.target}` : `Event = ${g.event_type}`}
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-lg font-semibold tabular-nums">{Number(g.completions).toLocaleString()}</span>
+            <Badge variant="secondary">{g.rate}%</Badge>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Funnel({ funnel }: { funnel?: { visitors: number; engaged: number; form_started: number; converted: number } }) {
+  if (!funnel || funnel.visitors === 0)
+    return <p className="py-6 text-center text-sm text-muted-foreground">Not enough traffic to build a funnel yet.</p>
+  const steps = [
+    { label: "Visitors", value: funnel.visitors },
+    { label: "Engaged", value: funnel.engaged },
+    { label: "Form started", value: funnel.form_started },
+    { label: "Converted", value: funnel.converted },
+  ]
+  const max = Math.max(funnel.visitors, 1)
+  return (
+    <div className="flex flex-col gap-3">
+      {steps.map((s, i) => {
+        const pct = (s.value / max) * 100
+        const stepPct = i === 0 ? 100 : steps[i - 1].value ? (s.value / steps[i - 1].value) * 100 : 0
+        return (
+          <div key={s.label} className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-sm">
+              <span>{s.label}</span>
+              <span className="tabular-nums">
+                {s.value.toLocaleString()} <span className="text-muted-foreground">({stepPct.toFixed(1)}%)</span>
+              </span>
+            </div>
+            <div className="h-3 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        )
+      })}
+    </div>
   )
 }

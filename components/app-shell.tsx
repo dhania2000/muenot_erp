@@ -561,7 +561,7 @@ export function AppShell({
     <ScreenMonitorProvider>
     <div className="fixed inset-0 flex overflow-hidden">
       <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
-        <div className="flex items-center px-5 py-5">
+        <div className="flex items-center px-5 pt-5 pb-4">
           <div className="flex items-center rounded-lg bg-white px-3 py-2 shadow-sm">
             {logoUrl ? (
               // Company logo from settings can be any host, so use a plain <img>.
@@ -572,6 +572,8 @@ export function AppShell({
             )}
           </div>
         </div>
+
+        <div className="mx-3 mb-3 border-t border-sidebar-border" />
 
         <nav className="min-h-0 flex-1 flex flex-col gap-1 overflow-y-auto px-3">
           {navItems.map((item) => {

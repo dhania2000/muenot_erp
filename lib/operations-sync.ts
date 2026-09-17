@@ -517,6 +517,109 @@ export async function spawnQualityActions(row: Record<string, any>, reviewId: nu
   }
 }
 
+// --- Phase 28: Issue → Escalation auto-flagging ----------------------------
+
+/**
+ * Raise (or refresh) an Escalation for an Issue when it becomes High/Critical
+ * severity, goes overdue, or is SLA-related. Idempotent on a per-issue
+ * reference (`ISS-<id>`) so repeated saves update the same escalation instead of
+ * stacking duplicates. Writes only to operations_escalations — the existing
+ * Issues register stays the primary source.
+ */
+export async function syncIssue(row: Record<string, any>, issueId: number | string): Promise<void> {
+  try {
+    if (!row || issueId === undefined || issueId === null) return
+    const escCols = await tableColumns("operations_escalations")
+    if (!escCols.size) return
+
+    const priority = String(row.priority ?? "").toLowerCase()
+    const status = String(row.status ?? "").toLowerCase()
+    const isClosed = ["resolved", "closed"].includes(status)
+    const highSeverity = ["high", "critical"].includes(priority)
+
+    let overdue = false
+    if (!isClosed && row.due_date) {
+      const due = new Date(String(row.due_date))
+      if (!Number.isNaN(due.getTime())) overdue = due.getTime() < Date.now()
+    }
+
+    const slaBreach = [row.issue_category, row.issue_type]
+      .map((v) => String(v ?? "").toLowerCase())
+      .some((v) => v.includes("sla"))
+
+    // Nothing to flag: closed issues, or issues that meet none of the triggers.
+    if (isClosed || (!highSeverity && !overdue && !slaBreach)) return
+
+    const reasons: string[] = []
+    if (highSeverity) reasons.push("High severity")
+    if (overdue) reasons.push("Overdue")
+    if (slaBreach) reasons.push("SLA breach")
+
+    const escNo = `ISS-${issueId}`
+    const existing = await query<any[]>(
+      `SELECT id FROM operations_escalations WHERE escalation_no = ? LIMIT 1`,
+      [escNo],
+    )
+    const today = new Date().toISOString().slice(0, 10)
+    const data: Record<string, unknown> = {
+      escalation_no: escNo,
+      project_id: row.project_id ?? null,
+      client_name: row.client_name ?? null,
+      raised_by: row.reported_by ?? null,
+      escalation_level: highSeverity ? "Level 2" : "Level 1",
+      category: reasons.join(", "),
+      description: `Auto-escalated from issue #${issueId}: ${row.title ?? ""}`.trim(),
+      impact: row.business_impact ?? row.client_impact ?? row.impact ?? null,
+      assigned_to: row.assigned_to ?? null,
+      raised_date: existing[0]?.id ? undefined : today,
+      target_resolution: row.due_date ?? null,
+      status: "Open",
+      remarks: `Auto-generated escalation from Issues register [ref:${escNo}]`,
+    }
+    // Drop undefined so an existing raised_date is preserved on refresh.
+    for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k]
+    await upsert("operations_escalations", escCols, data, existing[0]?.id)
+  } catch (error) {
+    console.log("[v0] operations-sync syncIssue failed:", (error as Error).message)
+  }
+}
+
+// --- Phase 30: SLA breach → Corrective Action (CAPA) -----------------------
+
+/**
+ * When an SLA monitoring row is Breached, spawn a linked Corrective Action so
+ * every breach lands in the CAPA pipeline automatically. Idempotent on
+ * `SLA-<id>`. Reuses operations_corrective_actions — no new CAPA store.
+ */
+export async function syncSlaBreach(row: Record<string, any>, slaId: number | string): Promise<void> {
+  try {
+    if (!row || slaId === undefined || slaId === null) return
+    if (String(row.sla_status ?? "").toLowerCase() !== "breached sla") return
+    const caCols = await tableColumns("operations_corrective_actions")
+    if (!caCols.size) return
+
+    const ref = `SLA-${slaId}`
+    const existing = await query<any[]>(
+      `SELECT id FROM operations_corrective_actions WHERE reference_no = ? LIMIT 1`,
+      [ref],
+    )
+    const delay = row.delay_days !== undefined && row.delay_days !== null ? `${row.delay_days} day` : "an unplanned"
+    const data: Record<string, unknown> = {
+      reference_no: ref,
+      project_id: row.project_id ?? null,
+      source_type: "SLA Breach",
+      issue_summary: `SLA breach on ${row.sla_metric ?? "SLA metric"} (${delay} delay)`,
+      action_owner: row.owner ?? null,
+      target_date: row.actual_completion ?? row.due_date ?? null,
+      status: "Open",
+      remarks: `Auto-generated from SLA monitoring breach [ref:${ref}]`,
+    }
+    await upsert("operations_corrective_actions", caCols, data, existing[0]?.id)
+  } catch (error) {
+    console.log("[v0] operations-sync syncSlaBreach failed:", (error as Error).message)
+  }
+}
+
 // --- generic write helpers (column-filtered) -------------------------------
 
 /** Insert `data`, keeping only keys that exist as columns on `table`. */

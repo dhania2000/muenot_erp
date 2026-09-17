@@ -13,6 +13,8 @@ import {
   spawnQualityActions,
   syncScorecardCriteria,
   recalcScorecard,
+  syncIssue,
+  syncSlaBreach,
 } from "@/lib/operations-sync"
 
 const tables = {
@@ -109,9 +111,9 @@ const allowedFields: Record<Kind, string[]> = {
   skill_matrix:["resource_id","resource_name","department","skill_category","skill_name","proficiency_level","experience_years","certification","last_assessed","assessed_by","status","remarks"],
   capacity_planning:["period","department","resource_type","project_id","planned_capacity","allocated_capacity","available_capacity","demand_forecast","utilization_target","owner","status","remarks"],
   utilization:["resource_id","resource_name","project_id","period","billable_hours","non_billable_hours","available_hours","utilization_percent","billable_percent","target_utilization","status","remarks"],
-  timesheets:["resource_id","resource_name","project_id","project_name","task_id","work_date","hours_worked","billable_hours","activity_type","description","approved_by","approval_status","status","remarks"],
+  timesheets:["resource_id","resource_name","project_id","project_name","task_id","work_date","start_time","end_time","hours_worked","billable_hours","non_billable_hours","activity_type","description","approved_by","approval_status","status","remarks"],
   qa_audits:["audit_no","project_id","client_name","audit_type","audit_scope","auditor","audit_date","findings","non_conformities","severity","score","corrective_action_required","closure_date","status","remarks"],
-  sla_monitoring:["project_id","client_name","sla_metric","sla_target","actual_value","unit","measurement_period","breach_count","penalty","owner","review_date","sla_status","status","remarks"],
+  sla_monitoring:["project_id","client_name","sla_metric","sla_target","actual_value","unit","measurement_period","due_date","actual_completion","delay_days","breach_count","penalty","owner","review_date","sla_status","status","remarks"],
   corrective_actions:["reference_no","project_id","source_type","issue_summary","root_cause","corrective_action","preventive_action","action_owner","target_date","closure_date","effectiveness","status","remarks"],
   escalations:["escalation_no","project_id","client_name","raised_by","escalation_level","category","description","impact","assigned_to","raised_date","target_resolution","resolution","closure_date","status","remarks"],
   root_cause_capa:["reference_no","project_id","problem_statement","analysis_method","root_cause","capa_type","corrective_action","preventive_action","owner","target_date","verification_date","effectiveness","status","remarks"],
@@ -140,6 +142,8 @@ async function runSyncHooks(selected: Kind, row: Record<string, any>): Promise<v
     else if (selected === "quality") await spawnQualityActions(row, row.id)
     else if (selected === "scorecard_criteria") await syncScorecardCriteria(row, row.id)
     else if (selected === "scorecards") await recalcScorecard(row.id)
+    else if (selected === "issues") await syncIssue(row, row.id)
+    else if (selected === "sla_monitoring") await syncSlaBreach(row, row.id)
   } catch (error) {
     console.log("[v0] operations sync hook failed:", (error as Error).message)
   }

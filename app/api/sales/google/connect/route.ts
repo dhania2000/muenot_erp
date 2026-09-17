@@ -33,6 +33,24 @@ export function resolveReturnPath(raw: string | null | undefined) {
   return raw && ALLOWED_RETURNS.includes(raw) ? raw : "/modules/sales/meetings"
 }
 
+/**
+ * Build a browser-navigable origin. The dev server binds to `0.0.0.0`, so the
+ * request origin can be `https://0.0.0.0:3000`, which browsers reject with
+ * ERR_ADDRESS_INVALID. Rewrite that (and the equivalent `[::]`) to `localhost`
+ * so post-OAuth redirects land on a reachable URL.
+ */
+export function resolveAppOrigin(rawOrigin: string) {
+  try {
+    const origin = new URL(rawOrigin)
+    if (origin.hostname === "0.0.0.0" || origin.hostname === "[::]" || origin.hostname === "::") {
+      origin.hostname = "localhost"
+    }
+    return origin.origin
+  } catch {
+    return rawOrigin
+  }
+}
+
 /** Resolve the redirect URI Google will call back. Overridable via env for prod. */
 function resolveRedirectUri(origin: string) {
   return process.env.GOOGLE_REDIRECT_URI || `${origin}/api/sales/google/callback`

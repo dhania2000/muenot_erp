@@ -7,6 +7,7 @@ import {
   OAUTH_STATE_COOKIE,
   OAUTH_RETURN_COOKIE,
   resolveReturnPath,
+  resolveAppOrigin,
 } from "@/app/api/sales/google/connect/route"
 
 function resolveRedirectUri(origin: string) {
@@ -15,9 +16,10 @@ function resolveRedirectUri(origin: string) {
 
 export async function GET(request: Request) {
   const url = new URL(request.url)
+  const appOrigin = resolveAppOrigin(url.origin)
 
   const session = await getSession()
-  if (!session) return NextResponse.redirect(new URL("/login", url.origin))
+  if (!session) return NextResponse.redirect(new URL("/login", appOrigin))
 
   const code = url.searchParams.get("code")
   const state = url.searchParams.get("state")
@@ -29,7 +31,7 @@ export async function GET(request: Request) {
   cookieStore.delete(OAUTH_STATE_COOKIE)
   cookieStore.delete(OAUTH_RETURN_COOKIE)
 
-  const returnUrl = new URL(returnPath, url.origin)
+  const returnUrl = new URL(returnPath, appOrigin)
   const fail = (reason: string) => {
     returnUrl.searchParams.set("google", reason)
     return NextResponse.redirect(returnUrl)

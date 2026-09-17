@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import { put } from "@vercel/blob"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import {
@@ -62,25 +61,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const dims = readImageDimensions(new Uint8Array(buffer))
   const changeNote = String(form.get("change_note") || "").slice(0, 500) || "New version"
 
-  let storageUrl: string
-  try {
-    const blob = await put(`marketing-library/${crypto.randomUUID()}-${file.name}`, file, {
-      access: "public",
-      addRandomSuffix: false,
-    })
-    storageUrl = blob.url
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: "Storage upload failed. Blob storage may not be configured.", detail: String(err?.message || err) },
-      { status: 502 },
-    )
-  }
+  // File bytes are stored directly in MySQL (no external Blob storage).
+  const fileData = Buffer.from(buffer)
+  const storageUrl: string | null = null
 
   const nextVersion = Number(asset.current_version || 1) + 1
   await query(
     `INSERT INTO marketing_library_versions
-      (library_id, version, file_name, file_type, file_size, storage_url, content_hash, width, height, change_note, uploaded_by, uploaded_by_name)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      (library_id, version, file_name, file_type, file_size, storage_url, file_data, content_hash, width, height, change_note, uploaded_by, uploaded_by_name)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       asset.id,
       nextVersion,
@@ -88,6 +77,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       fileType,
       file.size,
       storageUrl,
+      fileData,
       hash,
       dims?.width ?? null,
       dims?.height ?? null,
@@ -151,8 +141,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const nextVersion = Number(asset.current_version || 1) + 1
   await query(
     `INSERT INTO marketing_library_versions
-      (library_id, version, file_name, file_type, file_size, storage_url, content_hash, width, height, change_note, uploaded_by, uploaded_by_name)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      (library_id, version, file_name, file_type, file_size, storage_url, file_data, content_hash, width, height, change_note, uploaded_by, uploaded_by_name)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       asset.id,
       nextVersion,
@@ -160,6 +150,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       target.file_type,
       target.file_size,
       target.storage_url,
+      target.file_data,
       target.content_hash,
       target.width,
       target.height,

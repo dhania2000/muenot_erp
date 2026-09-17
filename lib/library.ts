@@ -339,6 +339,23 @@ async function createSchema() {
     INDEX idx_lib_audit_lib (library_id),
     INDEX idx_lib_audit_action (action)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  // File bytes are stored directly in MySQL (no external Blob storage). Each
+  // version keeps its own binary so history is fully self-contained. Added via
+  // a guarded ALTER so existing installs upgrade in place.
+  await addColumnIfMissing("marketing_library_versions", "file_data", "LONGBLOB NULL")
+}
+
+/** Adds a column only when it does not already exist (idempotent migration). */
+async function addColumnIfMissing(table: string, column: string, ddl: string) {
+  const rows = (await query(
+    `SELECT COUNT(*) AS c FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+    [table, column],
+  )) as { c: number }[]
+  if (Number(rows[0]?.c || 0) === 0) {
+    await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${ddl}`)
+  }
 }
 
 // ---------------------------------------------------------------------------

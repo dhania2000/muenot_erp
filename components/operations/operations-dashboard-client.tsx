@@ -24,6 +24,8 @@ import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
 import { OperationsSopHistory } from "@/components/operations/operations-sop-history"
 import { OperationsChecklistItems } from "@/components/operations/operations-checklist-items"
+import { CallButtons } from "@/components/calls/call-button"
+import { useResolvedEmployees, type ResolveItem } from "@/components/calls/use-resolved-employees"
 import {
   Table,
   TableHeader,
@@ -272,6 +274,31 @@ function recordId(row: any): string {
   return String(
     row.id ?? row.resource_id ?? row.project_id ?? row.allocation_id ?? row.review_id ?? row.issue_id ?? "",
   )
+}
+
+// Modules whose rows represent a person we can resolve to an HR Employee Master
+// record and therefore attach the reusable internal call action to: the
+// Resource master itself, Allocations (project members) and Tasks / Work Orders
+// (task assignees) — Phase 60/87-89/93.
+const CALLABLE_KINDS = new Set(["resources", "allocations", "tasks", "work_orders"])
+
+// Extract the loosely-linked identifiers for a row so the server can resolve it
+// to a callable HR employee. Resources carry their own employee code + emails;
+// allocations/tasks carry a resource_id into operations_resources plus a name.
+function callResolveItem(kind: string, row: any): ResolveItem | null {
+  const key = recordId(row)
+  if (!key) return null
+  if (kind === "resources") {
+    return {
+      key,
+      code: row.employee_id ?? null,
+      email: row.official_email || row.personal_email || null,
+      name: row.resource_name || null,
+    }
+  }
+  const name = row.resource_name || row.assigned_to || null
+  if (row.resource_id == null && !name) return null
+  return { key, resourceId: row.resource_id ?? null, name }
 }
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -617,6 +644,12 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
     : allRows
   const columns = c ? c.fields.slice(0, 6) : []
 
+  // Resolve visible rows to callable HR employees in one batch request.
+  const callableItems: ResolveItem[] = CALLABLE_KINDS.has(kind)
+    ? rows.map((r) => callResolveItem(kind, r)).filter((x): x is ResolveItem => x != null)
+    : []
+  const callTargets = useResolvedEmployees(callableItems)
+
   // Which bulk transitions are meaningful for this kind, derived from its fields.
   const fieldSet = new Set(c?.fields ?? [])
   const canApproveReject = fieldSet.has("approval_status") || fieldSet.has("decision")
@@ -916,6 +949,24 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
                   ))}
                   <td className="p-3">
                     <div className="flex items-center justify-end gap-1">
+                      {CALLABLE_KINDS.has(kind) &&
+                        (() => {
+                          const t = callTargets[recordId(row)]
+                          if (!t || !t.active) return null
+                          return (
+                            <CallButtons
+                              target={{
+                                employeeId: t.employeeId,
+                                name: t.name,
+                                origin: `operations_${kind}`,
+                                projectId: Number(row.project_id) || null,
+                                projectName: row.project_name || null,
+                                taskId: Number(row.task_id) || null,
+                                taskName: row.task_title || null,
+                              }}
+                            />
+                          )
+                        })()}
                       {kind === "sops" && row.id != null && (
                         <OperationsSopHistory sopId={row.id} title={row.title} />
                       )}

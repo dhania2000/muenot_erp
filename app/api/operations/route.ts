@@ -15,7 +15,11 @@ import {
   recalcScorecard,
   syncIssue,
   syncSlaBreach,
+  snapshotSop,
+  stampClientApprovalDecision,
 } from "@/lib/operations-sync"
+import { ensureOperationsSchema } from "@/lib/operations-ensure"
+import type { SessionPayload } from "@/lib/auth"
 
 const tables = {
   resources: "operations_resources",
@@ -98,7 +102,7 @@ const permissionKeys: Record<Kind, string> = {
 // column writes.
 const allowedFields: Record<Kind, string[]> = {
   resources:["employee_id","resource_name","resource_type","department","designation","skill_category","primary_skills","secondary_skills","skill_set","capacity_hours","employment_status","joining_date","exit_date","current_location","work_mode","availability_status","cost_rate","rate_type","reporting_manager","personal_email","official_email","contact_mobile","vendor_agency","shift","status","notes","remarks"],
-  projects:["project_name","client_id","client_name","service_vertical","project_type","project_manager","operations_manager","manager_name","start_date","end_date","status","billing_model","required_resources","allocated_resources","resources_deficiency","sla_target","sla_due_date","priority","shift","work_mode","client_poc","client_email","client_contact","description","remarks"],
+  projects:["project_name","client_id","client_name","service_vertical","project_type","project_manager","operations_manager","manager_name","start_date","end_date","status","billing_model","budget_amount","required_resources","allocated_resources","resources_deficiency","sla_target","sla_due_date","priority","shift","work_mode","client_poc","client_email","client_contact","description","remarks"],
   allocations:["project_id","client_name","resource_id","resource_name","resource_type","role","allocation_percent","from_date","to_date","shift","working_capacity","allocated_capacity","available_capacity","status","project_manager","operations_manager","assigned_by","notes","remarks"],
   quality:["task_id","project_id","client_name","resource_id","resource_name","resource_type","review_date","quality_score","quality_target","error_rate","rework_count","sla_target","sla_actual","sla_score","sla_status","client_escalation","root_cause","corrective_action","action_owner","action_due_date","closure_date","status","reviewer_name","remarks"],
   issues:["date_reported","project_id","client_name","issue_type","issue_category","priority","title","description","impact","reported_by","assigned_to","root_cause","corrective_action","preventive_action","target_date","due_date","closure_date","status","escalation_level","client_impact","business_impact","remarks"],
@@ -136,7 +140,12 @@ function kind(value: string | null): Kind | null { return value && value in tabl
 
 // After a successful create/update, fan out to the cross-module sync layer.
 // Best-effort: a hook failure is logged but never fails the user's write.
-async function runSyncHooks(selected: Kind, row: Record<string, any>): Promise<void> {
+async function runSyncHooks(
+  selected: Kind,
+  row: Record<string, any>,
+  session: SessionPayload,
+  changeType: "Created" | "Updated",
+): Promise<void> {
   try {
     if (selected === "timesheets") await syncTimesheet(row)
     else if (selected === "quality") await spawnQualityActions(row, row.id)
@@ -144,6 +153,8 @@ async function runSyncHooks(selected: Kind, row: Record<string, any>): Promise<v
     else if (selected === "scorecards") await recalcScorecard(row.id)
     else if (selected === "issues") await syncIssue(row, row.id)
     else if (selected === "sla_monitoring") await syncSlaBreach(row, row.id)
+    else if (selected === "sops") await snapshotSop(row, row.id, changeType, { id: session.userId, name: session.name })
+    else if (selected === "client_approvals") await stampClientApprovalDecision(row.id, { id: session.userId, name: session.name })
   } catch (error) {
     console.log("[v0] operations sync hook failed:", (error as Error).message)
   }
@@ -171,9 +182,10 @@ export async function POST(request: Request) {
   if (selected === "sla_monitoring") Object.assign(body, computeSlaTracking(body))
   const keys = allowedFields[selected].filter((key) => body[key] !== undefined); if (!keys.length) return NextResponse.json({ error: "No fields supplied" }, { status: 400 })
   try {
+    await ensureOperationsSchema()
     const values = keys.map((key) => body[key] === "" ? null : body[key]); const placeholders = keys.map(() => "?").join(",")
     const result = await query<any>(`INSERT INTO ${tables[selected]} (${keys.join(",")}) VALUES (${placeholders})`, values)
-    await runSyncHooks(selected, { ...body, id: result.insertId })
+    await runSyncHooks(selected, { ...body, id: result.insertId }, session, "Created")
     return NextResponse.json({ id: result.insertId }, { status: 201 })
   } catch { return NextResponse.json({ error: "Failed to create operation record" }, { status: 500 }) }
 }
@@ -183,6 +195,7 @@ export async function PUT(request: Request) {
   const body = await request.json(); const selected = kind(body.kind); if (!selected) return NextResponse.json({ error: "Invalid record type" }, { status: 400 })
   const id = body.id; if (!id) return NextResponse.json({ error: "Missing record id" }, { status: 400 })
   try {
+    await ensureOperationsSchema()
     const existing = await query<any[]>(`SELECT * FROM ${tables[selected]} WHERE id = ? LIMIT 1`, [id])
     if (!existing.length) return NextResponse.json({ error: "Record not found" }, { status: 404 })
     if (!(await canActOnRecord(session, permissionKeys[selected], "update", existing[0]))) return NextResponse.json({ error: "You do not have permission to edit this record." }, { status: 403 })
@@ -191,7 +204,7 @@ export async function PUT(request: Request) {
     const values = keys.map((key) => body[key] === "" ? null : body[key])
     const setClause = keys.map((key) => `${key} = ?`).join(",")
     await query(`UPDATE ${tables[selected]} SET ${setClause} WHERE id = ?`, [...values, id])
-    await runSyncHooks(selected, { ...existing[0], ...body, id })
+    await runSyncHooks(selected, { ...existing[0], ...body, id }, session, "Updated")
     return NextResponse.json({ id })
   } catch { return NextResponse.json({ error: "Failed to update operation record" }, { status: 500 }) }
 }

@@ -19,6 +19,7 @@ import { FinanceEmailDetailDialog } from "@/components/finance/finance-email-det
 import { FinanceEmailStatusBadge } from "@/components/finance/finance-email-status-badge"
 import { FinanceEmailAnalytics } from "@/components/finance/finance-email-analytics"
 import { FinanceEmailAutomationSettings } from "@/components/finance/finance-email-automation-settings"
+import { ConnectEmailPanel } from "@/components/connect-email-panel"
 
 type Summary = {
   total: number
@@ -84,6 +85,8 @@ export function FinanceEmailHub() {
           Compose, schedule and track every finance email from one place.
         </p>
       </header>
+
+      <ConnectEmailPanel returnPath="/modules/finance/emails" />
 
       {data && !data.configured && (
         <p className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">

@@ -153,9 +153,10 @@ export async function POST(request: NextRequest) {
     const sent = await sendEmail({
       to,
       subject,
-      html,
-      department: "operations",
-      messageId,
+        html,
+        department: "operations",
+        senderUserId: session.userId ?? null,
+        messageId,
       inReplyTo: inReplyTo ?? undefined,
       references: references ?? undefined,
       providerThreadId: providerThreadId ?? undefined,

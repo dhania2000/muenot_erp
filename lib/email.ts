@@ -933,9 +933,16 @@ export async function sendEmail(opts: {
    * message into the original conversation instead of starting a new thread.
    */
   providerThreadId?: string | null
+  /**
+   * When set, prefer sending through this employee's own connected Gmail mailbox
+   * (from "Connect your email") instead of the department's shared transport.
+   * Falls back to the shared transport when the user has no mailbox connected.
+   */
+  senderUserId?: number | null
 }): Promise<{ messageId?: string; providerThreadId?: string | null }> {
   const config = smtpConfig(opts.department)
-  const configuredFrom = opts.from || config.from || config.user
+  const userSender = await getUserMailSender(opts.senderUserId)
+  const configuredFrom = opts.from || userSender?.email || config.from || config.user
   const from = buildFromHeader(opts.department, configuredFrom)
 
   const attachments = opts.attachments?.length

@@ -86,8 +86,9 @@ export async function POST(request: Request) {
     await sendEmail({
       to: to_email,
       subject: renderedSubject,
-      html: renderedBody,
-      department: "recruit",
+        html: renderedBody,
+        department: "recruit",
+        senderUserId: session.userId ?? null,
       attachments: outgoing ? [outgoing] : undefined,
       messageId,
       inReplyTo: inReplyTo ?? undefined,

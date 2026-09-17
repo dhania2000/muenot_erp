@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { getGoogleAccount } from "@/lib/google-accounts"
-import { isGoogleOAuthConfigured } from "@/lib/google-calendar"
+import { isGoogleOAuthConfigured, scopeGrantsGmailSend } from "@/lib/google-calendar"
 
 export async function GET() {
   const session = await getSession()
@@ -13,5 +13,8 @@ export async function GET() {
     oauthConfigured: isGoogleOAuthConfigured(),
     connected: Boolean(account),
     email: account?.google_email ?? null,
+    // Whether the connected account granted permission to send email. A user can
+    // connect for Meet/Calendar only, so mailbox send is reported separately.
+    mailboxConnected: Boolean(account && scopeGrantsGmailSend(account.scope)),
   })
 }

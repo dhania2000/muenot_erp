@@ -19,6 +19,7 @@ import { PageHeader } from "@/components/recruit/recruit-shared"
 import { formatDateTime } from "@/lib/recruit"
 import { RecruitComposeEmailDialog } from "@/components/recruit/recruit-compose-email-dialog"
 import { ExcelExportButton } from "@/components/excel-export-button"
+import { ConnectEmailPanel } from "@/components/connect-email-panel"
 
 type EmailRow = {
   id: number

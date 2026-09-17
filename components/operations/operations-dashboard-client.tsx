@@ -17,7 +17,9 @@ import {
   DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog"
-import { Plus, Pencil, Trash2 } from "lucide-react"
+import { Plus, Pencil, Trash2, Search, X } from "lucide-react"
+import { toast } from "sonner"
+import { Checkbox } from "@/components/ui/checkbox"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
 import { OperationsSopHistory } from "@/components/operations/operations-sop-history"
@@ -549,6 +551,11 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [search, setSearch] = useState("")
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [bulkStatus, setBulkStatus] = useState("")
+  const [bulkAssignee, setBulkAssignee] = useState("")
+  const [bulkBusy, setBulkBusy] = useState(false)
   const { data, mutate } = useSWR<{ rows: any[] }>(`/api/operations?kind=${kind}`, fetcher)
   const c = configs[kind]
 
@@ -601,8 +608,77 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
     }
   }
 
-  const rows: any[] = data?.rows || []
+  const allRows: any[] = data?.rows || []
+  const term = search.trim().toLowerCase()
+  const rows: any[] = term
+    ? allRows.filter((row) =>
+        Object.values(row).some((v) => v != null && String(v).toLowerCase().includes(term)),
+      )
+    : allRows
   const columns = c ? c.fields.slice(0, 6) : []
+
+  // Which bulk transitions are meaningful for this kind, derived from its fields.
+  const fieldSet = new Set(c?.fields ?? [])
+  const canApproveReject = fieldSet.has("approval_status") || fieldSet.has("decision")
+  const canAssign = ["assigned_to", "action_owner", "owner", "approver"].some((f) => fieldSet.has(f))
+  const statusOptions = STATUS_BY_KIND[kind] ?? DEFAULT_STATUS
+
+  const visibleIds = rows.map((r) => Number(r.id)).filter((n) => Number.isFinite(n) && n > 0)
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id))
+  const selectedRows = allRows.filter((r) => selected.has(Number(r.id)))
+
+  function toggleRow(id: number, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  function toggleAll(checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of visibleIds) {
+        if (checked) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }
+
+  function clearSelection() {
+    setSelected(new Set())
+    setBulkStatus("")
+    setBulkAssignee("")
+  }
+
+  async function runBulk(action: string, value?: string) {
+    const ids = [...selected]
+    if (!ids.length) return
+    if (action === "delete" && !window.confirm(`Delete ${ids.length} selected record(s)? This cannot be undone.`)) return
+    setBulkBusy(true)
+    try {
+      const res = await fetch("/api/operations", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, ids, action, value }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(json?.error ?? "Bulk action failed")
+        return
+      }
+      const parts = [`${json.succeeded ?? 0} updated`]
+      if (json.forbidden) parts.push(`${json.forbidden} not permitted`)
+      if (json.skipped) parts.push(`${json.skipped} skipped`)
+      toast.success(parts.join(", "))
+      clearSelection()
+      mutate()
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   return (
     <main className="space-y-8 p-6">
@@ -615,7 +691,18 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
         </div>
 
         {kind !== "overview" && c && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder={`Search ${c.title.toLowerCase()}...`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-9 w-48 pl-8 sm:w-64"
+                aria-label={`Search ${c.title}`}
+              />
+            </div>
             <ExcelExportButton
               rows={rows}
               filename={kind}
@@ -692,11 +779,102 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
 
       {kind === "overview" && <OperationsOverview />}
 
+      {kind !== "overview" && selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-3">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+          <select
+            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            value={bulkStatus}
+            onChange={(e) => setBulkStatus(e.target.value)}
+            aria-label="Bulk status"
+            disabled={bulkBusy}
+          >
+            <option value="">Set status...</option>
+            {statusOptions.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkBusy || !bulkStatus}
+            onClick={() => runBulk("status", bulkStatus)}
+          >
+            Apply
+          </Button>
+          {canApproveReject && (
+            <>
+              <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => runBulk("approve")}>
+                Approve
+              </Button>
+              <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => runBulk("reject")}>
+                Reject
+              </Button>
+            </>
+          )}
+          <Button size="sm" variant="outline" disabled={bulkBusy} onClick={() => runBulk("close")}>
+            Close
+          </Button>
+          {canAssign && (
+            <div className="flex items-center gap-1">
+              <Input
+                placeholder="Assign to..."
+                value={bulkAssignee}
+                onChange={(e) => setBulkAssignee(e.target.value)}
+                className="h-9 w-36"
+                disabled={bulkBusy}
+                aria-label="Assign selected to"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={bulkBusy || !bulkAssignee.trim()}
+                onClick={() => runBulk("assign", bulkAssignee.trim())}
+              >
+                Assign
+              </Button>
+            </div>
+          )}
+          <ExcelExportButton
+            rows={selectedRows}
+            filename={`${kind}-selected`}
+            columns={c!.fields.map((f) => ({ header: formatLabel(f), value: (r: any) => r[f] }))}
+            label="Export Selected"
+            size="sm"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-destructive hover:text-destructive"
+            disabled={bulkBusy}
+            onClick={() => runBulk("delete")}
+          >
+            <Trash2 className="size-4" />
+            Delete
+          </Button>
+          <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={clearSelection}>
+            <X className="size-4" />
+            Clear
+          </Button>
+        </div>
+      )}
+
       {kind !== "overview" && (
         <section className="overflow-x-auto rounded-xl border bg-card">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b text-muted-foreground">
+                <th className="p-3">
+                  <Checkbox
+                    checked={allVisibleSelected}
+                    onCheckedChange={(v) => toggleAll(v === true)}
+                    aria-label="Select all rows"
+                    disabled={visibleIds.length === 0}
+                  />
+                </th>
                 <th className="p-3">ID</th>
                 {columns.map((col) => (
                   <th key={col} className="whitespace-nowrap p-3">
@@ -709,13 +887,23 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={columns.length + 2} className="p-8 text-center text-muted-foreground">
-                    No records yet. Click &quot;Add {c?.title}&quot; to create one.
+                  <td colSpan={columns.length + 3} className="p-8 text-center text-muted-foreground">
+                    {term
+                      ? `No ${c?.title.toLowerCase()} match "${search.trim()}".`
+                      : `No records yet. Click "Add ${c?.title}" to create one.`}
                   </td>
                 </tr>
               )}
               {rows.map((row: any, i: number) => (
                 <tr key={row.id ?? i} className="border-b transition-colors last:border-0 hover:bg-muted/40">
+                  <td className="p-3">
+                    <Checkbox
+                      checked={selected.has(Number(row.id))}
+                      onCheckedChange={(v) => toggleRow(Number(row.id), v === true)}
+                      aria-label="Select row"
+                      disabled={!Number.isFinite(Number(row.id)) || Number(row.id) <= 0}
+                    />
+                  </td>
                   <td className="p-3 font-mono text-xs">{row.id ?? recordId(row)}</td>
                   {columns.map((col) => (
                     <td key={col} className="p-3">

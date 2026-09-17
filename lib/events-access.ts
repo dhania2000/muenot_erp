@@ -46,6 +46,7 @@ export type ScanResult =
   | "QR_REVOKED"
   | "EVENT_CLOSED"
   | "EVENT_NOT_OPEN"
+  | "EVENT_LANDING"
   | "INVALID_TOKEN"
   | "RATE_LIMITED"
 

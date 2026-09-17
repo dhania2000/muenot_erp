@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { CheckCircle2, XCircle, Clock, LogOut, Loader2, ShieldAlert } from "lucide-react"
+import { CheckCircle2, XCircle, Clock, LogOut, Loader2, ShieldAlert, CalendarDays } from "lucide-react"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -80,6 +80,7 @@ export function ScanClient({ token }: { token: string }) {
   const Accent = () => {
     if (loading) return <Loader2 className="size-16 animate-spin text-muted-foreground" />
     if (!state) return null
+    if (state.result === "EVENT_LANDING") return <CalendarDays className="size-16 text-primary" />
     if (state.result === "ALREADY_CHECKED_IN") return <Clock className="size-16 text-amber-500" />
     if (state.result === "CHECKED_OUT") return <LogOut className="size-16 text-sky-500" />
     if (approved) return <CheckCircle2 className="size-16 text-emerald-500" />

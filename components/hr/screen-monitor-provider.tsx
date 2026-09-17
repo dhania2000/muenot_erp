@@ -2,20 +2,20 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { MonitorPlay, ShieldAlert } from "lucide-react"
+import { MonitorPlay } from "lucide-react"
 
 // ---------------------------------------------------------------------------
-// Screen Monitor Provider — the browser-side capture engine.
+// Screen Monitor Provider — the browser-side capture + live-broadcast engine.
 //
 // It is deliberately decoupled from attendance: the header Clock In/Out button
-// calls `startMonitoring()` / `stopMonitoring()` through this context. Capture
-// only ever begins AFTER the employee explicitly grants the browser
-// screen-share permission (getDisplayMedia). One JPEG frame is uploaded every
-// `captureIntervalSeconds` while a session is Active. Ending the shared stream,
-// clocking out, or closing the tab all stop capture. Nothing is recorded before
-// consent or after stop.
+// calls `startMonitoring()` / `stopMonitoring()` through this context. On Clock
+// In the browser's own native screen-share picker opens immediately (there is
+// no extra in-app consent step). Once the employee approves the picker:
+//   - one JPEG frame is uploaded every `captureIntervalSeconds` for the record
+//     timeline, and
+//   - HR can open a direct, peer-to-peer live view of the shared screen. The
+//     server only relays the WebRTC handshake; the video never touches it.
+// Ending the shared stream, clocking out, or closing the tab stops everything.
 // ---------------------------------------------------------------------------
 
 type PublicSettings = {
@@ -28,13 +28,17 @@ type PublicSettings = {
 
 type MonitorContextValue = {
   active: boolean
-  /** Called after a successful Clock In. Prompts for consent, then captures. */
+  /** Called after a successful Clock In. Opens the native picker, then captures. */
   startMonitoring: () => Promise<void>
   /** Called after a successful Clock Out (or manual stop). */
   stopMonitoring: (reason?: string) => Promise<void>
 }
 
 const MonitorContext = createContext<MonitorContextValue | null>(null)
+
+// Public STUN only — enough for most direct/NAT-traversable connections. No
+// media is relayed through the app; this just helps peers find each other.
+const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }]
 
 export function useScreenMonitor(): MonitorContextValue {
   const ctx = useContext(MonitorContext)
@@ -63,7 +67,6 @@ function detectBrowserOs(): { browser: string; os: string } {
 
 export function ScreenMonitorProvider({ children }: { children: React.ReactNode }) {
   const [active, setActive] = useState(false)
-  const [consentOpen, setConsentOpen] = useState(false)
 
   const streamRef = useRef<MediaStream | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -73,13 +76,33 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
   const sequenceRef = useRef(0)
   const settingsRef = useRef<PublicSettings | null>(null)
   const uploadingRef = useRef(false)
-  const consentResolveRef = useRef<((granted: boolean) => void) | null>(null)
+
+  // Live-view (WebRTC broadcaster) state.
+  const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map())
+  const signalPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const signalBusyRef = useRef(false)
+
+  const closeAllPeers = useCallback(() => {
+    peersRef.current.forEach((pc) => {
+      try {
+        pc.close()
+      } catch {
+        // ignore
+      }
+    })
+    peersRef.current.clear()
+  }, [])
 
   const teardownStream = useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current)
       intervalRef.current = null
     }
+    if (signalPollRef.current) {
+      clearInterval(signalPollRef.current)
+      signalPollRef.current = null
+    }
+    closeAllPeers()
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop())
       streamRef.current = null
@@ -88,7 +111,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
       videoRef.current.srcObject = null
     }
     setActive(false)
-  }, [])
+  }, [closeAllPeers])
 
   const patchSession = useCallback(async (op: "stop" | "revoke", reason?: string) => {
     const pk = sessionPkRef.current
@@ -166,6 +189,109 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     }
   }, [teardownStream])
 
+  // -------------------------------------------------------------------------
+  // Live view — broadcaster side. Each HR viewer negotiates its own peer
+  // connection through the polled signaling relay. We answer offers, trickle
+  // ICE, and tear a peer down on `bye` or when the stream ends.
+  // -------------------------------------------------------------------------
+  const postSignal = useCallback(async (viewerId: string, kind: string, payload: unknown) => {
+    const pk = sessionPkRef.current
+    if (!pk) return
+    try {
+      await fetch("/api/hr/screen-monitoring/signal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: pk, viewerId, role: "broadcaster", kind, payload }),
+      })
+    } catch {
+      // Transient — the viewer retries by re-offering.
+    }
+  }, [])
+
+  const handleViewerOffer = useCallback(
+    async (viewerId: string, offer: RTCSessionDescriptionInit) => {
+      const stream = streamRef.current
+      if (!stream) return
+
+      // Replace any prior connection for this viewer (fresh renegotiation).
+      const existing = peersRef.current.get(viewerId)
+      if (existing) {
+        try {
+          existing.close()
+        } catch {
+          // ignore
+        }
+        peersRef.current.delete(viewerId)
+      }
+
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+      peersRef.current.set(viewerId, pc)
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream))
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) void postSignal(viewerId, "ice", event.candidate.toJSON())
+      }
+      pc.onconnectionstatechange = () => {
+        if (["failed", "closed", "disconnected"].includes(pc.connectionState)) {
+          pc.close()
+          peersRef.current.delete(viewerId)
+        }
+      }
+
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(offer))
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        await postSignal(viewerId, "answer", answer)
+      } catch {
+        pc.close()
+        peersRef.current.delete(viewerId)
+      }
+    },
+    [postSignal],
+  )
+
+  const pollSignals = useCallback(async () => {
+    const pk = sessionPkRef.current
+    if (!pk || signalBusyRef.current) return
+    signalBusyRef.current = true
+    try {
+      const res = await fetch(
+        `/api/hr/screen-monitoring/signal?sessionId=${pk}&role=broadcaster&viewerId=broadcaster`,
+        { cache: "no-store" },
+      )
+      if (!res.ok) return
+      const json = (await res.json()) as {
+        messages: { viewerId: string; kind: string; payload: unknown }[]
+      }
+      // Process in order so an offer is always applied before its ICE.
+      for (const msg of json.messages ?? []) {
+        if (msg.kind === "offer") {
+          await handleViewerOffer(msg.viewerId, msg.payload as RTCSessionDescriptionInit)
+        } else if (msg.kind === "ice") {
+          const pc = peersRef.current.get(msg.viewerId)
+          if (pc && msg.payload) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.payload as RTCIceCandidateInit))
+            } catch {
+              // ignore late/duplicate candidates
+            }
+          }
+        } else if (msg.kind === "bye") {
+          const pc = peersRef.current.get(msg.viewerId)
+          if (pc) {
+            pc.close()
+            peersRef.current.delete(msg.viewerId)
+          }
+        }
+      }
+    } catch {
+      // Transient network failure — next tick retries.
+    } finally {
+      signalBusyRef.current = false
+    }
+  }, [handleViewerOffer])
+
   const beginCaptureLoop = useCallback(() => {
     const settings = settingsRef.current
     if (!settings) return
@@ -173,7 +299,9 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     // First frame shortly after consent, then on the configured cadence.
     setTimeout(() => void captureOnce(), 1500)
     intervalRef.current = setInterval(() => void captureOnce(), settings.captureIntervalSeconds * 1000)
-  }, [captureOnce])
+    // Listen for HR live-view connection requests.
+    signalPollRef.current = setInterval(() => void pollSignals(), 2000)
+  }, [captureOnce, pollSignals])
 
   const startMonitoring = useCallback(async () => {
     // Load current settings first — respect the global enabled flag (Phase 7).
@@ -194,27 +322,15 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
       return
     }
 
-    // Ask for consent via our own dialog before the native permission prompt.
-    const granted = await new Promise<boolean>((resolve) => {
-      consentResolveRef.current = resolve
-      setConsentOpen(true)
-    })
-    consentResolveRef.current = null
-    setConsentOpen(false)
-    if (!granted) {
-      await recordSession(false)
-      toast.message("Screen monitoring declined. Your attendance is still recorded.")
-      return
-    }
-
-    // Native browser screen-share prompt. We force the "entire screen" surface:
-    // the hints below make the monitor the default/only sensible choice, and the
-    // post-grant check rejects a window/tab share so only a full-screen capture
-    // is ever accepted.
+    // Native browser screen-share prompt opens immediately on Clock In. We force
+    // the "entire screen" surface: the hints below make the monitor the default/
+    // only sensible choice, and the post-grant check rejects a window/tab share
+    // so only a full-screen capture is ever accepted. A higher frame rate keeps
+    // the HR live view smooth (screenshots still sample once per interval).
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 1, displaySurface: "monitor" },
+        video: { frameRate: { ideal: 15, max: 30 }, displaySurface: "monitor" },
         audio: false,
         // Steer the browser picker toward the whole screen and away from
         // per-tab/window sharing where these options are supported.
@@ -325,6 +441,15 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     return () => {
       window.removeEventListener("pagehide", onUnload)
       if (intervalRef.current) clearInterval(intervalRef.current)
+      if (signalPollRef.current) clearInterval(signalPollRef.current)
+      peersRef.current.forEach((pc) => {
+        try {
+          pc.close()
+        } catch {
+          // ignore
+        }
+      })
+      peersRef.current.clear()
       streamRef.current?.getTracks().forEach((t) => t.stop())
       if (videoRef.current?.parentNode) videoRef.current.parentNode.removeChild(videoRef.current)
     }
@@ -348,58 +473,6 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
           Screen monitoring active
         </div>
       ) : null}
-
-      <Dialog
-        open={consentOpen}
-        onOpenChange={(open) => {
-          if (!open && consentResolveRef.current) {
-            consentResolveRef.current(false)
-            consentResolveRef.current = null
-          }
-          setConsentOpen(open)
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ShieldAlert className="size-5 text-amber-500" />
-              Screen monitoring consent
-            </DialogTitle>
-            <DialogDescription className="space-y-2 pt-2 text-left">
-              <span className="block">
-                While you are clocked in, a screenshot of your shared screen is captured about once a minute for
-                attendance and compliance records. Capturing only starts after you approve the browser&apos;s screen-share
-                prompt, and stops the moment you clock out or end sharing.
-              </span>
-              <span className="block text-muted-foreground">
-                Choose the screen or window to share in the next prompt. You can decline — your attendance is still
-                recorded either way.
-              </span>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                consentResolveRef.current?.(false)
-                consentResolveRef.current = null
-                setConsentOpen(false)
-              }}
-            >
-              Not now
-            </Button>
-            <Button
-              onClick={() => {
-                consentResolveRef.current?.(true)
-                consentResolveRef.current = null
-                setConsentOpen(false)
-              }}
-            >
-              Share screen &amp; continue
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
     </MonitorContext.Provider>

@@ -181,6 +181,31 @@ export const GOOGLE_MEET_SCOPES = [
 ]
 
 /**
+ * Scopes requested when an employee connects their own mailbox from a
+ * department's Emails section ("Connect your email"). We ask for:
+ * - gmail.send     → send mail as the connected user from their own mailbox
+ * - gmail.readonly → read back the real Message-ID Gmail assigns so follow-ups
+ *                    thread correctly (same technique as the service-account path)
+ * - openid / email → read back which Google account was connected
+ * Because the connect flow uses `include_granted_scopes`, connecting for email
+ * is additive: a user who already connected for Meet keeps that grant and simply
+ * adds Gmail on top, all under the single per-user refresh token.
+ */
+export const GMAIL_SEND_SCOPES = [
+  "openid",
+  "email",
+  "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.readonly",
+]
+
+export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+
+/** True when a stored OAuth scope string carries permission to send Gmail. */
+export function scopeGrantsGmailSend(scope: string | null | undefined) {
+  return Boolean(scope && scope.includes(GMAIL_SEND_SCOPE))
+}
+
+/**
  * The app-level Google credentials only require a client id + secret. The
  * refresh token is now stored per user, so this is the check the per-user
  * flow uses (distinct from the legacy shared-account isGoogleCalendarConfigured).
@@ -197,14 +222,23 @@ function makeOAuthClient(redirectUri?: string) {
   )
 }
 
-/** Build the Google consent screen URL for the connect flow. */
-export function buildGoogleAuthUrl(redirectUri: string, state: string) {
+/**
+ * Build the Google consent screen URL for the connect flow. The caller chooses
+ * which scope set to request — the Meet/Calendar connect passes the default
+ * calendar scopes; the "Connect your email" flow passes GMAIL_SEND_SCOPES.
+ * `include_granted_scopes` makes each grant additive on the same account.
+ */
+export function buildGoogleAuthUrl(
+  redirectUri: string,
+  state: string,
+  scopes: string[] = GOOGLE_MEET_SCOPES,
+) {
   const client = makeOAuthClient(redirectUri)
   return client.generateAuthUrl({
     access_type: "offline", // ask for a refresh token
     prompt: "consent", // force refresh_token to be returned every time
     include_granted_scopes: true,
-    scope: GOOGLE_MEET_SCOPES,
+    scope: scopes,
     state,
   })
 }
@@ -226,6 +260,20 @@ export async function exchangeGoogleCode(redirectUri: string, code: string) {
   }
 
   return { tokens, email }
+}
+
+/**
+ * Build a Gmail API client authorized as a specific employee using their stored
+ * OAuth refresh token. Unlike the service-account path in lib/email.ts (which
+ * impersonates a single Workspace mailbox), this sends as whichever Google
+ * account the employee connected via "Connect your email" — no env vars, no
+ * domain-wide delegation. The same OAuth client can both send and read message
+ * metadata, so follow-up threading works from one token.
+ */
+export function makeUserGmailClient(refreshToken: string) {
+  const auth = makeOAuthClient()
+  auth.setCredentials({ refresh_token: refreshToken })
+  return google.gmail({ version: "v1", auth })
 }
 
 /**

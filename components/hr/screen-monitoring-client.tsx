@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
@@ -52,6 +52,7 @@ import {
   Users,
   Maximize2,
   Monitor,
+  WifiOff,
 } from "lucide-react"
 
 const ALL = "__all__"
@@ -280,6 +281,7 @@ function LiveEmployeesPanel() {
     { refreshInterval: 15000, keepPreviousData: true },
   )
   const [preview, setPreview] = useState<LiveEmployee | null>(null)
+  const [liveTarget, setLiveTarget] = useState<LiveEmployee | null>(null)
 
   const employees = data?.employees ?? []
   const counts = data?.counts
@@ -395,6 +397,16 @@ function LiveEmployeesPanel() {
                     {[e.browser, e.os].filter(Boolean).join(" · ")}
                   </span>
                 )}
+                <Button
+                  size="sm"
+                  variant={e.live ? "default" : "outline"}
+                  className="mt-1 w-full gap-1.5"
+                  onClick={() => setLiveTarget(e)}
+                  disabled={!e.live}
+                >
+                  <Radio className="h-3.5 w-3.5" aria-hidden="true" />
+                  {e.live ? "View Live" : "Offline"}
+                </Button>
               </CardContent>
             </Card>
           ))}
@@ -422,7 +434,166 @@ function LiveEmployeesPanel() {
           )}
         </DialogContent>
       </Dialog>
+
+      <LiveVideoDialog employee={liveTarget} onClose={() => setLiveTarget(null)} />
     </div>
+  )
+}
+
+/**
+ * Live screen viewer — establishes a direct WebRTC connection to the employee's
+ * browser (the broadcaster) through the polled signaling relay and renders the
+ * incoming screen track. No video is proxied by the server: the offer/answer/ICE
+ * handshake is brokered, then media flows peer-to-peer. If the peers cannot
+ * connect (employee offline or a restrictive network), a clear failure state is
+ * shown.
+ */
+function LiveVideoDialog({ employee, onClose }: { employee: LiveEmployee | null; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [status, setStatus] = useState<"connecting" | "live" | "failed">("connecting")
+
+  const sessionPk = employee?.id ?? null
+
+  useEffect(() => {
+    if (!sessionPk) return
+    let cancelled = false
+    const viewerId = `v-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`
+    let remoteSet = false
+    const pendingIce: RTCIceCandidateInit[] = []
+    setStatus("connecting")
+
+    const post = (kind: string, payload: unknown) =>
+      fetch("/api/hr/screen-monitoring/signal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sessionPk, viewerId, role: "viewer", kind, payload }),
+      }).catch(() => {})
+
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] })
+    pc.addTransceiver("video", { direction: "recvonly" })
+    pc.ontrack = (event) => {
+      if (videoRef.current && event.streams[0]) {
+        videoRef.current.srcObject = event.streams[0]
+      }
+    }
+    pc.onicecandidate = (event) => {
+      if (event.candidate) void post("ice", event.candidate.toJSON())
+    }
+    pc.onconnectionstatechange = () => {
+      if (cancelled) return
+      if (pc.connectionState === "connected") setStatus("live")
+      else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") setStatus("failed")
+    }
+
+    void (async () => {
+      try {
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+        await post("offer", offer)
+      } catch {
+        if (!cancelled) setStatus("failed")
+      }
+    })()
+
+    const failTimer = setTimeout(() => {
+      if (!cancelled && pc.connectionState !== "connected") setStatus((s) => (s === "live" ? s : "failed"))
+    }, 20000)
+
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(
+          `/api/hr/screen-monitoring/signal?sessionId=${sessionPk}&role=viewer&viewerId=${encodeURIComponent(viewerId)}`,
+          { cache: "no-store" },
+        )
+        if (!res.ok) return
+        const json = (await res.json()) as { messages: { kind: string; payload: unknown }[] }
+        for (const msg of json.messages ?? []) {
+          if (msg.kind === "answer") {
+            await pc.setRemoteDescription(new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit))
+            remoteSet = true
+            for (const c of pendingIce.splice(0)) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(c))
+              } catch {
+                // ignore
+              }
+            }
+          } else if (msg.kind === "ice") {
+            const cand = msg.payload as RTCIceCandidateInit
+            if (remoteSet) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(cand))
+              } catch {
+                // ignore
+              }
+            } else {
+              pendingIce.push(cand)
+            }
+          }
+        }
+      } catch {
+        // transient — next tick retries
+      }
+    }, 1500)
+
+    return () => {
+      cancelled = true
+      clearTimeout(failTimer)
+      clearInterval(poll)
+      void post("bye", null)
+      try {
+        pc.close()
+      } catch {
+        // ignore
+      }
+    }
+  }, [sessionPk])
+
+  return (
+    <Dialog open={Boolean(employee)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[95vh] max-w-5xl overflow-hidden">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Radio className="h-5 w-5 text-primary" aria-hidden="true" />
+            {employee?.employee_name} — Live
+          </DialogTitle>
+          <DialogDescription>
+            {employee?.attendance_ref || employee?.session_id} · Direct peer-to-peer screen feed
+          </DialogDescription>
+        </DialogHeader>
+        <div className="relative aspect-video w-full overflow-hidden rounded-md border bg-black">
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-contain" />
+          {status !== "live" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/70 p-4 text-center text-sm text-white">
+              {status === "connecting" ? (
+                <>
+                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
+                  <span>Connecting to {employee?.employee_name}&apos;s screen…</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="h-6 w-6" aria-hidden="true" />
+                  <span>Could not establish a live connection.</span>
+                  <span className="text-xs text-white/70">
+                    The employee may have gone offline, or a restrictive network is blocking the direct feed.
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+          {status === "live" && (
+            <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-red-600/90 px-2.5 py-1 text-xs font-medium text-white">
+              <span className="relative flex h-2 w-2" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/80" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
+              </span>
+              LIVE
+            </span>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

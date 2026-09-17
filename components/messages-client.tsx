@@ -1,40 +1,165 @@
 "use client"
-import { useEffect, useState } from "react"
+
+import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { MessageSquare, Plus, Send, Users } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { MessageSquarePlus, Search } from "lucide-react"
+import { ConversationList } from "@/components/messages/conversation-list"
+import { ChatView } from "@/components/messages/chat-view"
+import { NewConversationDialog } from "@/components/messages/new-conversation-dialog"
+import { ManageGroupSheet } from "@/components/messages/manage-group-sheet"
+import { api, type Conversation, type ConversationDetail, type Recipient } from "@/components/messages/types"
 
-type Conversation = { id:number; subject:string|null; last_message:string|null; last_sender:string|null; unread:number }
-type User = { id:number; name:string; email:string; role:string }
+type Meta = {
+  users: Recipient[]
+  departments: string[]
+  myDepartment: string | null
+  canCreateGroup: boolean
+  canCreateManagement: boolean
+  canAnnounce: boolean
+}
+
+const FILTERS = [
+  { key: "all", label: "All" },
+  { key: "unread", label: "Unread" },
+  { key: "direct", label: "Direct" },
+  { key: "group", label: "Groups" },
+  { key: "department", label: "Departments" },
+  { key: "important", label: "Important" },
+] as const
+
 export function MessagesClient() {
- const [items,setItems]=useState<Conversation[]>([]); const [users,setUsers]=useState<User[]>([]); const [selected,setSelected]=useState<number|null>(null); const [messages,setMessages]=useState<any[]>([]); const [body,setBody]=useState(""); const [recipientId,setRecipientId]=useState(""); const [subject,setSubject]=useState(""); const [compose,setCompose]=useState(false); const [error,setError]=useState("")
- async function load(){ const [a,b]=await Promise.all([fetch("/api/messages"),fetch("/api/messages/recipients")]); if(a.ok)setItems((await a.json()).conversations); if(b.ok)setUsers((await b.json()).users) }
- useEffect(()=>{load()},[])
- async function open(id:number){setSelected(id); const r=await fetch(`/api/messages/${id}`); if(r.ok)setMessages((await r.json()).messages); load()}
- async function send(){setError(""); if(!body.trim())return; const url=compose?"/api/messages":`/api/messages/${selected}`; const payload=compose?{recipientId,subject,body}:{body}; const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}); if(!r.ok){setError((await r.json()).error||"Unable to send");return} setBody("");setSubject("");setRecipientId("");setCompose(false);await load()}
- return <main className="flex flex-col gap-6 p-6 md:p-8">
-  <header className="flex items-center justify-between gap-4">
-   <div>
-    <h1 className="text-2xl font-semibold tracking-tight">Messages</h1>
-    <span className="text-sm text-muted-foreground">Home • Messages</span>
-   </div>
-   <div className="flex items-center gap-3 text-muted-foreground">
-    <MessageSquare className="size-5" />
-    <Users className="size-5" />
-    <Plus className="size-5" />
-   </div>
-  </header>
-  <div className="mb-1 flex items-center justify-between">
-   <div>
-    <h2 className="text-2xl font-semibold">Employee communication</h2>
-    <p className="text-sm text-muted-foreground">Message teammates, admins, and management securely.</p>
-   </div>
-   <Button onClick={()=>setCompose(true)}><Plus className="mr-2 size-4"/>New message</Button>
-  </div>
-  <div className="grid min-h-[520px] gap-5 lg:grid-cols-[320px_1fr]">
-   <Card><CardHeader><CardTitle className="text-base">Inbox</CardTitle></CardHeader><CardContent className="flex flex-col gap-2">{items.length?items.map(c=><button key={c.id} onClick={()=>open(c.id)} className={`rounded-lg p-3 text-left hover:bg-muted ${selected===c.id?"bg-primary/10":""}`}><div className="flex justify-between gap-2 font-medium"><span>{c.subject||"Conversation"}</span>{Number(c.unread)>0&&<span className="rounded-full bg-primary px-2 text-xs text-primary-foreground">{c.unread}</span>}</div><p className="mt-1 truncate text-xs text-muted-foreground">{c.last_sender}: {c.last_message}</p></button>):<div className="py-12 text-center text-sm text-muted-foreground">No conversations yet.</div>}</CardContent></Card>
-   <Card className="flex flex-col"><CardHeader><CardTitle className="text-base">{compose?"New message":selected?"Conversation":"Select a conversation"}</CardTitle></CardHeader><CardContent className="flex flex-1 flex-col gap-4">{compose?<><label className="grid gap-2 text-sm font-medium">Recipient<select className="h-10 rounded-md border bg-background px-3" value={recipientId} onChange={e=>setRecipientId(e.target.value)}><option value="">Select employee, admin, or management</option>{users.map(u=><option key={u.id} value={u.id}>{u.name} · {u.role}</option>)}</select></label><Input placeholder="Subject (optional)" value={subject} onChange={e=>setSubject(e.target.value)}/></>:selected? <div className="flex flex-1 flex-col gap-3 overflow-y-auto">{messages.map(m=><div key={m.id} className="rounded-lg bg-muted p-3"><div className="mb-1 text-xs font-semibold">{m.sender_name}</div><p className="whitespace-pre-wrap text-sm">{m.body}</p></div>)}</div>:<div className="flex flex-1 flex-col items-center justify-center text-center text-muted-foreground"><MessageSquare className="mb-3 size-9"/><p>Select a conversation or start a new message.</p></div>} {(compose||selected)&&<div className="mt-auto flex gap-2 border-t pt-4"><Input placeholder="Write a message..." value={body} onChange={e=>setBody(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send()}}}/><Button onClick={send} aria-label="Send message"><Send className="size-4"/></Button></div>}{error&&<p className="text-sm text-destructive">{error}</p>}</CardContent></Card>
-  </div>
- </main>
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [meta, setMeta] = useState<Meta | null>(null)
+  const [selected, setSelected] = useState<number | null>(null)
+  const [filter, setFilter] = useState<string>("all")
+  const [showArchived, setShowArchived] = useState(false)
+  const [q, setQ] = useState("")
+  const [compose, setCompose] = useState(false)
+  const [manage, setManage] = useState<ConversationDetail | null>(null)
+  const [manageOpen, setManageOpen] = useState(false)
+
+  const loadConversations = useCallback(async () => {
+    const params = new URLSearchParams({ filter })
+    if (showArchived) params.set("archived", "1")
+    if (q.trim()) params.set("q", q.trim())
+    try {
+      const data = await api<{ conversations: Conversation[] }>(`/api/messages?${params}`)
+      setConversations(data.conversations)
+    } catch {
+      /* handled by empty state */
+    }
+  }, [filter, showArchived, q])
+
+  useEffect(() => {
+    api<Meta>("/api/messages/recipients").then(setMeta).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadConversations()
+    const t = setInterval(loadConversations, 10000)
+    return () => clearInterval(t)
+  }, [loadConversations])
+
+  const unreadTotal = conversations.reduce((n, c) => n + (c.unread || 0), 0)
+
+  return (
+    <main className="flex h-[calc(100vh-4rem)] flex-col gap-4 p-4 md:p-6">
+      <header className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Messages</h1>
+          <p className="text-sm text-muted-foreground">
+            Employee communication{unreadTotal > 0 ? ` · ${unreadTotal} unread` : ""}
+          </p>
+        </div>
+        <Button onClick={() => setCompose(true)}>
+          <MessageSquarePlus className="mr-2 size-4" /> New
+        </Button>
+      </header>
+
+      <div className="grid min-h-0 flex-1 overflow-hidden rounded-xl border bg-card lg:grid-cols-[340px_1fr]">
+        {/* Sidebar */}
+        <aside
+          className={cn(
+            "flex min-h-0 flex-col border-r",
+            selected !== null && "hidden lg:flex",
+          )}
+        >
+          <div className="border-b p-3">
+            <div className="relative mb-2">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search messages" className="pl-9" />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => { setFilter(f.key); setShowArchived(false) }}
+                  className={cn(
+                    "rounded-full px-2.5 py-1 text-xs transition-colors",
+                    filter === f.key && !showArchived
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/70",
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+              <button
+                onClick={() => { setShowArchived((v) => !v); setFilter("all") }}
+                className={cn(
+                  "rounded-full px-2.5 py-1 text-xs transition-colors",
+                  showArchived ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70",
+                )}
+              >
+                Archived
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <ConversationList items={conversations} selectedId={selected} onSelect={setSelected} />
+          </div>
+        </aside>
+
+        {/* Main */}
+        <section className={cn("min-h-0", selected === null && "hidden lg:block")}>
+          {selected !== null ? (
+            <ChatView
+              key={selected}
+              conversationId={selected}
+              onBack={() => setSelected(null)}
+              onChanged={loadConversations}
+              onManage={(d) => { setManage(d); setManageOpen(true) }}
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
+              <MessageSquarePlus className="size-10 opacity-40" />
+              <p className="max-w-xs text-sm">
+                Select a conversation to start messaging, or create a new direct, group, or department chat.
+              </p>
+              <Button variant="outline" onClick={() => setCompose(true)}>New conversation</Button>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {meta && (
+        <NewConversationDialog
+          open={compose}
+          onOpenChange={setCompose}
+          meta={meta}
+          onCreated={(id) => { setSelected(id); loadConversations() }}
+        />
+      )}
+
+      <ManageGroupSheet
+        detail={manage}
+        directory={meta?.users || []}
+        open={manageOpen}
+        onOpenChange={setManageOpen}
+        onChanged={loadConversations}
+      />
+    </main>
+  )
 }

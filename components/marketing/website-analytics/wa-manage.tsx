@@ -62,21 +62,21 @@ export function InstallDialog({
             Paste this snippet just before the closing {"</head>"} tag on every page you want to track.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-4">
+          <div className="flex min-w-0 flex-col gap-1.5">
             <Label className="text-xs text-muted-foreground">Tracking ID</Label>
             <div className="flex items-center gap-2">
               <code className="rounded bg-muted px-2 py-1 font-mono text-sm">{trackingId}</code>
               <CopyButton text={trackingId} />
             </div>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex items-center justify-between gap-2">
               <Label className="text-xs text-muted-foreground">Snippet</Label>
               <CopyButton text={install.snippet} />
             </div>
-            <pre className="overflow-x-auto rounded-md border bg-muted/50 p-3 text-xs">
-              <code>{install.snippet}</code>
+            <pre className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border bg-muted/50 p-3 text-xs">
+              <code className="whitespace-pre">{install.snippet}</code>
             </pre>
           </div>
           <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">

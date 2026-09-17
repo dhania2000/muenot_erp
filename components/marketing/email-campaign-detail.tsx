@@ -62,8 +62,14 @@ export function EmailCampaignDetail({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { data, isLoading } = useSWR<{ campaign: any; analytics: any }>(
+  const { data, isLoading } = useSWR<{ analytics: any; timeline: any[]; topLinks: any[] }>(
     open && campaignId ? `/api/marketing/campaigns/${campaignId}/analytics` : null,
+    fetcher,
+    { refreshInterval: open ? 8000 : 0 },
+  )
+  // The report header (name/subject/status) comes from the campaign record.
+  const { data: campaignData } = useSWR<{ campaign: any }>(
+    open && campaignId ? `/api/marketing/campaigns/${campaignId}` : null,
     fetcher,
     { refreshInterval: open ? 8000 : 0 },
   )
@@ -73,8 +79,9 @@ export function EmailCampaignDetail({
     refreshInterval: open ? 8000 : 0,
   })
 
-  const c = data?.campaign
+  const c = campaignData?.campaign
   const a = data?.analytics
+  const topLinks = data?.topLinks || []
   const sent = a?.sent ?? 0
 
   return (
@@ -104,9 +111,9 @@ export function EmailCampaignDetail({
 
               <TabsContent value="overview" className="space-y-4 px-6 py-4">
                 <div className="grid grid-cols-2 gap-3">
-                  <Metric icon={Send} label="Sent" value={sent} sub={`of ${a.total ?? 0} recipients`} />
-                  <Metric icon={MailOpen} label="Opened" value={a.opened ?? 0} sub={pct(a.opened ?? 0, sent) + " open rate"} />
-                  <Metric icon={MousePointerClick} label="Clicked" value={a.clicked ?? 0} sub={pct(a.clicked ?? 0, sent) + " click rate"} />
+                  <Metric icon={Send} label="Sent" value={sent} sub={`of ${a.recipients ?? 0} recipients`} />
+                  <Metric icon={MailOpen} label="Opened" value={a.openedUnique ?? 0} sub={pct(a.openedUnique ?? 0, sent) + " open rate"} />
+                  <Metric icon={MousePointerClick} label="Clicked" value={a.clickedUnique ?? 0} sub={pct(a.clickedUnique ?? 0, sent) + " click rate"} />
                   <Metric icon={AlertTriangle} label="Bounced" value={a.bounced ?? 0} sub={pct(a.bounced ?? 0, sent) + " bounce rate"} />
                   <Metric icon={UserX} label="Unsubscribed" value={a.unsubscribed ?? 0} />
                   <Metric icon={AlertTriangle} label="Failed" value={a.failed ?? 0} />
@@ -116,21 +123,20 @@ export function EmailCampaignDetail({
 
                 <div className="space-y-2 text-sm">
                   <Row label="Queued / remaining" value={a.queued ?? 0} />
-                  <Row label="Delivered" value={a.delivered ?? 0} />
-                  <Row label="Unique opens" value={a.unique_opens ?? a.opened ?? 0} />
-                  <Row label="Total opens" value={a.total_opens ?? 0} />
-                  <Row label="Total clicks" value={a.total_clicks ?? 0} />
+                  <Row label="Unique opens" value={a.openedUnique ?? 0} />
+                  <Row label="Total opens" value={a.opensTotal ?? 0} />
+                  <Row label="Total clicks" value={a.clicksTotal ?? 0} />
                   {c?.started_at ? <Row label="Started" value={new Date(c.started_at).toLocaleString()} /> : null}
                   {c?.completed_at ? <Row label="Completed" value={new Date(c.completed_at).toLocaleString()} /> : null}
                 </div>
 
-                {a.top_links?.length > 0 && (
+                {topLinks.length > 0 && (
                   <>
                     <Separator />
                     <div>
                       <h4 className="mb-2 text-sm font-medium">Top links</h4>
                       <div className="space-y-1.5">
-                        {a.top_links.map((l: any, i: number) => (
+                        {topLinks.map((l: any, i: number) => (
                           <div key={i} className="flex items-center justify-between gap-3 text-sm">
                             <span className="truncate text-muted-foreground">{l.url}</span>
                             <Badge variant="outline">{l.clicks}</Badge>

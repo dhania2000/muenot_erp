@@ -765,6 +765,16 @@ export async function scheduleCampaign(campaign: Record<string, any>, scheduledA
   await recordCampaignAudit({ campaignId: campaign.id, action: "schedule", summary: `Scheduled for ${dt} ${timezone || "UTC"}`, actorId })
 }
 
+/** Move a Scheduled campaign back to Draft (clears the scheduled time). */
+export async function unscheduleCampaign(campaign: Record<string, any>, actorId: number | null) {
+  if (campaign.status !== "Scheduled") throw new CampaignStateError("Only a scheduled campaign can be unscheduled.")
+  await query(
+    `UPDATE marketing_email_campaigns SET status = 'Draft', scheduled_at = NULL, row_version = row_version + 1 WHERE id = ?`,
+    [campaign.id],
+  )
+  await recordCampaignAudit({ campaignId: campaign.id, action: "unschedule", summary: "Moved back to draft", actorId })
+}
+
 export async function pauseCampaign(campaign: Record<string, any>, actorId: number | null) {
   if (campaign.status !== "Sending") throw new CampaignStateError("Only a sending campaign can be paused.")
   await query(`UPDATE marketing_email_campaigns SET status = 'Paused', row_version = row_version + 1 WHERE id = ?`, [campaign.id])

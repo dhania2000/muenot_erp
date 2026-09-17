@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from "jose"
 import { cookies } from "next/headers"
+import { setCurrentActor } from "./actor-context"
 
 export const SESSION_COOKIE = "ems_session"
 const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7 // 7 days
@@ -47,7 +48,18 @@ export async function getSession(): Promise<SessionPayload | null> {
   const cookieStore = await cookies()
   const token = cookieStore.get(SESSION_COOKIE)?.value
   if (!token) return null
-  return verifySessionToken(token)
+  const session = await verifySessionToken(token)
+  if (session) {
+    // Populate the per-request actor context so DB-layer notification capture
+    // can attribute writes to this user without threading it through routes.
+    setCurrentActor({
+      userId: session.userId,
+      name: session.name,
+      email: session.email,
+      role: session.role,
+    })
+  }
+  return session
 }
 
 export async function setSessionCookie(token: string, durationSeconds: number = SESSION_DURATION_SECONDS) {

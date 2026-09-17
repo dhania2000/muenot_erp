@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { verifyPassword } from "@/lib/password"
 import { createSessionToken, setSessionCookie } from "@/lib/auth"
 import { getNum } from "@/lib/settings/server"
+import { recordActivity } from "@/lib/notifications"
 
 type UserRow = {
   id: number
@@ -67,6 +68,15 @@ export async function POST(request: Request) {
       durationSeconds,
     )
     await setSessionCookie(token, durationSeconds)
+
+    // Notify full-access users (admins) that this account signed in.
+    void recordActivity({
+      action: "login",
+      title: `${user.name} signed in`,
+      body: user.email,
+      link: "/modules/hr/employees",
+      actor: { userId: user.id, name: user.name, email: user.email, role: user.role },
+    })
 
     return NextResponse.json({
       user: {

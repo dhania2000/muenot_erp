@@ -38,7 +38,68 @@ if (process.env.NODE_ENV !== "production") {
 
 export async function query<T = any>(sql: string, params: any[] = []): Promise<T> {
   const [rows] = await pool.query(sql, params)
+  // Auto-capture writes as activity notifications (fire-and-forget; never
+  // affects the caller's result or latency). See lib/notifications.ts.
+  maybeCaptureWrite(sql, rows)
   return rows as T
+}
+
+// ---------------------------------------------------------------------------
+// Automatic write capture -> notifications
+// ---------------------------------------------------------------------------
+// Detect INSERT / UPDATE / DELETE / REPLACE against a permission-mapped module
+// table and fan a notification out to the users allowed to see that module.
+// Kept deliberately cheap and defensive: any failure is swallowed so the
+// primary query is never impacted.
+
+const INSERT_RE = /^\s*insert\s+(?:ignore\s+)?into\s+`?([a-z0-9_]+)`?/i
+const REPLACE_RE = /^\s*replace\s+(?:into\s+)?`?([a-z0-9_]+)`?/i
+const UPDATE_RE = /^\s*update\s+(?:ignore\s+)?`?([a-z0-9_]+)`?/i
+const DELETE_RE = /^\s*delete\s+(?:ignore\s+)?from\s+`?([a-z0-9_]+)`?/i
+
+// Never generate notifications for writes to these infrastructure tables.
+const SKIP_TABLES = new Set([
+  "notifications",
+  "user_module_permissions",
+  "user_module_action_permissions",
+  "sessions",
+])
+
+function maybeCaptureWrite(sql: string, result: any) {
+  try {
+    let table: string | undefined
+    let action: "create" | "update" | "delete" | undefined
+
+    let m = INSERT_RE.exec(sql) || REPLACE_RE.exec(sql)
+    if (m) {
+      table = m[1]
+      action = "create"
+    } else if ((m = UPDATE_RE.exec(sql))) {
+      table = m[1]
+      action = "update"
+    } else if ((m = DELETE_RE.exec(sql))) {
+      table = m[1]
+      action = "delete"
+    }
+
+    if (!table || !action) return
+    table = table.toLowerCase()
+    if (SKIP_TABLES.has(table)) return
+
+    // For UPDATE/DELETE, skip when nothing actually changed.
+    const affected = typeof result?.affectedRows === "number" ? result.affectedRows : undefined
+    if (action !== "create" && affected === 0) return
+
+    const entityId =
+      action === "create" && result?.insertId ? String(result.insertId) : null
+
+    // Defer to the notifications module lazily to avoid an import cycle.
+    void import("./notifications")
+      .then((mod) => mod.recordDbWrite(table!, action!, entityId))
+      .catch((err) => console.error("[v0] notification capture failed:", err))
+  } catch {
+    // Never let capture interfere with the primary query.
+  }
 }
 
 // ---------------------------------------------------------------------------

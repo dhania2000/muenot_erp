@@ -139,6 +139,10 @@ export async function ensureCampaignSchema() {
       excluded_size INT UNSIGNED NOT NULL DEFAULT 0,
       sent_count INT UNSIGNED NOT NULL DEFAULT 0,
       failed_count INT UNSIGNED NOT NULL DEFAULT 0,
+      -- budget tracking (surfaced on the campaigns overview)
+      budget DECIMAL(14,2) NOT NULL DEFAULT 0,
+      spent DECIMAL(14,2) NOT NULL DEFAULT 0,
+      revenue DECIMAL(14,2) NOT NULL DEFAULT 0,
       started_at DATETIME NULL,
       completed_at DATETIME NULL,
       last_error VARCHAR(500) NULL,
@@ -170,6 +174,9 @@ export async function ensureCampaignSchema() {
     ["started_at", "`started_at` DATETIME NULL"],
     ["completed_at", "`completed_at` DATETIME NULL"],
     ["archived_at", "`archived_at` DATETIME NULL"],
+    ["budget", "`budget` DECIMAL(14,2) NOT NULL DEFAULT 0"],
+    ["spent", "`spent` DECIMAL(14,2) NOT NULL DEFAULT 0"],
+    ["revenue", "`revenue` DECIMAL(14,2) NOT NULL DEFAULT 0"],
   ]
   for (const [c, ddl] of cols) await addColumnIfMissing("marketing_email_campaigns", c, ddl)
 
@@ -763,6 +770,16 @@ export async function scheduleCampaign(campaign: Record<string, any>, scheduledA
     [dt, timezone, campaign.id],
   )
   await recordCampaignAudit({ campaignId: campaign.id, action: "schedule", summary: `Scheduled for ${dt} ${timezone || "UTC"}`, actorId })
+}
+
+/** Move a Scheduled campaign back to Draft (clears the scheduled time). */
+export async function unscheduleCampaign(campaign: Record<string, any>, actorId: number | null) {
+  if (campaign.status !== "Scheduled") throw new CampaignStateError("Only a scheduled campaign can be unscheduled.")
+  await query(
+    `UPDATE marketing_email_campaigns SET status = 'Draft', scheduled_at = NULL, row_version = row_version + 1 WHERE id = ?`,
+    [campaign.id],
+  )
+  await recordCampaignAudit({ campaignId: campaign.id, action: "unschedule", summary: "Moved back to draft", actorId })
 }
 
 export async function pauseCampaign(campaign: Record<string, any>, actorId: number | null) {

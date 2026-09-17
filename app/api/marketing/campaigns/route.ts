@@ -54,26 +54,71 @@ export async function GET(request: Request) {
 
   const [rows, countRows] = await Promise.all([
     query<any[]>(
-      `SELECT id, campaign_code, name, description, type, status, subject, scheduled_at, timezone,
-              audience_size, excluded_size, sent_count, failed_count, started_at, completed_at,
-              owner_id, created_at, updated_at
-         FROM marketing_email_campaigns ${whereSql}
+      `SELECT c.id, c.campaign_code, c.name, c.description, c.type, c.status, c.subject, c.scheduled_at, c.timezone,
+              c.audience_size, c.excluded_size, c.sent_count, c.failed_count, c.started_at, c.completed_at,
+              c.budget, c.spent, c.revenue,
+              c.owner_id, c.created_at, c.updated_at,
+              (SELECT COUNT(*) FROM marketing_campaign_recipients r WHERE r.campaign_id = c.id) AS recipient_count,
+              (SELECT COUNT(*) FROM marketing_campaign_recipients r WHERE r.campaign_id = c.id AND r.open_count > 0) AS opened_count,
+              (SELECT COUNT(*) FROM marketing_campaign_recipients r WHERE r.campaign_id = c.id AND r.click_count > 0) AS clicked_count
+         FROM marketing_email_campaigns c ${whereSql}
         ORDER BY ${sort} ${dir} LIMIT ? OFFSET ?`,
       [...args, pageSize, offset],
     ),
     query<any[]>(`SELECT COUNT(*) AS n FROM marketing_email_campaigns ${whereSql}`, args),
   ])
 
-  // Status counts for the filter chips (unfiltered by status).
-  const statusCounts = await query<any[]>(
-    `SELECT status, COUNT(*) AS n FROM marketing_email_campaigns WHERE archived_at IS NULL GROUP BY status`,
-  ).catch(() => [])
+  // Status counts for the filter chips + headline stat cards (unfiltered).
+  const [statusCounts, totals, engagement] = await Promise.all([
+    query<any[]>(
+      `SELECT status, COUNT(*) AS n FROM marketing_email_campaigns WHERE archived_at IS NULL GROUP BY status`,
+    ).catch(() => []),
+    query<any[]>(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(status = 'Sending'), 0) AS sending,
+              COALESCE(SUM(status = 'Scheduled'), 0) AS scheduled,
+              COALESCE(SUM(status IN ('Sending','Scheduled')), 0) AS active,
+              COALESCE(SUM(sent_count), 0) AS total_sent,
+              COALESCE(SUM(budget), 0) AS total_budget,
+              COALESCE(SUM(spent), 0) AS total_spent,
+              COALESCE(SUM(revenue), 0) AS total_revenue
+         FROM marketing_email_campaigns WHERE archived_at IS NULL`,
+    ).catch(() => [] as any[]),
+    query<any[]>(
+      `SELECT COALESCE(SUM(r.open_count > 0), 0) AS total_opened,
+              COALESCE(SUM(r.click_count > 0), 0) AS total_clicked
+         FROM marketing_campaign_recipients r
+         JOIN marketing_email_campaigns c ON c.id = r.campaign_id
+        WHERE c.archived_at IS NULL`,
+    ).catch(() => [] as any[]),
+  ])
+
+  const t = totals[0] || {}
+  const e = engagement[0] || {}
+  const totalBudget = Number(t.total_budget || 0)
+  const totalSpent = Number(t.total_spent || 0)
+  const totalRevenue = Number(t.total_revenue || 0)
+  const stats = {
+    total: Number(t.total || 0),
+    sending: Number(t.sending || 0),
+    scheduled: Number(t.scheduled || 0),
+    active: Number(t.active || 0),
+    total_sent: Number(t.total_sent || 0),
+    total_opened: Number(e.total_opened || 0),
+    total_clicked: Number(e.total_clicked || 0),
+    total_budget: totalBudget,
+    total_spent: totalSpent,
+    total_revenue: totalRevenue,
+    // ROI = return on the money actually spent. Null when nothing has been spent.
+    avg_roi: totalSpent > 0 ? Number((totalRevenue / totalSpent).toFixed(2)) : null,
+  }
 
   return NextResponse.json({
     campaigns: rows,
     total: Number(countRows[0]?.n || 0),
     page,
     pageSize,
+    stats,
     statusCounts: Object.fromEntries(statusCounts.map((r) => [r.status, Number(r.n)])),
   })
 }
@@ -93,12 +138,13 @@ export async function POST(request: Request) {
   const seq = code.split("-")[1] || "000001"
   const campaignCode = `EMC-${year}-${seq}`
 
+  const budget = Number.isFinite(Number(body.budget)) ? Math.max(0, Number(body.budget)) : 0
   const res = await query<any>(
     `INSERT INTO marketing_email_campaigns
        (campaign_code, name, description, type, status, subject, body_html, preheader, from_name, reply_to,
         audience_mode, audience_segments, audience_tags, audience_contacts, exclude_unsubscribed,
-        track_opens, track_clicks, owner_id, sender_user_id, created_by)
-     VALUES (?,?,?,?,'Draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        track_opens, track_clicks, budget, owner_id, sender_user_id, created_by)
+     VALUES (?,?,?,?,'Draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       campaignCode,
       name,
@@ -116,6 +162,7 @@ export async function POST(request: Request) {
       1,
       1,
       1,
+      budget,
       session.userId,
       session.userId,
       session.userId,

@@ -6,6 +6,7 @@ import {
   getCampaign,
   startSending,
   scheduleCampaign,
+  unscheduleCampaign,
   pauseCampaign,
   resumeCampaign,
   cancelCampaign,
@@ -51,6 +52,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     if (action === "schedule") {
       await scheduleCampaign(campaign, String(body.scheduledAt || ""), body.timezone ? String(body.timezone) : null, session.userId)
+      return NextResponse.json({ ok: true })
+    }
+
+    if (action === "unschedule") {
+      await unscheduleCampaign(campaign, session.userId)
       return NextResponse.json({ ok: true })
     }
 

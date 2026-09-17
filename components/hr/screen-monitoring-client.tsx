@@ -48,6 +48,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Radio,
+  Clock,
+  Users,
+  Maximize2,
+  Monitor,
 } from "lucide-react"
 
 const ALL = "__all__"
@@ -122,6 +126,45 @@ type SettingsResponse = {
     [key: string]: unknown
   }
   retentionChoices: number[]
+}
+
+type LiveEmployee = {
+  id: number
+  session_id: string
+  employee_id: number
+  employee_name: string
+  attendance_ref: string | null
+  work_date: string | null
+  started_at: string | null
+  last_capture_at: string | null
+  capture_count: number
+  permission_status: string | null
+  source_type: string | null
+  browser: string | null
+  os: string | null
+  latest_screenshot_id: string | null
+  elapsed_seconds: number
+  since_capture_seconds: number | null
+  live: boolean
+}
+
+type LiveResponse = {
+  employees: LiveEmployee[]
+  counts: { total: number; live: number; stale: number }
+  captureIntervalSeconds: number
+  staleAfterMinutes: number
+  scope: string
+  generatedAt: string
+}
+
+function formatAgo(seconds: number | null | undefined): string {
+  if (seconds == null) return "—"
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m ago`
 }
 
 function statusVariant(status: string | null | undefined): BadgeVariant {
@@ -226,6 +269,159 @@ function SummaryCards() {
           </Card>
         )
       })}
+    </div>
+  )
+}
+
+function LiveEmployeesPanel() {
+  const { data, isLoading, isValidating, mutate } = useSWR<LiveResponse>(
+    "/api/hr/screen-monitoring/live",
+    fetcher,
+    { refreshInterval: 15000, keepPreviousData: true },
+  )
+  const [preview, setPreview] = useState<LiveEmployee | null>(null)
+
+  const employees = data?.employees ?? []
+  const counts = data?.counts
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm">
+          <Users className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          <span className="font-medium tabular-nums">{counts?.total ?? 0}</span>
+          <span className="text-muted-foreground">monitored</span>
+        </div>
+        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm">
+          <span className="relative flex h-2.5 w-2.5" aria-hidden="true">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/70" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+          </span>
+          <span className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">{counts?.live ?? 0}</span>
+          <span className="text-muted-foreground">live</span>
+        </div>
+        <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm">
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-500" aria-hidden="true" />
+          <span className="font-medium tabular-nums text-amber-600 dark:text-amber-400">{counts?.stale ?? 0}</span>
+          <span className="text-muted-foreground">stale</span>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Auto-refreshes every 15s</span>
+          <Button variant="outline" size="sm" onClick={() => mutate()} disabled={isValidating} className="gap-1.5">
+            <RefreshCw className={`h-4 w-4 ${isValidating ? "animate-spin" : ""}`} aria-hidden="true" />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {isLoading && employees.length === 0 ? (
+        <div className="flex h-48 items-center justify-center rounded-md border">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+        </div>
+      ) : employees.length === 0 ? (
+        <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-md border text-muted-foreground">
+          <Monitor className="h-7 w-7" aria-hidden="true" />
+          <span className="text-sm font-medium">No employees are being monitored right now.</span>
+          <span className="text-xs">Active capture sessions appear here as employees clock in and grant permission.</span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {employees.map((e) => (
+            <Card key={e.id} className="overflow-hidden">
+              <button
+                type="button"
+                onClick={() => e.latest_screenshot_id && setPreview(e)}
+                disabled={!e.latest_screenshot_id}
+                className="group relative block aspect-video w-full bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                aria-label={e.latest_screenshot_id ? `View ${e.employee_name}'s latest capture` : `${e.employee_name} — no capture yet`}
+              >
+                {e.latest_screenshot_id ? (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/api/hr/screen-monitoring/screenshot/file?id=${encodeURIComponent(e.latest_screenshot_id)}`}
+                      alt={`Latest capture for ${e.employee_name}`}
+                      className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
+                    />
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
+                      <Maximize2 className="h-6 w-6 text-white" aria-hidden="true" />
+                    </span>
+                  </>
+                ) : (
+                  <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground">
+                    <ImageOff className="h-6 w-6" aria-hidden="true" />
+                    <span className="text-[11px]">Awaiting first capture</span>
+                  </span>
+                )}
+                <span
+                  className={`absolute left-2 top-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    e.live
+                      ? "bg-emerald-500/90 text-white"
+                      : "bg-amber-500/90 text-white"
+                  }`}
+                >
+                  {e.live ? (
+                    <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/80" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white" />
+                    </span>
+                  ) : null}
+                  {e.live ? "LIVE" : "STALE"}
+                </span>
+              </button>
+              <CardContent className="flex flex-col gap-2 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate font-medium">{e.employee_name}</span>
+                    <span className="truncate text-xs text-muted-foreground">{e.attendance_ref || e.session_id}</span>
+                  </div>
+                  <Badge variant="secondary" className="shrink-0 gap-1 tabular-nums">
+                    <Camera className="h-3 w-3" aria-hidden="true" />
+                    {e.capture_count}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                    {formatDuration(e.elapsed_seconds)}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Camera className="h-3.5 w-3.5" aria-hidden="true" />
+                    {formatAgo(e.since_capture_seconds)}
+                  </span>
+                </div>
+                {(e.browser || e.os) && (
+                  <span className="truncate text-[11px] text-muted-foreground">
+                    {[e.browser, e.os].filter(Boolean).join(" · ")}
+                  </span>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && setPreview(null)}>
+        <DialogContent className="max-h-[95vh] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MonitorPlay className="h-5 w-5 text-primary" aria-hidden="true" />
+              {preview?.employee_name}
+            </DialogTitle>
+            <DialogDescription>
+              {preview?.attendance_ref || preview?.session_id} · Last capture {formatAgo(preview?.since_capture_seconds)}
+            </DialogDescription>
+          </DialogHeader>
+          {preview?.latest_screenshot_id && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={`/api/hr/screen-monitoring/screenshot/file?id=${encodeURIComponent(preview.latest_screenshot_id)}`}
+              alt={`Latest capture for ${preview.employee_name}`}
+              className="w-full rounded-md border bg-muted"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

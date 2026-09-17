@@ -55,8 +55,9 @@ const HR_CHILDREN: FeatureChild[] = [
   { label: "HR Dashboard", href: "/modules/hr/dashboard", feature: "hr.view_dashboard" },
   { label: "Employees", href: "/modules/hr/employees", feature: "hr.view_employees" },
   { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_documents" },
-  { label: "Attendance", href: "/modules/hr/attendance", feature: "hr.view_attendance" },
-  { label: "Attendance Regularisation", href: "/modules/hr/attendance-regularisation", feature: "hr.view_regularisation" },
+    { label: "Attendance", href: "/modules/hr/attendance", feature: "hr.view_attendance" },
+    { label: "Attendance Regularisation", href: "/modules/hr/attendance-regularisation", feature: "hr.view_regularisation" },
+    { label: "Screen Activity Monitoring", href: "/modules/hr/screen-monitoring", feature: "hr.view_screen_monitoring" },
   { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
   { label: "Offboarding", href: "/modules/hr/offboarding", feature: "hr.view_offboarding" },
   {

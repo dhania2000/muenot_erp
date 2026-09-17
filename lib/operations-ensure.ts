@@ -61,6 +61,56 @@ export async function ensureOperationsSchema(): Promise<void> {
       KEY idx_sop_versions_created (created_at)
     )`)
 
+    // Phases 62-64 — email history linking + threading on the existing
+    // operations_emails table. Additive columns only; the base table (subject,
+    // body, status, tracking) is left untouched.
+    await ensureColumn("operations_emails", "entity_type", "VARCHAR(48) NULL")
+    await ensureColumn("operations_emails", "entity_id", "VARCHAR(64) NULL")
+    await ensureColumn("operations_emails", "project_id", "VARCHAR(64) NULL")
+    await ensureColumn("operations_emails", "client_name", "VARCHAR(255) NULL")
+    await ensureColumn("operations_emails", "template_id", "BIGINT NULL")
+    await ensureColumn("operations_emails", "thread_id", "VARCHAR(255) NULL")
+    await ensureColumn("operations_emails", "message_id", "VARCHAR(255) NULL")
+    await ensureColumn("operations_emails", "in_reply_to", "VARCHAR(255) NULL")
+    await ensureColumn("operations_emails", "references_hdr", "TEXT NULL")
+    await ensureColumn("operations_emails", "provider_thread_id", "VARCHAR(255) NULL")
+    await query(
+      `CREATE INDEX idx_operations_emails_entity ON operations_emails (entity_type, entity_id)`,
+    ).catch(() => {})
+    await query(`CREATE INDEX idx_operations_emails_thread ON operations_emails (thread_id)`).catch(() => {})
+
+    // Phases 65-67 — Operations meetings on the shared Google Calendar. Stores
+    // the Google event id so reschedule updates and cancel cancels the SAME
+    // event (never a duplicate). No new calendar system is introduced.
+    await query(`CREATE TABLE IF NOT EXISTS operations_meetings (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      meeting_type VARCHAR(48) DEFAULT 'Project Meeting',
+      entity_type VARCHAR(48) DEFAULT NULL,
+      entity_id VARCHAR(64) DEFAULT NULL,
+      project_id VARCHAR(64) DEFAULT NULL,
+      project_name VARCHAR(255) DEFAULT NULL,
+      client_name VARCHAR(255) DEFAULT NULL,
+      description TEXT DEFAULT NULL,
+      start_time DATETIME NOT NULL,
+      end_time DATETIME NOT NULL,
+      attendees TEXT DEFAULT NULL,
+      organizer_id INT UNSIGNED DEFAULT NULL,
+      organizer_name VARCHAR(255) DEFAULT NULL,
+      location VARCHAR(255) DEFAULT NULL,
+      google_event_id VARCHAR(255) DEFAULT NULL,
+      meet_link VARCHAR(512) DEFAULT NULL,
+      html_link VARCHAR(512) DEFAULT NULL,
+      status VARCHAR(32) DEFAULT 'Scheduled',
+      remarks TEXT DEFAULT NULL,
+      created_by INT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_operations_meetings_project (project_id),
+      KEY idx_operations_meetings_entity (entity_type, entity_id),
+      KEY idx_operations_meetings_start (start_time)
+    )`)
+
     // Phases 34-35 — checklist items driving completion %.
     await query(`CREATE TABLE IF NOT EXISTS operations_checklist_items (
       id INT AUTO_INCREMENT PRIMARY KEY,

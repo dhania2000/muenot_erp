@@ -395,6 +395,17 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "calendar.calendar", label: "My Calendar", group: "calendar", aliases: ["calendar"], scope: { table: "calendar_events" } },
     ],
   },
+  {
+    slug: "events",
+    label: "Events",
+    modules: [
+      // Drives the Events module RBAC. "events.view" grants read access to the
+      // Events pages/APIs; any write level grants "events.manage" (create/edit,
+      // participant management, QR generate/revoke). The public gate-scan page
+      // needs no session and is intentionally not gated by this matrix.
+      { key: "events.events", label: "Events", group: "events", aliases: ["event"], scope: { table: "hr_events", addedBy: "created_by" } },
+    ],
+  },
 ]
 
 export const PERMISSION_MODULES: PermissionModule[] = PERMISSION_GROUPS.flatMap((g) => g.modules)

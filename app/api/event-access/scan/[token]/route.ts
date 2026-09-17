@@ -30,11 +30,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
   const action = body.action === "checkin" || body.action === "checkout" ? body.action : "verify"
 
-  const verification = await verifyParticipantToken(token, action, {
-    scannerName: body.scanner_name ? String(body.scanner_name).slice(0, 150) : null,
-    venue: body.venue ? String(body.venue).slice(0, 255) : null,
-    deviceInfo: request.headers.get("user-agent")?.slice(0, 255) ?? null,
-  })
-
-  return NextResponse.json(verification)
+  try {
+    const verification = await verifyParticipantToken(token, action, {
+      scannerName: body.scanner_name ? String(body.scanner_name).slice(0, 150) : null,
+      venue: body.venue ? String(body.venue).slice(0, 255) : null,
+      deviceInfo: request.headers.get("user-agent")?.slice(0, 255) ?? null,
+    })
+    return NextResponse.json(verification)
+  } catch (error) {
+    // Never leak internals to the public gate screen; return a clean,
+    // structured result the scan UI can render (Phase 66 — Server Error).
+    console.error("[v0] scan verify failed:", (error as Error).message)
+    return NextResponse.json(
+      {
+        result: "SERVER_ERROR",
+        approved: false,
+        title: "Verification Unavailable",
+        message: "Could not verify this QR right now. Please try again in a moment.",
+      },
+      { status: 503 },
+    )
+  }
 }

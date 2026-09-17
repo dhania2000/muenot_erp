@@ -16,6 +16,7 @@ export type CalendarSourceModule =
   | "operations"
   | "recruitment"
   | "hr"
+  | "events"
   | "personal"
 
 export type GoogleSyncStatus =
@@ -67,5 +68,6 @@ export const CATEGORY_META: Record<
   Operations: { label: "Operations", module: "operations" },
   Interview: { label: "Interview", module: "recruitment" },
   HR: { label: "HR", module: "hr" },
+  Events: { label: "Events", module: "events" },
   Personal: { label: "Personal", module: "personal" },
 }

@@ -225,12 +225,99 @@ export async function readRecruitmentInterviews(win: SourceWindow): Promise<Unif
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Company events (Events module → My Calendar, spec Phases 51-53)             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Surface the Events module (`hr_events`) in the user's central calendar.
+ * An event appears when the signed-in user is genuinely connected to it:
+ * they created it, host it, it targets all employees, their name is listed as
+ * a specific attendee, or they are an assigned participant. Cancelled events
+ * are still shown (flagged "Cancelled") so the calendar reflects the change.
+ * The Events module remains the single source of truth — nothing is copied.
+ */
+export async function readCompanyEvents(win: SourceWindow): Promise<UnifiedCalendarEvent[]> {
+  try {
+    const cols = await tableColumns("hr_events")
+    if (!cols.has("start_at")) return []
+
+    // Resolve this user's HR employee identity for attendee/participant matching.
+    let empPk: number | null = null
+    let empName: string | null = null
+    if (win.email) {
+      const [emp] = await query<any[]>(
+        "SELECT id, employee_name FROM hr_employees WHERE official_email = ? OR personal_email = ? LIMIT 1",
+        [win.email, win.email],
+      )
+      if (emp) {
+        empPk = Number(emp.id)
+        empName = emp.employee_name ?? null
+      }
+    }
+
+    const fromDt = `${win.fromDate} 00:00:00`
+    const toDt = `${win.toDate} 23:59:59`
+    const hasParticipants = (await tableColumns("event_participants")).has("employee_pk")
+
+    // Build the relevance predicate. Order of args MUST match placeholder order.
+    const conds: string[] = ["e.attendee_type = 'all_employees'", "e.created_by = ?"]
+    const args: unknown[] = [fromDt, toDt, win.userId]
+    if (empName) {
+      conds.push("e.host_name = ?")
+      args.push(empName)
+      conds.push("(e.attendees IS NOT NULL AND JSON_SEARCH(e.attendees, 'one', ?) IS NOT NULL)")
+      args.push(empName)
+    }
+    if (empPk != null && hasParticipants) {
+      conds.push("EXISTS (SELECT 1 FROM event_participants p WHERE p.event_id = e.id AND p.employee_pk = ?)")
+      args.push(empPk)
+    }
+
+    const rows = await query<any[]>(
+      `SELECT e.* FROM hr_events e
+        WHERE e.start_at BETWEEN ? AND ?
+          AND (${conds.join(" OR ")})
+        ORDER BY e.start_at
+        LIMIT 500`,
+      args,
+    )
+    return rows.map((r) => {
+      const startWall = wallClockFromDateTime(r.start_at)
+      const endWall = wallClockFromDateTime(r.end_at)
+      const cancelled = String(r.status || "").toLowerCase() === "cancelled"
+      return {
+        id: `events:${r.id}`,
+        title: r.name || "Event",
+        start: toIstIso(startWall) || String(r.start_at),
+        end: toIstIso(endWall),
+        allDay: false,
+        location: r.location || null,
+        description: r.description || r.meeting_details || null,
+        hangoutLink: null,
+        htmlLink: null,
+        status: r.status || null,
+        sourceModule: "events",
+        sourceRecordId: String(r.id),
+        category: "Events",
+        organizer: r.host_name || r.created_by_name || null,
+        externalEventId: null,
+        googleSyncStatus: cancelled ? "Cancelled" : null,
+        href: `/modules/events`,
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
 /** Read every ERP source for the user in the window (Google added separately). */
 export async function readErpSources(win: SourceWindow): Promise<UnifiedCalendarEvent[]> {
   const results = await Promise.all([
     readSalesMeetings(win),
     readOperationsMeetings(win),
     readRecruitmentInterviews(win),
+    readCompanyEvents(win),
   ])
   return results.flat()
 }

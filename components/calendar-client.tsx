@@ -18,7 +18,7 @@ import {
   Video,
 } from "lucide-react"
 
-type SourceModule = "sales" | "operations" | "recruitment" | "hr" | "google"
+type SourceModule = "sales" | "operations" | "recruitment" | "hr" | "events" | "google"
 
 type CalendarEvent = {
   id: string
@@ -64,6 +64,7 @@ const SOURCE_META: Record<SourceModule, { label: string; dot: string; chip: stri
     chip: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
   },
   hr: { label: "HR", dot: "bg-emerald-500", chip: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  events: { label: "Events", dot: "bg-rose-500", chip: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
   google: { label: "Personal", dot: "bg-muted-foreground", chip: "bg-muted text-muted-foreground" },
 }
 

@@ -71,6 +71,10 @@
     {
       "path": "/api/marketing/whatsapp/scheduler",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/notice-board",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

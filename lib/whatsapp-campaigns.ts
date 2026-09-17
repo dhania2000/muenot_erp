@@ -2,7 +2,7 @@ import "server-only"
 import { query } from "@/lib/db"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
 import { getWhatsAppIntegration, sendWhatsAppTemplateWithComponents } from "@/lib/whatsapp"
-import { recordTemplateUsage } from "@/lib/whatsapp-templates"
+import { recordTemplateUsage, findLocalTemplate } from "@/lib/whatsapp-templates"
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -338,6 +338,21 @@ export async function launchCampaign(id: number, userId: number, batchSize = 50)
   if (!campaign.templateName) throw new Error("Campaign has no template")
   if (campaign.status === "running") return { status: "running", total: campaign.totalRecipients }
 
+  // Guard: WhatsApp only delivers APPROVED templates. Block launch (with a clear
+  // reason) when the chosen template is missing locally or not approved, so the
+  // campaign never reports "sent" for messages Meta will silently reject.
+  const tpl = await findLocalTemplate(campaign.templateName, campaign.templateLanguage || undefined)
+  if (!tpl) {
+    const msg = `Template "${campaign.templateName}" (${campaign.templateLanguage || "en_US"}) was not found. Sync templates from Meta and choose an approved template.`
+    await query("UPDATE `marketing_whatsapp_campaigns` SET last_error = ? WHERE id = ?", [msg, id])
+    throw new Error(msg)
+  }
+  if ((tpl.status || "").toUpperCase() !== "APPROVED") {
+    const msg = `Template "${campaign.templateName}" is ${tpl.status || "not approved"}. Only APPROVED templates can be broadcast.`
+    await query("UPDATE `marketing_whatsapp_campaigns` SET last_error = ? WHERE id = ?", [msg, id])
+    throw new Error(msg)
+  }
+
   const total = await buildCampaignRecipients(id)
   await query(
     "UPDATE `marketing_whatsapp_campaigns` SET status = 'running', launched_by = ?, launched_at = NOW(), last_error = NULL WHERE id = ?",
@@ -501,7 +516,8 @@ export async function applyCampaignStatusByWamid(wamid: string, status: "deliver
   } else if (status === "read" && (recipient.status === "sent" || recipient.status === "delivered")) {
     await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'read', read_at = NOW() WHERE id = ?", [recipient.id])
     await query("UPDATE `marketing_whatsapp_campaigns` SET read_count = read_count + 1 WHERE id = ?", [recipient.campaign_id])
-  } else if (status === "failed") {
+  } else if (status === "failed" && recipient.status !== "failed") {
+    // Only count a failure once — a retried webhook must not inflate failed_count.
     await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'failed' WHERE id = ?", [recipient.id])
     await query("UPDATE `marketing_whatsapp_campaigns` SET failed_count = failed_count + 1 WHERE id = ?", [recipient.campaign_id])
   }

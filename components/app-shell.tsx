@@ -73,21 +73,21 @@ function timeAgo(value: string) {
 function NotificationsBell() {
   const router = useRouter()
   const { data, mutate } = useSWR<{ notifications: SalesNotification[]; unread: number }>(
-    "/api/sales/notifications",
+    "/api/notifications",
     (url: string) => fetch(url).then((r) => (r.ok ? r.json() : { notifications: [], unread: 0 })),
-    { refreshInterval: 60000 },
+    { refreshInterval: 30000 },
   )
   const notifications = data?.notifications ?? []
   const unread = data?.unread ?? 0
 
   async function markAll() {
-    await fetch("/api/sales/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" })
+    await fetch("/api/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" })
     mutate()
   }
 
   async function open(n: SalesNotification) {
     if (!n.is_read) {
-      await fetch("/api/sales/notifications", {
+      await fetch("/api/notifications", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: n.id }),

@@ -56,6 +56,7 @@ const MESSAGES: Record<ScanResult, { title: string; message: string; approved: b
   QR_REVOKED: { title: "Access Denied", message: "This access QR has been revoked.", approved: false },
   EVENT_CLOSED: { title: "Event Closed", message: "Event access is closed.", approved: false },
   EVENT_NOT_OPEN: { title: "Access Not Open", message: "Event access window is not open yet.", approved: false },
+  EVENT_LANDING: { title: "Event Details", message: "Scan your personal access QR at the gate to check in.", approved: false },
   INVALID_TOKEN: { title: "Invalid QR", message: "Invalid or expired access QR.", approved: false },
   RATE_LIMITED: { title: "Too Many Attempts", message: "Too many attempts. Please wait a moment and try again.", approved: false },
 }
@@ -117,6 +118,30 @@ export async function verifyParticipantToken(
 
   const row = rows[0]
   if (!row) {
+    // Not a participant token. It may be the EVENT-level QR (hr_events.event_token),
+    // whose purpose is to show an event landing page — not to check anyone in.
+    const eventRows = await query<any[]>(
+      `SELECT id, name, location, start_at, end_at, status
+         FROM hr_events WHERE event_token = ? LIMIT 1`,
+      [cleaned],
+    )
+    const ev = eventRows[0]
+    if (ev) {
+      const event: ScanEvent = {
+        id: ev.id,
+        name: ev.name,
+        venue: ev.location,
+        startAt: ev.start_at,
+        endAt: ev.end_at,
+        status: ev.status,
+      }
+      await logScan({ eventId: ev.id, tokenRef: cleaned.slice(0, 16), result: "EVENT_LANDING", reason: "Event QR landing", ...ctx })
+      if (isEventClosed(ev.status)) {
+        return build("EVENT_CLOSED", { event })
+      }
+      return build("EVENT_LANDING", { event })
+    }
+
     await logScan({ tokenRef: cleaned.slice(0, 16), result: "INVALID_TOKEN", reason: "Token not found", ...ctx })
     return build("INVALID_TOKEN")
   }

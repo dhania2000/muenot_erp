@@ -18,6 +18,8 @@ import {
   Video,
 } from "lucide-react"
 
+type SourceModule = "sales" | "operations" | "recruitment" | "hr" | "google"
+
 type CalendarEvent = {
   id: string
   title: string
@@ -29,6 +31,12 @@ type CalendarEvent = {
   hangoutLink: string | null
   htmlLink: string | null
   status: string | null
+  sourceModule?: SourceModule
+  sourceRecordId?: string | number | null
+  category?: string | null
+  organizer?: string | null
+  href?: string | null
+  googleSyncStatus?: "Synced" | "Pending" | "Failed" | null
 }
 
 type EventsResponse = {
@@ -41,6 +49,29 @@ type EventsResponse = {
 
 const IST = "Asia/Kolkata"
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+/** Per-source theming so aggregated events are instantly distinguishable. */
+const SOURCE_META: Record<SourceModule, { label: string; dot: string; chip: string }> = {
+  sales: { label: "Sales", dot: "bg-blue-500", chip: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  operations: {
+    label: "Operations",
+    dot: "bg-amber-500",
+    chip: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  },
+  recruitment: {
+    label: "Recruitment",
+    dot: "bg-violet-500",
+    chip: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+  },
+  hr: { label: "HR", dot: "bg-emerald-500", chip: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  google: { label: "Personal", dot: "bg-muted-foreground", chip: "bg-muted text-muted-foreground" },
+}
+
+const ALL_SOURCES = Object.keys(SOURCE_META) as SourceModule[]
+
+function sourceOf(e: CalendarEvent): SourceModule {
+  return e.sourceModule ?? "google"
+}
 
 /** YYYY-MM-DD key for an event, evaluated in IST so days line up with the grid. */
 function dateKey(iso: string) {
@@ -83,6 +114,8 @@ export function CalendarClient({ name, description }: { name: string; descriptio
   })
   const [view, setView] = useState<"month" | "list">("month")
   const [search, setSearch] = useState("")
+  const [hiddenSources, setHiddenSources] = useState<Set<SourceModule>>(new Set())
+  const [syncing, setSyncing] = useState(false)
 
   // 6-week grid window (Mon-first) that fully contains the visible month.
   const gridStart = useMemo(() => {
@@ -135,6 +168,36 @@ export function CalendarClient({ name, description }: { name: string; descriptio
     mutate()
   }
 
+  async function runSync() {
+    setSyncing(true)
+    try {
+      const res = await fetch("/api/calendar/sync", { method: "POST" })
+      const json = await res.json()
+      if (json?.success) {
+        const t = json.totals ?? { synced: 0, failed: 0, retried: 0 }
+        if (t.retried === 0) toast.success("Everything is up to date")
+        else if (t.failed === 0) toast.success(`Synced ${t.synced} event${t.synced === 1 ? "" : "s"}`)
+        else toast.warning(`Synced ${t.synced}, ${t.failed} still failing`)
+      } else {
+        toast.error("Sync could not complete")
+      }
+    } catch {
+      toast.error("Sync could not complete")
+    } finally {
+      setSyncing(false)
+      mutate()
+    }
+  }
+
+  function toggleSource(src: SourceModule) {
+    setHiddenSources((prev) => {
+      const next = new Set(prev)
+      if (next.has(src)) next.delete(src)
+      else next.add(src)
+      return next
+    })
+  }
+
   const oauthConfigured = data?.oauthConfigured ?? true
   const connected = Boolean(data?.connected)
   const syncFailed = data?.error === "sync_failed"
@@ -142,11 +205,23 @@ export function CalendarClient({ name, description }: { name: string; descriptio
   const filteredEvents = useMemo(() => {
     const events = data?.events ?? []
     const q = search.trim().toLowerCase()
-    if (!q) return events
-    return events.filter((e) =>
-      [e.title, e.location, e.description].filter(Boolean).some((v) => v!.toLowerCase().includes(q)),
-    )
-  }, [data?.events, search])
+    return events.filter((e) => {
+      if (hiddenSources.has(sourceOf(e))) return false
+      if (!q) return true
+      return [e.title, e.location, e.description]
+        .filter(Boolean)
+        .some((v) => v!.toLowerCase().includes(q))
+    })
+  }, [data?.events, search, hiddenSources])
+
+  const sourceCounts = useMemo(() => {
+    const counts = new Map<SourceModule, number>()
+    for (const e of data?.events ?? []) {
+      const src = sourceOf(e)
+      counts.set(src, (counts.get(src) ?? 0) + 1)
+    }
+    return counts
+  }, [data?.events])
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>()
@@ -174,10 +249,16 @@ export function CalendarClient({ name, description }: { name: string; descriptio
             <p className="text-sm text-muted-foreground">{description}</p>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={() => mutate()} disabled={isValidating}>
-          <RefreshCw className={`mr-2 size-4 ${isValidating ? "animate-spin" : ""}`} />
-          Sync now
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => mutate()} disabled={isValidating}>
+            <RefreshCw className={`mr-2 size-4 ${isValidating ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+          <Button variant="outline" size="sm" onClick={runSync} disabled={syncing}>
+            <RefreshCw className={`mr-2 size-4 ${syncing ? "animate-spin" : ""}`} />
+            Sync now
+          </Button>
+        </div>
       </header>
 
       {oauthConfigured && (
@@ -258,6 +339,27 @@ export function CalendarClient({ name, description }: { name: string; descriptio
             <strong className="text-base">
               {viewMonth.toLocaleString("en-US", { month: "long", year: "numeric" })}
             </strong>
+            <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto">
+              {ALL_SOURCES.filter((src) => (sourceCounts.get(src) ?? 0) > 0).map((src) => {
+                const meta = SOURCE_META[src]
+                const hidden = hiddenSources.has(src)
+                return (
+                  <button
+                    key={src}
+                    type="button"
+                    onClick={() => toggleSource(src)}
+                    aria-pressed={!hidden}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                      hidden ? "border-border text-muted-foreground opacity-60" : `border-transparent ${meta.chip}`
+                    }`}
+                  >
+                    <span className={`size-2 rounded-full ${meta.dot}`} />
+                    {meta.label}
+                    <span className="tabular-nums opacity-70">{sourceCounts.get(src)}</span>
+                  </button>
+                )
+              })}
+            </div>
             <div className="flex items-center gap-3">
               <div className="relative hidden sm:block">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -317,19 +419,24 @@ export function CalendarClient({ name, description }: { name: string; descriptio
                       {day.getDate()}
                     </span>
                     <div className="mt-1 flex flex-col gap-1">
-                      {dayEvents.slice(0, 3).map((e) => (
-                        <a
-                          key={e.id}
-                          href={e.htmlLink ?? undefined}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="truncate rounded bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20"
-                          title={e.title}
-                        >
-                          {!e.allDay && <span className="tabular-nums">{timeLabel(e.start)} </span>}
-                          {e.title}
-                        </a>
-                      ))}
+                      {dayEvents.slice(0, 3).map((e) => {
+                        const meta = SOURCE_META[sourceOf(e)]
+                        const link = e.href ?? e.htmlLink ?? undefined
+                        return (
+                          <a
+                            key={e.id}
+                            href={link}
+                            target={link?.startsWith("http") ? "_blank" : undefined}
+                            rel="noreferrer"
+                            className={`flex items-center gap-1 truncate rounded px-1.5 py-0.5 text-xs font-medium hover:opacity-80 ${meta.chip}`}
+                            title={`${meta.label}: ${e.title}`}
+                          >
+                            <span className={`size-1.5 shrink-0 rounded-full ${meta.dot}`} />
+                            {!e.allDay && <span className="tabular-nums">{timeLabel(e.start)}</span>}
+                            <span className="truncate">{e.title}</span>
+                          </a>
+                        )
+                      })}
                       {dayEvents.length > 3 && (
                         <span className="px-1.5 text-xs text-muted-foreground">+{dayEvents.length - 3} more</span>
                       )}
@@ -354,15 +461,29 @@ export function CalendarClient({ name, description }: { name: string; descriptio
                     key={e.id}
                     className="flex items-center justify-between gap-4 rounded-md border border-border bg-card px-4 py-3"
                   >
-                    <div className="flex min-w-0 flex-col">
-                      <span className="truncate font-medium">{e.title}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(e.start).toLocaleDateString("en-GB", { timeZone: IST })}
-                        {!e.allDay && ` · ${timeLabel(e.start)}`}
-                        {e.location ? ` · ${e.location}` : ""}
-                      </span>
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span
+                        className={`mt-1.5 size-2.5 shrink-0 rounded-full ${SOURCE_META[sourceOf(e)].dot}`}
+                        aria-hidden
+                      />
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate font-medium">{e.title}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(e.start).toLocaleDateString("en-GB", { timeZone: IST })}
+                          {!e.allDay && ` · ${timeLabel(e.start)}`}
+                          {e.location ? ` · ${e.location}` : ""}
+                          {e.category ? ` · ${e.category}` : ""}
+                        </span>
+                      </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
+                      <Badge variant="outline" className="hidden sm:inline-flex">
+                        {SOURCE_META[sourceOf(e)].label}
+                      </Badge>
+                      {e.googleSyncStatus === "Failed" && (
+                        <Badge variant="destructive">Sync failed</Badge>
+                      )}
+                      {e.googleSyncStatus === "Pending" && <Badge variant="secondary">Pending</Badge>}
                       {e.allDay && <Badge variant="secondary">All day</Badge>}
                       {e.hangoutLink && (
                         <a

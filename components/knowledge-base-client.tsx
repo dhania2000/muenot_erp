@@ -17,7 +17,7 @@ import { ArticleEditor } from "@/components/knowledge-base/article-editor"
 import { ArticleDetailView } from "@/components/knowledge-base/article-detail"
 import { CategoriesManager } from "@/components/knowledge-base/categories-manager"
 import {
-  type ListResponse, type ArticleDetail, type ArticleRow, type Section,
+  type ListResponse, type ArticleDetail, type ArticleRow, type Section, type ContentType,
   SECTIONS, SORT_OPTIONS, STATUS_META, CONTENT_TYPE_META, AUDIENCE_LABELS,
   StatusBadge, TypeBadge, FavoriteStar, formatDate,
 } from "@/components/knowledge-base/kb-lib"
@@ -48,6 +48,7 @@ export function KnowledgeBaseClient() {
 
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<ArticleDetail | null>(null)
+  const [createType, setCreateType] = useState<ContentType>("article")
   const [detailId, setDetailId] = useState<number | null>(null)
 
   const section = SECTIONS.find((s) => s.key === sectionKey) ?? SECTIONS[0]
@@ -86,7 +87,8 @@ export function KnowledgeBaseClient() {
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
-  const openCreate = () => { setEditing(null); setEditorOpen(true) }
+  const openCreate = (type: ContentType = "article") => { setEditing(null); setCreateType(type); setEditorOpen(true) }
+  const createLabel = section.contentType ? CONTENT_TYPE_META[section.contentType].label : "Article"
   const openEdit = (detail: ArticleDetail) => { setDetailId(null); setEditing(detail); setEditorOpen(true) }
   const resetPageAnd = (fn: () => void) => { fn(); setPage(1) }
 
@@ -207,7 +209,9 @@ export function KnowledgeBaseClient() {
               </>
             )}
             {canManage && (
-              <Button onClick={openCreate}><Plus className="size-4" /> Add Article</Button>
+              <Button onClick={() => openCreate(section.contentType ?? "article")}>
+                <Plus className="size-4" /> Add {createLabel}
+              </Button>
             )}
           </div>
         </header>
@@ -286,7 +290,7 @@ export function KnowledgeBaseClient() {
                 <div className="flex flex-col items-center gap-3 py-16 text-center text-sm text-muted-foreground">
                   <BookOpen className="size-9" />
                   <p>No articles found.</p>
-                  {canManage && <Button variant="outline" size="sm" onClick={openCreate}><Plus className="size-3.5" /> Create the first one</Button>}
+                  {canManage && <Button variant="outline" size="sm" onClick={() => openCreate(section.contentType ?? "article")}><Plus className="size-3.5" /> Add {createLabel}</Button>}
                 </div>
               ) : (
                 <ul className="divide-y">
@@ -319,6 +323,7 @@ export function KnowledgeBaseClient() {
         open={editorOpen}
         onOpenChange={setEditorOpen}
         editing={editing}
+        initialContentType={createType}
         onSaved={() => mutate()}
       />
       <ArticleDetailView

@@ -342,7 +342,7 @@ function FormsTab({
   onChanged: () => void
 }) {
   async function toggleStatus(form: FormRow) {
-    const next = form.status === "Active" ? "Paused" : "Active"
+    const next = form.status === "Published" ? "Paused" : "Published"
     const res = await fetch(`/api/marketing/lead-generation/forms/${form.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -418,7 +418,7 @@ function FormsTab({
                 <TableCell className="text-center">{form.submission_count}</TableCell>
                 <TableCell className="text-center">{form.lead_count}</TableCell>
                 <TableCell>
-                  <Badge variant={form.status === "Active" ? "default" : "secondary"}>{form.status}</Badge>
+                  <Badge variant={form.status === "Published" ? "default" : "secondary"}>{form.status}</Badge>
                 </TableCell>
                 <TableCell>
                   <DropdownMenu>
@@ -439,7 +439,7 @@ function FormsTab({
                         <Pencil className="size-4" /> Edit
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => toggleStatus(form)}>
-                        <Power className="size-4" /> {form.status === "Active" ? "Pause" : "Activate"}
+                        <Power className="size-4" /> {form.status === "Published" ? "Pause" : "Activate"}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem className="text-destructive" onClick={() => remove(form)}>

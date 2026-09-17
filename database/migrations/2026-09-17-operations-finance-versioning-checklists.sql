@@ -25,9 +25,20 @@
 
 -- ---------------------------------------------------------------------------
 -- Phase 45 — Projects: authoritative planning budget for Budget vs Actual
+-- Guarded so re-running (or running after runtime self-heal) is a no-op.
 -- ---------------------------------------------------------------------------
-ALTER TABLE `operations_projects`
-  ADD COLUMN `budget_amount` DECIMAL(14,2) NULL AFTER `billing_model`;
+SET @ops_has_budget_amount := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'operations_projects'
+    AND COLUMN_NAME = 'budget_amount'
+);
+SET @ops_sql := IF(@ops_has_budget_amount = 0,
+  'ALTER TABLE `operations_projects` ADD COLUMN `budget_amount` DECIMAL(14,2) NULL AFTER `billing_model`',
+  'DO 0');
+PREPARE ops_stmt FROM @ops_sql;
+EXECUTE ops_stmt;
+DEALLOCATE PREPARE ops_stmt;
 
 -- ---------------------------------------------------------------------------
 -- Phase 33 — SOP version history (immutable snapshots)
@@ -77,7 +88,30 @@ CREATE TABLE IF NOT EXISTS operations_checklist_items (
 
 -- ---------------------------------------------------------------------------
 -- Phase 40 — Client approvals: audit stamp on decision
+-- Each column guarded independently so a partial prior run self-heals.
 -- ---------------------------------------------------------------------------
-ALTER TABLE `operations_client_approvals`
-  ADD COLUMN `decided_by` VARCHAR(255) NULL AFTER `decision_date`,
-  ADD COLUMN `decided_at` DATETIME NULL AFTER `decided_by`;
+SET @ops_has_decided_by := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'operations_client_approvals'
+    AND COLUMN_NAME = 'decided_by'
+);
+SET @ops_sql := IF(@ops_has_decided_by = 0,
+  'ALTER TABLE `operations_client_approvals` ADD COLUMN `decided_by` VARCHAR(255) NULL AFTER `decision_date`',
+  'DO 0');
+PREPARE ops_stmt FROM @ops_sql;
+EXECUTE ops_stmt;
+DEALLOCATE PREPARE ops_stmt;
+
+SET @ops_has_decided_at := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'operations_client_approvals'
+    AND COLUMN_NAME = 'decided_at'
+);
+SET @ops_sql := IF(@ops_has_decided_at = 0,
+  'ALTER TABLE `operations_client_approvals` ADD COLUMN `decided_at` DATETIME NULL AFTER `decided_by`',
+  'DO 0');
+PREPARE ops_stmt FROM @ops_sql;
+EXECUTE ops_stmt;
+DEALLOCATE PREPARE ops_stmt;

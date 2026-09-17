@@ -247,6 +247,127 @@ async function scanPending(scan: PendingScan): Promise<MonitoringAlert[]> {
   }))
 }
 
+// ── Client-approval automation (Phase 73) ─────────────────────────────────────
+/**
+ * Deliverables that have been SUBMITTED to the client but not yet accepted are
+ * awaiting a client decision — surface them so the owner chases acceptance.
+ * Covers both the internal deliverables register and the client_deliverables
+ * register (whichever the org uses). Reuses the existing deadline/notification
+ * pipeline — no separate approval store.
+ */
+async function scanSubmittedDeliverables(): Promise<MonitoringAlert[]> {
+  const internal = (await query(
+    `SELECT id, project_id, deliverable_name AS title, owner, submitted_date
+       FROM operations_deliverables
+      WHERE submitted_date IS NOT NULL
+        AND accepted_date IS NULL
+        AND LOWER(COALESCE(quality_status,'')) NOT IN ('accepted','rejected')
+        AND LOWER(COALESCE(status,'')) NOT IN (${closedList})
+      ORDER BY submitted_date ASC`,
+    [...CLOSED],
+  ).catch(() => [])) as any[]
+
+  const client = (await query(
+    `SELECT id, project_id, deliverable_name AS title, owner, submitted_date
+       FROM operations_client_deliverables
+      WHERE submitted_date IS NOT NULL
+        AND LOWER(COALESCE(acceptance_status,'pending')) NOT IN ('accepted','rejected')
+        AND LOWER(COALESCE(status,'')) NOT IN (${closedList})
+      ORDER BY submitted_date ASC`,
+    [...CLOSED],
+  ).catch(() => [])) as any[]
+
+  const map = (rows: any[], entity: string, link: string): MonitoringAlert[] =>
+    rows.map((r) => ({
+      category: "Deliverable Awaiting Client Approval",
+      entity,
+      entity_id: Number(r.id),
+      title: r.title ?? `${entity} #${r.id}`,
+      project_id: r.project_id != null ? Number(r.project_id) : null,
+      due_date: r.submitted_date ?? null,
+      owner: r.owner ?? null,
+      link,
+    }))
+
+  return [
+    ...map(internal, "deliverable", "/modules/operations/deliverables"),
+    ...map(client, "client_deliverable", "/modules/operations/client-deliverables"),
+  ]
+}
+
+// ── Document reminders (Phase 74) ─────────────────────────────────────────────
+// Documents every active project is expected to hold on file. Matching is
+// case-insensitive against the project's document_type values.
+const REQUIRED_PROJECT_DOCUMENTS = ["Contract", "SOW", "NDA"]
+
+/**
+ * Detect required-but-missing project documents plus documents whose validity
+ * is expiring/expired. Both are derived on read from operations_project_documents
+ * and the project master — no manual checklist is stored.
+ */
+async function scanDocuments(): Promise<MonitoringAlert[]> {
+  const alerts: MonitoringAlert[] = []
+
+  // Missing required documents per active project.
+  const projects = (await query(
+    `SELECT id, project_name FROM operations_projects WHERE LOWER(COALESCE(status,'')) = 'active'`,
+  ).catch(() => [])) as any[]
+
+  if (projects.length) {
+    const docs = (await query(
+      `SELECT project_id, LOWER(COALESCE(document_type,'')) AS dtype
+         FROM operations_project_documents
+        WHERE LOWER(COALESCE(status,'')) NOT IN ('archived','cancelled','superseded')`,
+    ).catch(() => [])) as any[]
+    const byProject = new Map<string, Set<string>>()
+    for (const d of docs) {
+      const key = String(d.project_id ?? "")
+      if (!byProject.has(key)) byProject.set(key, new Set())
+      if (d.dtype) byProject.get(key)!.add(d.dtype)
+    }
+    for (const p of projects) {
+      const present = byProject.get(String(p.id)) ?? new Set<string>()
+      const missing = REQUIRED_PROJECT_DOCUMENTS.filter((req) => !present.has(req.toLowerCase()))
+      if (missing.length) {
+        alerts.push({
+          category: "Missing Project Document",
+          entity: "project",
+          entity_id: Number(p.id),
+          title: `${p.project_name ?? `Project #${p.id}`} — missing ${missing.join(", ")}`,
+          project_id: Number(p.id),
+          due_date: null,
+          owner: null,
+          link: "/modules/operations/project-documents",
+        })
+      }
+    }
+  }
+
+  // Expiring / expired documents (within 30 days).
+  const expiring = (await query(
+    `SELECT id, project_id, document_name AS title, owner, expiry_date
+       FROM operations_project_documents
+      WHERE expiry_date IS NOT NULL
+        AND expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+        AND LOWER(COALESCE(status,'')) NOT IN ('archived','cancelled','superseded')
+      ORDER BY expiry_date ASC`,
+  ).catch(() => [])) as any[]
+  for (const r of expiring) {
+    alerts.push({
+      category: "Document Expiring",
+      entity: "document",
+      entity_id: Number(r.id),
+      title: r.title ?? `Document #${r.id}`,
+      project_id: r.project_id != null ? Number(r.project_id) : null,
+      due_date: r.expiry_date ?? null,
+      owner: r.owner ?? null,
+      link: "/modules/operations/project-documents",
+    })
+  }
+
+  return alerts
+}
+
 /**
  * Full deadline + pending-queue scan. Returns every alert grouped by category
  * plus flat list. Read-only — used both by the dashboard endpoint and the cron.
@@ -256,6 +377,8 @@ export async function computeMonitoring(): Promise<{ alerts: MonitoringAlert[]; 
     ...SCANS.map(scanOverdue),
     scanSlaBreaches(),
     ...PENDING_SCANS.map(scanPending),
+    scanSubmittedDeliverables(),
+    scanDocuments(),
   ])
   const alerts = results.flat()
   const counts: Record<string, number> = {}

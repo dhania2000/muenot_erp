@@ -83,6 +83,10 @@
     {
       "path": "/api/cron/call-cleanup",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/employee-asset-reminders",
+      "schedule": "0 7 * * *"
     }
   ]
 }

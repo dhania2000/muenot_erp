@@ -1,5 +1,5 @@
-import { WorkspaceModuleClient } from "@/components/workspace-module-client"
+import { EmployeeAssetsClient } from "@/components/assets/employee-assets-client"
 
 export default function EmployeeAssetsPage() {
-  return <WorkspaceModuleClient slug="assets" name="Employee Assets" description="Asset register" />
+  return <EmployeeAssetsClient />
 }

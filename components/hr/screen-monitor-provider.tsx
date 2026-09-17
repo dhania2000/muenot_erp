@@ -207,16 +207,35 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
       return
     }
 
-    // Native browser screen-share prompt.
+    // Native browser screen-share prompt. We force the "entire screen" surface:
+    // the hints below make the monitor the default/only sensible choice, and the
+    // post-grant check rejects a window/tab share so only a full-screen capture
+    // is ever accepted.
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 1 },
+        video: { frameRate: 1, displaySurface: "monitor" },
         audio: false,
-      })
+        // Steer the browser picker toward the whole screen and away from
+        // per-tab/window sharing where these options are supported.
+        monitorTypeSurfaces: "include",
+        surfaceSwitching: "exclude",
+        selfBrowserSurface: "exclude",
+        preferCurrentTab: false,
+      } as DisplayMediaStreamOptions)
     } catch {
       await recordSession(false)
       toast.error("Screen sharing permission was denied. Attendance is still recorded.")
+      return
+    }
+
+    // Enforce entire-screen sharing: if the employee picked a window or a tab,
+    // reject the stream and ask them to share their whole screen instead.
+    const displaySurface = stream.getVideoTracks()[0]?.getSettings().displaySurface
+    if (displaySurface && displaySurface !== "monitor") {
+      stream.getTracks().forEach((track) => track.stop())
+      await recordSession(false)
+      toast.error("Please share your entire screen, not a single window or tab.")
       return
     }
 

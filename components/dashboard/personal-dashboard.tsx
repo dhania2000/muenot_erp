@@ -76,6 +76,19 @@ function priorityTone(priority: string | null): string {
   }
 }
 
+// Distinct, high-contrast styling for the currently selected priority pill so
+// every option (including "low") gives clear visual feedback when clicked.
+function prioritySelectedTone(priority: "low" | "medium" | "high"): string {
+  switch (priority) {
+    case "high":
+      return "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/40 ring-1 ring-red-500/40"
+    case "medium":
+      return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40 ring-1 ring-amber-500/40"
+    case "low":
+      return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/40 ring-1 ring-emerald-500/40"
+  }
+}
+
 function formatDate(value: string | null): string | null {
   if (!value) return null
   const d = new Date(value)
@@ -266,9 +279,12 @@ function TodoCard({ todos, loading }: { todos: Todo[]; loading: boolean }) {
               key={p}
               type="button"
               onClick={() => setPriority(p)}
+              aria-pressed={priority === p}
               className={cn(
-                "rounded-md border px-2.5 py-1 text-xs capitalize transition-colors",
-                priority === p ? priorityTone(p) : "border-transparent bg-muted/60 text-muted-foreground hover:bg-muted",
+                "cursor-pointer rounded-md border px-2.5 py-1 text-xs capitalize transition-colors",
+                priority === p
+                  ? prioritySelectedTone(p)
+                  : "border-transparent bg-muted/60 text-muted-foreground hover:bg-muted",
               )}
             >
               {p}

@@ -18,6 +18,7 @@ import {
   snapshotSop,
   stampClientApprovalDecision,
 } from "@/lib/operations-sync"
+import { runTaskAutomation } from "@/lib/operations-task-automation"
 import { ensureOperationsSchema } from "@/lib/operations-ensure"
 import type { SessionPayload } from "@/lib/auth"
 
@@ -155,6 +156,10 @@ async function runSyncHooks(
     else if (selected === "sla_monitoring") await syncSlaBreach(row, row.id)
     else if (selected === "sops") await snapshotSop(row, row.id, changeType, { id: session.userId, name: session.name })
     else if (selected === "client_approvals") await stampClientApprovalDecision(row.id, { id: session.userId, name: session.name })
+
+    // Phase 71 — spawn linked follow-up tasks into the existing tasks pipeline.
+    // Idempotent, so calling on both Created and Updated is safe.
+    await runTaskAutomation(selected, row, changeType)
   } catch (error) {
     console.log("[v0] operations sync hook failed:", (error as Error).message)
   }

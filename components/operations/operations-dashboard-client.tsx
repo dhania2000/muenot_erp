@@ -165,6 +165,18 @@ const configs: Record<string, { title: string; fields: string[] }> = {
     title: "Budget vs Actual",
     fields: ["project_id", "project_name", "client_name", "category", "budget_amount", "actual_amount", "variance", "variance_percent", "period", "currency", "forecast_amount", "status", "remarks"],
   },
+  productivity: {
+    title: "Productivity",
+    fields: ["resource_id", "resource_name", "project_id", "period", "tasks_assigned", "tasks_completed", "deliverables_completed", "estimated_hours", "logged_hours", "billable_hours", "task_completion_percent", "efficiency_percent", "billable_percent", "productivity_score", "source", "status", "remarks"],
+  },
+  scorecards: {
+    title: "Quality Scorecards",
+    fields: ["scorecard_no", "scorecard_type", "subject_type", "subject_id", "subject_name", "project_id", "client_name", "period", "review_date", "reviewer", "total_score", "max_score", "score_percent", "result", "status", "remarks"],
+  },
+  scorecard_criteria: {
+    title: "Scorecard Criteria",
+    fields: ["scorecard_id", "criteria_name", "weight", "max_score", "score", "weighted_score", "status", "remarks"],
+  },
 }
 
 // Default lifecycle statuses used when a module has no specialised set.
@@ -212,6 +224,10 @@ const ENUM_OPTIONS: Record<string, string[]> = {
   decision: ["Approved", "Rejected", "On Hold", "Pending"],
   proficiency_level: ["Beginner", "Intermediate", "Advanced", "Expert"],
   capa_type: ["Corrective", "Preventive"],
+  scorecard_type: ["Resource", "Project", "Client", "Vendor"],
+  subject_type: ["Resource", "Project", "Client", "Vendor"],
+  result: ["Excellent", "Satisfactory", "Needs Improvement", "Poor"],
+  source: ["derived", "manual"],
 }
 
 // Returns the select options for a field within a module, or null for a plain input.

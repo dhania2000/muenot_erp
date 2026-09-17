@@ -5,6 +5,7 @@ import { createSessionToken, setSessionCookie } from "@/lib/auth"
 import { getNum } from "@/lib/settings/server"
 import { recordActivity } from "@/lib/notifications"
 import { resolveTenantIdForUser } from "@/lib/tenant-service"
+import { getStoredRoles } from "@/lib/platform-roles"
 
 type UserRow = {
   id: number
@@ -61,6 +62,13 @@ export async function POST(request: Request) {
     // tenant from the verified session, never from client input.
     const tenantId = (await resolveTenantIdForUser(user.id)) ?? undefined
 
+    // SPEC 3 — capture the platform/tenant role axes from the DB source of
+    // truth. Carried in the token for cheap UI hints only; guards re-resolve
+    // from the DB before authorizing. A fresh login never carries an
+    // impersonation — that is only ever set by the audited impersonation
+    // endpoint, so signing in always drops back to the operator's home tenant.
+    const roles = await getStoredRoles(user.id)
+
     // Session lifetime is configurable in Settings → Security (minutes).
     const timeoutMinutes = await getNum("security.session_timeout", 480)
     const durationSeconds = Math.max(60, Math.round(timeoutMinutes * 60))
@@ -71,6 +79,9 @@ export async function POST(request: Request) {
         name: user.name,
         role: user.role,
         tenantId,
+        platformRole: roles?.platformRole ?? "none",
+        tenantRole: roles?.tenantRole ?? (user.role === "admin" ? "tenant_admin" : "employee"),
+        impersonatedTenantId: null,
       },
       durationSeconds,
     )

@@ -35,6 +35,48 @@ export type EmailHubUiConfig = {
   recipientSearchPlaceholder: string
   /** {{variable}} names offered in the personalization helper. */
   personalization: string[]
+  /** Base path of the module template API, e.g. "/api/operations/email-templates". */
+  templatesApiBase: string
+  /** Copy + options for the Email Templates management page. */
+  templateBreadcrumb: string
+  templateTitle: string
+  templateDescription: string
+  templateAudiences: string[]
+  templateDefaultAudience: string
+}
+
+// ---------------------------------------------------------------------------
+// Email Hub template constants + row type (client-safe, dependency-free).
+// Mirrors the HR template lifecycle so Operations & Recruitment templates get
+// the same versioning, status governance and usage analytics.
+// ---------------------------------------------------------------------------
+export const EMAIL_HUB_TEMPLATE_STATUSES = ["Draft", "Active", "Inactive", "Archived"] as const
+export type EmailHubTemplateStatus = (typeof EMAIL_HUB_TEMPLATE_STATUSES)[number]
+
+export type EmailHubTemplate = {
+  id: number
+  template_uid: string | null
+  template_key: string | null
+  name: string
+  description: string | null
+  category: string
+  audience: string
+  event_key: string | null
+  subject: string
+  body: string
+  body_text: string | null
+  status: EmailHubTemplateStatus
+  version: number
+  usage_count: number
+  last_used_at: string | null
+  attachment_pathname: string | null
+  attachment_name: string | null
+  attachment_type: string | null
+  attachment_size: number | null
+  created_by: number | null
+  updated_by: number | null
+  created_at: string | null
+  updated_at: string | null
 }
 
 export const EMAIL_HUB_UI: Record<EmailHubModuleKey, EmailHubUiConfig> = {

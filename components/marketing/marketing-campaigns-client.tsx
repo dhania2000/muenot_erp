@@ -1,6 +1,8 @@
 "use client"
 
 import { useState } from "react"
+import useSWR from "swr"
+import { fetcher } from "@/lib/fetcher"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,66 +17,94 @@ import {
   DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Megaphone, Plus, DollarSign, TrendingUp } from "lucide-react"
 import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
 
-type Status = "Active" | "Scheduled" | "Completed" | "Draft"
+const CAMPAIGN_TYPES = ["Newsletter", "Promotional", "Announcement", "Transactional", "Re-engagement"] as const
 
-type Campaign = {
-  id: string
-  name: string
-  channel: string
-  status: Status
-  budget: number
-  spent: number
-  roi: string
-}
-
-const SEED: Campaign[] = []
-
-const STATUS_VARIANT: Record<Status, "default" | "secondary" | "outline"> = {
-  Active: "default",
+// Backend campaign statuses mapped to the display badge + variant used here.
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
+  Sending: "default",
+  Sent: "outline",
   Scheduled: "secondary",
-  Completed: "outline",
   Draft: "outline",
+  Paused: "secondary",
+  Cancelled: "outline",
+  Failed: "outline",
 }
 
-const money = (n: number) => `$${n.toLocaleString()}`
-
-function avgRoi(campaigns: Campaign[]) {
-  const nums = campaigns
-    .map((c) => Number.parseFloat(c.roi.replace("x", "")))
-    .filter((n) => !Number.isNaN(n))
-  if (nums.length === 0) return "—"
-  return `${(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(1)}x`
+type CampaignRow = {
+  id: number
+  campaign_code: string
+  name: string
+  type: string
+  status: string
+  budget: number | string
+  spent: number | string
+  revenue: number | string
 }
+
+type Stats = {
+  active: number
+  total_budget: number
+  total_spent: number
+  avg_roi: number | null
+}
+
+type CampaignsResponse = {
+  campaigns: CampaignRow[]
+  total: number
+  stats: Stats
+}
+
+const money = (n: number) =>
+  `$${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 
 export function MarketingCampaignsClient() {
-  const [campaigns, setCampaigns] = useState<Campaign[]>(SEED)
+  const { data, isLoading, mutate } = useSWR<CampaignsResponse>(
+    "/api/marketing/campaigns?pageSize=100&sort=created_at&dir=desc",
+    fetcher,
+  )
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ name: "", channel: "", budget: "" })
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({ name: "", type: "Newsletter", budget: "" })
 
-  function add() {
-    if (!form.name) return
-    setCampaigns((prev) => [
-      {
-        id: `MC-${207 + prev.length}`,
-        name: form.name,
-        channel: form.channel || "Email",
-        status: "Draft",
-        budget: Number(form.budget) || 0,
-        spent: 0,
-        roi: "—",
-      },
-      ...prev,
-    ])
-    setForm({ name: "", channel: "", budget: "" })
-    setOpen(false)
+  const campaigns = data?.campaigns ?? []
+  const stats = data?.stats
+
+  async function add() {
+    if (!form.name.trim() || saving) return
+    setSaving(true)
+    try {
+      const res = await fetch("/api/marketing/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          type: form.type,
+          budget: Number(form.budget) || 0,
+        }),
+      })
+      if (!res.ok) return
+      setForm({ name: "", type: "Newsletter", budget: "" })
+      setOpen(false)
+      await mutate()
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const totalBudget = campaigns.reduce((a, c) => a + c.budget, 0)
-  const totalSpent = campaigns.reduce((a, c) => a + c.spent, 0)
-  const active = campaigns.filter((c) => c.status === "Active").length
+  const active = stats?.active ?? 0
+  const totalBudget = stats?.total_budget ?? 0
+  const totalSpent = stats?.total_spent ?? 0
+  const roi = stats?.avg_roi
 
   return (
     <main className="flex flex-col gap-6 p-6">
@@ -97,29 +127,51 @@ export function MarketingCampaignsClient() {
                 <DialogTitle>New Campaign</DialogTitle>
               </DialogHeader>
               <div className="grid gap-4 py-2">
-                {(
-                  [
-                    ["name", "Campaign name", "text"],
-                    ["channel", "Channel", "text"],
-                    ["budget", "Budget", "number"],
-                  ] as const
-                ).map(([key, label, type]) => (
-                  <div key={key} className="flex flex-col gap-1.5">
-                    <Label htmlFor={key} className="text-xs text-muted-foreground">
-                      {label}
-                    </Label>
-                    <Input
-                      id={key}
-                      type={type}
-                      value={form[key]}
-                      onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                    />
-                  </div>
-                ))}
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="name" className="text-xs text-muted-foreground">
+                    Campaign name
+                  </Label>
+                  <Input
+                    id="name"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="type" className="text-xs text-muted-foreground">
+                    Type
+                  </Label>
+                  <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                    <SelectTrigger id="type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CAMPAIGN_TYPES.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {t}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="budget" className="text-xs text-muted-foreground">
+                    Budget
+                  </Label>
+                  <Input
+                    id="budget"
+                    type="number"
+                    min={0}
+                    value={form.budget}
+                    onChange={(e) => setForm({ ...form, budget: e.target.value })}
+                  />
+                </div>
               </div>
               <DialogFooter>
                 <DialogClose render={<Button variant="outline">Cancel</Button>} />
-                <Button onClick={add}>Create campaign</Button>
+                <Button onClick={add} disabled={saving || !form.name.trim()}>
+                  {saving ? "Creating…" : "Create campaign"}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -129,8 +181,18 @@ export function MarketingCampaignsClient() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Active Campaigns" value={active} icon={Megaphone} />
         <StatCard label="Total Budget" value={money(totalBudget)} icon={DollarSign} />
-        <StatCard label="Spent" value={money(totalSpent)} hint={totalBudget > 0 ? `${Math.round((totalSpent / totalBudget) * 100)}% of budget` : undefined} icon={DollarSign} />
-        <StatCard label="Avg. ROI" value={avgRoi(campaigns)} hint="Trailing 90 days" icon={TrendingUp} />
+        <StatCard
+          label="Spent"
+          value={money(totalSpent)}
+          hint={totalBudget > 0 ? `${Math.round((totalSpent / totalBudget) * 100)}% of budget` : undefined}
+          icon={DollarSign}
+        />
+        <StatCard
+          label="Avg. ROI"
+          value={roi != null ? `${roi.toFixed(1)}x` : "—"}
+          hint="Trailing 90 days"
+          icon={TrendingUp}
+        />
       </div>
 
       <Card>
@@ -147,28 +209,41 @@ export function MarketingCampaignsClient() {
               </tr>
             </thead>
             <tbody>
-              {campaigns.length === 0 && (
+              {isLoading && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                    Loading campaigns…
+                  </td>
+                </tr>
+              )}
+              {!isLoading && campaigns.length === 0 && (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-muted-foreground">
                     No campaigns yet. Create your first campaign to get started.
                   </td>
                 </tr>
               )}
-              {campaigns.map((c) => (
-                <tr key={c.id} className="border-b last:border-0">
-                  <td className="py-3">
-                    <div className="font-medium">{c.name}</div>
-                    <div className="font-mono text-xs text-muted-foreground">{c.id}</div>
-                  </td>
-                  <td className="py-3 text-muted-foreground">{c.channel}</td>
-                  <td className="py-3">
-                    <Badge variant={STATUS_VARIANT[c.status]}>{c.status}</Badge>
-                  </td>
-                  <td className="py-3 text-right tabular-nums">{money(c.budget)}</td>
-                  <td className="py-3 text-right tabular-nums">{money(c.spent)}</td>
-                  <td className="py-3 text-right font-medium tabular-nums">{c.roi}</td>
-                </tr>
-              ))}
+              {campaigns.map((c) => {
+                const budget = Number(c.budget) || 0
+                const spent = Number(c.spent) || 0
+                const revenue = Number(c.revenue) || 0
+                const rowRoi = spent > 0 ? `${(revenue / spent).toFixed(1)}x` : "—"
+                return (
+                  <tr key={c.id} className="border-b last:border-0">
+                    <td className="py-3">
+                      <div className="font-medium">{c.name}</div>
+                      <div className="font-mono text-xs text-muted-foreground">{c.campaign_code}</div>
+                    </td>
+                    <td className="py-3 text-muted-foreground">{c.type}</td>
+                    <td className="py-3">
+                      <Badge variant={STATUS_VARIANT[c.status] ?? "outline"}>{c.status}</Badge>
+                    </td>
+                    <td className="py-3 text-right tabular-nums">{money(budget)}</td>
+                    <td className="py-3 text-right tabular-nums">{money(spent)}</td>
+                    <td className="py-3 text-right font-medium tabular-nums">{rowRoi}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </CardContent>

@@ -139,6 +139,10 @@ export async function ensureCampaignSchema() {
       excluded_size INT UNSIGNED NOT NULL DEFAULT 0,
       sent_count INT UNSIGNED NOT NULL DEFAULT 0,
       failed_count INT UNSIGNED NOT NULL DEFAULT 0,
+      -- budget tracking (surfaced on the campaigns overview)
+      budget DECIMAL(14,2) NOT NULL DEFAULT 0,
+      spent DECIMAL(14,2) NOT NULL DEFAULT 0,
+      revenue DECIMAL(14,2) NOT NULL DEFAULT 0,
       started_at DATETIME NULL,
       completed_at DATETIME NULL,
       last_error VARCHAR(500) NULL,
@@ -170,6 +174,9 @@ export async function ensureCampaignSchema() {
     ["started_at", "`started_at` DATETIME NULL"],
     ["completed_at", "`completed_at` DATETIME NULL"],
     ["archived_at", "`archived_at` DATETIME NULL"],
+    ["budget", "`budget` DECIMAL(14,2) NOT NULL DEFAULT 0"],
+    ["spent", "`spent` DECIMAL(14,2) NOT NULL DEFAULT 0"],
+    ["revenue", "`revenue` DECIMAL(14,2) NOT NULL DEFAULT 0"],
   ]
   for (const [c, ddl] of cols) await addColumnIfMissing("marketing_email_campaigns", c, ddl)
 

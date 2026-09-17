@@ -5,6 +5,7 @@ import {
   getFormById,
   updateForm,
   setFormStatus,
+  FORM_STATUSES,
   FormNotFoundError,
   SubmissionRejectedError,
 } from "@/lib/marketing/leadgen-db"
@@ -27,7 +28,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const { id } = await params
   try {
-    await updateForm(Number(id), await request.json(), session.userId)
+    const body = await request.json()
+    // A status change is its own audited transition, so route it through
+    // setFormStatus (updateForm intentionally does not treat status as a
+    // writable column).
+    if (typeof body.status === "string" && (FORM_STATUSES as readonly string[]).includes(body.status)) {
+      await setFormStatus(Number(id), body.status, session.userId)
+    }
+    const { status: _status, ...rest } = body
+    if (Object.keys(rest).length) {
+      await updateForm(Number(id), rest, session.userId)
+    }
     const form = await getFormById(Number(id))
     return NextResponse.json({ ok: true, form })
   } catch (error) {

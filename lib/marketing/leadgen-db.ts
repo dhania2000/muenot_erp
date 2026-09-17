@@ -17,6 +17,7 @@ import {
   recordAudit,
   notify,
 } from "@/lib/sales/lead-lifecycle"
+import { triggerEvent } from "@/lib/marketing/journeys-engine"
 
 /**
  * Lead Generation service.
@@ -367,7 +368,7 @@ export async function listForms(opts: {
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
   return query<any[]>(
-    `SELECT f.*, u.name AS owner_name,
+    `SELECT f.*, u.name AS default_owner_name,
             (SELECT COUNT(*) FROM leadgen_form_fields ff WHERE ff.form_id = f.id) AS field_count,
             (SELECT COUNT(*) FROM leadgen_submissions s WHERE s.form_id = f.id AND s.lead_id IS NOT NULL) AS lead_count
        FROM leadgen_forms f
@@ -881,6 +882,15 @@ export async function processSubmission(
     })
   }
 
+  // 5) Fan out to Marketing Journeys. Active journeys whose trigger matches
+  // (form_submitted / lead_created / contact_added) auto-enroll this contact.
+  // Best-effort: a journey hiccup must never fail the captured lead.
+  if (contactId) {
+    await triggerEvent("form_submitted", { contactId }).catch(() => {})
+    await triggerEvent("contact_added", { contactId }).catch(() => {})
+    if (leadId) await triggerEvent("lead_created", { contactId }).catch(() => {})
+  }
+
   return { submission_code: code, status: "Converted", lead_code: leadCode }
 }
 
@@ -1067,43 +1077,38 @@ export async function convertSubmissionToLead(
 export async function getDashboard(days = 30): Promise<Record<string, any>> {
   const period = Math.min(365, Math.max(1, days))
 
-  const [totalsRow] = await query<any[]>(
+  // Headline totals for the stat cards. `forms`/`active_forms` come from the
+  // form master; `submissions`/`leads_created` from the submissions table so
+  // the conversion rate reflects real captured-to-lead performance.
+  const [formTotals] = await query<any[]>(
     `SELECT
         COUNT(*) AS forms,
-        SUM(status = 'Published') AS published,
-        COALESCE(SUM(view_count),0) AS views,
-        COALESCE(SUM(submission_count),0) AS submissions
+        COALESCE(SUM(status = 'Published'), 0) AS active_forms
        FROM leadgen_forms WHERE archived_at IS NULL`,
   )
-
-  const [subRow] = await query<any[]>(
+  const [subTotals] = await query<any[]>(
     `SELECT
-        COUNT(*) AS total,
-        SUM(status = 'Converted') AS converted,
-        SUM(status = 'New') AS pending,
-        SUM(status = 'Spam') AS spam,
-        SUM(status = 'Duplicate') AS duplicate,
-        SUM(lead_id IS NOT NULL) AS leads
-       FROM leadgen_submissions
-      WHERE created_at > (NOW() - INTERVAL ? DAY)`,
-    [period],
+        COUNT(*) AS submissions,
+        COALESCE(SUM(lead_id IS NOT NULL), 0) AS leads_created
+       FROM leadgen_submissions`,
   )
 
-  // Views vs. submissions per day for the funnel/trend chart.
+  const submissions = Number(subTotals?.submissions ?? 0)
+  const leadsCreated = Number(subTotals?.leads_created ?? 0)
+
+  // Submissions per day over the trailing window for the area chart.
   const trend = await query<any[]>(
-    `SELECT DATE(created_at) AS day,
-            SUM(type = 'view') AS views,
-            SUM(type = 'submit') AS submissions
-       FROM leadgen_form_events
+    `SELECT DATE(created_at) AS date, COUNT(*) AS submissions
+       FROM leadgen_submissions
       WHERE created_at > (NOW() - INTERVAL ? DAY)
-      GROUP BY DATE(created_at) ORDER BY day ASC`,
+      GROUP BY DATE(created_at) ORDER BY date ASC`,
     [period],
   )
 
-  // Per-form performance leaderboard.
+  // Per-form leaderboard by submission volume.
   const topForms = await query<any[]>(
-    `SELECT f.id, f.form_code, f.name, f.status, f.view_count, f.submission_count,
-            (SELECT COUNT(*) FROM leadgen_submissions s WHERE s.form_id = f.id AND s.lead_id IS NOT NULL) AS leads
+    `SELECT f.id, f.name, f.form_code, f.submission_count AS submissions,
+            (SELECT COUNT(*) FROM leadgen_submissions s WHERE s.form_id = f.id AND s.lead_id IS NOT NULL) AS leads_created
        FROM leadgen_forms f
       WHERE f.archived_at IS NULL
       ORDER BY f.submission_count DESC, f.view_count DESC
@@ -1111,49 +1116,41 @@ export async function getDashboard(days = 30): Promise<Record<string, any>> {
   )
 
   const bySource = await query<any[]>(
-    `SELECT COALESCE(NULLIF(f.lead_source,''),'Unspecified') AS source, COUNT(s.id) AS count
+    `SELECT COALESCE(NULLIF(f.lead_source,''),'Unspecified') AS lead_source, COUNT(s.id) AS submissions
        FROM leadgen_submissions s
        JOIN leadgen_forms f ON f.id = s.form_id
-      WHERE s.created_at > (NOW() - INTERVAL ? DAY) AND s.status = 'Converted'
-      GROUP BY source ORDER BY count DESC LIMIT 8`,
+      WHERE s.created_at > (NOW() - INTERVAL ? DAY)
+      GROUP BY lead_source ORDER BY submissions DESC LIMIT 8`,
     [period],
   )
 
-  const views = Number(totalsRow?.views ?? 0)
-  const submissions = Number(subRow?.total ?? 0)
-  const converted = Number(subRow?.converted ?? 0)
+  const recent = await query<any[]>(
+    `SELECT s.id, s.submission_code, f.name AS form_name, s.full_name, s.email, s.status, s.created_at
+       FROM leadgen_submissions s
+       LEFT JOIN leadgen_forms f ON f.id = s.form_id
+      ORDER BY s.created_at DESC LIMIT 8`,
+  )
 
   return {
     totals: {
-      forms: Number(totalsRow?.forms ?? 0),
-      published: Number(totalsRow?.published ?? 0),
-      views,
-      allSubmissions: Number(totalsRow?.submissions ?? 0),
-    },
-    period: {
-      days: period,
+      forms: Number(formTotals?.forms ?? 0),
+      active_forms: Number(formTotals?.active_forms ?? 0),
       submissions,
-      converted,
-      pending: Number(subRow?.pending ?? 0),
-      spam: Number(subRow?.spam ?? 0),
-      duplicate: Number(subRow?.duplicate ?? 0),
-      leads: Number(subRow?.leads ?? 0),
-      conversionRate: views > 0 ? Math.round((submissions / views) * 1000) / 10 : 0,
-      qualifyRate: submissions > 0 ? Math.round((converted / submissions) * 1000) / 10 : 0,
+      leads_created: leadsCreated,
+      conversion_rate: submissions > 0 ? Math.round((leadsCreated / submissions) * 1000) / 10 : 0,
     },
     trend: trend.map((t) => ({
-      day: t.day,
-      views: Number(t.views ?? 0),
+      date: t.date,
       submissions: Number(t.submissions ?? 0),
     })),
     topForms: topForms.map((f) => ({
-      ...f,
-      view_count: Number(f.view_count ?? 0),
-      submission_count: Number(f.submission_count ?? 0),
-      leads: Number(f.leads ?? 0),
-      conversionRate:
-        Number(f.view_count) > 0 ? Math.round((Number(f.submission_count) / Number(f.view_count)) * 1000) / 10 : 0,
+      id: f.id,
+      name: f.name,
+      form_code: f.form_code,
+      submissions: Number(f.submissions ?? 0),
+      leads_created: Number(f.leads_created ?? 0),
     })),
-    bySource: bySource.map((s) => ({ source: s.source, count: Number(s.count ?? 0) })),
+    bySource: bySource.map((s) => ({ lead_source: s.lead_source, submissions: Number(s.submissions ?? 0) })),
+    recent,
   }
 }

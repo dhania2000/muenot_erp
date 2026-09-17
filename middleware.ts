@@ -41,7 +41,33 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/dashboard", request.url))
   }
 
-  return NextResponse.next()
+  // Forward the subdomain as a PRE-AUTH HINT only (e.g. acme.muenot.app -> "acme").
+  // Server code must still derive the authoritative tenant from the verified
+  // session (users.tenant_id); this header can never override it. Stripped from
+  // the incoming request first so a client cannot spoof it.
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.delete("x-tenant-hint")
+  const subdomain = extractSubdomain(request.nextUrl.hostname)
+  if (subdomain) requestHeaders.set("x-tenant-hint", subdomain)
+
+  return NextResponse.next({ request: { headers: requestHeaders } })
+}
+
+/**
+ * Extract a tenant subdomain from the host, ignoring common non-tenant labels
+ * and bare/localhost/IP hosts. Returns null when there is no meaningful
+ * subdomain. Informational only — see the note at the call site.
+ */
+function extractSubdomain(hostname: string): string | null {
+  if (!hostname || hostname === "localhost") return null
+  // Skip raw IP addresses (no meaningful subdomain).
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return null
+  const labels = hostname.split(".")
+  if (labels.length < 3) return null
+  const candidate = labels[0].toLowerCase()
+  const RESERVED = new Set(["www", "app", "admin", "api", "staging", "preview", "vercel"])
+  if (RESERVED.has(candidate)) return null
+  return candidate
 }
 
 export const config = {

@@ -13,6 +13,7 @@ import {
   Plug,
   Settings2,
   Users,
+  Rocket,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -21,6 +22,7 @@ type NavItem = { href: string; label: string; icon: React.ComponentType<{ classN
 const NAV: NavItem[] = [
   { href: "/platform", label: "Overview", icon: LayoutDashboard, group: "Operate" },
   { href: "/platform/tenants", label: "Tenants & lifecycle", icon: Building2, group: "Operate" },
+  { href: "/platform/onboarding", label: "Organization onboarding", icon: Rocket, group: "Operate" },
   { href: "/platform/subscriptions", label: "Subscriptions & billing", icon: CreditCard, group: "Operate" },
   { href: "/platform/usage", label: "Usage & storage", icon: Gauge, group: "Operate" },
   { href: "/platform/health", label: "Health & jobs", icon: Activity, group: "Observe" },

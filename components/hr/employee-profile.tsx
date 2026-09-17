@@ -32,6 +32,9 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { PermissionMatrixEditor } from "@/components/hr/permission-matrix-editor"
+import { EmployeeCallAction } from "@/components/calls/call-button"
+import { useCalls } from "@/components/calls/call-provider"
+import { CallHistory } from "@/components/calls/call-history"
 import { EmployeeResetPasswordDialog } from "@/components/hr/employee-reset-password-dialog"
 import { shiftTimeLabel } from "@/components/hr/shift-change-status"
 
@@ -628,6 +631,46 @@ function EventsTab({ employeeId, active, mode }: { employeeId: number; active: s
   )
 }
 
+// Header call action. Placing a call requires a live login account and an
+// active employee; calling yourself is disabled. The buttons themselves are
+// further gated by the caller's RBAC audio/video permissions inside
+// <CallButtons/>, so this renders nothing for users without any call rights.
+function EmployeeHeaderCall({
+  employee,
+  linkedUser,
+}: {
+  employee: Record<string, any>
+  linkedUser: LinkedUser
+}) {
+  const { currentUserId } = useCalls()
+  const isSelf = linkedUser?.id === currentUserId
+  const inactive = ["Resigned", "Terminated", "Ex-Employee", "Suspended"].includes(
+    employee.employment_status || "",
+  )
+  const disabled = !linkedUser || isSelf || inactive
+  const disabledReason = !linkedUser
+    ? "This employee has no login account and cannot receive internal calls."
+    : isSelf
+      ? "You cannot call yourself."
+      : inactive
+        ? "This employee is inactive and cannot be called."
+        : undefined
+
+  return (
+    <EmployeeCallAction
+      target={{
+        employeeId: Number(employee.id),
+        name: employee.employee_name,
+        origin: "employee",
+      }}
+      showLabels
+      showPresence={!disabled}
+      disabled={disabled}
+      disabledReason={disabledReason}
+    />
+  )
+}
+
 export function EmployeeProfile({
   employee,
   linkedUser,
@@ -738,6 +781,7 @@ export function EmployeeProfile({
                 Reset password
               </Button>
             )}
+            <EmployeeHeaderCall employee={employee} linkedUser={linkedUser} />
           </div>
         </div>
       </div>
@@ -762,6 +806,7 @@ export function EmployeeProfile({
           <TabsTrigger value="shift">Shift</TabsTrigger>
           <TabsTrigger value="support">HR Support</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
+          <TabsTrigger value="calls">Calls</TabsTrigger>
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
           <TabsTrigger value="bank">Bank</TabsTrigger>
@@ -836,6 +881,10 @@ export function EmployeeProfile({
         </TabsContent>
         <TabsContent value="team" className="mt-5">
           <RelatedTabs employeeId={employee.id} active={tab} />
+        </TabsContent>
+
+        <TabsContent value="calls" className="mt-5">
+          <CallHistory employeeId={Number(employee.id)} />
         </TabsContent>
 
         <TabsContent value="timeline" className="mt-5">

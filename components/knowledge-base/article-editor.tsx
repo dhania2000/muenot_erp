@@ -25,6 +25,7 @@ type Props = {
   onOpenChange: (open: boolean) => void
   editing: ArticleDetail | null
   onSaved: () => void
+  initialContentType?: ContentType
 }
 
 type ErpLinkForm = { source_module: string; source_record_id: string; label: string }
@@ -75,7 +76,7 @@ const blankState = {
   change_summary: "",
 }
 
-export function ArticleEditor({ open, onOpenChange, editing, onSaved }: Props) {
+export function ArticleEditor({ open, onOpenChange, editing, onSaved, initialContentType }: Props) {
   const { data: meta } = useSWR<MetaResponse>(open ? "/api/knowledge-base/meta" : null, fetcher)
   const [form, setForm] = useState(blankState)
   const [erpLinks, setErpLinks] = useState<ErpLinkForm[]>([])
@@ -126,12 +127,12 @@ export function ArticleEditor({ open, onOpenChange, editing, onSaved }: Props) {
       setErpLinks(editing.erpLinks.map((e) => ({ source_module: e.source_module, source_record_id: e.source_record_id, label: e.label || "" })))
       setAttachments(editing.attachments.map((x) => ({ id: x.id, file_name: x.file_name, file_size: x.file_size })))
     } else {
-      setForm(blankState)
+      setForm({ ...blankState, content_type: initialContentType ?? "article" })
       setErpLinks([])
       setAttachments([])
     }
     setPreview(null)
-  }, [open, editing])
+  }, [open, editing, initialContentType])
 
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
 

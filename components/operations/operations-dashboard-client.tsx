@@ -20,6 +20,8 @@ import {
 import { Plus, Pencil, Trash2 } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
+import { OperationsSopHistory } from "@/components/operations/operations-sop-history"
+import { OperationsChecklistItems } from "@/components/operations/operations-checklist-items"
 import {
   Table,
   TableHeader,
@@ -640,6 +642,16 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
                   ))}
                   <td className="p-3">
                     <div className="flex items-center justify-end gap-1">
+                      {kind === "sops" && row.id != null && (
+                        <OperationsSopHistory sopId={row.id} title={row.title} />
+                      )}
+                      {kind === "checklists" && row.id != null && (
+                        <OperationsChecklistItems
+                          checklistId={row.id}
+                          name={row.checklist_name}
+                          onChange={() => mutate()}
+                        />
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"

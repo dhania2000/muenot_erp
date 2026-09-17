@@ -26,6 +26,7 @@ const ALLOWED_RETURNS = [
   "/modules/finance/emails",
   "/modules/operations/emails",
   "/modules/recruitment/emails",
+  "/modules/marketing/campaigns/email",
 ]
 
 export function resolveReturnPath(raw: string | null | undefined) {

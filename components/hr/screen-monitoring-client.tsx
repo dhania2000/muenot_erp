@@ -166,8 +166,12 @@ export function ScreenMonitoringClient() {
         </p>
       </header>
 
-      <Tabs defaultValue="sessions" className="w-full">
+      <Tabs defaultValue="live" className="w-full">
         <TabsList>
+          <TabsTrigger value="live" className="gap-1.5">
+            <Radio className="h-4 w-4" aria-hidden="true" />
+            Live Employees
+          </TabsTrigger>
           <TabsTrigger value="sessions" className="gap-1.5">
             <Activity className="h-4 w-4" aria-hidden="true" />
             Sessions
@@ -178,6 +182,9 @@ export function ScreenMonitoringClient() {
           </TabsTrigger>
         </TabsList>
 
+        <TabsContent value="live" className="mt-6">
+          <LiveEmployeesPanel />
+        </TabsContent>
         <TabsContent value="sessions" className="mt-6">
           <SessionsPanel isAdmin={isAdmin} />
         </TabsContent>

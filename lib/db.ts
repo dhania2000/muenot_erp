@@ -1,4 +1,5 @@
 import mysql from "mysql2/promise"
+import { guardQuery } from "@/lib/tenant-guard"
 
 // MySQL connection pool.
 // Configure these via environment variables (.env.local locally,
@@ -37,6 +38,12 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 export async function query<T = any>(sql: string, params: any[] = []): Promise<T> {
+  // Tenant isolation gate (SPEC 2). Inspects the statement and, in "enforce"
+  // mode, throws before execution when it touches a tenant-scoped table without
+  // a tenant_id predicate; in "report" mode (default) it only logs. Pure and
+  // cheap — see lib/tenant-guard.ts. Never blocks system/pre-auth queries
+  // (no tenant in context) or DDL / information_schema lookups.
+  guardQuery(sql)
   const [rows] = await pool.query(sql, params)
   // Auto-capture writes as activity notifications (fire-and-forget; never
   // affects the caller's result or latency). See lib/notifications.ts.

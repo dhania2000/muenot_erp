@@ -11,6 +11,7 @@ import { Bell, ChevronDown, Clock3, FileText, Loader2, LogOut, MapPin, MessageSq
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
 import { NotesPanel } from "@/components/notes-panel"
+import { ScreenMonitorProvider, useScreenMonitor } from "@/components/hr/screen-monitor-provider"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -288,6 +289,7 @@ function getBrowserLocation(): Promise<GeoResult> {
  */
 function HeaderClockButton() {
   const { data, mutate } = useSWR<ClockStatus>("/api/hr/attendance/clock", fetcher)
+  const { startMonitoring, stopMonitoring } = useScreenMonitor()
   const [busy, setBusy] = useState(false)
 
   const state = data?.state ?? "out"
@@ -318,8 +320,13 @@ function HeaderClockButton() {
         toast.error((json as { error?: string }).error || "Could not record attendance. Please try again.")
       } else if ((json as { state?: string }).state === "in") {
         toast.success("Clocked in")
+        // Screen monitoring only begins after this successful clock in and the
+        // employee's explicit screen-share consent (handled by the provider).
+        void startMonitoring()
       } else if ((json as { state?: string }).state === "out") {
         toast.success("Clocked out")
+        // Clocking out always stops capture immediately.
+        void stopMonitoring("clock_out")
       }
       await mutate()
     } catch {
@@ -551,6 +558,7 @@ export function AppShell({
   }
 
   return (
+    <ScreenMonitorProvider>
     <div className="fixed inset-0 flex overflow-hidden">
       <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex items-center px-5 py-5">
@@ -691,5 +699,6 @@ export function AppShell({
         </DialogContent>
       </Dialog>
     </div>
+    </ScreenMonitorProvider>
   )
 }

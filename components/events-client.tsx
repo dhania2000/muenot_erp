@@ -8,11 +8,12 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Ticket, Plus, Search, Eye, Pencil, Trash2, MapPin, Clock, User, ArrowLeft, CalendarDays } from "lucide-react"
+import { EventDetail } from "@/components/events/event-detail"
+import { Ticket, Plus, Search, Eye, Pencil, Trash2, ArrowLeft, Users, CheckCircle2 } from "lucide-react"
 
 type EventItem = {
   id: number
+  event_ref: string | null
   name: string
   label_color: string
   location: string | null
@@ -26,14 +27,32 @@ type EventItem = {
   host_name: string | null
   attendee_type: "all_employees" | "all_clients" | "specific"
   attendees: string[]
-  status: "pending" | "completed"
+  status: "draft" | "scheduled" | "live" | "completed" | "cancelled"
+  capacity: number | null
+  instructions: string | null
+  contact_person: string | null
+  meeting_details: string | null
+  access_before_minutes: number
+  access_after_minutes: number
+  allow_dob: number
   created_by_name: string | null
   created_at: string
+  participant_count: number
+  checked_in_count: number
 }
 
 type ApiResponse = { events: EventItem[]; employees: string[]; canManage: boolean }
 
 const LABEL_COLORS = ["#4f46e5", "#0891b2", "#059669", "#d97706", "#dc2626", "#7c3aed", "#db2777", "#475569"]
+const STATUSES = ["draft", "scheduled", "live", "completed", "cancelled"] as const
+
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  draft: "outline",
+  scheduled: "default",
+  live: "default",
+  completed: "secondary",
+  cancelled: "destructive",
+}
 
 const emptyForm = {
   id: 0,
@@ -50,19 +69,20 @@ const emptyForm = {
   host_name: "",
   attendee_type: "all_employees" as EventItem["attendee_type"],
   attendees: [] as string[],
-  status: "pending" as EventItem["status"],
+  status: "scheduled" as EventItem["status"],
+  capacity: "",
+  instructions: "",
+  contact_person: "",
+  meeting_details: "",
+  access_before_minutes: 30,
+  access_after_minutes: 0,
+  allow_dob: false,
 }
 
 function formatDateTime(value: string) {
   const d = new Date(value.replace(" ", "T"))
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-}
-
-function attendeeLabel(e: Pick<EventItem, "attendee_type" | "attendees">) {
-  if (e.attendee_type === "all_clients") return "All Clients"
-  if (e.attendee_type === "specific") return `${e.attendees.length} attendee${e.attendees.length === 1 ? "" : "s"}`
-  return "All Employees"
 }
 
 export function EventsClient() {
@@ -83,8 +103,8 @@ export function EventsClient() {
   const canManage = data?.canManage ?? false
 
   const [view, setView] = useState<"list" | "form">("list")
+  const [detailId, setDetailId] = useState<number | null>(null)
   const [form, setForm] = useState(emptyForm)
-  const [viewing, setViewing] = useState<EventItem | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
@@ -99,6 +119,10 @@ export function EventsClient() {
       repeat_cycle: e.repeat_cycle || "week", repeat_every: e.repeat_every || 1,
       repeat_ends_on: e.repeat_ends_on ?? "", host_name: e.host_name ?? "",
       attendee_type: e.attendee_type, attendees: e.attendees ?? [], status: e.status,
+      capacity: e.capacity != null ? String(e.capacity) : "", instructions: e.instructions ?? "",
+      contact_person: e.contact_person ?? "", meeting_details: e.meeting_details ?? "",
+      access_before_minutes: e.access_before_minutes ?? 30, access_after_minutes: e.access_after_minutes ?? 0,
+      allow_dob: !!e.allow_dob,
     })
     setError("")
     setView("form")
@@ -124,7 +148,6 @@ export function EventsClient() {
 
   const remove = async (id: number) => {
     await fetch(`/api/events?id=${id}`, { method: "DELETE" })
-    setViewing(null)
     mutate()
   }
 
@@ -136,6 +159,10 @@ export function EventsClient() {
   }
 
   const total = useMemo(() => events.length, [events])
+
+  if (detailId != null) {
+    return <EventDetail eventId={detailId} onBack={() => { setDetailId(null); mutate() }} />
+  }
 
   if (view === "form") {
     return (
@@ -175,10 +202,16 @@ export function EventsClient() {
             </div>
           </div>
 
-          <label className="grid gap-1.5 text-sm font-medium">
-            Where
-            <Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Event location" />
-          </label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-1.5 text-sm font-medium">
+              Where
+              <Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Event location / venue" />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">
+              Contact Person
+              <Input value={form.contact_person} onChange={(e) => setForm({ ...form, contact_person: e.target.value })} placeholder="On-site contact" />
+            </label>
+          </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <label className="grid gap-1.5 text-sm font-medium">
@@ -188,6 +221,21 @@ export function EventsClient() {
             <label className="grid gap-1.5 text-sm font-medium">
               Ends On
               <Input type="datetime-local" required value={form.end_at} onChange={(e) => setForm({ ...form, end_at: e.target.value })} />
+            </label>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <label className="grid gap-1.5 text-sm font-medium">
+              Capacity
+              <Input type="number" min={0} value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} placeholder="Optional" />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">
+              Access opens (min before)
+              <Input type="number" min={0} value={form.access_before_minutes} onChange={(e) => setForm({ ...form, access_before_minutes: Number(e.target.value) })} />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">
+              Access closes (min after)
+              <Input type="number" min={0} value={form.access_after_minutes} onChange={(e) => setForm({ ...form, access_after_minutes: Number(e.target.value) })} />
             </label>
           </div>
 
@@ -235,11 +283,10 @@ export function EventsClient() {
             </label>
             <label className="grid gap-1.5 text-sm font-medium">
               Status
-              <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: (v as EventItem["status"]) || "pending" })}>
+              <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: (v as EventItem["status"]) || "scheduled" })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
+                  {STATUSES.map((s) => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
                 </SelectContent>
               </Select>
             </label>
@@ -272,8 +319,23 @@ export function EventsClient() {
           </div>
 
           <label className="grid gap-1.5 text-sm font-medium">
+            Meeting / Location Details
+            <Textarea rows={2} value={form.meeting_details} onChange={(e) => setForm({ ...form, meeting_details: e.target.value })} placeholder="Meeting link, room, parking, etc." />
+          </label>
+
+          <label className="grid gap-1.5 text-sm font-medium">
+            Access Instructions
+            <Textarea rows={2} value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} placeholder="Shown to attendees on their access pass" />
+          </label>
+
+          <label className="grid gap-1.5 text-sm font-medium">
             Description
-            <Textarea rows={5} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Event description" />
+            <Textarea rows={4} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Event description" />
+          </label>
+
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input type="checkbox" checked={form.allow_dob} onChange={(e) => setForm({ ...form, allow_dob: e.target.checked })} />
+            Show attendee date of birth on the gate verification screen
           </label>
 
           <div className="flex items-center gap-2">
@@ -314,8 +376,7 @@ export function EventsClient() {
             <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="completed">Completed</SelectItem>
+              {STATUSES.map((s) => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
             </SelectContent>
           </Select>
         </label>
@@ -337,8 +398,8 @@ export function EventsClient() {
                 <th className="px-4 py-2.5 font-medium">#</th>
                 <th className="px-4 py-2.5 font-medium">Event Name</th>
                 <th className="px-4 py-2.5 font-medium">Starts On</th>
-                <th className="px-4 py-2.5 font-medium">Ends On</th>
                 <th className="px-4 py-2.5 font-medium">Host</th>
+                <th className="px-4 py-2.5 font-medium">Participants</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 text-right font-medium">Action</th>
               </tr>
@@ -358,22 +419,31 @@ export function EventsClient() {
                   <tr key={e.id} className="border-b last:border-b-0 hover:bg-muted/40">
                     <td className="px-4 py-3 text-muted-foreground">{i + 1}</td>
                     <td className="px-4 py-3">
-                      <button className="flex items-center gap-2 text-left font-medium hover:underline" onClick={() => setViewing(e)}>
+                      <button className="flex items-center gap-2 text-left font-medium hover:underline" onClick={() => setDetailId(e.id)}>
                         <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: e.label_color }} />
                         {e.name}
                       </button>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDateTime(e.start_at)}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatDateTime(e.end_at)}</td>
                     <td className="px-4 py-3 text-muted-foreground">{e.host_name || "—"}</td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Users className="size-3.5" /> {e.participant_count}
+                        {e.checked_in_count > 0 && (
+                          <span className="inline-flex items-center gap-1 text-emerald-600">
+                            <CheckCircle2 className="size-3.5" /> {e.checked_in_count}
+                          </span>
+                        )}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">
-                      <Badge variant={e.status === "completed" ? "secondary" : "default"} className="font-normal capitalize">
+                      <Badge variant={STATUS_VARIANT[e.status] ?? "default"} className="font-normal capitalize">
                         {e.status}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        <Button variant="outline" size="sm" onClick={() => setViewing(e)}><Eye className="size-3.5" /></Button>
+                        <Button variant="outline" size="sm" onClick={() => setDetailId(e.id)}><Eye className="size-3.5" /></Button>
                         {canManage && (
                           <>
                             <Button variant="outline" size="sm" onClick={() => openEdit(e)}><Pencil className="size-3.5" /></Button>
@@ -389,47 +459,6 @@ export function EventsClient() {
           </table>
         </div>
       </div>
-
-      <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
-        <DialogContent className="sm:max-w-lg">
-          {viewing && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 text-pretty">
-                  <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: viewing.label_color }} />
-                  {viewing.name}
-                </DialogTitle>
-                <DialogDescription className="capitalize">{viewing.status}</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-2.5 text-sm">
-                <p className="flex items-center gap-2"><Clock className="size-4 text-muted-foreground" /> {formatDateTime(viewing.start_at)} &ndash; {formatDateTime(viewing.end_at)}</p>
-                {viewing.location && <p className="flex items-center gap-2"><MapPin className="size-4 text-muted-foreground" /> {viewing.location}</p>}
-                {viewing.host_name && <p className="flex items-center gap-2"><User className="size-4 text-muted-foreground" /> Host: {viewing.host_name}</p>}
-                <p className="flex items-center gap-2"><CalendarDays className="size-4 text-muted-foreground" /> {attendeeLabel(viewing)}</p>
-                {viewing.repeat_enabled ? (
-                  <p className="text-muted-foreground">Repeats every {viewing.repeat_every} {viewing.repeat_cycle}(s){viewing.repeat_ends_on ? ` until ${viewing.repeat_ends_on}` : ""}</p>
-                ) : null}
-                {viewing.attendee_type === "specific" && viewing.attendees.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {viewing.attendees.map((a) => <Badge key={a} variant="secondary" className="font-normal">{a}</Badge>)}
-                  </div>
-                )}
-                {viewing.description && <p className="whitespace-pre-wrap pt-1 leading-relaxed text-foreground/90">{viewing.description}</p>}
-              </div>
-              {canManage && (
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <Button variant="outline" onClick={() => { const e = viewing; setViewing(null); openEdit(e) }}>
-                    <Pencil className="mr-2 size-3.5" /> Edit
-                  </Button>
-                  <Button variant="destructive" onClick={() => remove(viewing.id)}>
-                    <Trash2 className="mr-2 size-3.5" /> Delete
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
     </main>
   )
 }

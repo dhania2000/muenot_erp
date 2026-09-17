@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import { put } from "@vercel/blob"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import {
@@ -186,19 +185,9 @@ export async function POST(request: Request) {
   const dims = readImageDimensions(head.length >= 24 ? new Uint8Array(buffer) : head)
   const tags = parseTags(form.get("tags"))
 
-  let storageUrl: string | null = null
-  try {
-    const blob = await put(`marketing-library/${crypto.randomUUID()}-${file.name}`, file, {
-      access: "public",
-      addRandomSuffix: false,
-    })
-    storageUrl = blob.url
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: "Storage upload failed. Blob storage may not be configured.", detail: String(err?.message || err) },
-      { status: 502 },
-    )
-  }
+  // File bytes are stored directly in MySQL (no external Blob storage).
+  const fileData = Buffer.from(buffer)
+  const storageUrl: string | null = null
 
   const assetId = await nextAssetId()
   const name = str("name") || file.name
@@ -250,14 +239,15 @@ export async function POST(request: Request) {
 
   await query(
     `INSERT INTO marketing_library_versions
-      (library_id, version, file_name, file_type, file_size, storage_url, content_hash, width, height, change_note, uploaded_by, uploaded_by_name)
-     VALUES (?,1,?,?,?,?,?,?,?,?,?,?)`,
+      (library_id, version, file_name, file_type, file_size, storage_url, file_data, content_hash, width, height, change_note, uploaded_by, uploaded_by_name)
+     VALUES (?,1,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       libraryId,
       file.name,
       fileType,
       file.size,
       storageUrl,
+      fileData,
       hash,
       dims?.width ?? null,
       dims?.height ?? null,

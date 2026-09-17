@@ -28,30 +28,24 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const [asset] = (await query(`SELECT * FROM marketing_library WHERE id = ?`, [Number(id)])) as any[]
   if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-  let storageUrl: string | null = asset.storage_url
-  let fileName: string = asset.file_name
-  let fileType: string = asset.file_type
-  if (version) {
-    const [v] = (await query(
-      `SELECT storage_url, file_name, file_type FROM marketing_library_versions WHERE library_id = ? AND version = ?`,
-      [asset.id, version],
-    )) as any[]
-    if (!v) return NextResponse.json({ error: "Version not found" }, { status: 404 })
-    storageUrl = v.storage_url
-    fileName = v.file_name
-    fileType = v.file_type
-  }
-  if (!storageUrl) return NextResponse.json({ error: "No stored file" }, { status: 404 })
+  // Bytes live in the versions table (file_data). Resolve the requested version,
+  // defaulting to the asset's current version.
+  const wantedVersion = version || Number(asset.current_version || 1)
+  const [v] = (await query(
+    `SELECT file_data, storage_url, file_name, file_type FROM marketing_library_versions
+      WHERE library_id = ? AND version = ?`,
+    [asset.id, wantedVersion],
+  )) as any[]
+  if (!v) return NextResponse.json({ error: "Version not found" }, { status: 404 })
 
-  const upstream = await fetch(storageUrl)
-  if (!upstream.ok || !upstream.body)
-    return NextResponse.json({ error: "Stored file unavailable" }, { status: 502 })
+  const fileName: string = v.file_name || asset.file_name
+  const fileType: string = v.file_type || asset.file_type
 
   if (!preview) {
     await recordAudit("downloaded", {
       libraryId: asset.id,
       assetCode: asset.asset_id,
-      detail: version ? `v${version}` : `v${asset.current_version}`,
+      detail: `v${wantedVersion}`,
       userId: session.userId,
       userName: session.name,
     })
@@ -59,12 +53,27 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   const disposition = preview ? "inline" : "attachment"
   const safeName = fileName.replace(/["\\\r\n]/g, "_")
-  return new NextResponse(upstream.body, {
-    headers: {
-      "Content-Type": fileType || "application/octet-stream",
-      "Content-Disposition": `${disposition}; filename="${safeName}"`,
-      "Cache-Control": "private, max-age=300",
-      "X-Content-Type-Options": "nosniff",
-    },
-  })
+  const headers: Record<string, string> = {
+    "Content-Type": fileType || "application/octet-stream",
+    "Content-Disposition": `${disposition}; filename="${safeName}"`,
+    "Cache-Control": "private, max-age=300",
+    "X-Content-Type-Options": "nosniff",
+  }
+
+  // Preferred path: bytes stored directly in MySQL.
+  if (v.file_data) {
+    const body = Buffer.isBuffer(v.file_data) ? v.file_data : Buffer.from(v.file_data)
+    headers["Content-Length"] = String(body.length)
+    return new NextResponse(body, { headers })
+  }
+
+  // Legacy fallback: an older asset whose bytes still live in external storage.
+  if (v.storage_url) {
+    const upstream = await fetch(v.storage_url)
+    if (!upstream.ok || !upstream.body)
+      return NextResponse.json({ error: "Stored file unavailable" }, { status: 502 })
+    return new NextResponse(upstream.body, { headers })
+  }
+
+  return NextResponse.json({ error: "No stored file" }, { status: 404 })
 }

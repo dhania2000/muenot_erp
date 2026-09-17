@@ -3,7 +3,7 @@
 import * as React from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
-import { RefreshCw, Plus, Loader2 } from "lucide-react"
+import { RefreshCw, Plus, Loader2, AlertTriangle, History, BarChart3 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,13 +24,20 @@ import {
 import { fetcher } from "@/lib/fetcher"
 import { cn } from "@/lib/utils"
 import { NativeSelect, TabState } from "./shared"
-import type { WhatsAppTemplate, WhatsAppCaps } from "./types"
+import type { WhatsAppTemplate, WhatsAppTemplateVersion, WhatsAppCaps } from "./types"
 
 const STATUS_STYLE: Record<string, string> = {
   APPROVED: "border-transparent bg-[#25D366] text-white",
   PENDING: "border-transparent bg-amber-500 text-white",
   REJECTED: "border-transparent bg-destructive text-white",
   DISABLED: "border-transparent bg-muted-foreground text-white",
+  PAUSED: "border-transparent bg-amber-500 text-white",
+}
+
+const QUALITY_STYLE: Record<string, string> = {
+  GREEN: "border-transparent bg-[#25D366] text-white",
+  YELLOW: "border-transparent bg-amber-500 text-white",
+  RED: "border-transparent bg-destructive text-white",
 }
 
 const CATEGORIES = ["UTILITY", "MARKETING", "AUTHENTICATION"] as const
@@ -42,12 +49,6 @@ const LANGUAGES = [
   { code: "hi", label: "Hindi" },
   { code: "en", label: "English" },
 ]
-
-function bodyText(t: WhatsAppTemplate): string {
-  const comps = (t.components ?? []) as { type?: string; text?: string }[]
-  const body = comps.find((c) => (c.type ?? "").toUpperCase() === "BODY")
-  return body?.text ?? ""
-}
 
 /** Ordered, unique {{n}} placeholder numbers found in the body text. */
 function placeholderNumbers(text: string): number[] {
@@ -276,40 +277,158 @@ function CreateTemplateDialog({ onCreated }: { onCreated: () => void }) {
   )
 }
 
+/** Full detail + version history for a single template. */
+function TemplateDetailDialog({ template }: { template: WhatsAppTemplate }) {
+  const [open, setOpen] = React.useState(false)
+  const { data, isLoading } = useSWR<{ template: WhatsAppTemplate; versions: WhatsAppTemplateVersion[] }>(
+    open ? `/api/marketing/whatsapp/templates/${template.id}` : null,
+    fetcher,
+  )
+  const versions = data?.versions ?? []
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+            <History className="size-3.5" /> History
+          </Button>
+        }
+      />
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="break-all">{template.name}</DialogTitle>
+          <DialogDescription>
+            {(template.category ?? "—")} · {template.language} · v{template.version}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className={cn("text-[10px] uppercase", STATUS_STYLE[template.status] ?? STATUS_STYLE.DISABLED)}>
+              {template.status}
+            </Badge>
+            {template.qualityScore ? (
+              <Badge className={cn("text-[10px] uppercase", QUALITY_STYLE[template.qualityScore] ?? "")}>
+                Quality: {template.qualityScore}
+              </Badge>
+            ) : null}
+            <span className="text-xs text-muted-foreground">
+              Used {template.usageCount} time{template.usageCount === 1 ? "" : "s"}
+            </span>
+          </div>
+
+          {template.rejectedReason ? (
+            <div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+              <AlertTriangle className="size-4 shrink-0" />
+              <span>Rejected: {template.rejectedReason}</span>
+            </div>
+          ) : null}
+
+          <div className="grid gap-1.5 rounded-md border border-border p-3 text-xs">
+            {template.headerText ? (
+              <p>
+                <span className="font-medium">Header:</span> {template.headerText}
+              </p>
+            ) : null}
+            <p className="whitespace-pre-wrap text-pretty">
+              <span className="font-medium">Body:</span> {template.bodyText || "—"}
+            </p>
+            {template.footerText ? (
+              <p className="text-muted-foreground">
+                <span className="font-medium">Footer:</span> {template.footerText}
+              </p>
+            ) : null}
+            {template.buttons.length > 0 ? (
+              <p>
+                <span className="font-medium">Buttons:</span> {template.buttons.map((b) => b.text).filter(Boolean).join(", ")}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-2">
+            <p className="text-sm font-medium">Change history</p>
+            {isLoading ? (
+              <TabState loading>Loading history…</TabState>
+            ) : versions.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No history recorded yet.</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {versions.map((v) => (
+                  <li key={v.id} className="flex items-start gap-2 rounded-md border border-border p-2 text-xs">
+                    <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
+                      {v.changeType}
+                    </Badge>
+                    <div className="flex flex-col">
+                      <span>{v.detail || v.status || "Updated"}</span>
+                      <span className="text-muted-foreground">
+                        v{v.version} · {new Date(v.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /** Template catalog synced from the WABA, plus in-app authoring for employees. */
 export function TemplatesTab({ caps }: { caps: WhatsAppCaps | null }) {
-  const { data, isLoading, error, mutate } = useSWR<{ templates: WhatsAppTemplate[]; error?: string }>(
+  const { data, isLoading, error, mutate } = useSWR<{ templates: WhatsAppTemplate[]; syncError?: string }>(
     "/api/marketing/whatsapp/templates",
     fetcher,
   )
+  const [syncing, setSyncing] = React.useState(false)
 
   const templates = data?.templates ?? []
+  const approvedCount = templates.filter((t) => t.status === "APPROVED").length
+
+  async function handleSync() {
+    setSyncing(true)
+    try {
+      await mutate()
+      toast.success("Synced with Meta.")
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          {templates.length} template{templates.length === 1 ? "" : "s"} synced from Meta. Only approved templates can be
-          sent.
+          {templates.length} template{templates.length === 1 ? "" : "s"} · {approvedCount} approved. Only approved
+          templates can be sent.
         </p>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => mutate()}>
-            <RefreshCw className="size-4" /> Sync from Meta
+          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
+            {syncing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Sync from Meta
           </Button>
           {caps?.canSendTemplates ? <CreateTemplateDialog onCreated={() => mutate()} /> : null}
         </div>
       </div>
 
+      {data?.syncError ? (
+        <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="size-4 shrink-0" />
+          <span>Showing the cached catalog — could not reach Meta: {data.syncError}</span>
+        </div>
+      ) : null}
+
       {isLoading ? (
         <TabState loading>Loading templates…</TabState>
-      ) : error || (data && "error" in data && data.error) ? (
+      ) : error ? (
         <TabState>Could not load templates. Check the connection in Settings.</TabState>
       ) : templates.length === 0 ? (
         <TabState>No templates found on this WABA yet.</TabState>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {templates.map((t) => (
-            <Card key={`${t.name}-${t.language}`}>
+            <Card key={t.id} className={cn(t.status !== "APPROVED" && "opacity-90")}>
               <CardHeader className="gap-1">
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle className="text-sm font-semibold break-all">{t.name}</CardTitle>
@@ -324,12 +443,35 @@ export function TemplatesTab({ caps }: { caps: WhatsAppCaps | null }) {
                 </div>
                 <CardDescription className="text-xs">
                   {(t.category ?? "—")} · {t.language}
+                  {t.version > 1 ? ` · v${t.version}` : ""}
                 </CardDescription>
               </CardHeader>
-              <CardContent>
-                <p className="line-clamp-4 whitespace-pre-wrap text-xs text-muted-foreground text-pretty">
-                  {bodyText(t) || "No body preview."}
+              <CardContent className="flex flex-col gap-2">
+                <p className="line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground text-pretty">
+                  {t.bodyText || "No body preview."}
                 </p>
+
+                {t.status === "REJECTED" && t.rejectedReason ? (
+                  <p className="flex items-start gap-1.5 text-xs text-destructive">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <span className="line-clamp-2">{t.rejectedReason}</span>
+                  </p>
+                ) : null}
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-1">
+                      <BarChart3 className="size-3" /> {t.usageCount}
+                    </span>
+                    {t.qualityScore ? (
+                      <Badge className={cn("text-[10px] uppercase", QUALITY_STYLE[t.qualityScore] ?? "")}>
+                        {t.qualityScore}
+                      </Badge>
+                    ) : null}
+                    {t.variableCount > 0 ? <span>{t.variableCount} var</span> : null}
+                  </div>
+                  <TemplateDetailDialog template={t} />
+                </div>
               </CardContent>
             </Card>
           ))}

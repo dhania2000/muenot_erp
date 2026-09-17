@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { runCampaignScheduler } from "@/lib/whatsapp-campaigns"
 import { runNoReplyAutomations } from "@/lib/whatsapp-automations"
+import { syncTemplatesFromMeta } from "@/lib/whatsapp-templates"
 
 /**
  * Drives time-based work: sends due/scheduled campaign batches and fires
@@ -11,11 +12,14 @@ import { runNoReplyAutomations } from "@/lib/whatsapp-automations"
  * shared `CRON_SECRET` as a Bearer token so it can run unattended.
  */
 async function run() {
-  const [campaigns, automations] = await Promise.all([
+  const [campaigns, automations, templates] = await Promise.all([
     runCampaignScheduler(),
     runNoReplyAutomations(),
+    // Reconcile template statuses/rejections with Meta on each tick. Best-effort:
+    // a Graph outage must not stop campaign or automation processing.
+    syncTemplatesFromMeta().catch((err) => ({ ok: false, error: (err as Error).message })),
   ])
-  return { ok: true, campaigns, automations }
+  return { ok: true, campaigns, automations, templates }
 }
 
 function isAuthorizedCron(request: Request): boolean {

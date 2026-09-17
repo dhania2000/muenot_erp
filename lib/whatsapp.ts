@@ -765,6 +765,89 @@ export async function getWhatsAppTemplates(
   }
 }
 
+/** A raw template component as returned by the Graph API. */
+export type TemplateComponent = {
+  type?: string
+  format?: string
+  text?: string
+  buttons?: { type?: string; text?: string; url?: string; phone_number?: string }[]
+  example?: unknown
+}
+
+/** A fully-detailed template as returned by the Graph API (with components). */
+export type DetailedWhatsAppTemplate = {
+  metaId: string | null
+  name: string
+  language: string
+  status: string
+  category: string | null
+  qualityScore: string | null
+  rejectedReason: string | null
+  components: TemplateComponent[]
+}
+
+/**
+ * Fetches message templates from the WABA with FULL detail (components, quality
+ * score and rejection reason) so the ERP can persist a local catalog and show
+ * body previews, rejection reasons and variable counts — not just names.
+ * Paginates through all pages so large catalogs sync completely.
+ */
+export async function fetchWhatsAppTemplatesDetailed(
+  integration: WhatsAppIntegrationRow,
+): Promise<{ ok: boolean; templates: DetailedWhatsAppTemplate[]; error?: string }> {
+  const token = decryptToken(integration.access_token)
+  if (!token) return { ok: false, templates: [], error: "Stored access token could not be read." }
+
+  const out: DetailedWhatsAppTemplate[] = []
+  let url: string | null = `${GRAPH_BASE}/${encodeURIComponent(
+    integration.waba_id,
+  )}/message_templates?fields=id,name,language,status,category,quality_score,rejected_reason,components&limit=100`
+
+  try {
+    // Follow paging.next up to a sane cap to avoid runaway loops.
+    for (let page = 0; url && page < 20; page++) {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+      const data = (await res.json().catch(() => ({}))) as {
+        data?: {
+          id?: string
+          name: string
+          language: string
+          status: string
+          category?: string
+          quality_score?: { score?: string } | string
+          rejected_reason?: string
+          components?: TemplateComponent[]
+        }[]
+        paging?: { next?: string }
+        error?: { message?: string; code?: number }
+      }
+      if (!res.ok || data.error) {
+        return { ok: false, templates: [], error: parseGraphError(data.error, res.status).message }
+      }
+      for (const t of data.data ?? []) {
+        const quality =
+          typeof t.quality_score === "string"
+            ? t.quality_score
+            : (t.quality_score?.score ?? null)
+        out.push({
+          metaId: t.id ?? null,
+          name: t.name,
+          language: t.language,
+          status: t.status,
+          category: t.category ?? null,
+          qualityScore: quality ? String(quality).toUpperCase() : null,
+          rejectedReason: t.rejected_reason ? String(t.rejected_reason) : null,
+          components: Array.isArray(t.components) ? t.components : [],
+        })
+      }
+      url = data.paging?.next ?? null
+    }
+    return { ok: true, templates: out }
+  } catch (err) {
+    return { ok: false, templates: [], error: (err as Error).message }
+  }
+}
+
 /** Categories Meta accepts when creating a message template. */
 export type TemplateCategory = "UTILITY" | "MARKETING" | "AUTHENTICATION"
 

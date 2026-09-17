@@ -2,14 +2,23 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import {
   getWhatsAppIntegration,
-  getWhatsAppTemplates,
   createWhatsAppTemplate,
   type TemplateCategory,
 } from "@/lib/whatsapp"
 import { resolveWhatsAppCaps } from "@/lib/whatsapp-platform"
+import {
+  listLocalTemplates,
+  syncTemplatesFromMeta,
+  templateExists,
+} from "@/lib/whatsapp-templates"
 
-/** Lists the message templates configured on the connected WABA. */
-export async function GET() {
+/**
+ * Lists templates from the LOCAL catalog. By default it first reconciles the
+ * catalog with Meta (so status changes, rejection reasons and new templates show
+ * up), then returns the persisted rows with usage counts and versions. Pass
+ * `?sync=0` to skip the Meta round-trip and read the cache only.
+ */
+export async function GET(request: Request) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
@@ -18,12 +27,17 @@ export async function GET() {
     return NextResponse.json({ error: "No WhatsApp account is connected yet." }, { status: 400 })
   }
 
-  const result = await getWhatsAppTemplates(integration)
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error || "Failed to load templates." }, { status: 502 })
+  const url = new URL(request.url)
+  const skipSync = url.searchParams.get("sync") === "0"
+
+  let syncError: string | undefined
+  if (!skipSync) {
+    const result = await syncTemplatesFromMeta(integration)
+    if (!result.ok) syncError = result.error
   }
 
-  return NextResponse.json({ templates: result.templates })
+  const templates = await listLocalTemplates()
+  return NextResponse.json({ templates, syncError })
 }
 
 const CATEGORIES: TemplateCategory[] = ["UTILITY", "MARKETING", "AUTHENTICATION"]
@@ -70,6 +84,16 @@ export async function POST(request: Request) {
     ? body.bodyExamples.filter((v): v is string => typeof v === "string")
     : []
 
+  // Duplicate guard: Meta rejects a re-submitted name+language, so fail fast with
+  // a friendly message instead of surfacing an opaque Graph error.
+  const cleanName = name.trim().toLowerCase().replace(/\s+/g, "_")
+  if (cleanName && (await templateExists(cleanName, language))) {
+    return NextResponse.json(
+      { error: `A template named "${cleanName}" (${language}) already exists.` },
+      { status: 409 },
+    )
+  }
+
   const result = await createWhatsAppTemplate(integration, {
     name,
     language,
@@ -82,6 +106,10 @@ export async function POST(request: Request) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error || "Failed to create template." }, { status: 502 })
   }
+
+  // Persist immediately so the new PENDING template shows up without waiting for
+  // the next full sync. Best-effort — the create already succeeded on Meta.
+  await syncTemplatesFromMeta(integration).catch(() => {})
 
   return NextResponse.json({ id: result.id, status: result.status, category: result.category })
 }

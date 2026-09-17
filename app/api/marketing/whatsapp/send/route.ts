@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { getWhatsAppIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
+import { recordTemplateUsage } from "@/lib/whatsapp-templates"
 import {
   assignConversation,
   canAccessConversation,
@@ -128,6 +129,10 @@ export async function POST(request: Request) {
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error || "Failed to send message." }, { status: 502 })
+  }
+
+  if (mode === "template") {
+    await recordTemplateUsage(templateName, body.languageCode?.trim() || "en_US").catch(() => {})
   }
 
   // Record the outbound message so it shows in the inbox. If no conversation

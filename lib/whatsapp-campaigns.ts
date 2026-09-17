@@ -2,6 +2,7 @@ import "server-only"
 import { query } from "@/lib/db"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
 import { getWhatsAppIntegration, sendWhatsAppTemplateWithComponents } from "@/lib/whatsapp"
+import { recordTemplateUsage } from "@/lib/whatsapp-templates"
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -440,6 +441,12 @@ export async function processCampaignBatch(id: number, limit = 50): Promise<{ pr
     [id],
   )
   const remaining = Number(remainingRows[0]?.c ?? 0)
+
+  // Attribute this batch's sends to the template's usage counter.
+  if (campaign.templateName && processed > 0) {
+    await recordTemplateUsage(campaign.templateName, campaign.templateLanguage || undefined, processed).catch(() => {})
+  }
+
   if (remaining === 0) {
     await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'completed', completed_at = NOW() WHERE id = ?", [id])
     await logEvent(id, "completed")

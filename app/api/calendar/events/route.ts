@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { getGoogleAccount } from "@/lib/google-accounts"
-import { isGoogleOAuthConfigured, listCalendarEventsForUser } from "@/lib/google-calendar"
+import { aggregateCalendar } from "@/lib/calendar/aggregate"
+
+export const runtime = "nodejs"
 
 /**
- * Live calendar feed for the signed-in employee. Each employee connects their
- * own Google account (stored per user in `sales_google_accounts`), so this
- * returns events straight from *their* primary Google Calendar.
+ * Central calendar feed for the signed-in employee (spec Phases 2, 14-16).
+ *
+ * Returns the unified, de-duplicated set of the user's OWN events: their ERP
+ * source records (sales/operations/recruitment) merged with their personal
+ * Google Calendar events. The response shape is a superset of the legacy
+ * Google-only feed, so the client keeps working while gaining source/category
+ * and per-event sync context.
  */
 export async function GET(request: Request) {
   const session = await getSession()
@@ -17,37 +22,12 @@ export async function GET(request: Request) {
   const timeMin = url.searchParams.get("timeMin") || new Date(now - 45 * 864e5).toISOString()
   const timeMax = url.searchParams.get("timeMax") || new Date(now + 45 * 864e5).toISOString()
 
-  const oauthConfigured = isGoogleOAuthConfigured()
-  const account = await getGoogleAccount(session.userId)
+  const result = await aggregateCalendar({
+    userId: session.userId,
+    email: session.email,
+    timeMin,
+    timeMax,
+  })
 
-  if (!oauthConfigured || !account) {
-    return NextResponse.json({
-      oauthConfigured,
-      connected: Boolean(account),
-      email: account?.google_email ?? null,
-      events: [],
-    })
-  }
-
-  try {
-    const events = await listCalendarEventsForUser(account.refresh_token, { timeMin, timeMax })
-    return NextResponse.json({
-      oauthConfigured: true,
-      connected: true,
-      email: account.google_email,
-      events,
-    })
-  } catch (err: any) {
-    console.error("[v0] Google Calendar sync failed:", err?.message || err)
-    return NextResponse.json(
-      {
-        oauthConfigured: true,
-        connected: true,
-        email: account.google_email,
-        events: [],
-        error: "sync_failed",
-      },
-      { status: 200 },
-    )
-  }
+  return NextResponse.json(result)
 }

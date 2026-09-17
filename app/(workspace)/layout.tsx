@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getUserAccessibleModules, getFeatureChecker } from "@/lib/permissions"
+import { callPermissions } from "@/lib/calls-core"
+import { CallProvider } from "@/components/calls/call-provider"
 import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
@@ -350,6 +352,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // matrix an admin configured (not just the legacy user_permissions grants).
   const canAccess = await getFeatureChecker(session.userId, session.role)
 
+  // Internal calling: mount the provider app-wide so every signed-in user
+  // maintains presence and can receive incoming calls, regardless of whether
+  // they hold place-call permissions.
+  const callPerms = await callPermissions(session)
+
   const navItems: NavItem[] = [
     { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="size-4" /> },
     ...(session.role === "admin"
@@ -431,9 +438,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <SettingsProvider initial={settings}>
       <SettingsBranding />
-      <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
-        {children}
-      </AppShell>
+      <CallProvider currentUserId={session.userId} permissions={callPerms}>
+        <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
+          {children}
+        </AppShell>
+      </CallProvider>
     </SettingsProvider>
   )
 }

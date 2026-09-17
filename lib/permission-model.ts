@@ -258,12 +258,26 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     modules: [
       // Dashboard rows carry no record-level ownership — only "view" is meaningful.
       { key: "hr.dashboard", label: "HR Dashboard", group: "hr", aliases: ["dashboard"], scope: { table: "hr_employees" } },
+      // Shift & rotation sub-modules are declared BEFORE "Employees" so the
+      // feature-slug resolver matches "hr.view_rotation_employees" here rather
+      // than being shadowed by the Employees module's broad "employee" alias.
+      { key: "hr.shift_change_requests", label: "Shift Change Requests", group: "hr", aliases: ["shift_change"], scope: { table: "hr_shift_change_requests" } },
+      { key: "hr.shift_assignments", label: "Shift Assignments", group: "hr", aliases: ["shift_assignment"], scope: { table: "hr_shift_assignments" } },
+      { key: "hr.shift_rotations", label: "Shift Rotations", group: "hr", aliases: ["shift_rotation"], scope: { table: "hr_shift_rotations", addedBy: "created_by" } },
+      { key: "hr.rotation_sequences", label: "Rotation Sequences", group: "hr", aliases: ["rotation_sequence"], scope: { table: "hr_shift_rotation_sequences" } },
+      { key: "hr.rotation_employees", label: "Rotation Employees", group: "hr", aliases: ["rotation_employee"], scope: { table: "hr_shift_rotation_employees" } },
       { key: "hr.employees", label: "Employees", group: "hr", aliases: ["employee"], scope: { table: "hr_employees", addedBy: "created_by" } },
       { key: "hr.documents", label: "Employee Documents", group: "hr", aliases: ["document"], scope: { table: "hr_employee_documents" } },
-      { key: "hr.attendance", label: "Attendance", group: "hr", aliases: ["attendance", "regularisation"], scope: { table: "hr_attendance", addedBy: "user_id", ownedBy: "user_id" } },
+      { key: "hr.attendance", label: "Attendance", group: "hr", aliases: ["attendance"], scope: { table: "hr_attendance", addedBy: "user_id", ownedBy: "user_id" } },
+      { key: "hr.attendance_regularisation", label: "Attendance Regularisation", group: "hr", aliases: ["regularisation"], scope: { table: "hr_attendance_regularisation" } },
       { key: "hr.screen_monitoring", label: "Screen Activity Monitoring", group: "hr", aliases: ["screen_monitoring", "screen", "monitoring"], scope: { table: "screen_monitoring_sessions", addedBy: "user_id", ownedBy: "user_id" }, extraActions: SCREEN_MONITORING_EXTRA_ACTIONS },
-      { key: "hr.leaves", label: "Leaves", group: "hr", aliases: ["leave"], scope: { table: "hr_leave_requests", addedBy: "created_by", ownedBy: "employee_id" } },
-      { key: "hr.shifts", label: "Shifts", group: "hr", aliases: ["shift", "rotation"], scope: { table: "hr_shifts", addedBy: "created_by" } },
+      // Leave sub-modules precede the generic "Leave Requests" (alias "leave")
+      // so their more specific slugs resolve to their own permission rows.
+      { key: "hr.leave_balances", label: "Leave Balances", group: "hr", aliases: ["leave_balance"], scope: { table: "hr_leave_balances" } },
+      { key: "hr.leave_quota_history", label: "Leave Quota History", group: "hr", aliases: ["leave_quota"], scope: { table: "hr_leave_quota_history", addedBy: "created_by" } },
+      { key: "hr.leave_types", label: "Leave Types", group: "hr", aliases: ["leave_type"], scope: { table: "hr_leave_types" } },
+      { key: "hr.leaves", label: "Leave Requests", group: "hr", aliases: ["leave"], scope: { table: "hr_leave_requests", addedBy: "created_by", ownedBy: "employee_id" } },
+      { key: "hr.shifts", label: "Shifts", group: "hr", aliases: ["shift"], scope: { table: "hr_shifts", addedBy: "created_by" } },
       { key: "hr.support", label: "HR Support", group: "hr", aliases: ["support"], scope: { table: "hr_support_tickets", addedBy: "created_by", ownedBy: "assigned_to" } },
       { key: "hr.offboarding", label: "Offboarding", group: "hr", aliases: ["offboarding", "exit"], scope: { table: "hr_offboarding", addedBy: "created_by" } },
       { key: "hr.master", label: "Promotions & Awards", group: "hr", aliases: ["master", "promotion", "award", "appreciation"], scope: { table: "hr_master_records", addedBy: "created_by" } },
@@ -304,6 +318,14 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "finance.bank_transactions", label: "Bank Transactions", group: "finance", aliases: ["bank_transaction", "transaction"], scope: { table: "bank_transactions", addedBy: "created_by" } },
       { key: "finance.bank_cash", label: "Bank & Cash", group: "finance", aliases: ["bank_cash"], scope: { table: "finance_accounts", addedBy: "created_by" } },
       { key: "finance.chart_of_accounts", label: "Chart of Accounts", group: "finance", aliases: ["chart"], scope: { table: "chart_of_accounts", addedBy: "created_by" } },
+      // Balance-sheet registers (declared with specific aliases that do not
+      // clash with any other Finance feature slug).
+      { key: "finance.fixed_assets", label: "Fixed Assets", group: "finance", aliases: ["fixed_asset"], scope: { table: "fixed_assets", addedBy: "created_by" } },
+      { key: "finance.loans_advances", label: "Loans & Advances", group: "finance", aliases: ["loans_advance", "loan"], scope: { table: "loans_advances", addedBy: "created_by" } },
+      { key: "finance.investments", label: "Investments", group: "finance", aliases: ["investment"], scope: { table: "investments", addedBy: "created_by" } },
+      { key: "finance.provisions_accruals", label: "Provisions & Accruals", group: "finance", aliases: ["provisions_accrual", "provision", "accrual"], scope: { table: "provisions_accruals", addedBy: "created_by" } },
+      { key: "finance.capital_equity", label: "Capital & Equity", group: "finance", aliases: ["capital_equity", "capital", "equity"], scope: { table: "capital_equity", addedBy: "created_by" } },
+      { key: "finance.related_parties", label: "Related Parties", group: "finance", aliases: ["related_parties", "related_part", "related"], scope: { table: "related_parties", addedBy: "created_by" } },
       { key: "finance.customers_vendors", label: "Vendors", group: "finance", aliases: ["customer", "vendor"], scope: { table: "customers_vendors", addedBy: "created_by" } },
       { key: "finance.gst_filing", label: "GST Filing", group: "finance", aliases: ["gst"], scope: { table: "gst_filings" }, extraActions: GST_FILING_EXTRA_ACTIONS },
       { key: "finance.tds_filing", label: "TDS Filing", group: "finance", aliases: ["tds"], scope: { table: "tds_filings" }, extraActions: TDS_FILING_EXTRA_ACTIONS },
@@ -318,7 +340,12 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     label: "Recruitment",
     modules: [
       { key: "recruitment.dashboard", label: "Recruitment Dashboard", group: "recruitment", aliases: ["dashboard"], scope: { table: "recruit_jobs" } },
-      { key: "recruitment.requisitions", label: "Job Requisitions", group: "recruitment", aliases: ["requisition", "job", "application"], scope: { table: "recruitment_requisitions", addedBy: "created_by" } },
+      // "Jobs" and "Job Applications" precede Requisitions so their dedicated
+      // slugs (recruitment.view_jobs / recruitment.view_applications) resolve to
+      // their own rows instead of collapsing onto Requisitions.
+      { key: "recruitment.jobs", label: "Jobs", group: "recruitment", aliases: ["job"], scope: { table: "recruit_jobs" } },
+      { key: "recruitment.applications", label: "Job Applications", group: "recruitment", aliases: ["application"], scope: { table: "recruit_applications" } },
+      { key: "recruitment.requisitions", label: "Job Requisitions", group: "recruitment", aliases: ["requisition"], scope: { table: "recruitment_requisitions", addedBy: "created_by" } },
       { key: "recruitment.candidates", label: "Candidates", group: "recruitment", aliases: ["candidate", "screening", "source", "call"], scope: { table: "recruitment_candidates", addedBy: "created_by", ownedBy: "assigned_to" } },
       { key: "recruitment.interviews", label: "Interviews & Assessments", group: "recruitment", aliases: ["interview", "assessment"], scope: { table: "recruitment_interviews", addedBy: "created_by" }, extraActions: INTERVIEW_EXTRA_ACTIONS },
       { key: "recruitment.offers", label: "Selection & Offers", group: "recruitment", aliases: ["offer", "selection"], scope: { table: "recruitment_offers", addedBy: "created_by" }, extraActions: OFFER_EXTRA_ACTIONS },
@@ -349,8 +376,10 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "operations.utilization", label: "Utilization", group: "operations", aliases: ["utilization"], scope: { table: "operations_utilization", addedBy: "created_by" } },
       { key: "operations.timesheets", label: "Timesheets", group: "operations", aliases: ["timesheet"], scope: { table: "operations_timesheets", addedBy: "created_by" } },
       { key: "operations.productivity", label: "Productivity", group: "operations", aliases: ["productivity"], scope: { table: "operations_productivity", addedBy: "created_by" } },
-      { key: "operations.scorecards", label: "Quality Scorecards", group: "operations", aliases: ["scorecard"], scope: { table: "operations_scorecards", addedBy: "created_by" } },
+      // Scorecard Criteria precedes Quality Scorecards so its slug is not
+      // shadowed by the Scorecards module's broader "scorecard" alias.
       { key: "operations.scorecard_criteria", label: "Scorecard Criteria", group: "operations", aliases: ["scorecard_criteria"], scope: { table: "operations_scorecard_criteria", addedBy: "created_by" } },
+      { key: "operations.scorecards", label: "Quality Scorecards", group: "operations", aliases: ["scorecard"], scope: { table: "operations_scorecards", addedBy: "created_by" } },
       { key: "operations.qa_audits", label: "QA Audits", group: "operations", aliases: ["audit"], scope: { table: "operations_qa_audits", addedBy: "created_by" } },
       { key: "operations.sla_monitoring", label: "SLA Monitoring", group: "operations", aliases: ["sla_monitoring"], scope: { table: "operations_sla_monitoring", addedBy: "created_by" } },
       { key: "operations.corrective_actions", label: "Corrective Actions", group: "operations", aliases: ["corrective"], scope: { table: "operations_corrective_actions", addedBy: "created_by" } },
@@ -413,6 +442,9 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     label: "Legal",
     modules: [
       { key: "legal.dashboard", label: "Legal Dashboard", group: "legal", aliases: ["dashboard"], scope: { table: "legal_contracts" } },
+      // Contract Templates precedes Contracts so "legal.view_contract_templates"
+      // resolves here instead of onto Contracts' broader "contract" alias.
+      { key: "legal.templates", label: "Contract Templates", group: "legal", aliases: ["contract_template", "template"], scope: { table: "legal_contract_templates" } },
       { key: "legal.contracts", label: "Contracts", group: "legal", aliases: ["contract"], scope: { table: "legal_contracts", addedBy: "created_by" } },
       { key: "legal.esign", label: "Esign", group: "legal", aliases: ["esign", "sign", "signature"], scope: { table: "legal_esign_requests", addedBy: "created_by" } },
     ],

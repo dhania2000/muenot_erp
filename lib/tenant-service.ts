@@ -252,3 +252,25 @@ export async function createTenant(input: CreateTenantInput): Promise<Tenant> {
   if (!created) throw new Error("Failed to load the tenant that was just created")
   return created
 }
+
+const TENANT_STATUSES: TenantStatus[] = ["active", "suspended", "inactive"]
+
+/**
+ * Change a tenant's lifecycle status (suspend / reactivate / deactivate). The
+ * platform-owner tenant (Muenot itself) can never be taken out of `active` —
+ * suspending the platform's own tenant would lock every operator out. Returns
+ * the updated tenant.
+ */
+export async function setTenantStatus(id: number, status: TenantStatus): Promise<Tenant> {
+  await ensureTenantSchema()
+  if (!TENANT_STATUSES.includes(status)) throw new Error(`Invalid tenant status "${status}"`)
+  const tenant = await getTenantById(id)
+  if (!tenant) throw new Error("Tenant not found")
+  if (tenant.is_platform_owner && status !== "active") {
+    throw new Error("The platform-owner tenant must remain active")
+  }
+  await query("UPDATE `tenants` SET `status` = ? WHERE `id` = ?", [status, id])
+  const updated = await getTenantById(id)
+  if (!updated) throw new Error("Failed to load the updated tenant")
+  return updated
+}

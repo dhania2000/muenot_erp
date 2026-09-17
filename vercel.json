@@ -77,6 +77,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/marketing-planner",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/notice-board",
       "schedule": "*/15 * * * *"
     },

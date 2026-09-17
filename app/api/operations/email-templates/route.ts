@@ -1,19 +1,48 @@
 import { NextRequest, NextResponse } from "next/server"
-import { query } from "@/lib/db"
-import { getSession } from "@/lib/auth"
+import { requireFeature } from "@/lib/api-auth"
+import { userHasFeature } from "@/lib/permissions"
+import { createTemplate, listTemplates } from "@/lib/operations-email-templates"
 
-export async function GET() {
-  const session = await getSession()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const templates = await query<any[]>("SELECT * FROM operations_email_templates ORDER BY updated_at DESC, created_at DESC LIMIT 200")
-  return NextResponse.json({ templates })
+/** List Operations email templates (with optional search/status/category filters). */
+export async function GET(request: NextRequest) {
+  const session = await requireFeature("operations.email_templates")
+  if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const { searchParams } = new URL(request.url)
+  const [templates, canManage] = await Promise.all([
+    listTemplates({
+      search: searchParams.get("search") || undefined,
+      status: searchParams.get("status") || undefined,
+      category: searchParams.get("category") || undefined,
+      includeArchived: searchParams.get("includeArchived") === "1",
+    }),
+    userHasFeature(session.userId, session.role, "operations.email_templates"),
+  ])
+  return NextResponse.json({ templates, canManage })
 }
 
+/** Create a new Operations email template. */
 export async function POST(request: NextRequest) {
-  const session = await getSession()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const body = await request.json()
-  if (!body.name || !body.subject || !body.body) return NextResponse.json({ error: "Name, subject and body are required" }, { status: 400 })
-  const result = await query<any>("INSERT INTO operations_email_templates (name, subject, body, attachment_pathname, attachment_name, attachment_type, attachment_size) VALUES (?, ?, ?, ?, ?, ?, ?)", [body.name, body.subject, body.body, body.attachment?.pathname || null, body.attachment?.filename || null, body.attachment?.contentType || null, body.attachment?.size || null])
-  return NextResponse.json({ id: result.insertId }, { status: 201 })
+  const session = await requireFeature("operations.email_templates")
+  if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  const body = await request.json().catch(() => ({}))
+  const result = await createTemplate(
+    {
+      name: body.name,
+      template_key: body.template_key,
+      description: body.description,
+      category: body.category,
+      audience: body.audience,
+      event_key: body.event_key,
+      subject: body.subject,
+      body: body.body,
+      body_text: body.body_text,
+      status: body.status,
+      attachment: body.attachment,
+    },
+    session.userId,
+  )
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.code })
+  return NextResponse.json(result)
 }

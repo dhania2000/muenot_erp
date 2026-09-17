@@ -26,36 +26,36 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { EmailAttachmentPicker, type EmailAttachment } from "@/components/email-attachment-picker"
 import {
-  RECRUIT_EMAIL_CATEGORIES,
-  RECRUIT_TEMPLATE_AUDIENCES,
-  RECRUIT_TEMPLATE_STATUSES,
-  type RecruitEmailTemplate,
-} from "@/lib/recruit-email-template-shared"
+  OPERATIONS_EMAIL_CATEGORIES,
+  OPERATIONS_TEMPLATE_AUDIENCES,
+  OPERATIONS_TEMPLATE_STATUSES,
+  type OperationsEmailTemplate,
+} from "@/lib/operations-email-template-shared"
 
 const COMMON_VARIABLES = [
-  "candidate_name",
-  "first_name",
-  "job_applied",
-  "interview_date",
-  "interview_mode",
-  "recruiter_name",
+  "employee_name",
+  "task_name",
+  "project_name",
+  "milestone_name",
+  "deliverable_name",
+  "due_date",
+  "priority",
   "company_name",
 ]
 
 const SAMPLE_VALUES: Record<string, string> = {
-  candidate_name: "Rohan Mehta",
-  first_name: "Rohan",
-  job_applied: "Senior Frontend Engineer",
-  interview_date: "24 Sep 2026, 11:00 AM",
-  interview_mode: "Google Meet",
-  recruiter_name: "Priya Sharma",
+  employee_name: "Sneha Kulkarni",
+  task_name: "Deploy staging build",
+  project_name: "Apollo Migration",
+  milestone_name: "Phase 2 sign-off",
+  deliverable_name: "API spec v3",
+  issue_title: "Payment webhook timeout",
+  sla_name: "P1 response",
+  due_date: "26 Sep 2026",
+  priority: "High",
   company_name: "Muenot Technologies",
-  application_id: "APP-2026-0184",
-  offer_id: "OFR-2026-0031",
-  designation: "Senior Frontend Engineer",
-  department: "Engineering",
-  joining_date: "15 Oct 2026",
-  location: "Bengaluru",
+  client_name: "Northwind Traders",
+  status: "In Progress",
 }
 
 type AutomationEvent = {
@@ -85,7 +85,7 @@ const EMPTY: FormState = {
   template_key: "",
   description: "",
   category: "General",
-  audience: "Candidate",
+  audience: "Team",
   event_key: "",
   subject: "",
   body: "",
@@ -94,7 +94,7 @@ const EMPTY: FormState = {
   attachment: null,
 }
 
-export function RecruitEmailTemplateDialog({
+export function OperationsEmailTemplateDialog({
   open,
   onOpenChange,
   template,
@@ -103,7 +103,7 @@ export function RecruitEmailTemplateDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  template: RecruitEmailTemplate | null
+  template: OperationsEmailTemplate | null
   canManage: boolean
   onSaved: () => void
 }) {
@@ -113,7 +113,7 @@ export function RecruitEmailTemplateDialog({
   const bodyRef = useRef<HTMLTextAreaElement>(null)
 
   const { data: automationData } = useSWR<{ events: AutomationEvent[] }>(
-    open ? "/api/recruit/email-hub/automations" : null,
+    open ? "/api/operations/email-hub/automations" : null,
     fetcher,
   )
   const events = automationData?.events ?? []
@@ -126,7 +126,7 @@ export function RecruitEmailTemplateDialog({
         template_key: template.template_key || "",
         description: template.description || "",
         category: template.category || "General",
-        audience: template.audience || "Candidate",
+        audience: template.audience || "Team",
         event_key: template.event_key || "",
         subject: template.subject,
         body: template.body,
@@ -172,7 +172,7 @@ export function RecruitEmailTemplateDialog({
   }
 
   async function runPreview() {
-    const res = await fetch("/api/recruit/email-templates/preview", {
+    const res = await fetch("/api/operations/email-templates/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subject: form.subject, body: form.body, sample: SAMPLE_VALUES }),
@@ -195,8 +195,8 @@ export function RecruitEmailTemplateDialog({
       template_key: form.template_key || null,
     }
     const url = template
-      ? `/api/recruit/email-templates/${template.id}`
-      : "/api/recruit/email-templates"
+      ? `/api/operations/email-templates/${template.id}`
+      : "/api/operations/email-templates"
     const method = template ? "PATCH" : "POST"
     const res = await fetch(url, {
       method,
@@ -221,7 +221,7 @@ export function RecruitEmailTemplateDialog({
           <DialogDescription>
             {template?.template_uid
               ? `${template.template_uid}${template.template_key ? ` · ${template.template_key}` : ""} · v${template.version}`
-              : "Reusable recruitment email with variables, categories and lifecycle status."}
+              : "Reusable operations email with variables, categories and lifecycle status."}
           </DialogDescription>
         </DialogHeader>
 
@@ -233,7 +233,7 @@ export function RecruitEmailTemplateDialog({
                 id="tpl-name"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Interview scheduled — candidate"
+                placeholder="Task assigned — assignee"
                 disabled={!canManage}
               />
             </div>
@@ -243,7 +243,7 @@ export function RecruitEmailTemplateDialog({
                 id="tpl-key"
                 value={form.template_key}
                 onChange={(e) => setForm({ ...form, template_key: e.target.value })}
-                placeholder="INTERVIEW_SCHEDULED_CANDIDATE"
+                placeholder="TASK_ASSIGNED_ASSIGNEE"
                 disabled={!canManage}
               />
             </div>
@@ -255,7 +255,7 @@ export function RecruitEmailTemplateDialog({
               id="tpl-desc"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="Sent to a candidate when their interview is scheduled."
+              placeholder="Sent to a team member when a task is assigned to them."
               disabled={!canManage}
             />
           </div>
@@ -272,7 +272,7 @@ export function RecruitEmailTemplateDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {RECRUIT_EMAIL_CATEGORIES.map((c) => (
+                  {OPERATIONS_EMAIL_CATEGORIES.map((c) => (
                     <SelectItem key={c} value={c}>
                       {c}
                     </SelectItem>
@@ -291,7 +291,7 @@ export function RecruitEmailTemplateDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {RECRUIT_TEMPLATE_AUDIENCES.map((a) => (
+                  {OPERATIONS_TEMPLATE_AUDIENCES.map((a) => (
                     <SelectItem key={a} value={a}>
                       {a}
                     </SelectItem>
@@ -310,7 +310,7 @@ export function RecruitEmailTemplateDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {RECRUIT_TEMPLATE_STATUSES.map((s) => (
+                  {OPERATIONS_TEMPLATE_STATUSES.map((s) => (
                     <SelectItem key={s} value={s}>
                       {s}
                     </SelectItem>
@@ -351,7 +351,7 @@ export function RecruitEmailTemplateDialog({
               id="tpl-subject"
               value={form.subject}
               onChange={(e) => setForm({ ...form, subject: e.target.value })}
-              placeholder="Your interview for {{job_applied}} is scheduled"
+              placeholder="You've been assigned {{task_name}}"
               disabled={!canManage}
             />
           </div>
@@ -383,7 +383,7 @@ export function RecruitEmailTemplateDialog({
                 ref={bodyRef}
                 value={form.body}
                 onChange={(e) => setForm({ ...form, body: e.target.value })}
-                placeholder="<p>Hi {{first_name}},</p>"
+                placeholder="<p>Hi {{employee_name}},</p>"
                 className="min-h-56 font-mono text-sm"
                 disabled={!canManage}
               />

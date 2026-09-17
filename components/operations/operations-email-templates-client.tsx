@@ -34,13 +34,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  RECRUIT_EMAIL_CATEGORIES,
-  RECRUIT_TEMPLATE_STATUSES,
-  type RecruitEmailTemplate,
-} from "@/lib/recruit-email-template-shared"
-import { RecruitEmailTemplateDialog } from "@/components/recruit/recruit-email-template-dialog"
+  OPERATIONS_EMAIL_CATEGORIES,
+  OPERATIONS_TEMPLATE_STATUSES,
+  type OperationsEmailTemplate,
+} from "@/lib/operations-email-template-shared"
+import { OperationsEmailTemplateDialog } from "@/components/operations/operations-email-template-dialog"
 
-type ApiResponse = { templates: RecruitEmailTemplate[]; canManage: boolean }
+type ApiResponse = { templates: OperationsEmailTemplate[]; canManage: boolean }
 
 const STATUS_STYLES: Record<string, string> = {
   Active: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
@@ -60,15 +60,15 @@ function StatCard({ label, value }: { label: string; value: number }) {
   )
 }
 
-export function RecruitEmailTemplatesClient() {
+export function OperationsEmailTemplatesClient() {
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("all")
   const [category, setCategory] = useState("all")
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing, setEditing] = useState<RecruitEmailTemplate | null>(null)
+  const [editing, setEditing] = useState<OperationsEmailTemplate | null>(null)
 
   const { data, isLoading, mutate } = useSWR<ApiResponse>(
-    "/api/recruit/email-templates?includeArchived=1",
+    "/api/operations/email-templates?includeArchived=1",
     fetcher,
   )
   const templates = data?.templates ?? []
@@ -103,13 +103,13 @@ export function RecruitEmailTemplatesClient() {
     setEditing(null)
     setDialogOpen(true)
   }
-  function openEdit(t: RecruitEmailTemplate) {
+  function openEdit(t: OperationsEmailTemplate) {
     setEditing(t)
     setDialogOpen(true)
   }
 
-  async function setStatusFor(t: RecruitEmailTemplate, next: string) {
-    const res = await fetch(`/api/recruit/email-templates/${t.id}`, {
+  async function setStatusFor(t: OperationsEmailTemplate, next: string) {
+    const res = await fetch(`/api/operations/email-templates/${t.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: next }),
@@ -123,8 +123,8 @@ export function RecruitEmailTemplatesClient() {
     }
   }
 
-  async function duplicate(t: RecruitEmailTemplate) {
-    const res = await fetch(`/api/recruit/email-templates/${t.id}`, {
+  async function duplicate(t: OperationsEmailTemplate) {
+    const res = await fetch(`/api/operations/email-templates/${t.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "duplicate" }),
@@ -138,8 +138,8 @@ export function RecruitEmailTemplatesClient() {
     }
   }
 
-  async function remove(t: RecruitEmailTemplate) {
-    const res = await fetch(`/api/recruit/email-templates/${t.id}`, { method: "DELETE" })
+  async function remove(t: OperationsEmailTemplate) {
+    const res = await fetch(`/api/operations/email-templates/${t.id}`, { method: "DELETE" })
     if (res.ok) {
       toast.success("Template archived")
       mutate()
@@ -176,7 +176,7 @@ export function RecruitEmailTemplatesClient() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All statuses</SelectItem>
-                {RECRUIT_TEMPLATE_STATUSES.map((s) => (
+                {OPERATIONS_TEMPLATE_STATUSES.map((s) => (
                   <SelectItem key={s} value={s}>
                     {s}
                   </SelectItem>
@@ -189,7 +189,7 @@ export function RecruitEmailTemplatesClient() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All categories</SelectItem>
-                {RECRUIT_EMAIL_CATEGORIES.map((c) => (
+                {OPERATIONS_EMAIL_CATEGORIES.map((c) => (
                   <SelectItem key={c} value={c}>
                     {c}
                   </SelectItem>
@@ -235,7 +235,7 @@ export function RecruitEmailTemplatesClient() {
                     <p className="text-sm font-medium">No templates found</p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {templates.length === 0
-                        ? "Create your first recruitment email template to get started."
+                        ? "Create your first operations email template to get started."
                         : "Try adjusting your search or filters."}
                     </p>
                   </td>
@@ -332,7 +332,7 @@ export function RecruitEmailTemplatesClient() {
         </div>
       </div>
 
-      <RecruitEmailTemplateDialog
+      <OperationsEmailTemplateDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         template={editing}

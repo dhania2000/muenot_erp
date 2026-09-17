@@ -1,20 +1,28 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Card } from "@/components/ui/card"
+import useSWR from "swr"
+import { toast } from "sonner"
+import { fetcher } from "@/lib/fetcher"
+import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogTrigger,
-  DialogClose,
-} from "@/components/ui/dialog"
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,293 +31,343 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Mail, ListFilter, Search, MoreVertical, FileText, CheckCircle2, Clock, Send, Trash2 } from "lucide-react"
-import { ConnectEmailPanel } from "@/components/connect-email-panel"
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import {
+  Plus,
+  Search,
+  Mail,
+  Send,
+  MailOpen,
+  MousePointerClick,
+  MoreHorizontal,
+  RefreshCw,
+  BarChart3,
+  Pencil,
+  Copy,
+  Trash2,
+  Pause,
+  Play,
+  Ban,
+  Loader2,
+} from "lucide-react"
+import { MarketingHeader, StatCard } from "@/components/marketing/marketing-shared"
+import { EmailCampaignBuilder } from "@/components/marketing/email-campaign-builder"
+import { EmailCampaignDetail } from "@/components/marketing/email-campaign-detail"
 
-type Status = "Draft" | "Sent" | "Scheduled" | "Sending"
-
-type EmailCampaign = {
-  id: string
-  name: string
-  createdAt: string
-  folder: string
-  status: Status
-  opened: number | null
-  clicked: number | null
+const STATUS_BADGE: Record<string, string> = {
+  Draft: "bg-muted text-muted-foreground",
+  Scheduled: "bg-amber-100 text-amber-700",
+  Sending: "bg-blue-100 text-blue-700",
+  Paused: "bg-orange-100 text-orange-700",
+  Sent: "bg-emerald-100 text-emerald-700",
+  Failed: "bg-red-100 text-red-700",
+  Cancelled: "bg-muted text-muted-foreground",
 }
 
-const STATUS_META: Record<Status, { label: string; icon: React.ComponentType<{ className?: string }>; className: string }> = {
-  Draft: { label: "Draft", icon: FileText, className: "text-primary" },
-  Sent: { label: "Sent", icon: CheckCircle2, className: "text-emerald-600" },
-  Scheduled: { label: "Scheduled", icon: Clock, className: "text-amber-600" },
-  Sending: { label: "Sending", icon: Send, className: "text-primary" },
-}
+const STATUSES = ["all", "Draft", "Scheduled", "Sending", "Paused", "Sent", "Failed", "Cancelled"]
 
-const SEED: EmailCampaign[] = []
-
-const FOLDERS = ["All Folders", "General", "Newsletters", "Promotions", "Automated"]
-
-function formatNow() {
-  return new Date().toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  })
+function pct(n: number, d: number) {
+  if (!d) return "—"
+  return `${Math.round((n / d) * 1000) / 10}%`
 }
 
 export function MarketingEmailClient() {
-  const [rows, setRows] = useState<EmailCampaign[]>(SEED)
-  const [folder, setFolder] = useState("All Folders")
-  const [query, setQuery] = useState("")
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ name: "", folder: "General" })
+  const [search, setSearch] = useState("")
+  const [status, setStatus] = useState("all")
+  const [builderId, setBuilderId] = useState<number | null>(null)
+  const [builderOpen, setBuilderOpen] = useState(false)
+  const [detailId, setDetailId] = useState<number | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [deleteId, setDeleteId] = useState<number | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState("")
 
-  const filtered = useMemo(() => {
-    return rows.filter((r) => {
-      const matchFolder = folder === "All Folders" || r.folder === folder
-      const matchQuery = r.name.toLowerCase().includes(query.trim().toLowerCase())
-      return matchFolder && matchQuery
-    })
-  }, [rows, folder, query])
+  const params = new URLSearchParams()
+  if (status !== "all") params.set("status", status)
+  if (search.trim()) params.set("search", search.trim())
+  const key = `/api/marketing/campaigns?${params.toString()}`
+  const { data, isLoading, mutate } = useSWR<{ campaigns: any[]; stats: any }>(key, fetcher, {
+    refreshInterval: 10000,
+  })
 
-  const allChecked = filtered.length > 0 && filtered.every((r) => selected.has(r.id))
+  const campaigns = data?.campaigns || []
+  const stats = data?.stats || {}
 
-  function toggleAll() {
-    setSelected((prev) => {
-      if (allChecked) {
-        const next = new Set(prev)
-        filtered.forEach((r) => next.delete(r.id))
-        return next
-      }
-      return new Set([...prev, ...filtered.map((r) => r.id)])
-    })
+  async function createCampaign() {
+    if (!newName.trim()) {
+      toast.error("Give your campaign a name")
+      return
+    }
+    setCreating(true)
+    try {
+      const res = await fetch("/api/marketing/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName.trim() }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || "Could not create campaign")
+      setNewName("")
+      await mutate()
+      // Open the builder on the new draft.
+      setBuilderId(body.campaign.id)
+      setBuilderOpen(true)
+    } catch (err: any) {
+      toast.error(err.message)
+    } finally {
+      setCreating(false)
+    }
   }
 
-  function toggleOne(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+  async function runAction(id: number, action: string, label: string) {
+    const res = await fetch(`/api/marketing/campaigns/${id}/transition`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
     })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) toast.error(body.error || "Action failed")
+    else {
+      toast.success(label)
+      mutate()
+    }
   }
 
-  function create() {
-    if (!form.name.trim()) return
-    setRows((prev) => [
-      {
-        id: `EML-${100 + prev.length + 1}`,
-        name: form.name.trim(),
-        createdAt: formatNow(),
-        folder: form.folder,
-        status: "Draft",
-        opened: null,
-        clicked: null,
-      },
-      ...prev,
-    ])
-    setForm({ name: "", folder: "General" })
-    setOpen(false)
+  async function duplicate(id: number) {
+    const res = await fetch(`/api/marketing/campaigns/${id}/duplicate`, { method: "POST" })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) toast.error(body.error || "Could not duplicate")
+    else {
+      toast.success("Duplicated as a new draft")
+      mutate()
+    }
   }
 
-  function remove(id: string) {
-    setRows((prev) => prev.filter((r) => r.id !== id))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      next.delete(id)
-      return next
-    })
+  async function confirmDelete() {
+    if (!deleteId) return
+    const res = await fetch(`/api/marketing/campaigns/${deleteId}`, { method: "DELETE" })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) toast.error(body.error || "Could not delete")
+    else {
+      toast.success("Campaign deleted")
+      mutate()
+    }
+    setDeleteId(null)
   }
 
-  const count = filtered.length
+  function openBuilder(id: number) {
+    setBuilderId(id)
+    setBuilderOpen(true)
+  }
+  function openDetail(id: number) {
+    setDetailId(id)
+    setDetailOpen(true)
+  }
+
+  const totalSent = Number(stats.total_sent || 0)
+  const totalOpened = Number(stats.total_opened || 0)
+  const totalClicked = Number(stats.total_clicked || 0)
 
   return (
-    <main className="flex flex-col gap-6 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-full border bg-muted/40">
-            <Mail className="size-5 text-muted-foreground" />
-          </div>
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-primary">Marketing Campaigns</p>
-            <h1 className="text-2xl font-semibold uppercase tracking-tight">Email Campaigns</h1>
-          </div>
-        </div>
+    <div className="space-y-6">
+      <MarketingHeader
+        eyebrow="Marketing"
+        title="Email Campaigns"
+        description="Design, target, and send email campaigns to your contacts — then track opens, clicks, and unsubscribes in real time."
+        action={
+          <Dialog>
+            <DropdownMenu>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" onClick={() => mutate()} aria-label="Refresh">
+                  <RefreshCw className="size-4" />
+                </Button>
+                <CreateButton value={newName} onChange={setNewName} onCreate={createCampaign} creating={creating} />
+              </div>
+            </DropdownMenu>
+          </Dialog>
+        }
+      />
 
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger render={<Button size="lg">Create</Button>} />
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Create Email Campaign</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-4 py-2">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="name" className="text-xs text-muted-foreground">
-                  Campaign name
-                </Label>
-                <Input
-                  id="name"
-                  placeholder="e.g. Weekly Newsletter"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-muted-foreground">Folder</Label>
-                <Select value={form.folder} onValueChange={(v) => setForm({ ...form, folder: v ?? "General" })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {FOLDERS.filter((f) => f !== "All Folders").map((f) => (
-                      <SelectItem key={f} value={f}>
-                        {f}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <DialogFooter>
-              <DialogClose render={<Button variant="outline">Cancel</Button>} />
-              <Button onClick={create}>Create</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Total campaigns" value={Number(stats.total || 0)} icon={Mail} hint={`${Number(stats.sending || 0)} sending now`} />
+        <StatCard label="Emails sent" value={totalSent.toLocaleString()} icon={Send} hint={`${Number(stats.scheduled || 0)} scheduled`} />
+        <StatCard label="Avg. open rate" value={pct(totalOpened, totalSent)} icon={MailOpen} hint={`${totalOpened.toLocaleString()} opens`} />
+        <StatCard label="Avg. click rate" value={pct(totalClicked, totalSent)} icon={MousePointerClick} hint={`${totalClicked.toLocaleString()} clicks`} />
       </div>
 
-      <ConnectEmailPanel returnPath="/modules/marketing/campaigns/email" />
-
-      <Card className="overflow-hidden p-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
-          <p className="text-lg">
-            <span className="font-semibold">{count}</span>{" "}
-            <span className="text-muted-foreground">
-              Email {count === 1 ? "Campaign" : "Campaigns"} in this list
-            </span>
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={folder} onValueChange={(v) => setFolder(v ?? "All Folders")}>
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
+      <Card>
+        <CardContent className="space-y-4 pt-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search campaigns…" className="pl-9" />
+            </div>
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {FOLDERS.map((f) => (
-                  <SelectItem key={f} value={f}>
-                    {f}
-                  </SelectItem>
-                ))}
+                {STATUSES.map((s) => <SelectItem key={s} value={s} className="capitalize">{s === "all" ? "All statuses" : s}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon" aria-label="Filter campaigns">
-              <ListFilter className="size-4" />
-            </Button>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="I'm Searching for campaign"
-                className="w-56 pl-9"
-              />
-            </div>
           </div>
-        </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="w-12 px-4 py-3">
-                  <Checkbox checked={allChecked} onCheckedChange={toggleAll} aria-label="Select all campaigns" />
-                </th>
-                <th className="px-2 py-3 font-medium">Email Campaigns Name</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 text-right font-medium">Opened</th>
-                <th className="px-4 py-3 text-right font-medium">Clicked</th>
-                <th className="w-12 px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-16 text-center text-muted-foreground">
-                    No email campaigns found.
-                  </td>
-                </tr>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Campaign</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Recipients</TableHead>
+                <TableHead className="text-right">Opens</TableHead>
+                <TableHead className="text-right">Clicks</TableHead>
+                <TableHead className="w-10" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow><TableCell colSpan={6} className="py-16 text-center"><Loader2 className="mx-auto size-6 animate-spin text-muted-foreground" /></TableCell></TableRow>
+              ) : campaigns.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-16 text-center">
+                    <Mail className="mx-auto mb-3 size-8 text-muted-foreground" />
+                    <p className="text-sm font-medium">No campaigns yet</p>
+                    <p className="text-sm text-muted-foreground">Create your first email campaign to get started.</p>
+                  </TableCell>
+                </TableRow>
               ) : (
-                filtered.map((c) => {
-                  const meta = STATUS_META[c.status]
-                  const StatusIcon = meta.icon
+                campaigns.map((c) => {
+                  const sent = Number(c.sent_count || 0)
+                  const canReport = ["Sending", "Paused", "Sent", "Failed", "Cancelled"].includes(c.status)
                   return (
-                    <tr key={c.id} className="border-b last:border-0 hover:bg-muted/40">
-                      <td className="px-4 py-4">
-                        <Checkbox
-                          checked={selected.has(c.id)}
-                          onCheckedChange={() => toggleOne(c.id)}
-                          aria-label={`Select ${c.name}`}
-                        />
-                      </td>
-                      <td className="px-2 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="flex size-10 shrink-0 items-center justify-center rounded-full border">
-                            <Mail className="size-4 text-muted-foreground" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate font-medium">{c.name}</div>
-                            <div className="truncate text-xs text-muted-foreground">Created on {c.createdAt}</div>
-                          </div>
+                    <TableRow key={c.id} className="cursor-pointer" onClick={() => (canReport ? openDetail(c.id) : openBuilder(c.id))}>
+                      <TableCell>
+                        <div className="font-medium">{c.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {c.campaign_code} · {c.type}
+                          {c.subject ? ` · ${c.subject}` : ""}
                         </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <span className={`inline-flex items-center gap-1.5 font-medium ${meta.className}`}>
-                          <StatusIcon className="size-4" />
-                          {meta.label}
+                      </TableCell>
+                      <TableCell>
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE[c.status] || "bg-muted"}`}>
+                          {c.status}
+                          {c.status === "Sending" ? ` ${sent}/${c.recipient_count}` : ""}
                         </span>
-                      </td>
-                      <td className="px-4 py-4 text-right tabular-nums text-muted-foreground">
-                        {c.opened == null ? "-" : `${c.opened}%`}
-                      </td>
-                      <td className="px-4 py-4 text-right tabular-nums text-muted-foreground">
-                        {c.clicked == null ? "-" : `${c.clicked}%`}
-                      </td>
-                      <td className="px-4 py-4">
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{Number(c.recipient_count || 0).toLocaleString()}</TableCell>
+                      <TableCell className="text-right tabular-nums">{sent ? pct(Number(c.opened_count || 0), sent) : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{sent ? pct(Number(c.clicked_count || 0), sent) : "—"}</TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <Button variant="ghost" size="icon" aria-label={`Actions for ${c.name}`}>
-                                <MoreVertical className="size-4" />
-                              </Button>
-                            }
-                          />
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="size-8"><MoreHorizontal className="size-4" /></Button>
+                          </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem>Edit</DropdownMenuItem>
-                            <DropdownMenuItem>Duplicate</DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem variant="destructive" onClick={() => remove(c.id)}>
-                              <Trash2 className="size-4" />
-                              Delete
-                            </DropdownMenuItem>
+                            {canReport && (
+                              <DropdownMenuItem onClick={() => openDetail(c.id)}><BarChart3 className="mr-2 size-4" />View report</DropdownMenuItem>
+                            )}
+                            {["Draft", "Scheduled", "Paused"].includes(c.status) && (
+                              <DropdownMenuItem onClick={() => openBuilder(c.id)}><Pencil className="mr-2 size-4" />Edit</DropdownMenuItem>
+                            )}
+                            {c.status === "Scheduled" && (
+                              <DropdownMenuItem onClick={() => runAction(c.id, "unschedule", "Moved back to draft")}><Ban className="mr-2 size-4" />Unschedule</DropdownMenuItem>
+                            )}
+                            {c.status === "Sending" && (
+                              <DropdownMenuItem onClick={() => runAction(c.id, "pause", "Campaign paused")}><Pause className="mr-2 size-4" />Pause</DropdownMenuItem>
+                            )}
+                            {c.status === "Paused" && (
+                              <DropdownMenuItem onClick={() => runAction(c.id, "resume", "Campaign resumed")}><Play className="mr-2 size-4" />Resume</DropdownMenuItem>
+                            )}
+                            {["Sending", "Paused", "Scheduled"].includes(c.status) && (
+                              <DropdownMenuItem onClick={() => runAction(c.id, "cancel", "Campaign cancelled")}><Ban className="mr-2 size-4" />Cancel</DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem onClick={() => duplicate(c.id)}><Copy className="mr-2 size-4" />Duplicate</DropdownMenuItem>
+                            {["Draft", "Cancelled", "Failed"].includes(c.status) && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-red-600" onClick={() => setDeleteId(c.id)}><Trash2 className="mr-2 size-4" />Delete</DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   )
                 })
               )}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
-    </main>
+
+      <EmailCampaignBuilder campaignId={builderId} open={builderOpen} onOpenChange={setBuilderOpen} onSaved={() => mutate()} />
+      <EmailCampaignDetail campaignId={detailId} open={detailOpen} onOpenChange={setDetailOpen} />
+
+      <AlertDialog open={deleteId !== null} onOpenChange={(o) => !o && setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this campaign?</AlertDialogTitle>
+            <AlertDialogDescription>This permanently removes the draft campaign and its content. This cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+function CreateButton({
+  value,
+  onChange,
+  onCreate,
+  creating,
+}: {
+  value: string
+  onChange: (v: string) => void
+  onCreate: () => void
+  creating: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button onClick={() => setOpen(true)}><Plus className="mr-2 size-4" />New campaign</Button>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New email campaign</DialogTitle>
+          <DialogDescription>Name your campaign — you can set the content, audience, and schedule next.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <Label htmlFor="cname">Campaign name</Label>
+          <Input id="cname" value={value} autoFocus placeholder="e.g. October Product Newsletter"
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) onCreate()
+            }} />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={onCreate} disabled={creating}>
+            {creating ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}Create &amp; edit
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

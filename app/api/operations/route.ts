@@ -214,6 +214,91 @@ export async function PUT(request: Request) {
   } catch { return NextResponse.json({ error: "Failed to update operation record" }, { status: 500 }) }
 }
 
+// Compute the column/value patch a bulk action applies, restricted to the
+// columns that are actually writable for the kind. Semantic actions
+// (close/approve/reject) fan out to the relevant status/decision columns so a
+// single button works across modules with different schemas.
+function bulkPatch(action: string, value: string | undefined, writable: Set<string>): Record<string, string> {
+  const today = new Date().toISOString().slice(0, 10)
+  const keep = (obj: Record<string, string>) =>
+    Object.fromEntries(Object.entries(obj).filter(([key]) => writable.has(key)))
+  switch (action) {
+    case "status":
+      return value ? keep({ status: value }) : {}
+    case "close":
+      return keep({ status: "Closed", closure_date: today, decision_date: today })
+    case "approve": {
+      const patch: Record<string, string> = {}
+      if (writable.has("approval_status")) patch.approval_status = "Approved"
+      if (writable.has("decision")) patch.decision = "Approved"
+      if (writable.has("decision_date")) patch.decision_date = today
+      if (!writable.has("approval_status") && !writable.has("decision")) patch.status = "Approved"
+      return keep(patch)
+    }
+    case "reject": {
+      const patch: Record<string, string> = {}
+      if (writable.has("approval_status")) patch.approval_status = "Rejected"
+      if (writable.has("decision")) patch.decision = "Rejected"
+      if (writable.has("decision_date")) patch.decision_date = today
+      if (!writable.has("approval_status") && !writable.has("decision")) patch.status = "Rejected"
+      return keep(patch)
+    }
+    case "assign": {
+      if (!value) return {}
+      const col = ["assigned_to", "action_owner", "owner", "approver"].find((c) => writable.has(c))
+      return col ? { [col]: value } : {}
+    }
+    default:
+      return {}
+  }
+}
+
+// Bulk actions (Phase 82). Applies a status update / semantic transition /
+// assignment / delete to many records at once. Every record is still gated by
+// the same per-record permission check as single edits, and successful writes
+// run the same cross-module sync hooks, so bulk edits stay consistent.
+export async function PATCH(request: Request) {
+  const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const body = await request.json(); const selected = kind(body.kind); if (!selected) return NextResponse.json({ error: "Invalid record type" }, { status: 400 })
+  const ids: number[] = Array.isArray(body.ids)
+    ? [...new Set((body.ids as unknown[]).map((v) => Number(v)).filter((n): n is number => Number.isFinite(n) && n > 0))]
+    : []
+  if (!ids.length) return NextResponse.json({ error: "No records selected" }, { status: 400 })
+  const action = String(body.action ?? "")
+  const value = body.value === undefined || body.value === null ? undefined : String(body.value)
+  const isDelete = action === "delete"
+  if (!isDelete && !["status", "close", "approve", "reject", "assign"].includes(action))
+    return NextResponse.json({ error: "Unsupported bulk action" }, { status: 400 })
+  try {
+    await ensureOperationsSchema()
+    const writable = new Set(allowedFields[selected])
+    const patch = isDelete ? {} : bulkPatch(action, value, writable)
+    if (!isDelete && Object.keys(patch).length === 0)
+      return NextResponse.json({ error: "This action does not apply to these records." }, { status: 400 })
+    let succeeded = 0, forbidden = 0, skipped = 0
+    for (const id of ids) {
+      const existing = await query<any[]>(`SELECT * FROM ${tables[selected]} WHERE id = ? LIMIT 1`, [id])
+      if (!existing.length) { skipped++; continue }
+      const gate = isDelete ? "delete" : "update"
+      if (!(await canActOnRecord(session, permissionKeys[selected], gate, existing[0]))) { forbidden++; continue }
+      if (isDelete) {
+        await query(`DELETE FROM ${tables[selected]} WHERE id = ?`, [id])
+        succeeded++
+        continue
+      }
+      let effective = { ...patch }
+      if (selected === "sla_monitoring") effective = { ...effective, ...computeSlaTracking({ ...existing[0], ...effective }) as any }
+      const keys = Object.keys(effective)
+      const setClause = keys.map((key) => `${key} = ?`).join(",")
+      const values = keys.map((key) => (effective as any)[key] === "" ? null : (effective as any)[key])
+      await query(`UPDATE ${tables[selected]} SET ${setClause} WHERE id = ?`, [...values, id])
+      await runSyncHooks(selected, { ...existing[0], ...effective, id }, session, "Updated")
+      succeeded++
+    }
+    return NextResponse.json({ succeeded, forbidden, skipped, total: ids.length })
+  } catch { return NextResponse.json({ error: "Failed to apply bulk action" }, { status: 500 }) }
+}
+
 export async function DELETE(request: Request) {
   const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const url = new URL(request.url); const selected = kind(url.searchParams.get("kind")); const id = url.searchParams.get("id")

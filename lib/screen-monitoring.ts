@@ -155,6 +155,27 @@ async function doEnsureSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `)
 
+  // Ephemeral WebRTC signaling relay for the live-view feature. Each row is a
+  // single offer/answer/ICE message between one HR viewer and the employee
+  // broadcaster for a session. Rows are short-lived: consumed on read and
+  // swept after a few minutes. No media ever touches the server — this table
+  // only brokers the peer-to-peer handshake.
+  await query(`
+    CREATE TABLE IF NOT EXISTS screen_monitoring_signals (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      session_pk BIGINT UNSIGNED NOT NULL,
+      viewer_id VARCHAR(64) NOT NULL,
+      sender ENUM('viewer','broadcaster') NOT NULL,
+      kind ENUM('offer','answer','ice','bye') NOT NULL,
+      payload LONGTEXT NULL,
+      consumed TINYINT(1) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_sig_poll (session_pk, sender, consumed),
+      KEY idx_sig_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `)
+
   await query(`
     CREATE TABLE IF NOT EXISTS screen_monitoring_settings (
       id TINYINT UNSIGNED NOT NULL DEFAULT 1,
@@ -614,4 +635,71 @@ export async function runMonitoringCleanup(): Promise<CleanupResult> {
   }
 
   return { staleClosed: stale.length, screenshotsPurged: purgeCount, emptySessionsMarked: 0 }
+}
+
+// ---------------------------------------------------------------------------
+// Live view — WebRTC signaling relay (peer-to-peer; no media on the server)
+// ---------------------------------------------------------------------------
+export type SignalSender = "viewer" | "broadcaster"
+export type SignalKind = "offer" | "answer" | "ice" | "bye"
+
+export type SignalMessage = {
+  id: number
+  viewer_id: string
+  sender: SignalSender
+  kind: SignalKind
+  payload: string | null
+}
+
+/** Store one handshake message for the other peer to pick up on its next poll. */
+export async function postSignal(input: {
+  sessionPk: number
+  viewerId: string
+  sender: SignalSender
+  kind: SignalKind
+  payload: string | null
+}): Promise<void> {
+  await ensureMonitoringSchema()
+  await query(
+    `INSERT INTO screen_monitoring_signals (session_pk, viewer_id, sender, kind, payload)
+     VALUES (?,?,?,?,?)`,
+    [input.sessionPk, input.viewerId.slice(0, 64), input.sender, input.kind, input.payload ?? null],
+  )
+}
+
+/**
+ * Drain the messages addressed to `reader` for a session (viewers only see the
+ * broadcaster messages tagged with their own viewerId; the broadcaster sees all
+ * viewer messages). Read rows are marked consumed so each is delivered once, and
+ * stale signals (> 3 min) are swept opportunistically.
+ */
+export async function pollSignals(input: {
+  sessionPk: number
+  reader: SignalSender
+  viewerId?: string
+}): Promise<SignalMessage[]> {
+  await ensureMonitoringSchema()
+  // Opportunistic cleanup so the relay table never grows unbounded.
+  await query(`DELETE FROM screen_monitoring_signals WHERE created_at < (NOW() - INTERVAL 3 MINUTE)`)
+
+  const wantSender: SignalSender = input.reader === "viewer" ? "broadcaster" : "viewer"
+  const where = ["session_pk = ?", "sender = ?", "consumed = 0"]
+  const params: unknown[] = [input.sessionPk, wantSender]
+  if (input.reader === "viewer") {
+    where.push("viewer_id = ?")
+    params.push(input.viewerId ?? "")
+  }
+  const rows = await query<SignalMessage[]>(
+    `SELECT id, viewer_id, sender, kind, payload FROM screen_monitoring_signals
+      WHERE ${where.join(" AND ")} ORDER BY id ASC LIMIT 100`,
+    params,
+  )
+  if (rows.length) {
+    const ids = rows.map((r) => r.id)
+    await query(
+      `UPDATE screen_monitoring_signals SET consumed = 1 WHERE id IN (${ids.map(() => "?").join(",")})`,
+      ids,
+    )
+  }
+  return rows
 }

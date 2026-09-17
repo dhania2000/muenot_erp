@@ -113,7 +113,7 @@ export function PersonalDashboard({ modules }: { modules: ModuleCard[] }) {
         <StatCard icon={ListTodo} label="Open to-dos" value={stats.openTodos} href="#todo-list" />
         <StatCard icon={Clock} label="Pending work" value={stats.pendingWork} href="#pending-work" />
         <StatCard icon={FolderKanban} label="Active projects" value={stats.activeProjects} href="#assigned-projects" />
-        <StatCard icon={CalendarClock} label="Meetings today" value={stats.meetingsToday} href="/calendar" />
+        <StatCard icon={CalendarClock} label="Meetings today" value={stats.meetingsToday} href="/modules/calendar" />
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -400,7 +400,7 @@ function MeetingsCard({ meetings, loading }: { meetings: Meeting[]; loading: boo
         </div>
       )}
       <Link
-        href="/calendar"
+        href="/modules/calendar"
         className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
       >
         <CalendarDays className="size-3.5" /> Open calendar

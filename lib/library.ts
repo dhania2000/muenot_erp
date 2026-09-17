@@ -1,6 +1,7 @@
 import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { userHasFeature } from "@/lib/permissions"
+import { notify } from "@/lib/sales/lead-lifecycle"
 import type { SessionPayload } from "@/lib/auth"
 
 /**
@@ -396,6 +397,97 @@ export async function storageStats(): Promise<StorageStats> {
     percentage: quotaBytes > 0 ? Math.min(100, Math.round((usedBytes / quotaBytes) * 100)) : 0,
     assetCount: Number(count?.c || 0),
     largest,
+  }
+}
+
+const LIBRARY_LINK = "/modules/marketing/library"
+
+/**
+ * Scheduled maintenance sweep (Phase 30/74/92/93). Idempotent:
+ *  - Expires assets past their expiry_date (once, guarded by expiry_notified)
+ *    and notifies the uploader.
+ *  - Raises a storage-capacity alert to admins when usage crosses the warning
+ *    threshold, deduped to at most one alert per UTC day via the audit trail.
+ * Safe to run repeatedly; a second run on the same day is a no-op.
+ */
+export async function runLibraryMaintenance(): Promise<{
+  ran_at: string
+  expired: number
+  storage_alert: boolean
+  storage_percentage: number
+}> {
+  await ensureLibrarySchema()
+
+  // 1. Expire assets whose expiry date has passed.
+  const due = (await query(
+    `SELECT id, asset_id, name, created_by
+       FROM marketing_library
+      WHERE expiry_date IS NOT NULL
+        AND expiry_date <= CURDATE()
+        AND expiry_notified = 0
+        AND status NOT IN ('Archived', 'Expired')`,
+  )) as { id: number; asset_id: string; name: string; created_by: number | null }[]
+
+  for (const asset of due) {
+    await query(
+      `UPDATE marketing_library SET status = 'Expired', expiry_notified = 1 WHERE id = ?`,
+      [asset.id],
+    )
+    await recordAudit("expired", {
+      libraryId: asset.id,
+      assetCode: asset.asset_id,
+      detail: "Auto-expired by scheduled maintenance",
+      userName: "System",
+    })
+    if (asset.created_by) {
+      await notify(null, {
+        userId: asset.created_by,
+        type: "marketing-library",
+        title: "Asset expired",
+        body: `"${asset.name}" (${asset.asset_id}) has passed its expiry date and was marked Expired.`,
+        link: LIBRARY_LINK,
+        entityType: "marketing_library",
+        entityId: asset.asset_id,
+      }).catch(() => {})
+    }
+  }
+
+  // 2. Storage-capacity alert (deduped to one per day via audit trail).
+  const stats = await storageStats()
+  let storageAlert = false
+  if (stats.percentage >= 80) {
+    const [already] = (await query(
+      `SELECT id FROM marketing_library_audit
+        WHERE action = 'storage_alert' AND DATE(created_at) = CURDATE() LIMIT 1`,
+    )) as { id: number }[]
+    if (!already) {
+      storageAlert = true
+      await recordAudit("storage_alert", {
+        detail: `Storage at ${stats.percentage}% (${humanSize(stats.usedBytes)} of ${humanSize(stats.quotaBytes)})`,
+        userName: "System",
+      })
+      const admins = (await query(
+        `SELECT id FROM users WHERE role = 'admin' AND status = 'active'`,
+      ).catch(() => [])) as { id: number }[]
+      for (const admin of admins) {
+        await notify(null, {
+          userId: admin.id,
+          type: "marketing-library",
+          title: "Library storage running low",
+          body: `Digital Asset Library is ${stats.percentage}% full (${humanSize(stats.usedBytes)} of ${humanSize(stats.quotaBytes)}). Consider archiving unused assets.`,
+          link: LIBRARY_LINK,
+          entityType: "marketing_library",
+          entityId: null,
+        }).catch(() => {})
+      }
+    }
+  }
+
+  return {
+    ran_at: new Date().toISOString(),
+    expired: due.length,
+    storage_alert: storageAlert,
+    storage_percentage: stats.percentage,
   }
 }
 

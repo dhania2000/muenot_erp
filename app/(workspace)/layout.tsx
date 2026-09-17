@@ -221,6 +221,7 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
       { label: "Tasks", href: "/modules/operations/tasks", feature: "operations.view_tasks" },
       { label: "Task Board", href: "/modules/operations/task-board", feature: "operations.view_tasks" },
       { label: "Work Orders", href: "/modules/operations/work-orders", feature: "operations.view_work_orders" },
+      { label: "Meetings", href: "/modules/operations/meetings", feature: "operations.view_meetings" },
     ],
   },
   {

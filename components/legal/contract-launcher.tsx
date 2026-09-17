@@ -193,15 +193,14 @@ function LauncherDialog({
               <p className="text-sm text-muted-foreground">Download it, or open it in the Legal workspace to email or track.</p>
             </div>
             <div className="flex flex-wrap justify-center gap-2">
-              <Button asChild>
-                <a href={`/api/legal/contracts/${done.id}/pdf?download=1`}>
-                  <Download data-icon="inline-start" /> Download PDF
-                </a>
+              <Button render={<a href={`/api/legal/contracts/${done.id}/pdf?download=1`} />}>
+                <Download data-icon="inline-start" /> Download PDF
               </Button>
-              <Button variant="outline" asChild>
-                <a href={`/modules/legal/contracts?open=${done.id}`} target="_blank" rel="noreferrer">
-                  <ExternalLink data-icon="inline-start" /> Open in Legal
-                </a>
+              <Button
+                variant="outline"
+                render={<a href={`/modules/legal/contracts?open=${done.id}`} target="_blank" rel="noreferrer" />}
+              >
+                <ExternalLink data-icon="inline-start" /> Open in Legal
               </Button>
               <Button variant="ghost" onClick={onClose}>
                 Done

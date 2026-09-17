@@ -151,10 +151,13 @@ export function ContractsClient() {
                 <td className="px-4 py-3 text-muted-foreground">{fmtDate(c.end_date)}</td>
                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <div className="flex justify-end">
-                    <Button variant="outline" size="sm" asChild aria-label="Download PDF">
-                      <a href={`/api/legal/contracts/${c.id}/pdf?download=1`}>
-                        <Download className="size-4" />
-                      </a>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label="Download PDF"
+                      render={<a href={`/api/legal/contracts/${c.id}/pdf?download=1`} />}
+                    >
+                      <Download className="size-4" />
                     </Button>
                   </div>
                 </td>

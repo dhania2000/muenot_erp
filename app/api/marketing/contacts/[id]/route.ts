@@ -128,7 +128,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   })
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   await ensureContactSchema()
   const session = await requireFeature("marketing.contacts.manage")
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
@@ -137,6 +137,17 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const contactId = Number(id)
   const current = await loadContact(contactId)
   if (!current) return NextResponse.json({ error: "Contact not found" }, { status: 404 })
+
+  const permanent = new URL(request.url).searchParams.get("permanent") === "true"
+
+  if (permanent) {
+    // Hard delete — remove the contact and its dependent rows entirely.
+    await query(`DELETE FROM marketing_segment_members WHERE contact_id = ?`, [contactId]).catch(() => {})
+    await query(`DELETE FROM marketing_contact_tags WHERE contact_id = ?`, [contactId]).catch(() => {})
+    await query(`DELETE FROM marketing_contact_activity WHERE contact_id = ?`, [contactId]).catch(() => {})
+    await query(`DELETE FROM marketing_contacts WHERE id = ?`, [contactId])
+    return NextResponse.json({ ok: true, permanent: true })
+  }
 
   await query(
     `UPDATE marketing_contacts SET archived_at = NOW(), archived_by = ?, row_version = row_version + 1 WHERE id = ?`,

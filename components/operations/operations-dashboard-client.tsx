@@ -20,6 +20,8 @@ import {
 import { Plus, Pencil, Trash2 } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
+import { OperationsSopHistory } from "@/components/operations/operations-sop-history"
+import { OperationsChecklistItems } from "@/components/operations/operations-checklist-items"
 import {
   Table,
   TableHeader,
@@ -285,6 +287,18 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
 
 export function OperationsOverview() {
   const { data, isLoading } = useSWR("/api/operations/dashboard", fetcherJson, { refreshInterval: 30000 })
+  const { data: monitoring } = useSWR<{
+    counts: Record<string, number>
+    alerts: { category: string; title: string; due_date: string | null; owner: string | null; link: string }[]
+    progress: {
+      project_id: number
+      project_name: string | null
+      client_name: string | null
+      progress: number
+      overdue_tasks: number
+      status: string | null
+    }[]
+  }>("/api/operations/monitoring", fetcherJson, { refreshInterval: 30000 })
 
   if (isLoading || !data) {
     return <div className="text-sm text-muted-foreground">Loading operations dashboard...</div>
@@ -339,6 +353,80 @@ export function OperationsOverview() {
           </Card>
         ))}
       </div>
+
+      {monitoring && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <Card className="lg:col-span-1">
+            <CardHeader>
+              <CardTitle className="text-base">Deadlines & Alerts</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              {Object.keys(monitoring.counts).length === 0 ? (
+                <p className="text-sm text-muted-foreground">No overdue or pending items. All clear.</p>
+              ) : (
+                Object.entries(monitoring.counts)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([category, count]) => (
+                    <div key={category} className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">{category}</span>
+                      <Badge variant={/overdue|breach/i.test(category) ? "destructive" : "outline"}>{count}</Badge>
+                    </div>
+                  ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle className="text-base">Project Progress</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {monitoring.progress.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No projects yet.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Project</TableHead>
+                      <TableHead>Client</TableHead>
+                      <TableHead className="w-40">Progress</TableHead>
+                      <TableHead className="text-right">Overdue Tasks</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {monitoring.progress.slice(0, 8).map((p) => (
+                      <TableRow key={p.project_id}>
+                        <TableCell className="font-medium">{p.project_name ?? `#${p.project_id}`}</TableCell>
+                        <TableCell className="text-muted-foreground">{p.client_name ?? "—"}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                              <div
+                                className="h-full rounded-full bg-primary"
+                                style={{ width: `${Math.min(100, Math.max(0, p.progress))}%` }}
+                              />
+                            </div>
+                            <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">
+                              {p.progress}%
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {p.overdue_tasks > 0 ? (
+                            <Badge variant="destructive">{p.overdue_tasks}</Badge>
+                          ) : (
+                            <span className="text-muted-foreground">0</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
         <Card>
@@ -640,6 +728,16 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
                   ))}
                   <td className="p-3">
                     <div className="flex items-center justify-end gap-1">
+                      {kind === "sops" && row.id != null && (
+                        <OperationsSopHistory sopId={row.id} title={row.title} />
+                      )}
+                      {kind === "checklists" && row.id != null && (
+                        <OperationsChecklistItems
+                          checklistId={row.id}
+                          name={row.checklist_name}
+                          onChange={() => mutate()}
+                        />
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"

@@ -1,2 +1,2 @@
-import { OperationsFeaturePage } from "@/components/operations/operations-feature-page"
-export default function ResourceCostPage() { return <OperationsFeaturePage module="resource_cost" /> }
+import { OperationsFinanceReport } from "@/components/operations/operations-finance-report"
+export default function ResourceCostPage() { return <OperationsFinanceReport view="resource_cost" /> }

@@ -128,6 +128,19 @@ export const REPORTS_EXTRA_ACTIONS: ExtendedAction[] = [
  * Destructive/irreversible steps fall back to `delete`; preparatory ones to the
  * base verb they extend (`add`/`update`).
  */
+/**
+ * Screen Activity Monitoring extended actions. Base View/Add/Update/Delete
+ * scopes already encode "View Own / Team / All" (via none/owned/added/all). The
+ * privileged operations below are separable so an HR viewer can be granted read
+ * access without export, retention-purge or settings rights.
+ */
+export const SCREEN_MONITORING_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "export", label: "Export Monitoring Data", fallback: "view", scoped: false, description: "Export monitoring session metadata (employee, attendance, session, duration, status)." },
+  { key: "download_screenshot", label: "Download Screenshot", fallback: "view", scoped: false, description: "Download individual captured screenshots (audited)." },
+  { key: "manage_retention", label: "Retention Management", fallback: "delete", scoped: false, description: "Delete screenshots and manage retention purges." },
+  { key: "manage_settings", label: "Monitoring Settings", fallback: "delete", scoped: false, description: "Configure capture interval, image quality and retention window." },
+]
+
 export const INTERVIEW_EXTRA_ACTIONS: ExtendedAction[] = [
   { key: "schedule_interview", label: "Schedule Interview", fallback: "add", scoped: true, description: "Schedule an interview and issue the calendar invite / notifications." },
   { key: "reschedule_interview", label: "Reschedule Interview", fallback: "update", scoped: true, description: "Move a scheduled interview to a new date/time and re-issue invites." },
@@ -202,6 +215,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "hr.employees", label: "Employees", group: "hr", aliases: ["employee"], scope: { table: "hr_employees", addedBy: "created_by" } },
       { key: "hr.documents", label: "Employee Documents", group: "hr", aliases: ["document"], scope: { table: "hr_employee_documents" } },
       { key: "hr.attendance", label: "Attendance", group: "hr", aliases: ["attendance", "regularisation"], scope: { table: "hr_attendance", addedBy: "user_id", ownedBy: "user_id" } },
+      { key: "hr.screen_monitoring", label: "Screen Activity Monitoring", group: "hr", aliases: ["screen_monitoring", "screen", "monitoring"], scope: { table: "screen_monitoring_sessions", addedBy: "user_id", ownedBy: "user_id" }, extraActions: SCREEN_MONITORING_EXTRA_ACTIONS },
       { key: "hr.leaves", label: "Leaves", group: "hr", aliases: ["leave"], scope: { table: "hr_leave_requests", addedBy: "created_by", ownedBy: "employee_id" } },
       { key: "hr.shifts", label: "Shifts", group: "hr", aliases: ["shift", "rotation"], scope: { table: "hr_shifts", addedBy: "created_by" } },
       { key: "hr.support", label: "HR Support", group: "hr", aliases: ["support"], scope: { table: "hr_support_tickets", addedBy: "created_by", ownedBy: "assigned_to" } },

@@ -7,6 +7,13 @@ import {
   canCreateInModule,
   canActOnRecord,
 } from "@/lib/permission-enforce"
+import {
+  syncTimesheet,
+  computeSlaTracking,
+  spawnQualityActions,
+  syncScorecardCriteria,
+  recalcScorecard,
+} from "@/lib/operations-sync"
 
 const tables = {
   resources: "operations_resources",
@@ -39,6 +46,9 @@ const tables = {
   resource_cost: "operations_resource_cost",
   vendor_cost: "operations_vendor_cost",
   budget_vs_actual: "operations_budget_vs_actual",
+  productivity: "operations_productivity",
+  scorecards: "operations_scorecards",
+  scorecard_criteria: "operations_scorecard_criteria",
 } as const
 
 type Kind = keyof typeof tables
@@ -76,6 +86,9 @@ const permissionKeys: Record<Kind, string> = {
   resource_cost: "operations.resource_cost",
   vendor_cost: "operations.vendor_cost",
   budget_vs_actual: "operations.budget_vs_actual",
+  productivity: "operations.productivity",
+  scorecards: "operations.scorecards",
+  scorecard_criteria: "operations.scorecard_criteria",
 }
 
 // Whitelist of writable columns per kind. Shared by create (POST) and update
@@ -112,9 +125,25 @@ const allowedFields: Record<Kind, string[]> = {
   resource_cost:["resource_id","resource_name","project_id","cost_type","rate","rate_type","hours","period","total_cost","currency","billable","status","remarks"],
   vendor_cost:["vendor_name","project_id","service_category","po_number","description","invoice_amount","paid_amount","currency","invoice_date","due_date","payment_status","status","remarks"],
   budget_vs_actual:["project_id","project_name","client_name","category","budget_amount","actual_amount","variance","variance_percent","period","currency","forecast_amount","status","remarks"],
+  productivity:["resource_id","resource_name","project_id","period","tasks_assigned","tasks_completed","deliverables_completed","estimated_hours","logged_hours","billable_hours","task_completion_percent","efficiency_percent","billable_percent","productivity_score","source","status","remarks"],
+  scorecards:["scorecard_no","scorecard_type","subject_type","subject_id","subject_name","project_id","client_name","period","review_date","reviewer","total_score","max_score","score_percent","result","status","remarks"],
+  scorecard_criteria:["scorecard_id","criteria_name","weight","max_score","score","weighted_score","status","remarks"],
 }
 
 function kind(value: string | null): Kind | null { return value && value in tables ? value as Kind : null }
+
+// After a successful create/update, fan out to the cross-module sync layer.
+// Best-effort: a hook failure is logged but never fails the user's write.
+async function runSyncHooks(selected: Kind, row: Record<string, any>): Promise<void> {
+  try {
+    if (selected === "timesheets") await syncTimesheet(row)
+    else if (selected === "quality") await spawnQualityActions(row, row.id)
+    else if (selected === "scorecard_criteria") await syncScorecardCriteria(row, row.id)
+    else if (selected === "scorecards") await recalcScorecard(row.id)
+  } catch (error) {
+    console.log("[v0] operations sync hook failed:", (error as Error).message)
+  }
+}
 
 export async function GET(request: Request) {
   const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -135,8 +164,14 @@ export async function POST(request: Request) {
   const session = await getSession(); if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const body = await request.json(); const selected = kind(body.kind); if (!selected) return NextResponse.json({ error: "Invalid record type" }, { status: 400 })
   if (!(await canCreateInModule(session, permissionKeys[selected]))) return NextResponse.json({ error: "You do not have permission to create this record." }, { status: 403 })
+  if (selected === "sla_monitoring") Object.assign(body, computeSlaTracking(body))
   const keys = allowedFields[selected].filter((key) => body[key] !== undefined); if (!keys.length) return NextResponse.json({ error: "No fields supplied" }, { status: 400 })
-  try { const values = keys.map((key) => body[key] === "" ? null : body[key]); const placeholders = keys.map(() => "?").join(","); const result = await query<any>(`INSERT INTO ${tables[selected]} (${keys.join(",")}) VALUES (${placeholders})`, values); return NextResponse.json({ id: result.insertId }, { status: 201 }) } catch { return NextResponse.json({ error: "Failed to create operation record" }, { status: 500 }) }
+  try {
+    const values = keys.map((key) => body[key] === "" ? null : body[key]); const placeholders = keys.map(() => "?").join(",")
+    const result = await query<any>(`INSERT INTO ${tables[selected]} (${keys.join(",")}) VALUES (${placeholders})`, values)
+    await runSyncHooks(selected, { ...body, id: result.insertId })
+    return NextResponse.json({ id: result.insertId }, { status: 201 })
+  } catch { return NextResponse.json({ error: "Failed to create operation record" }, { status: 500 }) }
 }
 
 export async function PUT(request: Request) {
@@ -147,10 +182,12 @@ export async function PUT(request: Request) {
     const existing = await query<any[]>(`SELECT * FROM ${tables[selected]} WHERE id = ? LIMIT 1`, [id])
     if (!existing.length) return NextResponse.json({ error: "Record not found" }, { status: 404 })
     if (!(await canActOnRecord(session, permissionKeys[selected], "update", existing[0]))) return NextResponse.json({ error: "You do not have permission to edit this record." }, { status: 403 })
+    if (selected === "sla_monitoring") Object.assign(body, computeSlaTracking({ ...existing[0], ...body }))
     const keys = allowedFields[selected].filter((key) => body[key] !== undefined); if (!keys.length) return NextResponse.json({ error: "No fields supplied" }, { status: 400 })
     const values = keys.map((key) => body[key] === "" ? null : body[key])
     const setClause = keys.map((key) => `${key} = ?`).join(",")
     await query(`UPDATE ${tables[selected]} SET ${setClause} WHERE id = ?`, [...values, id])
+    await runSyncHooks(selected, { ...existing[0], ...body, id })
     return NextResponse.json({ id })
   } catch { return NextResponse.json({ error: "Failed to update operation record" }, { status: 500 }) }
 }

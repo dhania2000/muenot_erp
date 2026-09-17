@@ -239,6 +239,7 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
     label: "Timesheets",
     children: [
       { label: "Timesheet Management", href: "/modules/operations/timesheets", feature: "operations.view_timesheets" },
+      { label: "Productivity", href: "/modules/operations/productivity", feature: "operations.view_productivity" },
     ],
   },
   {
@@ -247,6 +248,8 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
       { label: "Quality Reviews", href: "/modules/operations/quality", feature: "operations.view_quality" },
       { label: "QA Audits", href: "/modules/operations/qa-audits", feature: "operations.view_qa_audits" },
       { label: "SLA Monitoring", href: "/modules/operations/sla-monitoring", feature: "operations.view_sla_monitoring" },
+      { label: "Quality Scorecards", href: "/modules/operations/scorecards", feature: "operations.view_scorecards" },
+      { label: "Scorecard Criteria", href: "/modules/operations/scorecard-criteria", feature: "operations.view_scorecard_criteria" },
       { label: "Corrective Actions", href: "/modules/operations/corrective-actions", feature: "operations.view_corrective_actions" },
     ],
   },

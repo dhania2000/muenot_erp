@@ -3,6 +3,8 @@ import MailComposer from "nodemailer/lib/mail-composer"
 import { google } from "googleapis"
 import crypto from "crypto"
 import { query } from "@/lib/db"
+import { getGoogleAccount } from "@/lib/google-accounts"
+import { makeUserGmailClient, scopeGrantsGmailSend } from "@/lib/google-calendar"
 
 let tablesEnsured = false
 
@@ -842,6 +844,69 @@ function buildFromHeader(department: Department | undefined, configuredFrom: str
   if (!address) return configuredFrom
   if (department === "sales") return `Muenot Business Team <${address}>`
   return configuredFrom
+}
+
+/**
+ * Look up whether an employee has connected their own mailbox via "Connect your
+ * email". Returns their OAuth refresh token + address when the connection
+ * carries the gmail.send scope, otherwise null so the caller falls back to the
+ * department's shared transport.
+ */
+async function getUserMailSender(userId: number | undefined | null) {
+  if (!userId) return null
+  try {
+    const account = await getGoogleAccount(userId)
+    if (!account?.refresh_token || !scopeGrantsGmailSend(account.scope)) return null
+    return { refreshToken: account.refresh_token, email: account.google_email as string | null }
+  } catch (err) {
+    console.error("[v0][email] could not load connected mailbox for user", userId, (err as any)?.message)
+    return null
+  }
+}
+
+/** True when this employee can send from their own connected Gmail mailbox. */
+export async function hasConnectedMailbox(userId: number | undefined | null) {
+  return Boolean(await getUserMailSender(userId))
+}
+
+/**
+ * Send a fully-composed MIME message through an employee's own Gmail using their
+ * OAuth refresh token. Mirrors the service-account send path (threadId join +
+ * real Message-ID read-back) but authorized as the connected user.
+ */
+async function sendViaUserGmail(
+  refreshToken: string,
+  mailOptions: Record<string, unknown>,
+  opts: { messageId?: string; providerThreadId?: string | null },
+): Promise<{ messageId?: string; providerThreadId?: string | null }> {
+  const gmail = makeUserGmailClient(refreshToken)
+  const raw = await composeMime(mailOptions)
+  const encoded = raw.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  const res = await gmail.users.messages.send({
+    userId: "me",
+    requestBody: opts.providerThreadId ? { raw: encoded, threadId: opts.providerThreadId } : { raw: encoded },
+  })
+
+  let realMessageId = opts.messageId
+  if (res.data.id) {
+    try {
+      const sent = await gmail.users.messages.get({
+        userId: "me",
+        id: res.data.id,
+        format: "metadata",
+        metadataHeaders: ["Message-ID", "Message-Id"],
+      })
+      const header = (sent.data.payload?.headers || []).find(
+        (h) => (h.name || "").toLowerCase() === "message-id",
+      )?.value
+      if (header) realMessageId = header
+    } catch (err) {
+      // Non-fatal: send already succeeded; only follow-up threading degrades.
+      console.error("[v0][email] Gmail Message-ID read-back failed:", (err as any)?.message)
+    }
+  }
+
+  return { messageId: realMessageId, providerThreadId: res.data.threadId ?? opts.providerThreadId ?? null }
 }
 
 export async function sendEmail(opts: {

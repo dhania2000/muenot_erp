@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { ensureContractTables } from "@/lib/legal-contracts-db"
 import { validateTemplate } from "@/lib/legal-contracts-render"
+import { logContractEvent } from "@/lib/legal-contracts-audit"
 import {
   type ContractTemplate,
   type ContractTemplateVersion,
@@ -138,6 +139,14 @@ export async function createContractTemplate(input: TemplateInput): Promise<{ ok
   const template = await getContractTemplate(Number((result as any).insertId))
   if (!template) return { ok: false, error: "Failed to load created template" }
   await snapshotVersion(template, "Template created", input.actorId ?? null)
+  await logContractEvent({
+    entity: "template",
+    entityId: template.id,
+    entityRef: template.template_uid,
+    type: "template_created",
+    summary: `Created template “${template.name}” (${template.contract_type})`,
+    actorId: input.actorId ?? null,
+  })
   return { ok: true, template }
 }
 

@@ -6,6 +6,7 @@ import { ensureContractTables, getCompanySettings } from "@/lib/legal-contracts-
 import { resolveContractVariables, formatContractDate } from "@/lib/legal-contract-variables"
 import { renderContractTemplate, missingRequiredValues } from "@/lib/legal-contracts-render"
 import { getContractTemplate } from "@/lib/legal-contracts-templates"
+import { logContractEvent } from "@/lib/legal-contracts-audit"
 import { sourceMeta, type GeneratedContract } from "@/lib/legal-contracts-shared"
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,10 @@ export type GenerateContractInput = {
   status?: string
   allowMissing?: boolean
   supersedesId?: number | null
+  /** Status to set on the superseded contract. Defaults to "Cancelled". */
+  supersedeStatus?: string
+  /** Audit event type to record. Defaults to "contract_generated". */
+  auditType?: "contract_generated" | "contract_renewed"
   actorId?: number | null
   actorName?: string | null
 }
@@ -141,8 +146,8 @@ export async function generateContract(input: GenerateContractInput): Promise<Ge
 
   if (input.supersedesId) {
     await query(
-      "UPDATE legal_generated_contracts SET superseded_by = ?, status = 'Cancelled' WHERE id = ?",
-      [newId, input.supersedesId],
+      "UPDATE legal_generated_contracts SET superseded_by = ?, status = ? WHERE id = ?",
+      [newId, input.supersedeStatus || "Cancelled", input.supersedesId],
     ).catch(() => {})
   }
 
@@ -155,6 +160,26 @@ export async function generateContract(input: GenerateContractInput): Promise<Ge
 
   const contract = await getGeneratedContract(newId)
   if (!contract) return { ok: false, error: "Failed to load created contract", code: 500 }
+
+  await logContractEvent({
+    entity: "contract",
+    entityId: newId,
+    entityRef: contract.reference_no || contract.contract_uid,
+    type: input.auditType || "contract_generated",
+    summary:
+      input.auditType === "contract_renewed"
+        ? `Renewed from contract #${input.supersedesId}`
+        : `Generated ${contract.contract_type} “${contract.title}”`,
+    detail: {
+      templateId: input.templateId ?? null,
+      templateVersion: template?.version ?? null,
+      source,
+      sourceRef: input.sourceRef ?? null,
+      party: partyName,
+    },
+    actorId: input.actorId ?? null,
+    actorName: input.actorName ?? null,
+  })
 
   void meta
   return { ok: true, contract }
@@ -265,23 +290,42 @@ export async function listGeneratedContracts(filters: ContractListFilters = {}):
   }
 }
 
-/** Aggregate counts for the Generated tab summary cards. */
-export async function contractStats(): Promise<{ total: number; active: number; expiringSoon: number; draft: number }> {
+/** Aggregate counts for the Generated tab summary cards (Phase 95). */
+export async function contractStats(): Promise<{
+  total: number
+  active: number
+  pending: number
+  draft: number
+  signed: number
+  expiringSoon: number
+  expired: number
+  renewalDue: number
+}> {
   await ensureContractTables()
   const rows = await query<any[]>(
     `SELECT
         COUNT(*) AS total,
         SUM(status IN ('Active','Signed')) AS active,
-        SUM(status IN ('Draft','Generated','In Review')) AS draft,
-        SUM(end_date IS NOT NULL AND end_date >= CURDATE() AND end_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)) AS expiring_soon
+        SUM(status IN ('Generated','In Review')) AS pending,
+        SUM(status = 'Draft') AS draft,
+        SUM(status = 'Signed') AS signed,
+        SUM(status = 'Expired') AS expired,
+        SUM(status NOT IN ('Expired','Terminated','Cancelled') AND end_date IS NOT NULL
+            AND end_date >= CURDATE() AND end_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)) AS expiring_soon,
+        SUM(status NOT IN ('Expired','Terminated','Cancelled') AND renewal_date IS NOT NULL
+            AND renewal_date >= CURDATE() AND renewal_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)) AS renewal_due
        FROM legal_generated_contracts`,
-  ).catch(() => [{ total: 0, active: 0, draft: 0, expiring_soon: 0 }])
+  ).catch(() => [{}])
   const r = rows[0] || {}
   return {
     total: Number(r.total || 0),
     active: Number(r.active || 0),
-    expiringSoon: Number(r.expiring_soon || 0),
+    pending: Number(r.pending || 0),
     draft: Number(r.draft || 0),
+    signed: Number(r.signed || 0),
+    expiringSoon: Number(r.expiring_soon || 0),
+    expired: Number(r.expired || 0),
+    renewalDue: Number(r.renewal_due || 0),
   }
 }
 

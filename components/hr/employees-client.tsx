@@ -59,6 +59,10 @@ import {
 import { toast } from "sonner";
 import { ExcelImportButton } from "@/components/sales/excel-import-button";
 import { ExcelExportButton } from "@/components/excel-export-button";
+import { EmployeeCallAction } from "@/components/calls/call-button";
+
+// Employment states in which an employee can no longer receive internal calls.
+const NON_CALLABLE_STATUSES = new Set(["Resigned", "Terminated", "Ex-Employee", "Suspended"]);
 
 const EMPLOYEE_IMPORT_ALIASES = Object.fromEntries(
   [
@@ -1013,6 +1017,21 @@ export function EmployeesClient() {
                 </td>
                 <td className="px-4 py-4">
                   <div className="flex items-center justify-end gap-1">
+                    <EmployeeCallAction
+                      target={{ employeeId: Number(e.id), name: e.employee_name, origin: "employee_list" }}
+                      disabled={
+                        Boolean(e.archived_at) ||
+                        !e.user_id ||
+                        NON_CALLABLE_STATUSES.has(String(e.employment_status || ""))
+                      }
+                      disabledReason={
+                        !e.user_id
+                          ? "No login account"
+                          : e.archived_at || NON_CALLABLE_STATUSES.has(String(e.employment_status || ""))
+                            ? "Employee is inactive"
+                            : undefined
+                      }
+                    />
                     <Button
                       variant="ghost"
                       size="icon"

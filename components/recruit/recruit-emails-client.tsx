@@ -78,6 +78,8 @@ export function RecruitEmailsClient() {
         }
       />
 
+      <ConnectEmailPanel returnPath="/modules/recruitment/emails" />
+
       {data && !data.emailConfigured && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
           Email is not configured yet. Set SMTP_HOST, SMTP_USER and SMTP_PASS in your environment to start sending.

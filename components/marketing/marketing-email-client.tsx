@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Mail, ListFilter, Search, MoreVertical, FileText, CheckCircle2, Clock, Send, Trash2 } from "lucide-react"
+import { ConnectEmailPanel } from "@/components/connect-email-panel"
 
 type Status = "Draft" | "Sent" | "Scheduled" | "Sending"
 
@@ -185,6 +186,8 @@ export function MarketingEmailClient() {
           </DialogContent>
         </Dialog>
       </div>
+
+      <ConnectEmailPanel returnPath="/modules/marketing/campaigns/email" />
 
       <Card className="overflow-hidden p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">

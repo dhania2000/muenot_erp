@@ -103,7 +103,7 @@ const configs: Record<string, { title: string; fields: string[] }> = {
   },
   timesheets: {
     title: "Timesheet Management",
-    fields: ["resource_id", "resource_name", "project_id", "project_name", "task_id", "work_date", "hours_worked", "billable_hours", "activity_type", "description", "approved_by", "approval_status", "status", "remarks"],
+    fields: ["resource_id", "resource_name", "project_id", "project_name", "task_id", "work_date", "start_time", "end_time", "hours_worked", "billable_hours", "non_billable_hours", "activity_type", "description", "approved_by", "approval_status", "status", "remarks"],
   },
   qa_audits: {
     title: "QA Audits",
@@ -111,7 +111,7 @@ const configs: Record<string, { title: string; fields: string[] }> = {
   },
   sla_monitoring: {
     title: "SLA Monitoring",
-    fields: ["project_id", "client_name", "sla_metric", "sla_target", "actual_value", "unit", "measurement_period", "breach_count", "penalty", "owner", "review_date", "sla_status", "status", "remarks"],
+    fields: ["project_id", "client_name", "sla_metric", "sla_target", "actual_value", "unit", "measurement_period", "due_date", "actual_completion", "delay_days", "breach_count", "penalty", "owner", "review_date", "sla_status", "status", "remarks"],
   },
   corrective_actions: {
     title: "Corrective Actions",
@@ -186,8 +186,8 @@ const DEFAULT_STATUS = ["Active", "In Progress", "On Hold", "Completed", "Closed
 // (Phase 5): Draft → Planned → Active → On Hold → Completed → Closed → Cancelled.
 const STATUS_BY_KIND: Record<string, string[]> = {
   projects: ["Draft", "Planned", "Active", "On Hold", "Completed", "Closed", "Cancelled"],
-  issues: ["Open", "In Progress", "Resolved", "Closed"],
-  escalations: ["Open", "In Progress", "Resolved", "Closed"],
+  issues: ["Open", "Assigned", "In Progress", "Blocked", "Resolved", "Closed", "Reopened"],
+  escalations: ["Open", "Assigned", "In Progress", "Blocked", "Resolved", "Closed", "Reopened"],
   approvals: ["Pending", "Approved", "Rejected"],
   client_approvals: ["Pending", "Approved", "Rejected"],
   tasks: ["To Do", "In Progress", "Blocked", "In Review", "Done"],
@@ -230,10 +230,30 @@ const ENUM_OPTIONS: Record<string, string[]> = {
   source: ["derived", "manual"],
 }
 
+// Per-module overrides for enum fields whose option list differs from the
+// shared ENUM_OPTIONS default. Timesheets follow the approval lifecycle
+// Draft → Submitted → Approved → Rejected (Phase 18), while other modules that
+// expose `approval_status` keep the simpler Pending/Approved/Rejected set.
+const ENUM_BY_KIND: Record<string, Record<string, string[]>> = {
+  timesheets: {
+    approval_status: ["Draft", "Submitted", "Approved", "Rejected"],
+  },
+}
+
+// Fields that are computed automatically by the server and must not be edited
+// by hand (e.g. SLA delay is derived from due date vs. actual completion).
+const READONLY_FIELDS = new Set(["delay_days"])
+
+// Fields that render as a time picker rather than a text input.
+const TIME_FIELDS = new Set(["start_time", "end_time"])
+
+// Extra date fields whose name does not literally contain "date".
+const DATE_FIELDS = new Set(["actual_completion"])
+
 // Returns the select options for a field within a module, or null for a plain input.
 function optionsFor(kind: string, field: string): string[] | null {
   if (field === "status") return STATUS_BY_KIND[kind] ?? DEFAULT_STATUS
-  return ENUM_OPTIONS[field] ?? null
+  return ENUM_BY_KIND[kind]?.[field] ?? ENUM_OPTIONS[field] ?? null
 }
 
 // Columns that render as a coloured status Badge in the list view.
@@ -550,8 +570,18 @@ export function OperationsDashboardClient({ initialModule = "resources" }: { ini
                         ) : (
                           <Input
                             id={field}
-                            placeholder={formatLabel(field)}
-                            type={field.includes("date") ? "date" : "text"}
+                            placeholder={
+                              READONLY_FIELDS.has(field) ? "Auto-calculated" : formatLabel(field)
+                            }
+                            type={
+                              TIME_FIELDS.has(field)
+                                ? "time"
+                                : field.includes("date") || DATE_FIELDS.has(field)
+                                  ? "date"
+                                  : "text"
+                            }
+                            readOnly={READONLY_FIELDS.has(field)}
+                            disabled={READONLY_FIELDS.has(field)}
                             value={form[field] ?? ""}
                             onChange={(e) => setForm({ ...form, [field]: e.target.value })}
                           />

@@ -1,14 +1,16 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import useSWR from "swr"
+import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
+import { readExcelFile, mapRow, downloadExcelTemplate } from "@/lib/excel-import"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuLabel,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ArticleEditor } from "@/components/knowledge-base/article-editor"
@@ -103,6 +105,50 @@ export function KnowledgeBaseClient() {
     window.open(`/api/knowledge-base/export?${p.toString()}`, "_blank")
   }
 
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const [importing, setImporting] = useState(false)
+
+  const IMPORT_ALIASES = {
+    heading: ["heading", "title", "name", "articletitle"],
+    summary: ["summary", "description", "excerpt"],
+    content: ["content", "body", "details", "article"],
+    content_type: ["contenttype", "type", "category type"],
+    category: ["category", "categoryname"],
+    subcategory: ["subcategory", "subcategoryname"],
+    department: ["department", "dept"],
+    tags: ["tags", "keywords", "labels"],
+  } as const
+
+  const IMPORT_HEADERS = ["Heading", "Summary", "Content", "Content Type", "Category", "Subcategory", "Department", "Tags"]
+  const IMPORT_SAMPLE = ["Leave Policy 2026", "How to apply for leave", "Employees may apply for leave via the HR portal...", "policy", "HR Policies", "Leave", "Human Resources", "leave, hr, policy"]
+
+  const handleImportFile = async (file: File) => {
+    setImporting(true)
+    try {
+      const rawRows = await readExcelFile(file)
+      if (!rawRows.length) { toast.error("The file has no data rows"); return }
+      const rows = rawRows.map((r) => mapRow(r, IMPORT_ALIASES))
+      const res = await fetch("/api/knowledge-base/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows, fileName: file.name }),
+      })
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) { toast.error(result.error || "Import failed"); return }
+      if (result.imported > 0) {
+        toast.success(`Imported ${result.imported} article${result.imported === 1 ? "" : "s"} as draft${result.imported === 1 ? "" : "s"}`)
+        mutate()
+      }
+      if (result.skipped > 0) toast.info(`${result.skipped} skipped (duplicate titles)`)
+      if (result.failed > 0) toast.error(`${result.failed} row${result.failed === 1 ? "" : "s"} could not be imported`, { description: result.errors?.[0] })
+      if (!result.imported && !result.skipped && !result.failed) toast.info("Nothing to import")
+    } catch {
+      toast.error("Could not read that file. Use .xlsx, .xls, or .csv.")
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const activeFilterCount =
     (category !== "all" ? 1 : 0) + (status !== "all" ? 1 : 0) + (author !== "all" ? 1 : 0) +
     (department !== "all" ? 1 : 0) + (toType !== "all" ? 1 : 0) + (tag ? 1 : 0) +
@@ -128,7 +174,37 @@ export function KnowledgeBaseClient() {
           </div>
           <div className="flex items-center gap-2">
             {canManage && isList && (
-              <Button variant="outline" onClick={exportCsv}><Download className="size-4" /> Export</Button>
+              <>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) handleImportFile(file)
+                    e.target.value = ""
+                  }}
+                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" disabled={importing}>
+                      <Upload className="size-4" /> {importing ? "Importing…" : "Import"}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>Bulk import articles</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={() => importInputRef.current?.click()}>
+                      <Upload className="size-4" /> Upload file (.xlsx, .csv)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => downloadExcelTemplate("knowledge-base-import-template.xlsx", IMPORT_HEADERS, IMPORT_SAMPLE)}>
+                      <Download className="size-4" /> Download template
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant="outline" onClick={exportCsv}><Download className="size-4" /> Export</Button>
+              </>
             )}
             {canManage && (
               <Button onClick={openCreate}><Plus className="size-4" /> Add Article</Button>

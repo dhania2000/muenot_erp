@@ -186,15 +186,14 @@ export function ContractDetailDialog({ contractId, onClose }: { contractId: numb
 
                 {/* Primary actions */}
                 <div className="flex flex-wrap gap-2">
-                  <Button asChild>
-                    <a href={`${contractKey}/pdf?download=1`}>
-                      <Download data-icon="inline-start" /> Download PDF
-                    </a>
+                  <Button render={<a href={`${contractKey}/pdf?download=1`} />}>
+                    <Download data-icon="inline-start" /> Download PDF
                   </Button>
-                  <Button variant="outline" asChild>
-                    <a href={`${contractKey}/pdf`} target="_blank" rel="noreferrer">
-                      <ExternalLink data-icon="inline-start" /> Open PDF
-                    </a>
+                  <Button
+                    variant="outline"
+                    render={<a href={`${contractKey}/pdf`} target="_blank" rel="noreferrer" />}
+                  >
+                    <ExternalLink data-icon="inline-start" /> Open PDF
                   </Button>
                   <Button variant="outline" onClick={() => setEmailOpen(true)}>
                     <Mail data-icon="inline-start" /> Email

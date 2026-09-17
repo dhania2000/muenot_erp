@@ -314,10 +314,14 @@ export function SignClient({ token }: { token: string }) {
               <div className="flex flex-col items-center gap-3 p-8 text-center text-sm text-muted-foreground">
                 <FileText className="size-8" />
                 <p>Your browser can’t display the document inline.</p>
-                <Button asChild variant="outline" size="sm">
-                  <a href={`/api/legal/esign/public/${token}/pdf`} target="_blank" rel="noreferrer">
-                    Open document in a new tab
-                  </a>
+                <Button
+                  render={
+                    <a href={`/api/legal/esign/public/${token}/pdf`} target="_blank" rel="noreferrer" />
+                  }
+                  variant="outline"
+                  size="sm"
+                >
+                  Open document in a new tab
                 </Button>
               </div>
             </object>

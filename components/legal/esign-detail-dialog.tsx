@@ -156,16 +156,20 @@ export function EsignDetailDialog({
                     <Ban data-icon="inline-start" /> Cancel request
                   </Button>
                 )}
-                <Button size="sm" variant="outline" asChild>
-                  <a href={`/api/legal/esign/${req.id}/pdf`} target="_blank" rel="noreferrer">
-                    <Download data-icon="inline-start" /> Original PDF
-                  </a>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  render={<a href={`/api/legal/esign/${req.id}/pdf`} target="_blank" rel="noreferrer" />}
+                >
+                  <Download data-icon="inline-start" /> Original PDF
                 </Button>
                 {isCompleted && (
-                  <Button size="sm" variant="outline" asChild>
-                    <a href={`/api/legal/esign/${req.id}/pdf?signed=1`} target="_blank" rel="noreferrer">
-                      <FileSignature data-icon="inline-start" /> Signed PDF
-                    </a>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    render={<a href={`/api/legal/esign/${req.id}/pdf?signed=1`} target="_blank" rel="noreferrer" />}
+                  >
+                    <FileSignature data-icon="inline-start" /> Signed PDF
                   </Button>
                 )}
               </div>

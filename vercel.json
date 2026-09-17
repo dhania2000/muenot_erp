@@ -5,6 +5,10 @@
       "schedule": "0 6 * * *"
     },
     {
+      "path": "/api/cron/esign-scheduler",
+      "schedule": "0 7 * * *"
+    },
+    {
       "path": "/api/cron/sales-emails",
       "schedule": "*/15 * * * *"
     },

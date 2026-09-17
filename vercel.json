@@ -73,6 +73,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/marketing-journeys",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/notice-board",
       "schedule": "*/15 * * * *"
     },

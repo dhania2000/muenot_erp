@@ -138,12 +138,48 @@ export type Audience = {
   createdAt: string
 }
 
+export type WhatsAppTemplateButton = {
+  type?: string
+  text?: string
+  url?: string
+  phone_number?: string
+}
+
 export type WhatsAppTemplate = {
+  id: number
   name: string
   status: string
-  category?: string
+  category: string | null
   language: string
-  components?: unknown[]
+  headerType: string | null
+  headerText: string | null
+  bodyText: string | null
+  footerText: string | null
+  buttons: WhatsAppTemplateButton[]
+  variableCount: number
+  metaId: string | null
+  qualityScore: string | null
+  rejectedReason: string | null
+  previousStatus: string | null
+  statusChangedAt: string | null
+  version: number
+  usageCount: number
+  lastUsedAt: string | null
+  isDeleted: boolean
+  syncedAt: string | null
+  createdAt: string | null
+}
+
+export type WhatsAppTemplateVersion = {
+  id: number
+  version: number
+  status: string | null
+  category: string | null
+  bodyText: string | null
+  rejectedReason: string | null
+  changeType: string
+  detail: string | null
+  createdAt: string
 }
 
 export type WhatsAppContact = {

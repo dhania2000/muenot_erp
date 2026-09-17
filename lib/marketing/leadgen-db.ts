@@ -17,6 +17,7 @@ import {
   recordAudit,
   notify,
 } from "@/lib/sales/lead-lifecycle"
+import { triggerEvent } from "@/lib/marketing/journeys-engine"
 
 /**
  * Lead Generation service.
@@ -879,6 +880,15 @@ export async function processSubmission(
       entityType: "leadgen_submission",
       entityId: code,
     })
+  }
+
+  // 5) Fan out to Marketing Journeys. Active journeys whose trigger matches
+  // (form_submitted / lead_created / contact_added) auto-enroll this contact.
+  // Best-effort: a journey hiccup must never fail the captured lead.
+  if (contactId) {
+    await triggerEvent("form_submitted", { contactId }).catch(() => {})
+    await triggerEvent("contact_added", { contactId }).catch(() => {})
+    if (leadId) await triggerEvent("lead_created", { contactId }).catch(() => {})
   }
 
   return { submission_code: code, status: "Converted", lead_code: leadCode }

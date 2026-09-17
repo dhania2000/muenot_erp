@@ -13,6 +13,7 @@ import {
   isEligible,
   eligibilityReason,
 } from "@/lib/marketing/contacts-db"
+import { triggerEvent } from "@/lib/marketing/journeys-engine"
 
 const SORTABLE: Record<string, string> = {
   created_at: "c.created_at",
@@ -186,6 +187,10 @@ export async function POST(request: Request) {
     meta: { source: columns.source },
     actorId: session.userId,
   })
+
+  // Auto-enroll into any Active journey with a "contact_added" trigger.
+  // Best-effort so a journey error never fails contact creation.
+  await triggerEvent("contact_added", { contactId: newId, actorId: session.userId }).catch(() => {})
 
   return NextResponse.json({ ok: true, id: newId, contact_code: code }, { status: 201 })
 }

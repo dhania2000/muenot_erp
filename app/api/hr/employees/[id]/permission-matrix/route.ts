@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { ensurePermissionSchema, getUserMatrix, setUserMatrix } from "@/lib/permission-store"
 import { defaultMatrix, PERMISSION_MODULES, type PermissionMatrix } from "@/lib/permission-model"
+import { evaluateProposedMatrix, hasBlockingViolation, logSodAudit } from "@/lib/sod"
 
 async function requireAdmin() {
   const session = await getSession()
@@ -78,7 +79,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Admin accounts already have full access." }, { status: 400 })
   }
 
-  const body = (await request.json()) as { matrix?: PermissionMatrix }
+  const body = (await request.json()) as { matrix?: PermissionMatrix; overrideSod?: boolean }
   if (!body.matrix || typeof body.matrix !== "object") {
     return NextResponse.json({ error: "matrix is required" }, { status: 400 })
   }
@@ -90,6 +91,43 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (p) clean[mod.key] = p
   }
 
+  // SPEC 13 — evaluate the duties this matrix WOULD grant before persisting.
+  const override = body.overrideSod === true
+  const report = await evaluateProposedMatrix(emp.user_id, clean)
+  const blocking = hasBlockingViolation(report.violations)
+  if (blocking && !override) {
+    await logSodAudit({
+      action: "assignment_blocked",
+      actorId: session.userId,
+      targetUserId: emp.user_id,
+      targetUserName: emp.employee_name,
+      summary: `Permission change blocked — ${report.violations.length} segregation-of-duties conflict(s)`,
+      detail: { violations: report.violations },
+    })
+    return NextResponse.json(
+      {
+        error: "These permissions violate segregation-of-duties policy.",
+        sodBlocked: true,
+        sodViolations: report.violations,
+      },
+      { status: 409 },
+    )
+  }
+
   await setUserMatrix(emp.user_id, clean, session.userId)
-  return NextResponse.json({ ok: true })
+
+  if (report.violations.length > 0) {
+    await logSodAudit({
+      action: blocking ? "assignment_overridden" : "assignment_blocked",
+      actorId: session.userId,
+      targetUserId: emp.user_id,
+      targetUserName: emp.employee_name,
+      summary: blocking
+        ? `Permission change applied with SoD OVERRIDE — ${report.violations.length} conflict(s) accepted`
+        : `Permission change applied with ${report.violations.length} SoD warning(s)`,
+      detail: { violations: report.violations, overridden: blocking },
+    })
+  }
+
+  return NextResponse.json({ ok: true, sodViolations: report.violations })
 }

@@ -34,6 +34,7 @@ import {
   presetForCode,
   type PlanEntitlements,
 } from "@/lib/platform/entitlements"
+import { resolveAllFeatures, type FeatureState } from "@/lib/platform/feature-entitlements"
 import { Pencil, Plus, Check, Package } from "lucide-react"
 
 type Plan = {
@@ -104,6 +105,14 @@ function planToForm(plan: Plan): FormState {
     sort_order: String(plan.sort_order),
     entitlements: toDraft(plan.entitlements),
   }
+}
+
+// SPEC 18 — how each resolved feature state reads in the plan matrix.
+const FEATURE_STATE_STYLE: Record<FeatureState, { label: string; className: string }> = {
+  enabled: { label: "Enabled", className: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
+  limited: { label: "Limited", className: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400" },
+  metered: { label: "Metered", className: "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-400" },
+  disabled: { label: "Disabled", className: "border-transparent bg-muted text-muted-foreground" },
 }
 
 function emptyForm(): FormState {
@@ -318,6 +327,32 @@ export function PlansManager({
                     ))}
                   </div>
                 )}
+
+                <Separator />
+
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Features
+                  </span>
+                  <ul className="flex flex-col gap-1">
+                    {resolveAllFeatures(ent).map((f) => {
+                      const style = FEATURE_STATE_STYLE[f.state]
+                      return (
+                        <li key={f.key} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="truncate text-muted-foreground">{f.label}</span>
+                          <span className="flex items-center gap-1.5">
+                            {(f.state === "limited" || f.state === "metered") && f.limit != null && (
+                              <span className="tabular-nums text-muted-foreground">{f.limit}</span>
+                            )}
+                            <Badge variant="outline" className={`px-1.5 py-0 text-[10px] ${style.className}`}>
+                              {style.label}
+                            </Badge>
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
 
                 {canManage && (
                   <div className="mt-1 flex items-center gap-2">

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { createAutomation, listAutomations } from "@/lib/whatsapp-automations"
 import { resolveWhatsAppCaps } from "@/lib/whatsapp-platform"
+import { enforceFeature } from "@/lib/platform/feature-guard"
 import {
   AUTOMATION_ACTIONS,
   AUTOMATION_TRIGGERS,
@@ -25,6 +26,19 @@ export async function POST(request: Request) {
 
   const caps = await resolveWhatsAppCaps(session)
   if (!caps.canManageAutomation) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+
+  // SPEC 18 — plan-level feature entitlement, enforced server-side (not just
+  // UI hiding): confirm the tenant's plan grants an automation workflow and has
+  // capacity for one more before we create it.
+  if (session.tenantId != null) {
+    const gate = await enforceFeature(session.tenantId, "automation.workflows", { requested: 1 })
+    if (!gate.ok) {
+      return NextResponse.json(
+        { error: gate.reason, code: gate.status === 402 ? "plan_limit" : "not_entitled" },
+        { status: gate.status },
+      )
+    }
+  }
 
   const body = (await request.json().catch(() => ({}))) as {
     name?: string

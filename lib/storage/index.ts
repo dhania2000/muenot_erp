@@ -19,6 +19,7 @@ import {
 } from "./multipart-store"
 import { recordFileMetadata, getByObjectKey, softDeleteFile, sha256, type FileObject } from "./file-metadata"
 import { enqueueScan, enforceDownloadPolicyForKey } from "./file-scanning"
+import { checkStorageQuota } from "./storage-quota"
 import type {
   StorageProvider,
   UploadResult,
@@ -86,11 +87,16 @@ export type FileMetadataInput = {
 export async function uploadFile(
   path: string,
   file: File,
-  opts: { public?: boolean; skipValidation?: boolean; metadata?: FileMetadataInput } = {},
+  opts: { public?: boolean; skipValidation?: boolean; skipQuota?: boolean; metadata?: FileMetadataInput } = {},
 ): Promise<{ ok: true; result: UploadResult & { file?: FileObject } } | { ok: false; error: string }> {
   if (!opts.skipValidation) {
     const validationError = await validateUpload(file)
     if (validationError) return { ok: false, error: validationError }
+  }
+  // SPEC 35 — enforce the tenant's storage quota before accepting the bytes.
+  if (!opts.skipQuota) {
+    const quota = await checkStorageQuota(file.size)
+    if (!quota.allowed) return { ok: false, error: quota.reason }
   }
   const key = tenantKey(currentTenantId(), path)
   const { provider } = await getTenantStorage()
@@ -264,6 +270,11 @@ export async function beginLargeUpload(input: {
 > {
   const validationError = await validateLargeUpload({ name: input.filename, size: input.size })
   if (validationError) return { ok: false, error: validationError }
+
+  // SPEC 35 — reject the session up front if it would breach a hard quota, so a
+  // huge multipart upload is never started only to be rejected at completion.
+  const quota = await checkStorageQuota(input.size)
+  if (!quota.allowed) return { ok: false, error: quota.reason }
 
   const { partSize } = await getLargeUploadLimits()
   const totalParts = Math.max(1, Math.ceil(input.size / partSize))
@@ -461,6 +472,37 @@ export {
   type VersionAuditAction,
   type RestoreActor,
 } from "./file-versions"
+// SPEC 35 — Tenant storage quotas (plan/custom quota, threshold, hard limit, dashboard).
+export {
+  ensureStorageQuotaSchema,
+  getQuotaSettings,
+  setQuotaSettings,
+  resolveStorageQuota,
+  checkStorageQuota,
+  getStorageUsageByModule,
+  getStorageQuotaDashboard,
+  resolveEffectiveQuota,
+  computeQuotaStatus,
+  decideUpload,
+  usagePercent,
+  gbToBytes,
+  bytesToGb,
+  formatBytes,
+  normalizeWarnThreshold,
+  BYTES_PER_GB,
+  DEFAULT_WARN_THRESHOLD,
+  DEFAULT_QUOTA_SETTINGS,
+  type QuotaSettings,
+  type QuotaSettingsInput,
+  type QuotaSource,
+  type QuotaStatus,
+  type QuotaDecision,
+  type ResolvedQuota,
+  type ModuleUsage,
+  type StorageQuotaDashboard,
+  type QuotaAlert,
+  type QuotaAlertLevel,
+} from "./storage-quota"
 // SPEC 31 — CDN / media-delivery policy helpers.
 export {
   mediaKindFor,

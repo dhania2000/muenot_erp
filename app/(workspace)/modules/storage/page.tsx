@@ -1,5 +1,5 @@
 import { billingGuard } from "@/lib/billing-guard"
-import { StorageConnections } from "@/components/admin/storage-connections"
+import { StorageConnections } from "@/components/storage/storage-connections"
 import { LargeUploadsPanel } from "@/components/storage/large-uploads-panel"
 import { StorageHealthPanel } from "@/components/storage/storage-health-panel"
 import { StorageMigrationPanel } from "@/components/storage/storage-migration-panel"
@@ -15,6 +15,7 @@ export default async function Page() {
       <StorageMigrationPanel />
       <StorageRetentionPanel />
       <LargeUploadsPanel />
+      <FileVersionsPanel />
     </div>
   )
 }

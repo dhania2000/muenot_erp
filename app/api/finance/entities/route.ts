@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { canCreateInModule } from "@/lib/permission-enforce"
+import { dataScopeWhere } from "@/lib/data-scope"
 import { listEntities, createEntity, EntityValidationError } from "@/lib/legal-entities"
 
 /**
@@ -14,7 +15,11 @@ const PERMISSION_KEY = "finance.entities"
 export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const entities = await listEntities()
+  // SPEC 10 — data-level scope: a Finance/regional user with an entity/branch
+  // grant only sees their assigned legal entities. Unconfigured users / admins
+  // get null (unrestricted), preserving existing behaviour.
+  const scope = await dataScopeWhere(session, "finance.entities", "e")
+  const entities = await listEntities(scope)
   return NextResponse.json({ entities })
 }
 

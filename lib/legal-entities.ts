@@ -291,11 +291,16 @@ export async function ensureEntitySchema(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Entity reads
 // ---------------------------------------------------------------------------
-export async function listEntities(): Promise<
-  Array<LegalEntity & { bank_account_count: number; org_unit_name: string | null }>
-> {
+export async function listEntities(
+  scope?: { sql: string; params: (string | number)[] } | null,
+): Promise<Array<LegalEntity & { bank_account_count: number; org_unit_name: string | null }>> {
   await ensureEntitySchema()
   const tenantId = currentTenantId()
+  // SPEC 10 — optional data-level scope predicate (finance.entities). ANDed
+  // into the tenant filter so a Finance user only sees their assigned entities.
+  // The predicate is built with the "e" alias by the caller (dataScopeWhere).
+  const scopeSql = scope ? ` AND ${scope.sql}` : ""
+  const scopeParams = scope ? scope.params : []
   const rows = await query<any[]>(
     `SELECT e.*,
             (SELECT COUNT(*) FROM legal_entity_bank_accounts b
@@ -303,9 +308,9 @@ export async function listEntities(): Promise<
             (SELECT name FROM org_units u
               WHERE u.id = e.org_unit_id AND u.tenant_id = e.tenant_id LIMIT 1) AS org_unit_name
        FROM legal_entities e
-      WHERE e.tenant_id = ?
+      WHERE e.tenant_id = ?${scopeSql}
       ORDER BY e.is_default DESC, e.status ASC, e.name ASC`,
-    [tenantId],
+    [tenantId, ...scopeParams],
   )
   return rows as any
 }

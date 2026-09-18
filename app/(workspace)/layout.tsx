@@ -427,6 +427,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }
   }
 
+  // SPEC 10 — Data-level permissions console. Placed directly after Marketing
+  // and restricted to platform/tenant admins (same gate as the Admin panel), so
+  // the data-scope engine is reachable from the sidebar rather than buried in a
+  // tab under Roles & permissions.
+  if (session.role === "admin") {
+    navItems.push({
+      label: "Data Permissions",
+      href: "/admin/data-permissions",
+      icon: <ShieldCheck className="size-4" />,
+    })
+  }
+
   // Optional custom sidebar link driven by Custom Link Settings.
   if (settingEnabled(settings["customlink.enabled"], false) && settings["customlink.url"]) {
     navItems.push({

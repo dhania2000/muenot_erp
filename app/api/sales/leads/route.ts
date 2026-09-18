@@ -4,6 +4,7 @@ import { requireFeature } from "@/lib/api-auth"
 import { createLead, ensureLeadLifecycleSchema } from "@/lib/sales/lead-lifecycle"
 import { resolveCompanyId } from "@/lib/sales/company-master"
 import { scopeWhereForModule, mergeScopeIntoWhere, canCreateInModule } from "@/lib/permission-enforce"
+import { dataScopeWhere, mergeDataScope } from "@/lib/data-scope"
 
 export async function GET() {
   const session = await requireFeature("sales.view_leads")
@@ -15,7 +16,13 @@ export async function GET() {
   // they created, "owned" only leads assigned to them, "both" either. Merged
   // into the base archived-filter WHERE clause.
   const scoped = await scopeWhereForModule(session, "sales.leads", "view", "sales_leads", "l")
-  const { where, args } = mergeScopeIntoWhere("WHERE l.archived_at IS NULL", [], scoped)
+  const base = mergeScopeIntoWhere("WHERE l.archived_at IS NULL", [], scoped)
+
+  // SPEC 10 — data-level scope (self / team / entity / branch / all). ANDed on
+  // top of the RBAC record scope: a rep sees only their own / their team's /
+  // their assigned entity's leads. Unconfigured users / admins are unaffected.
+  const dataScope = await dataScopeWhere(session, "sales.leads", "l")
+  const { where, args } = mergeDataScope(base.where, base.args, dataScope)
 
   const leads = await query(
     `SELECT l.*, u.name AS assigned_to_name

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { canActOnRecord } from "@/lib/permission-enforce"
+import { canAccessRecord } from "@/lib/data-scope"
 import {
   getEntity,
   updateEntity,
@@ -24,6 +25,10 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params
   const entity = await getEntity(Number(id))
   if (!entity) return NextResponse.json({ error: "Entity not found" }, { status: 404 })
+  // SPEC 10 — the record must fall within the user's data-level scope.
+  if (!(await canAccessRecord(session, PERMISSION_KEY, entity))) {
+    return NextResponse.json({ error: "This entity is outside your data access scope" }, { status: 403 })
+  }
   return NextResponse.json({ entity })
 }
 
@@ -33,6 +38,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   const { id } = await ctx.params
   const entity = await getEntity(Number(id))
   if (!entity) return NextResponse.json({ error: "Entity not found" }, { status: 404 })
+  if (!(await canAccessRecord(session, PERMISSION_KEY, entity))) {
+    return NextResponse.json({ error: "This entity is outside your data access scope" }, { status: 403 })
+  }
   if (!(await canActOnRecord(session, PERMISSION_KEY, "update", entity))) {
     return NextResponse.json({ error: "You do not have permission to edit this entity" }, { status: 403 })
   }
@@ -54,6 +62,9 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
   const { id } = await ctx.params
   const entity = await getEntity(Number(id))
   if (!entity) return NextResponse.json({ error: "Entity not found" }, { status: 404 })
+  if (!(await canAccessRecord(session, PERMISSION_KEY, entity))) {
+    return NextResponse.json({ error: "This entity is outside your data access scope" }, { status: 403 })
+  }
   if (!(await canActOnRecord(session, PERMISSION_KEY, "delete", entity))) {
     return NextResponse.json({ error: "You do not have permission to delete this entity" }, { status: 403 })
   }

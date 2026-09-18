@@ -3,6 +3,7 @@ import { StorageConnections } from "@/components/admin/storage-connections"
 import { LargeUploadsPanel } from "@/components/storage/large-uploads-panel"
 import { StorageHealthPanel } from "@/components/storage/storage-health-panel"
 import { StorageMigrationPanel } from "@/components/storage/storage-migration-panel"
+import { StorageRetentionPanel } from "@/components/storage/storage-retention-panel"
 import { FileVersionsPanel } from "@/components/storage/file-versions-panel"
 
 export default async function Page() {
@@ -12,6 +13,7 @@ export default async function Page() {
       <StorageConnections />
       <StorageHealthPanel />
       <StorageMigrationPanel />
+      <StorageRetentionPanel />
       <LargeUploadsPanel />
     </div>
   )

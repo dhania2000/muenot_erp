@@ -56,6 +56,9 @@ export const TENANT_OWNED_TABLES = [
   "legal_entities",
   "legal_entity_bank_accounts",
   "intercompany_transactions",
+  // SaaS subscription engine (SPEC 16)
+  "saas_subscriptions",
+  "saas_subscription_events",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

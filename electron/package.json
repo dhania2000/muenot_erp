@@ -1,0 +1,40 @@
+{
+  "name": "muenot-erp-desktop",
+  "productName": "Muenot ERP",
+  "version": "1.0.0",
+  "description": "Muenot ERP desktop shell with automatic full-screen monitoring (no share prompt).",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env ERP_URL=http://localhost:3000 electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "in.co.muenot.erp.desktop",
+    "productName": "Muenot ERP",
+    "files": ["main.js", "preload.js"],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.business"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Office"
+    }
+  }
+}

@@ -438,6 +438,24 @@ export {
   type FileClassification,
   type RetentionPolicyId,
 } from "./file-metadata-policy"
+// SPEC 33 — File / document versioning (history, restore, download, audit).
+export {
+  getFileVersionHistory,
+  restoreFileVersion,
+  getVersionDownloadUrl,
+  listFileVersionAudit,
+  logFileVersionAudit,
+  ensureFileVersionAuditSchema,
+  canRestoreVersion,
+  supportsVersioning,
+  formatVersionLabel,
+  normalizeVersionAuditAction,
+  type FileVersion,
+  type FileVersionHistory,
+  type VersionAuditEntry,
+  type VersionAuditAction,
+  type RestoreActor,
+} from "./file-versions"
 // SPEC 31 — CDN / media-delivery policy helpers.
 export {
   mediaKindFor,

@@ -5,6 +5,7 @@ import { nextRecordId } from "@/lib/record-ids"
 import { ensureEmployeeEventsSchema, logEmployeeEvent } from "@/lib/hr-employee-events"
 import { initializeEmployeeBalances } from "@/lib/hr-leave"
 import { scopeWhereForModule, canCreateInModule } from "@/lib/permission-enforce"
+import { dataScopeWhere } from "@/lib/data-scope"
 
 // Columns that can be written via create/update.
 const ALLOWED = new Set([
@@ -99,6 +100,16 @@ export async function GET(request: Request) {
   if (scoped) {
     where.push(scoped.sql)
     args.push(...scoped.params)
+  }
+
+  // SPEC 10 — data-level scope (self / team / entity / branch / all). Layers
+  // ON TOP of the RBAC scope above: the two are ANDed, so a manager with a
+  // "team" data scope still only sees rows the RBAC view scope also permits.
+  // Unconfigured users / admins are unaffected (dataScopeWhere returns null).
+  const dataScope = await dataScopeWhere(session, "hr.employees")
+  if (dataScope) {
+    where.push(dataScope.sql)
+    args.push(...dataScope.params)
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""

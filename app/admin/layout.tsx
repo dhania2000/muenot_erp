@@ -29,6 +29,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const navItems: NavItem[] = [
     { label: "Overview", href: "/admin", icon: <LayoutDashboard className="size-4" /> },
+    { label: "Employees", href: "/admin/employees", icon: <Users2 className="size-4" /> },
+    { label: "Roles & permissions", href: "/admin/roles", icon: <ShieldCheck className="size-4" /> },
+    { label: "Data permissions", href: "/admin/data-permissions", icon: <ShieldCheck className="size-4" /> },
     { label: "Settings", href: "/admin/settings", icon: <Settings className="size-4" />, children: [{ label: "Company Settings", href: "/admin/settings" }, { label: "Environment variables", href: "/admin/settings" }] },
     ...modules.map((m) => ({
       label: m.name,

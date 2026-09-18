@@ -33,6 +33,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { label: "Roles & permissions", href: "/admin/roles", icon: <ShieldCheck className="size-4" /> },
     { label: "Data permissions", href: "/admin/data-permissions", icon: <ShieldCheck className="size-4" /> },
     { label: "Approval authority", href: "/admin/approval-authority", icon: <GitBranch className="size-4" /> },
+    { label: "Maker-checker", href: "/admin/maker-checker", icon: <ShieldCheck className="size-4" /> },
     { label: "Settings", href: "/admin/settings", icon: <Settings className="size-4" />, children: [{ label: "Company Settings", href: "/admin/settings" }, { label: "Environment variables", href: "/admin/settings" }] },
     ...modules.map((m) => ({
       label: m.name,

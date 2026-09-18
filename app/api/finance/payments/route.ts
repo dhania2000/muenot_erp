@@ -9,6 +9,7 @@ import {
   recordPayment,
   reversePayment,
 } from "@/lib/finance-payments"
+import { isOperationGated, submitForApproval } from "@/lib/maker-checker"
 
 // Payments are Accounts-Receivable against sales invoices, so they are gated by
 // the same feature as Sales Invoices.
@@ -56,20 +57,57 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const body = await req.json().catch(() => ({}))
+
+  // The prepared receipt, captured once so the same shape is either applied now
+  // or deferred to a checker. `created_by` records who prepared it (the maker).
+  const paymentInput = {
+    party_id: body.party_id ?? null,
+    party_name: body.party_name ?? null,
+    payment_date: body.payment_date,
+    payment_mode: body.payment_mode,
+    deposit_role: body.deposit_role === "cash" ? ("cash" as const) : ("bank" as const),
+    reference_no: body.reference_no ?? null,
+    narration: body.narration ?? null,
+    financial_year: body.financial_year ?? null,
+    allocations: Array.isArray(body.allocations) ? body.allocations : [],
+    idempotency_key: body.idempotency_key ?? null,
+    created_by: session.userId,
+  }
+
   try {
-    const result = await recordPayment({
-      party_id: body.party_id ?? null,
-      party_name: body.party_name ?? null,
-      payment_date: body.payment_date,
-      payment_mode: body.payment_mode,
-      deposit_role: body.deposit_role === "cash" ? "cash" : "bank",
-      reference_no: body.reference_no ?? null,
-      narration: body.narration ?? null,
-      financial_year: body.financial_year ?? null,
-      allocations: Array.isArray(body.allocations) ? body.allocations : [],
-      idempotency_key: body.idempotency_key ?? null,
-      created_by: session.userId,
-    })
+    // SPEC 12 — maker-checker. When payment creation is gated, the receipt is
+    // NOT posted here; it is captured and held until a different person (never
+    // the maker — segregation is enforced in the approval engine) approves it.
+    if (await isOperationGated("finance.payment.create")) {
+      const amount = paymentInput.allocations.reduce((sum: number, a: any) => sum + Number(a?.amount || 0), 0)
+      const submission = await submitForApproval({
+        operationKey: "finance.payment.create",
+        payload: paymentInput,
+        maker: { userId: session.userId, name: session.name ?? null, role: session.role ?? null },
+        entityType: "payment",
+        entityRef: paymentInput.reference_no,
+        title: `Payment${paymentInput.party_name ? ` to ${paymentInput.party_name}` : ""}`,
+        amount: amount || null,
+      })
+
+      if (submission.pending) {
+        return NextResponse.json(
+          {
+            ok: true,
+            pending: true,
+            requiresApproval: true,
+            changeId: submission.changeId,
+            requestId: submission.requestId,
+            message: "Payment submitted for approval. It will be posted once a checker approves it.",
+          },
+          { status: 202 },
+        )
+      }
+      // Auto-applied (no approval rule configured) — behaves like a direct post.
+      return NextResponse.json({ ok: true, autoApplied: true, payment_id: submission.ref, changeId: submission.changeId })
+    }
+
+    const result = await recordPayment(paymentInput)
     return NextResponse.json({ ok: true, ...result })
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 400 })

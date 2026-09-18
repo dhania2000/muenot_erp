@@ -5,7 +5,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem } from "@/components/app-shell"
-import { LayoutDashboard, Users2, TrendingUp, Wallet, UserPlus, Settings2, Settings, ShieldCheck } from "lucide-react"
+import { LayoutDashboard, Users2, TrendingUp, Wallet, UserPlus, Settings2, Settings, ShieldCheck, GitBranch } from "lucide-react"
 
 const moduleIcons: Record<string, NavItem["icon"]> = {
   hr: <Users2 className="size-4" />,
@@ -32,6 +32,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { label: "Employees", href: "/admin/employees", icon: <Users2 className="size-4" /> },
     { label: "Roles & permissions", href: "/admin/roles", icon: <ShieldCheck className="size-4" /> },
     { label: "Data permissions", href: "/admin/data-permissions", icon: <ShieldCheck className="size-4" /> },
+    { label: "Approval authority", href: "/admin/approval-authority", icon: <GitBranch className="size-4" /> },
     { label: "Settings", href: "/admin/settings", icon: <Settings className="size-4" />, children: [{ label: "Company Settings", href: "/admin/settings" }, { label: "Environment variables", href: "/admin/settings" }] },
     ...modules.map((m) => ({
       label: m.name,

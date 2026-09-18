@@ -8,6 +8,8 @@ import {
   ListObjectsV2Command,
   HeadBucketCommand,
   CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
 } from "@aws-sdk/client-s3"
 import type {
@@ -17,6 +19,8 @@ import type {
   StorageObjectMeta,
   ResolvedConnection,
   HealthReport,
+  MultipartHandle,
+  MultipartPart,
 } from "./types"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { HealthReportBuilder, describeError } from "./health"
@@ -174,6 +178,64 @@ export class S3StorageProvider implements StorageProvider {
     return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: this.full(key) }), {
       expiresIn,
     })
+  }
+
+  /**
+   * SPEC 30 — Native S3 multipart upload. The upload ID returned by the service
+   * is stable across requests, so each chunk arrives as its own stateless HTTP
+   * request and is streamed straight to the bucket without buffering the whole
+   * file server-side.
+   */
+  async createMultipart(
+    key: string,
+    contentType: string,
+    _opts: { public?: boolean } = {},
+  ): Promise<MultipartHandle> {
+    const created = await this.client.send(
+      new CreateMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: this.full(key),
+        ContentType: contentType || "application/octet-stream",
+        ...(this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}),
+      }),
+    )
+    if (!created.UploadId) throw new Error("Provider did not return a multipart upload ID")
+    return { uploadId: created.UploadId }
+  }
+
+  async uploadPart(key: string, uploadId: string, partNumber: number, data: Buffer): Promise<MultipartPart> {
+    const res = await this.client.send(
+      new UploadPartCommand({
+        Bucket: this.bucket,
+        Key: this.full(key),
+        UploadId: uploadId,
+        PartNumber: partNumber,
+        Body: data,
+      }),
+    )
+    if (!res.ETag) throw new Error("Provider did not return a part ETag")
+    return { partNumber, etag: res.ETag }
+  }
+
+  async completeMultipart(key: string, uploadId: string, parts: MultipartPart[]): Promise<UploadResult> {
+    const ordered = [...parts].sort((a, b) => a.partNumber - b.partNumber)
+    await this.client.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: this.full(key),
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: ordered.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
+        },
+      }),
+    )
+    return { url: proxyUrl(key), key, provider: this.id, size: 0, contentType: null }
+  }
+
+  async abortMultipart(key: string, uploadId: string): Promise<void> {
+    await this.client
+      .send(new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: this.full(key), UploadId: uploadId }))
+      .catch(() => {})
   }
 
   async healthCheck(): Promise<void> {

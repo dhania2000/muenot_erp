@@ -338,8 +338,9 @@ const rawSections: Omit<SettingSection, "module" | "submodule">[] = [
     description: "Where uploaded files are stored.",
     fields: [
       { key: "storage.provider", label: "Storage Provider", type: "select", options: ["Local", "Vercel Blob", "Amazon S3", "Google Cloud"], default: "Vercel Blob" },
-      { key: "storage.max_upload_mb", label: "Max Upload Size (MB)", type: "number", default: "25" },
-      { key: "storage.allowed_types", label: "Allowed File Types", type: "text", default: "jpg,png,pdf,docx,xlsx", full: true },
+    { key: "storage.max_upload_mb", label: "Max Upload Size (MB)", type: "number", default: "25" },
+    { key: "storage.max_multipart_mb", label: "Max Large (Multipart) Upload Size (MB)", type: "number", default: "5120" },
+    { key: "storage.allowed_types", label: "Allowed File Types", type: "text", default: "jpg,png,pdf,docx,xlsx", full: true },
       { key: "storage.s3_bucket", label: "S3 Bucket", type: "text" },
       { key: "storage.s3_region", label: "S3 Region", type: "text" },
     ],

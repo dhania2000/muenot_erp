@@ -59,6 +59,18 @@ export const TENANT_OWNED_TABLES = [
   // SaaS subscription engine (SPEC 16)
   "saas_subscriptions",
   "saas_subscription_events",
+  // Usage metering (SPEC 19)
+  "usage_events",
+  "usage_daily",
+  "usage_limits",
+  // Billing engine (SPEC 20)
+  "billing_invoices",
+  "billing_invoice_lines",
+  "billing_coupons",
+  "billing_credits",
+  "billing_payments",
+  "billing_refunds",
+  "billing_reconciliation",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

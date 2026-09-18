@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { ensureMessagesSchema } from "@/lib/messages-ensure"
 import { getParticipant } from "@/lib/messages-core"
+import { openStoredObject } from "@/lib/storage"
 
 /**
  * GET /api/messages/attachments/[id]
@@ -21,13 +22,18 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!(await getParticipant(att.conversation_id, session.userId)))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-  const upstream = await fetch(att.storage_url)
-  if (!upstream.ok || !upstream.body) return NextResponse.json({ error: "File unavailable" }, { status: 502 })
+  let obj
+  try {
+    obj = await openStoredObject(att.storage_url)
+  } catch {
+    return NextResponse.json({ error: "File unavailable" }, { status: 502 })
+  }
 
   const headers = new Headers()
-  headers.set("Content-Type", att.file_type || "application/octet-stream")
+  headers.set("Content-Type", att.file_type || obj.contentType || "application/octet-stream")
   headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(att.file_name)}"`)
   headers.set("Cache-Control", "private, max-age=0, no-store")
   headers.set("X-Content-Type-Options", "nosniff")
-  return new NextResponse(upstream.body, { headers })
+  const body = obj.body instanceof Buffer ? new Uint8Array(obj.body) : (obj.body as ReadableStream<Uint8Array>)
+  return new NextResponse(body as any, { headers })
 }

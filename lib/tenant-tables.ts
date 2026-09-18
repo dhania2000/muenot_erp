@@ -76,6 +76,9 @@ export const TENANT_OWNED_TABLES = [
   // Renewal management (SPEC 24)
   "saas_renewal_reminders",
   "saas_renewal_attempts",
+  // Customer-owned storage (SPEC 26) — each tenant's storage backend + creds
+  "tenant_storage_connections",
+  "tenant_storage_audit",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

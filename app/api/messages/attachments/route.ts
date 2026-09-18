@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { put } from "@vercel/blob"
+import { uploadFile } from "@/lib/storage"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { userHasFeature } from "@/lib/permissions"
@@ -34,15 +34,15 @@ export async function POST(request: Request) {
   if (!ALLOWED_ATTACHMENT_EXT.includes(ext))
     return NextResponse.json({ error: `File type .${ext} is not allowed` }, { status: 400 })
 
-  const blob = await put(`messages/${conversationId}/${crypto.randomUUID()}-${file.name}`, file, {
-    access: "public",
-    addRandomSuffix: false,
+  const up = await uploadFile(`messages/${conversationId}/${crypto.randomUUID()}-${file.name}`, file, {
+    skipValidation: true,
   })
+  if (!up.ok) return NextResponse.json({ error: up.error }, { status: 400 })
 
   await query(
     `INSERT INTO message_attachments (conversation_id, uploaded_by, file_name, file_type, file_size, storage_url)
      VALUES (?,?,?,?,?,?)`,
-    [conversationId, session.userId, file.name.slice(0, 255), file.type || ext, file.size, blob.url],
+    [conversationId, session.userId, file.name.slice(0, 255), file.type || ext, file.size, up.result.key],
   )
   const row = (await query<any[]>("SELECT LAST_INSERT_ID() id"))[0]
 

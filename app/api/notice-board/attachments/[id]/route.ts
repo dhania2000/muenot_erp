@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { ensureNoticeSchema, canView, canManage, resolveEmployee, employeeCanSee } from "@/lib/notice-board"
+import { openStoredObject } from "@/lib/storage"
 
 export const dynamic = "force-dynamic"
 
@@ -28,13 +29,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
-  const upstream = await fetch(att.storage_url)
-  if (!upstream.ok || !upstream.body)
+  let obj
+  try {
+    obj = await openStoredObject(att.storage_url)
+  } catch {
     return NextResponse.json({ error: "File unavailable" }, { status: 502 })
-
-  return new NextResponse(upstream.body, {
+  }
+  const body = obj.body instanceof Buffer ? new Uint8Array(obj.body) : (obj.body as ReadableStream<Uint8Array>)
+  return new NextResponse(body as any, {
     headers: {
-      "Content-Type": att.file_type || "application/octet-stream",
+      "Content-Type": att.file_type || obj.contentType || "application/octet-stream",
       "Content-Disposition": `inline; filename="${encodeURIComponent(att.file_name)}"`,
       "Cache-Control": "private, no-store",
     },

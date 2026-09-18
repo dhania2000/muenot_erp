@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { put } from "@vercel/blob"
+import { uploadFile } from "@/lib/storage"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { ensureNoticeSchema, canManage, ATTACHMENT_ALLOWED_EXT, ATTACHMENT_MAX_BYTES } from "@/lib/notice-board"
@@ -28,15 +28,13 @@ export async function POST(request: Request) {
   if (!ATTACHMENT_ALLOWED_EXT.includes(ext))
     return NextResponse.json({ error: `File type .${ext} is not allowed` }, { status: 400 })
 
-  const blob = await put(`notice-board/${crypto.randomUUID()}-${file.name}`, file, {
-    access: "public",
-    addRandomSuffix: false,
-  })
+  const up = await uploadFile(`notice-board/${crypto.randomUUID()}-${file.name}`, file, { skipValidation: true })
+  if (!up.ok) return NextResponse.json({ error: up.error }, { status: 400 })
 
   const res: any = await query(
     `INSERT INTO notice_attachments (draft_key, file_name, file_type, file_size, storage_url, uploaded_by)
      VALUES (?,?,?,?,?,?)`,
-    [draftKey, file.name.slice(0, 255), file.type || `application/${ext}`, file.size, blob.url, session.userId],
+    [draftKey, file.name.slice(0, 255), file.type || `application/${ext}`, file.size, up.result.key, session.userId],
   )
 
   return NextResponse.json({

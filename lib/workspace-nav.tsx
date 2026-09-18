@@ -16,6 +16,7 @@ import {
   Megaphone,
   MessageCircle,
   LayoutDashboard,
+  CreditCard,
 } from "lucide-react"
 
 function settingEnabled(v: string | undefined, fallback = true) {
@@ -368,6 +369,29 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   { label: "Settings", href: "/admin/settings" },
 ]
 
+// Subscription & Billing — a dedicated admin module that sits directly below
+// Administration in the sidebar. Every entry maps to a page under
+// /modules/billing/* so the whole billing lifecycle (plans, subscriptions,
+// invoicing, payments, reconciliation, reporting) is reachable from one place.
+export const BILLING_CHILDREN: NavChild[] = [
+  { label: "Subscription Management", href: "/modules/billing/subscriptions" },
+  { label: "Plan Management", href: "/modules/billing/plans" },
+  { label: "Feature Entitlements", href: "/modules/billing/entitlements" },
+  { label: "Usage Metering", href: "/modules/billing/usage-metering" },
+  { label: "Billing", href: "/modules/billing/billing" },
+  { label: "Payment Gateways", href: "/modules/billing/payment-gateways" },
+  { label: "Payment Webhooks", href: "/modules/billing/payment-webhooks" },
+  { label: "Invoices & Credit Notes", href: "/modules/billing/invoices" },
+  { label: "Renewals", href: "/modules/billing/renewals" },
+  { label: "Customer Billing Portal", href: "/modules/billing/customer-portal" },
+  { label: "Coupons & Discounts", href: "/modules/billing/coupons" },
+  { label: "Credits & Adjustments", href: "/modules/billing/credits" },
+  { label: "Refunds", href: "/modules/billing/refunds" },
+  { label: "Payment Reconciliation", href: "/modules/billing/reconciliation" },
+  { label: "Billing Settings", href: "/modules/billing/settings" },
+  { label: "Billing Reports", href: "/modules/billing/reports" },
+]
+
 // SPECS 1/3/4/5 — The Muenot platform / super-admin console lives in its own
 // route tree (`/platform`, gated on the platform axis). Surfacing it as a
 // single Administration entry connects that already-built UI to the sidebar
@@ -474,6 +498,15 @@ export async function buildWorkspaceNav(
       href: "/admin",
       icon: <ShieldCheck className="size-4" />,
       children: adminChildren,
+    })
+
+    // Subscription & Billing sits directly below Administration and is likewise
+    // restricted to admins.
+    navItems.push({
+      label: "Subscription & Billing",
+      href: "/modules/billing",
+      icon: <CreditCard className="size-4" />,
+      children: BILLING_CHILDREN,
     })
   }
 

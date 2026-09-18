@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { RolesManager } from "@/components/admin/roles-manager"
 import { AbacManager } from "@/components/admin/abac-manager"
+import { DataScopeManager } from "@/components/admin/data-scope-manager"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 
 export default async function AdminRolesPage() {
@@ -23,12 +24,16 @@ export default async function AdminRolesPage() {
         <TabsList>
           <TabsTrigger value="roles">Roles (RBAC)</TabsTrigger>
           <TabsTrigger value="abac">Attribute policies (ABAC)</TabsTrigger>
+          <TabsTrigger value="data">Data scopes</TabsTrigger>
         </TabsList>
         <TabsContent value="roles" className="pt-4">
           <RolesManager />
         </TabsContent>
         <TabsContent value="abac" className="pt-4">
           <AbacManager />
+        </TabsContent>
+        <TabsContent value="data" className="pt-4">
+          <DataScopeManager />
         </TabsContent>
       </Tabs>
     </div>

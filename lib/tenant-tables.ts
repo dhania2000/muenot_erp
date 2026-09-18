@@ -63,6 +63,14 @@ export const TENANT_OWNED_TABLES = [
   "usage_events",
   "usage_daily",
   "usage_limits",
+  // Billing engine (SPEC 20)
+  "billing_invoices",
+  "billing_invoice_lines",
+  "billing_coupons",
+  "billing_credits",
+  "billing_payments",
+  "billing_refunds",
+  "billing_reconciliation",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

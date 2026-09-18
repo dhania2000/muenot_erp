@@ -1,0 +1,1238 @@
+import "server-only"
+import { query } from "@/lib/db"
+import { nextRecordId } from "@/lib/record-ids"
+import {
+  tenantSelect,
+  tenantInsert,
+  tenantUpdate,
+  requireOwnedRow,
+} from "@/lib/tenant-scope"
+import type { SessionPayload } from "@/lib/auth"
+import {
+  computeInvoice,
+  computePlanChange,
+  deriveInvoiceStatus,
+  evaluateCoupon,
+  refundableAmount,
+  round2,
+  validateRefund,
+  type Coupon,
+  type DiscountType,
+  type InvoiceStatus,
+  type LineInput,
+} from "@/lib/billing/billing-math"
+import { getSubscription } from "@/lib/billing/subscription-engine"
+
+/**
+ * SPEC 20 — Billing engine (data + service layer).
+ * ---------------------------------------------------------------------------
+ * Owns the money side of the SaaS business: invoices and their line items,
+ * coupons, the account credit ledger (credits + adjustments), payments,
+ * refunds and gateway reconciliation. It composes the pure financial core
+ * (lib/billing/billing-math.ts) with tenant-scoped persistence (SPEC 2),
+ * validation, authorization (via callers) and an audit trail through each
+ * invoice's line/payment/refund children.
+ *
+ * All tenant-scoped reads/writes go through lib/tenant-scope so they always
+ * carry a tenant_id predicate and satisfy the fail-closed guard.
+ */
+
+export class BillingError extends Error {
+  status: number
+  fields?: Record<string, string>
+  constructor(message: string, status = 400, fields?: Record<string, string>) {
+    super(message)
+    this.name = "BillingError"
+    this.status = status
+    this.fields = fields
+  }
+}
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+export type InvoiceType = "recurring" | "one_time" | "credit_note"
+
+export type InvoiceLine = {
+  id: number
+  invoice_id: number
+  line_type: "subscription" | "one_time" | "proration" | "adjustment"
+  description: string
+  quantity: number
+  unit_amount: number
+  amount: number
+  taxable: boolean
+}
+
+export type Invoice = {
+  id: number
+  invoice_no: string
+  tenant_id: number
+  subscription_id: number | null
+  customer_name: string
+  invoice_type: InvoiceType
+  currency: string
+  subtotal: number
+  discount_total: number
+  coupon_code: string | null
+  tax_rate: number
+  tax_total: number
+  credit_applied: number
+  adjustment_total: number
+  total: number
+  amount_paid: number
+  amount_refunded: number
+  balance: number
+  status: InvoiceStatus
+  issue_date: string
+  due_date: string | null
+  period_start: string | null
+  period_end: string | null
+  memo: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type InvoiceView = Invoice & { lines: InvoiceLine[] }
+
+export type CouponRow = {
+  id: number
+  coupon_code: string
+  name: string
+  discount_type: DiscountType
+  value: number
+  currency: string
+  duration: "once" | "forever" | "repeating"
+  duration_months: number | null
+  min_amount: number | null
+  max_redemptions: number | null
+  times_redeemed: number
+  valid_from: string | null
+  valid_until: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export type CreditEntry = {
+  id: number
+  credit_no: string
+  entry_type: "credit" | "debit" | "adjustment"
+  reason: string
+  amount: number
+  currency: string
+  invoice_id: number | null
+  status: "available" | "applied" | "void"
+  created_at: string
+}
+
+export type Payment = {
+  id: number
+  payment_no: string
+  invoice_id: number
+  amount: number
+  currency: string
+  method: string
+  gateway: string | null
+  reference: string | null
+  status: "succeeded" | "pending" | "failed"
+  reconciled: boolean
+  paid_at: string | null
+  note: string | null
+  created_at: string
+}
+
+export type Refund = {
+  id: number
+  refund_no: string
+  invoice_id: number
+  payment_id: number | null
+  amount: number
+  currency: string
+  reason: string | null
+  status: "pending" | "succeeded" | "failed"
+  refunded_at: string | null
+  created_at: string
+}
+
+export type ReconEntry = {
+  id: number
+  statement_ref: string
+  gateway: string
+  payout_ref: string | null
+  amount: number
+  currency: string
+  payment_id: number | null
+  invoice_no: string | null
+  status: "matched" | "unmatched"
+  reconciled_at: string | null
+  created_at: string
+}
+
+export type BillingSummary = {
+  currency: string
+  invoices: { total: number; open: number; paid: number; draft: number; void: number }
+  outstanding: number
+  collected: number
+  refunded: number
+  credit_balance: number
+  coupons_active: number
+  mrr: number
+}
+
+// ── Schema (self-healing) ────────────────────────────────────────────────────
+
+let schemaEnsured: Promise<void> | null = null
+
+async function runEnsure(): Promise<void> {
+  await query(`CREATE TABLE IF NOT EXISTS billing_coupons (
+    id               INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id        INT UNSIGNED NOT NULL,
+    coupon_code      VARCHAR(40) NOT NULL,
+    name             VARCHAR(150) NOT NULL,
+    discount_type    VARCHAR(10) NOT NULL DEFAULT 'percent',
+    value            DECIMAL(14,2) NOT NULL DEFAULT 0,
+    currency         VARCHAR(10) NOT NULL DEFAULT 'USD',
+    duration         VARCHAR(12) NOT NULL DEFAULT 'once',
+    duration_months  INT UNSIGNED DEFAULT NULL,
+    min_amount       DECIMAL(14,2) DEFAULT NULL,
+    max_redemptions  INT UNSIGNED DEFAULT NULL,
+    times_redeemed   INT UNSIGNED NOT NULL DEFAULT 0,
+    valid_from       DATE DEFAULT NULL,
+    valid_until      DATE DEFAULT NULL,
+    is_active        TINYINT(1) NOT NULL DEFAULT 1,
+    created_by       INT UNSIGNED DEFAULT NULL,
+    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_billing_coupon_code (tenant_id, coupon_code),
+    KEY idx_billing_coupons_tenant (tenant_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS billing_invoices (
+    id               INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    invoice_no       VARCHAR(30) NOT NULL,
+    tenant_id        INT UNSIGNED NOT NULL,
+    subscription_id  INT UNSIGNED DEFAULT NULL,
+    customer_name    VARCHAR(190) NOT NULL DEFAULT '',
+    invoice_type     VARCHAR(20) NOT NULL DEFAULT 'one_time',
+    currency         VARCHAR(10) NOT NULL DEFAULT 'USD',
+    subtotal         DECIMAL(14,2) NOT NULL DEFAULT 0,
+    discount_total   DECIMAL(14,2) NOT NULL DEFAULT 0,
+    coupon_code      VARCHAR(40) DEFAULT NULL,
+    tax_rate         DECIMAL(7,4) NOT NULL DEFAULT 0,
+    tax_total        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    credit_applied   DECIMAL(14,2) NOT NULL DEFAULT 0,
+    adjustment_total DECIMAL(14,2) NOT NULL DEFAULT 0,
+    total            DECIMAL(14,2) NOT NULL DEFAULT 0,
+    amount_paid      DECIMAL(14,2) NOT NULL DEFAULT 0,
+    amount_refunded  DECIMAL(14,2) NOT NULL DEFAULT 0,
+    balance          DECIMAL(14,2) NOT NULL DEFAULT 0,
+    status           VARCHAR(20) NOT NULL DEFAULT 'draft',
+    issue_date       DATE NOT NULL,
+    due_date         DATE DEFAULT NULL,
+    period_start     DATE DEFAULT NULL,
+    period_end       DATE DEFAULT NULL,
+    memo             VARCHAR(500) DEFAULT NULL,
+    created_by       INT UNSIGNED DEFAULT NULL,
+    created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_billing_invoice_no (invoice_no),
+    KEY idx_billing_invoices_tenant (tenant_id),
+    KEY idx_billing_inv_status (status),
+    KEY idx_billing_inv_sub (subscription_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS billing_invoice_lines (
+    id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id     INT UNSIGNED NOT NULL,
+    invoice_id    INT UNSIGNED NOT NULL,
+    line_type     VARCHAR(20) NOT NULL DEFAULT 'one_time',
+    description   VARCHAR(300) NOT NULL DEFAULT '',
+    quantity      DECIMAL(14,4) NOT NULL DEFAULT 1,
+    unit_amount   DECIMAL(14,4) NOT NULL DEFAULT 0,
+    amount        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    taxable       TINYINT(1) NOT NULL DEFAULT 1,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_billing_lines_tenant (tenant_id),
+    KEY idx_billing_lines_invoice (invoice_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS billing_credits (
+    id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id     INT UNSIGNED NOT NULL,
+    credit_no     VARCHAR(30) NOT NULL,
+    entry_type    VARCHAR(12) NOT NULL DEFAULT 'credit',
+    reason        VARCHAR(300) NOT NULL DEFAULT '',
+    amount        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    currency      VARCHAR(10) NOT NULL DEFAULT 'USD',
+    invoice_id    INT UNSIGNED DEFAULT NULL,
+    status        VARCHAR(12) NOT NULL DEFAULT 'available',
+    created_by    INT UNSIGNED DEFAULT NULL,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_billing_credit_no (credit_no),
+    KEY idx_billing_credits_tenant (tenant_id),
+    KEY idx_billing_credits_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS billing_payments (
+    id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id     INT UNSIGNED NOT NULL,
+    payment_no    VARCHAR(30) NOT NULL,
+    invoice_id    INT UNSIGNED NOT NULL,
+    amount        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    currency      VARCHAR(10) NOT NULL DEFAULT 'USD',
+    method        VARCHAR(20) NOT NULL DEFAULT 'manual',
+    gateway       VARCHAR(40) DEFAULT NULL,
+    reference     VARCHAR(120) DEFAULT NULL,
+    status        VARCHAR(12) NOT NULL DEFAULT 'succeeded',
+    reconciled    TINYINT(1) NOT NULL DEFAULT 0,
+    reconciled_at DATETIME DEFAULT NULL,
+    paid_at       DATETIME DEFAULT NULL,
+    note          VARCHAR(300) DEFAULT NULL,
+    created_by    INT UNSIGNED DEFAULT NULL,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_billing_payment_no (payment_no),
+    KEY idx_billing_payments_tenant (tenant_id),
+    KEY idx_billing_pay_invoice (invoice_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS billing_refunds (
+    id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id     INT UNSIGNED NOT NULL,
+    refund_no     VARCHAR(30) NOT NULL,
+    invoice_id    INT UNSIGNED NOT NULL,
+    payment_id    INT UNSIGNED DEFAULT NULL,
+    amount        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    currency      VARCHAR(10) NOT NULL DEFAULT 'USD',
+    reason        VARCHAR(300) DEFAULT NULL,
+    status        VARCHAR(12) NOT NULL DEFAULT 'succeeded',
+    refunded_at   DATETIME DEFAULT NULL,
+    created_by    INT UNSIGNED DEFAULT NULL,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_billing_refund_no (refund_no),
+    KEY idx_billing_refunds_tenant (tenant_id),
+    KEY idx_billing_ref_invoice (invoice_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS billing_reconciliation (
+    id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id     INT UNSIGNED NOT NULL,
+    statement_ref VARCHAR(60) NOT NULL,
+    gateway       VARCHAR(40) NOT NULL DEFAULT '',
+    payout_ref    VARCHAR(120) DEFAULT NULL,
+    amount        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    currency      VARCHAR(10) NOT NULL DEFAULT 'USD',
+    payment_id    INT UNSIGNED DEFAULT NULL,
+    invoice_no    VARCHAR(30) DEFAULT NULL,
+    status        VARCHAR(12) NOT NULL DEFAULT 'unmatched',
+    reconciled_at DATETIME DEFAULT NULL,
+    created_by    INT UNSIGNED DEFAULT NULL,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_billing_recon_tenant (tenant_id),
+    KEY idx_billing_recon_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+}
+
+export async function ensureBillingSchema(): Promise<void> {
+  if (!schemaEnsured) {
+    schemaEnsured = runEnsure().catch((err) => {
+      schemaEnsured = null
+      throw err
+    })
+  }
+  return schemaEnsured
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+const today = () => new Date().toISOString().slice(0, 10)
+const now = () => new Date().toISOString().slice(0, 19).replace("T", " ")
+const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+const bool = (v: any) => v === true || v === 1 || v === "1" || v === "true"
+const dateOf = (v: any) => (v ? String(v).slice(0, 10) : null)
+
+function mapInvoice(r: any): Invoice {
+  return {
+    id: Number(r.id),
+    invoice_no: String(r.invoice_no),
+    tenant_id: Number(r.tenant_id),
+    subscription_id: r.subscription_id == null ? null : Number(r.subscription_id),
+    customer_name: String(r.customer_name ?? ""),
+    invoice_type: String(r.invoice_type) as InvoiceType,
+    currency: String(r.currency),
+    subtotal: num(r.subtotal),
+    discount_total: num(r.discount_total),
+    coupon_code: r.coupon_code ?? null,
+    tax_rate: num(r.tax_rate),
+    tax_total: num(r.tax_total),
+    credit_applied: num(r.credit_applied),
+    adjustment_total: num(r.adjustment_total),
+    total: num(r.total),
+    amount_paid: num(r.amount_paid),
+    amount_refunded: num(r.amount_refunded),
+    balance: num(r.balance),
+    status: String(r.status) as InvoiceStatus,
+    issue_date: dateOf(r.issue_date)!,
+    due_date: dateOf(r.due_date),
+    period_start: dateOf(r.period_start),
+    period_end: dateOf(r.period_end),
+    memo: r.memo ?? null,
+    created_at: String(r.created_at),
+    updated_at: String(r.updated_at),
+  }
+}
+
+function mapLine(r: any): InvoiceLine {
+  return {
+    id: Number(r.id),
+    invoice_id: Number(r.invoice_id),
+    line_type: String(r.line_type) as InvoiceLine["line_type"],
+    description: String(r.description ?? ""),
+    quantity: num(r.quantity),
+    unit_amount: num(r.unit_amount),
+    amount: num(r.amount),
+    taxable: bool(r.taxable),
+  }
+}
+
+function mapCoupon(r: any): CouponRow {
+  return {
+    id: Number(r.id),
+    coupon_code: String(r.coupon_code),
+    name: String(r.name),
+    discount_type: String(r.discount_type) as DiscountType,
+    value: num(r.value),
+    currency: String(r.currency),
+    duration: String(r.duration) as CouponRow["duration"],
+    duration_months: r.duration_months == null ? null : num(r.duration_months),
+    min_amount: r.min_amount == null ? null : num(r.min_amount),
+    max_redemptions: r.max_redemptions == null ? null : num(r.max_redemptions),
+    times_redeemed: num(r.times_redeemed),
+    valid_from: dateOf(r.valid_from),
+    valid_until: dateOf(r.valid_until),
+    is_active: bool(r.is_active),
+    created_at: String(r.created_at),
+  }
+}
+
+function mapCredit(r: any): CreditEntry {
+  return {
+    id: Number(r.id),
+    credit_no: String(r.credit_no),
+    entry_type: String(r.entry_type) as CreditEntry["entry_type"],
+    reason: String(r.reason ?? ""),
+    amount: num(r.amount),
+    currency: String(r.currency),
+    invoice_id: r.invoice_id == null ? null : Number(r.invoice_id),
+    status: String(r.status) as CreditEntry["status"],
+    created_at: String(r.created_at),
+  }
+}
+
+function mapPayment(r: any): Payment {
+  return {
+    id: Number(r.id),
+    payment_no: String(r.payment_no),
+    invoice_id: Number(r.invoice_id),
+    amount: num(r.amount),
+    currency: String(r.currency),
+    method: String(r.method),
+    gateway: r.gateway ?? null,
+    reference: r.reference ?? null,
+    status: String(r.status) as Payment["status"],
+    reconciled: bool(r.reconciled),
+    paid_at: r.paid_at ? String(r.paid_at) : null,
+    note: r.note ?? null,
+    created_at: String(r.created_at),
+  }
+}
+
+function mapRefund(r: any): Refund {
+  return {
+    id: Number(r.id),
+    refund_no: String(r.refund_no),
+    invoice_id: Number(r.invoice_id),
+    payment_id: r.payment_id == null ? null : Number(r.payment_id),
+    amount: num(r.amount),
+    currency: String(r.currency),
+    reason: r.reason ?? null,
+    status: String(r.status) as Refund["status"],
+    refunded_at: r.refunded_at ? String(r.refunded_at) : null,
+    created_at: String(r.created_at),
+  }
+}
+
+function mapRecon(r: any): ReconEntry {
+  return {
+    id: Number(r.id),
+    statement_ref: String(r.statement_ref),
+    gateway: String(r.gateway ?? ""),
+    payout_ref: r.payout_ref ?? null,
+    amount: num(r.amount),
+    currency: String(r.currency),
+    payment_id: r.payment_id == null ? null : Number(r.payment_id),
+    invoice_no: r.invoice_no ?? null,
+    status: String(r.status) as ReconEntry["status"],
+    reconciled_at: r.reconciled_at ? String(r.reconciled_at) : null,
+    created_at: String(r.created_at),
+  }
+}
+
+// ── Account credit balance ────────────────────────────────────────────────────
+
+/**
+ * The tenant's spendable credit balance: available credits/adjustments minus
+ * consumed debits. Adjustment entries may be signed (a negative adjustment is
+ * a debit against the balance).
+ */
+export async function creditBalance(): Promise<number> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_credits", {
+    columns: "entry_type, amount, status",
+    where: "status != 'void'",
+  })) as any[]
+  let balance = 0
+  for (const r of rows) {
+    const amt = num(r.amount)
+    if (r.entry_type === "debit") balance -= Math.abs(amt)
+    else balance += amt
+  }
+  return round2(balance)
+}
+
+// ── Coupons ─────────────────────────────────────────────────────────────────
+
+export async function listCoupons(): Promise<CouponRow[]> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_coupons", { tail: "ORDER BY created_at DESC" })) as any[]
+  return rows.map(mapCoupon)
+}
+
+export type CouponInput = {
+  code?: string
+  name?: string
+  discount_type?: DiscountType
+  value?: number | string
+  currency?: string
+  duration?: "once" | "forever" | "repeating"
+  duration_months?: number | string | null
+  min_amount?: number | string | null
+  max_redemptions?: number | string | null
+  valid_from?: string | null
+  valid_until?: string | null
+  is_active?: boolean
+}
+
+export async function createCoupon(input: CouponInput, session: SessionPayload): Promise<CouponRow> {
+  await ensureBillingSchema()
+  const fields: Record<string, string> = {}
+  const code = String(input.code ?? "").trim().toUpperCase()
+  if (!code) fields.code = "Coupon code is required."
+  if (!String(input.name ?? "").trim()) fields.name = "Name is required."
+  const type: DiscountType = input.discount_type === "fixed" ? "fixed" : "percent"
+  const value = num(input.value)
+  if (value <= 0) fields.value = "Discount value must be greater than zero."
+  if (type === "percent" && value > 100) fields.value = "Percentage cannot exceed 100."
+  if (Object.keys(fields).length) throw new BillingError("Validation failed", 400, fields)
+
+  const dup = (await tenantSelect("billing_coupons", {
+    columns: "id",
+    where: "coupon_code = ?",
+    params: [code],
+  })) as any[]
+  if (dup.length) {
+    throw new BillingError("A coupon with that code already exists.", 409, { code: "Code already in use." })
+  }
+
+  const { insertId } = await tenantInsert("billing_coupons", {
+    coupon_code: code,
+    name: String(input.name).trim(),
+    discount_type: type,
+    value: round2(value),
+    currency: String(input.currency || "USD").trim(),
+    duration: input.duration ?? "once",
+    duration_months: input.duration_months ? num(input.duration_months) : null,
+    min_amount:
+      input.min_amount === null || input.min_amount === undefined || input.min_amount === ("" as any)
+        ? null
+        : round2(num(input.min_amount)),
+    max_redemptions: input.max_redemptions ? num(input.max_redemptions) : null,
+    valid_from: input.valid_from || null,
+    valid_until: input.valid_until || null,
+    is_active: input.is_active === false ? 0 : 1,
+    created_by: session.userId,
+  })
+  const created = await requireOwnedRow("billing_coupons", insertId)
+  return mapCoupon(created)
+}
+
+export async function setCouponActive(id: number, isActive: boolean): Promise<void> {
+  await ensureBillingSchema()
+  await requireOwnedRow("billing_coupons", id)
+  await tenantUpdate("billing_coupons", { is_active: isActive ? 1 : 0 }, "id = ?", [id])
+}
+
+export async function findCouponByCode(code: string): Promise<CouponRow | null> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_coupons", {
+    where: "coupon_code = ?",
+    params: [String(code).trim().toUpperCase()],
+    tail: "LIMIT 1",
+  })) as any[]
+  return rows[0] ? mapCoupon(rows[0]) : null
+}
+
+// ── Credits & adjustments ─────────────────────────────────────────────────────
+
+export async function listCredits(): Promise<CreditEntry[]> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_credits", { tail: "ORDER BY created_at DESC" })) as any[]
+  return rows.map(mapCredit)
+}
+
+export type CreditInput = {
+  entry_type?: "credit" | "debit" | "adjustment"
+  reason?: string
+  amount?: number | string
+  currency?: string
+}
+
+export async function createCredit(input: CreditInput, session: SessionPayload): Promise<CreditEntry> {
+  await ensureBillingSchema()
+  const entryType =
+    input.entry_type === "debit" ? "debit" : input.entry_type === "adjustment" ? "adjustment" : "credit"
+  const amount = round2(num(input.amount))
+  if (amount === 0) throw new BillingError("Amount cannot be zero.", 400, { amount: "Enter a non-zero amount." })
+  if (entryType !== "adjustment" && amount <= 0) {
+    throw new BillingError("Amount must be greater than zero.", 400, { amount: "Enter a positive amount." })
+  }
+  const creditNo = await nextRecordId("CRN", { digits: 5, allowCustom: true })
+  const { insertId } = await tenantInsert("billing_credits", {
+    credit_no: creditNo,
+    entry_type: entryType,
+    reason: String(input.reason ?? "").trim(),
+    amount,
+    currency: String(input.currency || "USD").trim(),
+    invoice_id: null,
+    status: "available",
+    created_by: session.userId,
+  })
+  const created = await requireOwnedRow("billing_credits", insertId)
+  return mapCredit(created)
+}
+
+/** Record a debit against the credit ledger (credit consumed by an invoice). */
+async function consumeCredit(amount: number, invoiceId: number, session: SessionPayload): Promise<void> {
+  if (amount <= 0) return
+  const creditNo = await nextRecordId("CRN", { digits: 5, allowCustom: true })
+  await tenantInsert("billing_credits", {
+    credit_no: creditNo,
+    entry_type: "debit",
+    reason: `Applied to invoice #${invoiceId}`,
+    amount: round2(amount),
+    currency: "USD",
+    invoice_id: invoiceId,
+    status: "applied",
+    created_by: session.userId,
+  })
+}
+
+// ── Invoices: reads ──────────────────────────────────────────────────────────
+
+export async function listInvoices(): Promise<Invoice[]> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_invoices", { tail: "ORDER BY created_at DESC" })) as any[]
+  return rows.map(mapInvoice)
+}
+
+async function loadLines(invoiceId: number): Promise<InvoiceLine[]> {
+  const rows = (await tenantSelect("billing_invoice_lines", {
+    where: "invoice_id = ?",
+    params: [invoiceId],
+    tail: "ORDER BY id ASC",
+  })) as any[]
+  return rows.map(mapLine)
+}
+
+export async function getInvoice(id: number): Promise<InvoiceView | null> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_invoices", {
+    where: "id = ?",
+    params: [id],
+    tail: "LIMIT 1",
+  })) as any[]
+  if (!rows[0]) return null
+  const invoice = mapInvoice(rows[0])
+  return { ...invoice, lines: await loadLines(invoice.id) }
+}
+
+export async function listPayments(invoiceId: number): Promise<Payment[]> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_payments", {
+    where: "invoice_id = ?",
+    params: [invoiceId],
+    tail: "ORDER BY created_at ASC",
+  })) as any[]
+  return rows.map(mapPayment)
+}
+
+// ── Invoices: creation ─────────────────────────────────────────────────────────
+
+export type CreateInvoiceInput = {
+  invoice_type?: InvoiceType
+  subscription_id?: number | null
+  customer_name?: string
+  currency?: string
+  lines?: Array<{
+    description?: string
+    quantity?: number | string
+    unit_amount?: number | string
+    taxable?: boolean
+    line_type?: InvoiceLine["line_type"]
+  }>
+  discount_type?: DiscountType | null
+  discount_value?: number | string | null
+  coupon_code?: string | null
+  tax_rate?: number | string
+  adjustment?: number | string
+  apply_credit?: boolean
+  due_date?: string | null
+  period_start?: string | null
+  period_end?: string | null
+  memo?: string | null
+  /** When true, finalize immediately (open/paid) instead of leaving a draft. */
+  finalize?: boolean
+}
+
+/**
+ * Create an invoice from raw lines plus modifiers. Runs the full money
+ * breakdown through the pure core, optionally consumes account credit,
+ * increments coupon redemption, and persists the header + lines.
+ */
+export async function createInvoice(input: CreateInvoiceInput, session: SessionPayload): Promise<InvoiceView> {
+  await ensureBillingSchema()
+
+  const rawLines: LineInput[] = (input.lines ?? []).map((l) => ({
+    description: String(l.description ?? "").trim(),
+    quantity: num(l.quantity ?? 1),
+    unitAmount: num(l.unit_amount ?? 0),
+    taxable: l.taxable !== false,
+    lineType: (l.line_type ?? "one_time") as LineInput["lineType"],
+  }))
+  if (rawLines.length === 0) {
+    throw new BillingError("An invoice needs at least one line item.", 400, { lines: "Add at least one line." })
+  }
+
+  const currency = String(input.currency || "USD").trim()
+  const subtotalPreview = round2(rawLines.reduce((s, l) => s + round2(Number(l.quantity) * Number(l.unitAmount)), 0))
+
+  // Coupon (optional) — evaluated against the pre-discount subtotal.
+  let coupon: CouponRow | null = null
+  let couponDiscount = 0
+  if (input.coupon_code) {
+    coupon = await findCouponByCode(input.coupon_code)
+    const ev = evaluateCoupon(coupon as unknown as Coupon | null, subtotalPreview, { onDate: today(), currency })
+    if (!ev.applicable) {
+      throw new BillingError(ev.reason ?? "Coupon is not applicable.", 400, { coupon_code: ev.reason ?? "Invalid coupon." })
+    }
+    couponDiscount = ev.discount
+  }
+
+  const applyCreditFlag = input.apply_credit === true
+  const available = applyCreditFlag ? await creditBalance() : 0
+
+  const totals = computeInvoice({
+    lines: rawLines,
+    discount:
+      input.discount_type && input.discount_value != null
+        ? { type: input.discount_type, value: num(input.discount_value) }
+        : null,
+    couponDiscount,
+    taxRatePercent: num(input.tax_rate),
+    adjustment: num(input.adjustment),
+    creditAvailable: available,
+  })
+
+  const finalize = input.finalize !== false // default: finalize on create
+  const status = deriveInvoiceStatus(
+    { total: totals.total, amountPaid: 0, amountRefunded: 0, creditApplied: totals.creditApplied },
+    { finalized: finalize },
+  )
+
+  const invoiceNo = await nextRecordId("BINV", { digits: 5, allowCustom: true })
+  const { insertId } = await tenantInsert("billing_invoices", {
+    invoice_no: invoiceNo,
+    subscription_id: input.subscription_id ?? null,
+    customer_name: String(input.customer_name ?? "").trim(),
+    invoice_type: input.invoice_type ?? "one_time",
+    currency,
+    subtotal: totals.subtotal,
+    discount_total: totals.discountTotal,
+    coupon_code: coupon?.coupon_code ?? null,
+    tax_rate: num(input.tax_rate),
+    tax_total: totals.taxTotal,
+    credit_applied: totals.creditApplied,
+    adjustment_total: totals.adjustmentTotal,
+    total: totals.total,
+    amount_paid: 0,
+    amount_refunded: 0,
+    balance: totals.amountDue,
+    status,
+    issue_date: today(),
+    due_date: input.due_date || null,
+    period_start: input.period_start || null,
+    period_end: input.period_end || null,
+    memo: input.memo || null,
+    created_by: session.userId,
+  })
+
+  // Persist lines.
+  for (const l of rawLines) {
+    const amount = round2(Number(l.quantity) * Number(l.unitAmount))
+    await tenantInsert("billing_invoice_lines", {
+      invoice_id: insertId,
+      line_type: l.lineType ?? "one_time",
+      description: l.description ?? "",
+      quantity: Number(l.quantity),
+      unit_amount: Number(l.unitAmount),
+      amount,
+      taxable: l.taxable !== false ? 1 : 0,
+    })
+  }
+
+  // Consume credit + increment coupon redemption after the invoice exists.
+  if (totals.creditApplied > 0) await consumeCredit(totals.creditApplied, insertId, session)
+  if (coupon) {
+    await tenantUpdate(
+      "billing_coupons",
+      { times_redeemed: coupon.times_redeemed + 1 },
+      "id = ?",
+      [coupon.id],
+    ).catch((e) => console.log("[v0] coupon redemption bump failed", (e as Error).message))
+  }
+
+  const created = await getInvoice(insertId)
+  if (!created) throw new BillingError("Failed to load the invoice just created", 500)
+  return created
+}
+
+// ── Invoices: money mutations ────────────────────────────────────────────────
+
+/** Recompute amount_paid / amount_refunded / balance / status from children. */
+async function recomputeInvoice(invoiceId: number): Promise<void> {
+  const inv = await getInvoice(invoiceId)
+  if (!inv) return
+  const payRows = (await tenantSelect("billing_payments", {
+    columns: "amount, status",
+    where: "invoice_id = ? AND status = 'succeeded'",
+    params: [invoiceId],
+  })) as any[]
+  const refundRows = (await tenantSelect("billing_refunds", {
+    columns: "amount, status",
+    where: "invoice_id = ? AND status = 'succeeded'",
+    params: [invoiceId],
+  })) as any[]
+  const amountPaid = round2(payRows.reduce((s, r) => s + num(r.amount), 0))
+  const amountRefunded = round2(refundRows.reduce((s, r) => s + num(r.amount), 0))
+
+  const sticky = inv.status === "void" ? "void" : inv.status === "uncollectible" ? "uncollectible" : null
+  const finalized = inv.status !== "draft"
+  const status = deriveInvoiceStatus(
+    { total: inv.total, amountPaid, amountRefunded, creditApplied: inv.credit_applied },
+    { finalized, sticky },
+  )
+  // Balance owed = total − credit − paid (never negative for display).
+  const balance = round2(Math.max(0, inv.total - inv.credit_applied - amountPaid))
+  await tenantUpdate(
+    "billing_invoices",
+    { amount_paid: amountPaid, amount_refunded: amountRefunded, balance, status },
+    "id = ?",
+    [invoiceId],
+  )
+}
+
+export type PaymentInput = {
+  amount?: number | string
+  method?: string
+  gateway?: string | null
+  reference?: string | null
+  status?: "succeeded" | "pending" | "failed"
+  note?: string | null
+}
+
+export async function recordPayment(invoiceId: number, input: PaymentInput, session: SessionPayload): Promise<Payment> {
+  await ensureBillingSchema()
+  const inv = await getInvoice(invoiceId)
+  if (!inv) throw new BillingError("Invoice not found", 404)
+  if (inv.status === "void") throw new BillingError("Cannot pay a void invoice.", 409)
+  if (inv.status === "draft") throw new BillingError("Finalize the invoice before recording a payment.", 409)
+
+  const status = input.status ?? "succeeded"
+  const outstanding = round2(Math.max(0, inv.total - inv.credit_applied - inv.amount_paid))
+  const amount = round2(num(input.amount) || outstanding)
+  if (amount <= 0) throw new BillingError("Payment amount must be greater than zero.", 400, { amount: "Enter an amount." })
+  if (status === "succeeded" && amount > outstanding + 0.0001) {
+    throw new BillingError(`Payment exceeds the outstanding balance of ${outstanding}.`, 400, {
+      amount: `Max ${outstanding}.`,
+    })
+  }
+
+  const paymentNo = await nextRecordId("BPAY", { digits: 5, allowCustom: true })
+  const { insertId } = await tenantInsert("billing_payments", {
+    payment_no: paymentNo,
+    invoice_id: invoiceId,
+    amount,
+    currency: inv.currency,
+    method: String(input.method || "manual"),
+    gateway: input.gateway || null,
+    reference: input.reference || null,
+    status,
+    reconciled: 0,
+    paid_at: status === "succeeded" ? now() : null,
+    note: input.note || null,
+    created_by: session.userId,
+  })
+  await recomputeInvoice(invoiceId)
+  const created = await requireOwnedRow("billing_payments", insertId)
+  return mapPayment(created)
+}
+
+export async function finalizeInvoice(invoiceId: number): Promise<InvoiceView> {
+  await ensureBillingSchema()
+  const inv = await getInvoice(invoiceId)
+  if (!inv) throw new BillingError("Invoice not found", 404)
+  if (inv.status !== "draft") return inv
+  await tenantUpdate("billing_invoices", { status: "open" }, "id = ?", [invoiceId])
+  await recomputeInvoice(invoiceId)
+  return (await getInvoice(invoiceId))!
+}
+
+export async function voidInvoice(invoiceId: number): Promise<InvoiceView> {
+  await ensureBillingSchema()
+  const inv = await getInvoice(invoiceId)
+  if (!inv) throw new BillingError("Invoice not found", 404)
+  if (inv.amount_paid > 0) {
+    throw new BillingError("Cannot void an invoice with payments. Refund it instead.", 409)
+  }
+  await tenantUpdate("billing_invoices", { status: "void", balance: 0 }, "id = ?", [invoiceId])
+  return (await getInvoice(invoiceId))!
+}
+
+export type RefundInput = {
+  amount?: number | string
+  reason?: string | null
+  payment_id?: number | null
+  /** When true, issue the refunded amount as account credit instead of cash. */
+  as_credit?: boolean
+}
+
+export async function refundInvoice(invoiceId: number, input: RefundInput, session: SessionPayload): Promise<Refund> {
+  await ensureBillingSchema()
+  const inv = await getInvoice(invoiceId)
+  if (!inv) throw new BillingError("Invoice not found", 404)
+
+  const check = validateRefund(num(input.amount) || inv.amount_paid - inv.amount_refunded, {
+    amountPaid: inv.amount_paid,
+    amountRefunded: inv.amount_refunded,
+  })
+  if (!check.ok) throw new BillingError(check.reason ?? "Invalid refund.", 400, { amount: check.reason ?? undefined })
+
+  const refundNo = await nextRecordId("BREF", { digits: 5, allowCustom: true })
+  const { insertId } = await tenantInsert("billing_refunds", {
+    refund_no: refundNo,
+    invoice_id: invoiceId,
+    payment_id: input.payment_id ?? null,
+    amount: check.amount,
+    currency: inv.currency,
+    reason: input.reason || null,
+    status: "succeeded",
+    refunded_at: now(),
+    created_by: session.userId,
+  })
+  await recomputeInvoice(invoiceId)
+
+  // Optionally return the money as account credit for future invoices.
+  if (input.as_credit) {
+    await createCredit(
+      { entry_type: "credit", reason: `Refund credit for invoice ${inv.invoice_no}`, amount: check.amount, currency: inv.currency },
+      session,
+    )
+  }
+
+  const created = await requireOwnedRow("billing_refunds", insertId)
+  return mapRefund(created)
+}
+
+// ── Recurring billing / invoice generation from subscriptions ─────────────────
+
+/**
+ * Generate a recurring invoice for a subscription's current period. Idempotent
+ * per (subscription, period_start): if an invoice already exists for that
+ * period it is returned rather than duplicated.
+ */
+export async function generateSubscriptionInvoice(
+  subscriptionId: number,
+  session: SessionPayload,
+  opts: { taxRate?: number } = {},
+): Promise<{ invoice: InvoiceView; created: boolean }> {
+  await ensureBillingSchema()
+  const sub = await getSubscription(subscriptionId)
+  if (!sub) throw new BillingError("Subscription not found", 404)
+
+  const existing = (await tenantSelect("billing_invoices", {
+    columns: "id",
+    where: "subscription_id = ? AND period_start = ?",
+    params: [subscriptionId, sub.current_period_start],
+    tail: "LIMIT 1",
+  })) as any[]
+  if (existing[0]) {
+    const inv = await getInvoice(Number(existing[0].id))
+    return { invoice: inv!, created: false }
+  }
+
+  const invoice = await createInvoice(
+    {
+      invoice_type: "recurring",
+      subscription_id: subscriptionId,
+      customer_name: sub.plan_name,
+      currency: sub.currency,
+      tax_rate: opts.taxRate ?? 0,
+      period_start: sub.current_period_start,
+      period_end: sub.current_period_end,
+      due_date: sub.current_period_end,
+      finalize: true,
+      lines: [
+        {
+          description: `${sub.plan_name} — ${sub.term_label} (${sub.current_period_start} to ${sub.current_period_end})`,
+          quantity: 1,
+          unit_amount: sub.amount,
+          taxable: true,
+          line_type: "subscription",
+        },
+      ],
+    },
+    session,
+  )
+  return { invoice, created: true }
+}
+
+/**
+ * Run recurring billing across every active subscription whose current period
+ * has an invoice due. Returns a summary of what was generated.
+ */
+export async function runRecurringBilling(
+  session: SessionPayload,
+  opts: { taxRate?: number } = {},
+): Promise<{ generated: number; skipped: number; invoiceNos: string[] }> {
+  await ensureBillingSchema()
+  const subs = (await tenantSelect("saas_subscriptions", {
+    columns: "id, status",
+    where: "status IN ('active','trial','past_due','grace')",
+  })) as any[]
+  let generated = 0
+  let skipped = 0
+  const invoiceNos: string[] = []
+  for (const s of subs) {
+    try {
+      const res = await generateSubscriptionInvoice(Number(s.id), session, opts)
+      if (res.created) {
+        generated++
+        invoiceNos.push(res.invoice.invoice_no)
+      } else {
+        skipped++
+      }
+    } catch (e) {
+      console.log("[v0] recurring billing failed for subscription", s.id, (e as Error).message)
+      skipped++
+    }
+  }
+  return { generated, skipped, invoiceNos }
+}
+
+/**
+ * Apply an immediate mid-cycle plan change to a subscription and produce the
+ * prorated invoice (upgrade → charge now) or account credit (downgrade).
+ */
+export async function applyPlanChangeProration(
+  subscriptionId: number,
+  newAmount: number,
+  session: SessionPayload,
+  opts: { taxRate?: number } = {},
+): Promise<{ result: ReturnType<typeof computePlanChange>; invoice: InvoiceView | null; credit: CreditEntry | null }> {
+  await ensureBillingSchema()
+  const sub = await getSubscription(subscriptionId)
+  if (!sub) throw new BillingError("Subscription not found", 404)
+
+  const result = computePlanChange({
+    oldAmount: sub.amount,
+    newAmount: round2(num(newAmount)),
+    periodStart: sub.current_period_start,
+    periodEnd: sub.current_period_end,
+    changeDate: today(),
+  })
+
+  let invoice: InvoiceView | null = null
+  let credit: CreditEntry | null = null
+
+  if (result.netAmount > 0) {
+    // Upgrade: bill the prorated difference immediately.
+    invoice = await createInvoice(
+      {
+        invoice_type: "one_time",
+        subscription_id: subscriptionId,
+        customer_name: sub.plan_name,
+        currency: sub.currency,
+        tax_rate: opts.taxRate ?? 0,
+        finalize: true,
+        memo: `Prorated upgrade for ${sub.subscription_no}`,
+        lines: [
+          {
+            description: `Prorated plan change (credit ${result.unusedCredit} for unused time, charge ${result.remainingCharge} for new plan)`,
+            quantity: 1,
+            unit_amount: result.netAmount,
+            taxable: true,
+            line_type: "proration",
+          },
+        ],
+      },
+      session,
+    )
+  } else if (result.netAmount < 0) {
+    // Downgrade: issue the difference back as account credit.
+    credit = await createCredit(
+      {
+        entry_type: "credit",
+        reason: `Prorated downgrade credit for ${sub.subscription_no}`,
+        amount: Math.abs(result.netAmount),
+        currency: sub.currency,
+      },
+      session,
+    )
+  }
+
+  return { result, invoice, credit }
+}
+
+// ── Reconciliation ────────────────────────────────────────────────────────────
+
+export async function listReconciliation(): Promise<ReconEntry[]> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_reconciliation", { tail: "ORDER BY created_at DESC" })) as any[]
+  return rows.map(mapRecon)
+}
+
+export type ReconInput = {
+  statement_ref?: string
+  gateway?: string
+  payout_ref?: string | null
+  amount?: number | string
+  currency?: string
+  payment_reference?: string | null
+}
+
+/**
+ * Ingest a gateway settlement line and attempt to auto-match it to a payment
+ * by reference or by exact outstanding amount. Matched entries flag the
+ * payment as reconciled.
+ */
+export async function ingestReconciliation(input: ReconInput, session: SessionPayload): Promise<ReconEntry> {
+  await ensureBillingSchema()
+  const amount = round2(num(input.amount))
+  const statementRef = String(input.statement_ref ?? "").trim() || `STMT-${Date.now()}`
+
+  // Try to match by explicit payment reference first, then by amount.
+  let matchedPayment: Payment | null = null
+  if (input.payment_reference) {
+    const byRef = (await tenantSelect("billing_payments", {
+      where: "(reference = ? OR payment_no = ?) AND status = 'succeeded'",
+      params: [input.payment_reference, input.payment_reference],
+      tail: "LIMIT 1",
+    })) as any[]
+    if (byRef[0]) matchedPayment = mapPayment(byRef[0])
+  }
+  if (!matchedPayment && amount > 0) {
+    const byAmount = (await tenantSelect("billing_payments", {
+      where: "amount = ? AND status = 'succeeded' AND reconciled = 0",
+      params: [amount],
+      tail: "ORDER BY created_at ASC LIMIT 1",
+    })) as any[]
+    if (byAmount[0]) matchedPayment = mapPayment(byAmount[0])
+  }
+
+  let invoiceNo: string | null = null
+  if (matchedPayment) {
+    const inv = await getInvoice(matchedPayment.invoice_id)
+    invoiceNo = inv?.invoice_no ?? null
+    await tenantUpdate(
+      "billing_payments",
+      { reconciled: 1, reconciled_at: now() },
+      "id = ?",
+      [matchedPayment.id],
+    )
+  }
+
+  const { insertId } = await tenantInsert("billing_reconciliation", {
+    statement_ref: statementRef,
+    gateway: String(input.gateway ?? "").trim(),
+    payout_ref: input.payout_ref || null,
+    amount,
+    currency: String(input.currency || "USD").trim(),
+    payment_id: matchedPayment?.id ?? null,
+    invoice_no: invoiceNo,
+    status: matchedPayment ? "matched" : "unmatched",
+    reconciled_at: matchedPayment ? now() : null,
+    created_by: session.userId,
+  })
+  const created = await requireOwnedRow("billing_reconciliation", insertId)
+  return mapRecon(created)
+}
+
+// ── Summary ─────────────────────────────────────────────────────────────────
+
+export async function getBillingSummary(): Promise<BillingSummary> {
+  await ensureBillingSchema()
+  const invoices = await listInvoices()
+  const [creditBal, coupons, mrrRows] = await Promise.all([
+    creditBalance(),
+    tenantSelect("billing_coupons", { columns: "id", where: "is_active = 1" }) as Promise<any[]>,
+    tenantSelect("saas_subscriptions", {
+      columns: "amount, term, status",
+      where: "status IN ('active','trial','past_due','grace')",
+    }) as Promise<any[]>,
+  ])
+
+  const termMonths: Record<string, number> = { monthly: 1, yearly: 12, two_year: 24, five_year: 60 }
+  const mrr = round2(
+    mrrRows.reduce((s, r) => s + num(r.amount) / (termMonths[String(r.term)] ?? 1), 0),
+  )
+
+  const counts = { total: invoices.length, open: 0, paid: 0, draft: 0, void: 0 }
+  let outstanding = 0
+  let collected = 0
+  let refunded = 0
+  for (const inv of invoices) {
+    if (inv.status === "open" || inv.status === "partially_paid") counts.open++
+    else if (inv.status === "paid" || inv.status === "refunded") counts.paid++
+    else if (inv.status === "draft") counts.draft++
+    else if (inv.status === "void") counts.void++
+    if (inv.status !== "void") outstanding += inv.balance
+    collected += inv.amount_paid
+    refunded += inv.amount_refunded
+  }
+
+  return {
+    currency: invoices[0]?.currency ?? "USD",
+    invoices: counts,
+    outstanding: round2(outstanding),
+    collected: round2(collected),
+    refunded: round2(refunded),
+    credit_balance: creditBal,
+    coupons_active: coupons.length,
+    mrr,
+  }
+}

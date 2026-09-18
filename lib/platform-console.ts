@@ -19,6 +19,13 @@ import "server-only"
  */
 import { query } from "@/lib/db"
 import { listTenants, type Tenant } from "@/lib/tenant-service"
+import {
+  type PlanEntitlements,
+  EMPTY_ENTITLEMENTS,
+  normalizeEntitlements,
+  parseEntitlements,
+  presetForCode,
+} from "@/lib/platform/entitlements"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +42,8 @@ export type Plan = {
   currency: string
   seat_limit: number | null
   features: string[]
+  /** SPEC 17 — the structured entitlement contract for this plan. */
+  entitlements: PlanEntitlements
   is_active: boolean
   sort_order: number
 }
@@ -86,6 +95,7 @@ const DEFAULT_PLANS: Omit<Plan, "is_active">[] = [
     currency: "USD",
     seat_limit: null,
     features: ["all_modules", "priority_support", "unlimited_storage"],
+    entitlements: presetForCode("enterprise"),
     sort_order: 0,
   },
   {
@@ -96,6 +106,7 @@ const DEFAULT_PLANS: Omit<Plan, "is_active">[] = [
     currency: "USD",
     seat_limit: 10,
     features: ["core_modules", "email_support"],
+    entitlements: presetForCode("starter"),
     sort_order: 1,
   },
   {
@@ -106,6 +117,7 @@ const DEFAULT_PLANS: Omit<Plan, "is_active">[] = [
     currency: "USD",
     seat_limit: 50,
     features: ["all_modules", "email_support", "api_access"],
+    entitlements: presetForCode("growth"),
     sort_order: 2,
   },
   {
@@ -116,6 +128,7 @@ const DEFAULT_PLANS: Omit<Plan, "is_active">[] = [
     currency: "USD",
     seat_limit: null,
     features: ["all_modules", "priority_support", "api_access", "sso", "dedicated_db"],
+    entitlements: presetForCode("enterprise"),
     sort_order: 3,
   },
 ]
@@ -153,6 +166,17 @@ function planCodeForTenant(t: Tenant): PlanCode {
 
 let ensured: Promise<void> | null = null
 
+/** Add a column only if it doesn't already exist (MySQL has no portable ADD COLUMN IF NOT EXISTS). */
+async function ensureColumn(table: string, column: string, definition: string): Promise<void> {
+  const rows = await query<any[]>(
+    `SELECT COUNT(*) AS c FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+    [table, column],
+  )
+  if (Number(rows?.[0]?.c ?? 0) > 0) return
+  await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`)
+}
+
 async function runEnsure(): Promise<void> {
   await query(`
     CREATE TABLE IF NOT EXISTS \`platform_plans\` (
@@ -163,6 +187,7 @@ async function runEnsure(): Promise<void> {
       \`currency\` VARCHAR(10) NOT NULL DEFAULT 'USD',
       \`seat_limit\` INT UNSIGNED DEFAULT NULL,
       \`features\` JSON DEFAULT NULL,
+      \`entitlements\` JSON DEFAULT NULL,
       \`is_active\` TINYINT(1) NOT NULL DEFAULT 1,
       \`sort_order\` INT NOT NULL DEFAULT 0,
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -170,6 +195,9 @@ async function runEnsure(): Promise<void> {
       PRIMARY KEY (\`code\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+
+  // SPEC 17 — add the entitlements column to installs created before it existed.
+  await ensureColumn("platform_plans", "entitlements", "JSON DEFAULT NULL")
 
   await query(`
     CREATE TABLE IF NOT EXISTS \`tenant_subscriptions\` (
@@ -251,10 +279,20 @@ async function runEnsure(): Promise<void> {
   // Seed platform defaults (idempotent — never clobber operator edits).
   for (const p of DEFAULT_PLANS) {
     await query(
-      `INSERT INTO \`platform_plans\` (\`code\`, \`name\`, \`description\`, \`price_monthly\`, \`currency\`, \`seat_limit\`, \`features\`, \`is_active\`, \`sort_order\`)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+      `INSERT INTO \`platform_plans\` (\`code\`, \`name\`, \`description\`, \`price_monthly\`, \`currency\`, \`seat_limit\`, \`features\`, \`entitlements\`, \`is_active\`, \`sort_order\`)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
        ON DUPLICATE KEY UPDATE \`code\` = \`code\``,
-      [p.code, p.name, p.description, p.price_monthly, p.currency, p.seat_limit, JSON.stringify(p.features), p.sort_order],
+      [
+        p.code,
+        p.name,
+        p.description,
+        p.price_monthly,
+        p.currency,
+        p.seat_limit,
+        JSON.stringify(p.features),
+        JSON.stringify(p.entitlements),
+        p.sort_order,
+      ],
     )
   }
   for (const f of DEFAULT_FLAGS) {
@@ -329,7 +367,11 @@ async function provisionSubscriptions(): Promise<void> {
 // Plans
 // ---------------------------------------------------------------------------
 
-type PlanRow = Omit<Plan, "features" | "is_active"> & { features: string | null; is_active: number }
+type PlanRow = Omit<Plan, "features" | "entitlements" | "is_active"> & {
+  features: string | null
+  entitlements: string | null
+  is_active: number
+}
 
 function mapPlan(r: PlanRow): Plan {
   let features: string[] = []
@@ -341,6 +383,10 @@ function mapPlan(r: PlanRow): Plan {
       features = []
     }
   }
+  // A pre-SPEC-17 row has a NULL entitlements column: fall back to the tier
+  // preset so the plan still has a meaningful contract, never a bare floor.
+  const entitlements =
+    r.entitlements != null ? parseEntitlements(r.entitlements) : presetForCode(r.code)
   return {
     code: r.code,
     name: r.name,
@@ -349,6 +395,7 @@ function mapPlan(r: PlanRow): Plan {
     currency: r.currency,
     seat_limit: r.seat_limit != null ? Number(r.seat_limit) : null,
     features,
+    entitlements,
     is_active: Boolean(r.is_active),
     sort_order: Number(r.sort_order),
   }
@@ -372,6 +419,7 @@ export async function upsertPlan(input: {
   currency?: string
   seat_limit?: number | null
   features?: string[]
+  entitlements?: unknown
   sort_order?: number
 }): Promise<void> {
   await ensurePlatformConsoleSchema()
@@ -379,14 +427,24 @@ export async function upsertPlan(input: {
   if (!/^[a-z0-9_-]{2,40}$/.test(code)) throw new Error("Plan code must be 2-40 chars: letters, digits, - or _")
   if (!input.name?.trim()) throw new Error("Plan name is required")
   if (!Number.isFinite(input.price_monthly) || input.price_monthly < 0) throw new Error("Price must be a non-negative number")
+  // Entitlements are normalized to the canonical shape before persistence so a
+  // malformed form body can never write an invalid contract. When omitted on an
+  // update we keep the existing value; on insert we seed the tier preset.
+  const existing = (await query<PlanRow[]>("SELECT * FROM `platform_plans` WHERE `code` = ?", [code]))[0]
+  const entitlements: PlanEntitlements =
+    input.entitlements !== undefined
+      ? normalizeEntitlements(input.entitlements)
+      : existing
+        ? parseEntitlements(existing.entitlements)
+        : presetForCode(code)
   await query(
-    `INSERT INTO \`platform_plans\` (\`code\`, \`name\`, \`description\`, \`price_monthly\`, \`currency\`, \`seat_limit\`, \`features\`, \`sort_order\`)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO \`platform_plans\` (\`code\`, \`name\`, \`description\`, \`price_monthly\`, \`currency\`, \`seat_limit\`, \`features\`, \`entitlements\`, \`sort_order\`)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        \`name\` = VALUES(\`name\`), \`description\` = VALUES(\`description\`),
        \`price_monthly\` = VALUES(\`price_monthly\`), \`currency\` = VALUES(\`currency\`),
        \`seat_limit\` = VALUES(\`seat_limit\`), \`features\` = VALUES(\`features\`),
-       \`sort_order\` = VALUES(\`sort_order\`)`,
+       \`entitlements\` = VALUES(\`entitlements\`), \`sort_order\` = VALUES(\`sort_order\`)`,
     [
       code,
       input.name.trim(),
@@ -395,6 +453,7 @@ export async function upsertPlan(input: {
       input.currency ?? "USD",
       input.seat_limit ?? null,
       JSON.stringify(input.features ?? []),
+      JSON.stringify(entitlements),
       input.sort_order ?? 0,
     ],
   )

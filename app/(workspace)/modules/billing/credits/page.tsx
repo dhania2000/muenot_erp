@@ -1,8 +1,7 @@
 import { billingGuard } from "@/lib/billing-guard"
-import { BillingModuleView } from "@/components/billing/billing-module-view"
-import { BILLING_CONFIGS } from "@/lib/billing-configs"
+import { CreditConsole } from "@/components/billing/credit-console"
 
 export default async function Page() {
   await billingGuard()
-  return <BillingModuleView config={BILLING_CONFIGS.credits} />
+  return <CreditConsole />
 }

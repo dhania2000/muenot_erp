@@ -73,6 +73,9 @@ export const TENANT_OWNED_TABLES = [
   "billing_reconciliation",
   // Payment gateway abstraction (SPEC 21) — inbound webhook idempotency ledger
   "billing_gateway_events",
+  // Renewal management (SPEC 24)
+  "saas_renewal_reminders",
+  "saas_renewal_attempts",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

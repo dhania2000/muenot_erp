@@ -1,10 +1,9 @@
-import { put } from "@vercel/blob"
 import { NextRequest, NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getProduct } from "@/lib/products-db"
 import { getProductSession, canEditProduct } from "@/lib/products-api-auth"
 import { logProductAudit } from "@/lib/products-audit"
-import { validateUpload } from "@/lib/settings/uploads"
+import { uploadFile } from "@/lib/storage"
 
 export const runtime = "nodejs"
 
@@ -37,22 +36,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const docType = String(form.get("doc_type") || "Product Document")
   if (!(file instanceof File)) return NextResponse.json({ error: "File is required" }, { status: 400 })
 
-  const uploadError = await validateUpload(file)
-  if (uploadError) return NextResponse.json({ error: uploadError }, { status: 400 })
-
-  const blob = await put(`products/${pk}/${crypto.randomUUID()}-${file.name}`, file, {
-    access: "public",
-    addRandomSuffix: false,
-  })
+  const up = await uploadFile(`products/${pk}/${crypto.randomUUID()}-${file.name}`, file)
+  if (!up.ok) return NextResponse.json({ error: up.error }, { status: 400 })
+  const url = up.result.url
 
   const result = (await query(
     `INSERT INTO product_documents (product_pk, doc_type, file_name, url, uploaded_by) VALUES (?,?,?,?,?)`,
-    [pk, docType, file.name, blob.url, ctx.session.userId],
+    [pk, docType, file.name, url, ctx.session.userId],
   )) as any
 
   // The first uploaded image becomes the product thumbnail if none is set.
   if (docType === "Image" && !product.image_url) {
-    await query(`UPDATE products SET image_url = ? WHERE id = ?`, [blob.url, pk])
+    await query(`UPDATE products SET image_url = ? WHERE id = ?`, [url, pk])
   }
 
   await logProductAudit({

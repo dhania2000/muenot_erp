@@ -59,14 +59,31 @@ export async function POST(req: NextRequest) {
 
   try {
     const provider = providerFromConnection(conn)
-    await provider.healthCheck()
-    await logStorageAudit("connection_tested", {
+    // SPEC 28 — run the full capability battery rather than one opaque probe.
+    const report = await provider.diagnose()
+
+    const passed = report.checks.filter((c) => c.status === "pass").length
+    const failed = report.checks.filter((c) => c.status === "fail")
+    const summary = report.ok
+      ? `All checks passed (${passed}/${report.checks.length})`
+      : `${failed.length} check(s) failed: ${failed.map((c) => c.label).join(", ")}`
+
+    await logStorageAudit(report.ok ? "connection_tested" : "connection_test_failed", {
       connectionId: conn.id || null,
-      detail: `${conn.provider} ok`,
+      detail: `${conn.provider}: ${summary}`.slice(0, 500),
       userId: session.userId,
     })
-    return NextResponse.json({ ok: true, message: "Connection successful" })
+    if (!report.ok) {
+      console.log(
+        "[v0] storage health check failed:",
+        conn.provider,
+        failed.map((c) => `${c.label}=${c.detail}`).join("; "),
+      )
+    }
+
+    return NextResponse.json({ ok: report.ok, message: summary, report })
   } catch (err: any) {
+    // A diagnose() should not throw for expected failures, but guard anyway.
     const message = err?.name === "CredentialsProviderError" ? "Invalid credentials" : err?.message || "Connection failed"
     await logStorageAudit("connection_test_failed", {
       connectionId: conn.id || null,

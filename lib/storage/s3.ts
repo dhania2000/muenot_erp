@@ -1,4 +1,5 @@
 import "server-only"
+import { randomUUID } from "node:crypto"
 import {
   S3Client,
   PutObjectCommand,
@@ -6,9 +7,43 @@ import {
   DeleteObjectCommand,
   ListObjectsV2Command,
   HeadBucketCommand,
+  CreateMultipartUploadCommand,
+  AbortMultipartUploadCommand,
 } from "@aws-sdk/client-s3"
-import type { StorageProvider, UploadResult, DownloadResult, StorageObjectMeta, ResolvedConnection } from "./types"
+import type {
+  StorageProvider,
+  UploadResult,
+  DownloadResult,
+  StorageObjectMeta,
+  ResolvedConnection,
+  HealthReport,
+} from "./types"
+import { HealthReportBuilder, describeError } from "./health"
 import { getProviderDefinition, type ServerSideEncryptionMode } from "./providers"
+
+/**
+ * SPEC 28 — Classify a failure from the initial HeadBucket probe so the report
+ * can attribute it to the right stage. An HTTP status means we reached the
+ * service (so connectivity is fine) and the problem is auth vs. bucket; no
+ * status means the request never completed the round trip (network) unless the
+ * SDK rejected the credentials before sending anything.
+ */
+function classifyBucketError(err: unknown): "network" | "credentials" | "bucket" {
+  const e = err as any
+  const name: string = e?.name || e?.Code || ""
+  const status: number | undefined = e?.$metadata?.httpStatusCode
+  const credNames = new Set([
+    "InvalidAccessKeyId",
+    "SignatureDoesNotMatch",
+    "CredentialsProviderError",
+    "InvalidToken",
+    "ExpiredToken",
+    "AuthorizationHeaderMalformed",
+  ])
+  if (status) return credNames.has(name) || status === 401 ? "credentials" : "bucket"
+  // No HTTP status: either creds rejected locally, or a transport failure.
+  return credNames.has(name) ? "credentials" : "network"
+}
 
 /**
  * A single S3 implementation that serves EVERY S3-compatible backend — AWS S3,
@@ -130,6 +165,111 @@ export class S3StorageProvider implements StorageProvider {
     // HeadBucket verifies both connectivity and that the credentials can reach
     // the target bucket, without needing any object to exist.
     await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }))
+  }
+
+  /**
+   * SPEC 28 — Full diagnostic run. Probes every storage capability in order and
+   * reports each as pass/fail/skip. Later probes are skipped (never run) once a
+   * prerequisite fails, so an admin sees exactly where the chain breaks without
+   * a cascade of misleading errors. A temporary object is written under a
+   * `.v0-healthcheck/` prefix and always cleaned up.
+   */
+  async diagnose(): Promise<HealthReport> {
+    const b = new HealthReportBuilder()
+
+    // 1-3. One HeadBucket call covers connectivity, credentials and bucket
+    // access; we attribute a failure to the correct stage and skip the rest.
+    let bucketOk = false
+    const start = Date.now()
+    try {
+      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }))
+      b.pass("connectivity", "Reached the storage endpoint", Date.now() - start)
+      b.pass("credentials", "Credentials accepted")
+      b.pass("bucket", `Bucket "${this.bucket}" is reachable`)
+      bucketOk = true
+    } catch (err) {
+      const duration = Date.now() - start
+      const kind = classifyBucketError(err)
+      const detail = describeError(err)
+      if (kind === "network") {
+        b.fail("connectivity", detail, duration)
+        b.skip("credentials", "Skipped — could not reach the endpoint")
+        b.skip("bucket", "Skipped — could not reach the endpoint")
+      } else if (kind === "credentials") {
+        b.pass("connectivity", "Reached the storage endpoint", duration)
+        b.fail("credentials", detail)
+        b.skip("bucket", "Skipped — credentials were rejected")
+      } else {
+        b.pass("connectivity", "Reached the storage endpoint", duration)
+        b.pass("credentials", "Credentials accepted")
+        b.fail("bucket", detail)
+      }
+    }
+
+    if (!bucketOk) {
+      b.skip("write", "Skipped — bucket is not accessible")
+      b.skip("read", "Skipped — bucket is not accessible")
+      b.skip("delete", "Skipped — bucket is not accessible")
+      b.skip("multipart", "Skipped — bucket is not accessible")
+      return b.build()
+    }
+
+    // 4-6. Write → read → delete a single throwaway object.
+    const key = this.full(`.v0-healthcheck/${randomUUID()}.txt`)
+    const payload = Buffer.from(`v0 storage health check ${new Date().toISOString()}`)
+    const wrote = await b.run("write", async () => {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: payload,
+          ContentType: "text/plain",
+          ...(this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}),
+        }),
+      )
+      return "Wrote a temporary test object"
+    })
+
+    if (wrote) {
+      await b.run("read", async () => {
+        const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }))
+        const body = res.Body as any
+        const bytes: Uint8Array | null = body?.transformToByteArray ? await body.transformToByteArray() : null
+        if (bytes && bytes.byteLength !== payload.byteLength) {
+          throw new Error("Object read back did not match what was written")
+        }
+        return "Read the test object back"
+      })
+      await b.run("delete", async () => {
+        await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
+        return "Deleted the test object"
+      })
+    } else {
+      b.skip("read", "Skipped — write failed")
+      b.skip("delete", "Skipped — nothing was written to clean up")
+    }
+
+    // 7. Multipart support: initiate then immediately abort (no parts uploaded),
+    // which exercises the multipart API path without leaving an open upload.
+    await b.run("multipart", async () => {
+      const mpKey = this.full(`.v0-healthcheck/${randomUUID()}.part`)
+      const created = await this.client.send(
+        new CreateMultipartUploadCommand({
+          Bucket: this.bucket,
+          Key: mpKey,
+          ContentType: "application/octet-stream",
+          ...(this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}),
+        }),
+      )
+      const uploadId = created.UploadId
+      if (!uploadId) throw new Error("Provider did not return a multipart upload ID")
+      await this.client.send(
+        new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: mpKey, UploadId: uploadId }),
+      )
+      return "Initiated and aborted a multipart upload"
+    })
+
+    return b.build()
   }
 }
 

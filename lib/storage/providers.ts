@@ -147,3 +147,34 @@ export function getProviderDefinition(id: string): ProviderDefinition | null {
 export function isS3Provider(id: string): boolean {
   return getProviderDefinition(id)?.s3Compatible ?? false
 }
+
+/**
+ * SPEC 27 — Server-side encryption at the object-storage layer.
+ * ---------------------------------------------------------------------------
+ * Independent of the at-rest encryption we apply to stored SECRETS. This tells
+ * the S3 backend how each uploaded OBJECT should be encrypted server-side:
+ *   - none    → rely on the bucket's default encryption policy (no header set)
+ *   - AES256  → SSE-S3, S3-managed keys
+ *   - aws:kms → SSE-KMS, AWS KMS-managed keys (bucket/account default CMK)
+ */
+export type ServerSideEncryptionMode = "none" | "AES256" | "aws:kms"
+
+export const ENCRYPTION_OPTIONS: {
+  value: ServerSideEncryptionMode
+  label: string
+  description: string
+}[] = [
+  { value: "none", label: "Bucket default", description: "Use whatever encryption the bucket enforces (no header sent)." },
+  { value: "AES256", label: "SSE-S3 (AES-256)", description: "Server-side encryption with S3-managed keys." },
+  { value: "aws:kms", label: "SSE-KMS", description: "Server-side encryption with the bucket's default AWS KMS key." },
+]
+
+const ENCRYPTION_VALUES = new Set<string>(ENCRYPTION_OPTIONS.map((o) => o.value))
+
+export function isEncryptionMode(value: string): value is ServerSideEncryptionMode {
+  return ENCRYPTION_VALUES.has(value)
+}
+
+export function normalizeEncryption(value: string | null | undefined): ServerSideEncryptionMode {
+  return value && isEncryptionMode(value) ? value : "none"
+}

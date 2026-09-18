@@ -45,6 +45,8 @@ export async function POST(req: NextRequest) {
     secretAccessKey: secret,
     forcePathStyle: Boolean(body.forcePathStyle ?? def.forcePathStyle),
     publicBaseUrl: body.publicBaseUrl != null ? String(body.publicBaseUrl) : null,
+    pathPrefix: body.pathPrefix != null ? String(body.pathPrefix) : null,
+    serverSideEncryption: body.serverSideEncryption != null ? String(body.serverSideEncryption) : null,
     isActive: false,
   }
 

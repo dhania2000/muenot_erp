@@ -17,6 +17,7 @@ import {
   MessageCircle,
   LayoutDashboard,
   CreditCard,
+  HardDrive,
 } from "lucide-react"
 
 function settingEnabled(v: string | undefined, fallback = true) {
@@ -388,7 +389,6 @@ export const BILLING_CHILDREN: NavChild[] = [
   { label: "Credits & Adjustments", href: "/modules/billing/credits" },
   { label: "Refunds", href: "/modules/billing/refunds" },
   { label: "Payment Reconciliation", href: "/modules/billing/reconciliation" },
-  { label: "Storage", href: "/modules/billing/storage" },
   { label: "Billing Settings", href: "/modules/billing/settings" },
   { label: "Billing Reports", href: "/modules/billing/reports" },
 ]
@@ -508,6 +508,14 @@ export async function buildWorkspaceNav(
       href: "/modules/billing",
       icon: <CreditCard className="size-4" />,
       children: BILLING_CHILDREN,
+    })
+
+    // Storage is its own top-level admin module (moved out of Subscription &
+    // Billing). Customer-owned object storage connections are managed here.
+    navItems.push({
+      label: "Storage",
+      href: "/modules/storage",
+      icon: <HardDrive className="size-4" />,
     })
   }
 

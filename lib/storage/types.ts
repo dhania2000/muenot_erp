@@ -45,6 +45,40 @@ export type DownloadResult = {
 }
 
 /**
+ * SPEC 28 — Storage provider health check.
+ * ---------------------------------------------------------------------------
+ * The "Test connection" action runs a battery of individual probes instead of
+ * one opaque call, so an admin can see exactly which capability is broken.
+ */
+export type HealthCheckId =
+  | "connectivity"
+  | "credentials"
+  | "bucket"
+  | "write"
+  | "read"
+  | "delete"
+  | "multipart"
+
+export type HealthCheckStatus = "pass" | "fail" | "skip"
+
+export type HealthCheckResult = {
+  id: HealthCheckId
+  /** Human label for the UI (e.g. "Bucket access"). */
+  label: string
+  status: HealthCheckStatus
+  /** Actionable detail — what happened, or why a check was skipped. */
+  detail: string | null
+  /** Wall-clock duration of the probe in milliseconds. */
+  durationMs: number
+}
+
+export type HealthReport = {
+  /** True when no check failed (skips are allowed). */
+  ok: boolean
+  checks: HealthCheckResult[]
+}
+
+/**
  * The uniform contract every storage backend implements. Callers (upload
  * routes, download proxy, admin tooling) depend only on this interface, never
  * on a specific vendor SDK.
@@ -59,6 +93,11 @@ export interface StorageProvider {
   list(prefix: string, opts?: { limit?: number }): Promise<StorageObjectMeta[]>
   /** Delete a single object. Idempotent. */
   delete(key: string): Promise<void>
-  /** Lightweight connectivity/permission check used by the "Test connection" action. */
+  /** Lightweight connectivity/permission check (throws on failure). */
   healthCheck(): Promise<void>
+  /**
+   * SPEC 28 — Full diagnostic run for the "Test connection" action. Never
+   * throws for expected failures; every probe is reported as pass/fail/skip.
+   */
+  diagnose(): Promise<HealthReport>
 }

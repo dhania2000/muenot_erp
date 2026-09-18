@@ -18,6 +18,7 @@ import {
   type UploadSessionStatus,
 } from "./multipart-store"
 import { recordFileMetadata, getByObjectKey, softDeleteFile, sha256, type FileObject } from "./file-metadata"
+import { enqueueScan, enforceDownloadPolicyForKey } from "./file-scanning"
 import type {
   StorageProvider,
   UploadResult,
@@ -118,6 +119,8 @@ export async function uploadFile(
     } catch (metaErr) {
       console.error("[v0] file metadata record failed (upload succeeded):", metaErr)
     }
+    // SPEC 34 — kick off an asynchronous security scan for the new object.
+    if (recorded) enqueueScan(recorded, { requestedBy: opts.metadata.ownerId ?? null })
     return { ok: true, result: { ...result, file: recorded } }
   } catch (err) {
     console.error("[v0] storage upload failed:", err)
@@ -200,6 +203,8 @@ export async function getSignedDownloadUrl(ref: string, opts: { expiresIn?: numb
   const key = keyFromRef(ref)
   const tenantId = currentTenantId()
   if (!keyBelongsToTenant(key, tenantId)) throw new CrossTenantAccessError("File not found")
+  // SPEC 34 — block the link if the object is quarantined / not yet cleared.
+  await enforceDownloadPolicyForKey(key)
   const { provider } = await getTenantStorage()
   return provider.presign(key, opts)
 }
@@ -438,6 +443,24 @@ export {
   type FileClassification,
   type RetentionPolicyId,
 } from "./file-metadata-policy"
+// SPEC 33 — File / document versioning (history, restore, download, audit).
+export {
+  getFileVersionHistory,
+  restoreFileVersion,
+  getVersionDownloadUrl,
+  listFileVersionAudit,
+  logFileVersionAudit,
+  ensureFileVersionAuditSchema,
+  canRestoreVersion,
+  supportsVersioning,
+  formatVersionLabel,
+  normalizeVersionAuditAction,
+  type FileVersion,
+  type FileVersionHistory,
+  type VersionAuditEntry,
+  type VersionAuditAction,
+  type RestoreActor,
+} from "./file-versions"
 // SPEC 31 — CDN / media-delivery policy helpers.
 export {
   mediaKindFor,

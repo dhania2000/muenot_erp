@@ -84,6 +84,10 @@ export const TENANT_OWNED_TABLES = [
   "storage_upload_parts",
   // Centralized file metadata (SPEC 32) — one normalized row per stored file
   "file_objects",
+  // File / document version audit trail (SPEC 33)
+  "file_version_audit",
+  // Malware / file-security scan state (SPEC 34)
+  "file_security_scans",
   // Storage → Migration — module/sub-module data mapped to a storage folder
   "tenant_storage_migrations",
 ] as const

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { currentTenantIdOrNull } from "@/lib/tenant-scope"
-import { getProviderDefinition, isStorageProviderId } from "@/lib/storage/providers"
+import { getProviderDefinition, isStorageProviderId, normalizeEncryption } from "@/lib/storage/providers"
 import { providerFromConnection } from "@/lib/storage"
 import { getResolvedConnectionById, logStorageAudit } from "@/lib/storage/connection-store"
 import type { ResolvedConnection } from "@/lib/storage/types"
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     forcePathStyle: Boolean(body.forcePathStyle ?? def.forcePathStyle),
     publicBaseUrl: body.publicBaseUrl != null ? String(body.publicBaseUrl) : null,
     pathPrefix: body.pathPrefix != null ? String(body.pathPrefix) : null,
-    serverSideEncryption: body.serverSideEncryption != null ? String(body.serverSideEncryption) : null,
+    serverSideEncryption: normalizeEncryption(body.serverSideEncryption != null ? String(body.serverSideEncryption) : null),
     isActive: false,
   }
 

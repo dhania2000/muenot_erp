@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto"
 import { put, del, list, head } from "@vercel/blob"
 import type { StorageProvider, UploadResult, DownloadResult, StorageObjectMeta, HealthReport } from "./types"
 import { HealthReportBuilder } from "./health"
+import { proxyUrl } from "./s3"
+import { signedProxyUrl, DEFAULT_SIGNED_URL_TTL_SECONDS } from "./signing"
 
 /**
  * Default platform storage. Objects are stored public (mirroring the ERP's
@@ -14,12 +16,15 @@ export class VercelBlobProvider implements StorageProvider {
   readonly id = "vercel_blob" as const
 
   async upload(key: string, data: Buffer, contentType: string): Promise<UploadResult> {
-    const blob = await put(key, data, {
+    await put(key, data, {
       access: "public",
       addRandomSuffix: false,
       contentType: contentType || undefined,
     })
-    return { url: blob.url, key, provider: this.id, size: data.length, contentType: contentType || null }
+    // SPEC 29 — Do NOT persist/expose the raw public blob URL. Callers store the
+    // access-controlled proxy path so every read is authenticated + tenant- and
+    // object-scoped, and no sensitive file is reachable by URL alone.
+    return { url: proxyUrl(key), key, provider: this.id, size: data.length, contentType: contentType || null }
   }
 
   async download(key: string): Promise<DownloadResult> {
@@ -54,6 +59,16 @@ export class VercelBlobProvider implements StorageProvider {
     // del accepts a pathname or URL; resolve the URL first for reliability.
     const meta = await head(key).catch(() => null)
     if (meta?.url) await del(meta.url)
+  }
+
+  /**
+   * SPEC 29 — Vercel Blob has no native private-presign, so we hand back a
+   * short-lived HMAC-signed URL to the app's access-controlled proxy instead of
+   * the raw (public) blob URL. The signed token binds the URL to this exact
+   * object and to the tenant encoded in its key, and expires quickly.
+   */
+  async presign(key: string, opts: { expiresIn?: number } = {}): Promise<string> {
+    return signedProxyUrl(key, opts.expiresIn ?? DEFAULT_SIGNED_URL_TTL_SECONDS)
   }
 
   async healthCheck(): Promise<void> {

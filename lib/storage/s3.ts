@@ -18,8 +18,10 @@ import type {
   ResolvedConnection,
   HealthReport,
 } from "./types"
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { HealthReportBuilder, describeError } from "./health"
 import { getProviderDefinition, type ServerSideEncryptionMode } from "./providers"
+import { clampTtl } from "./signing"
 
 /**
  * SPEC 28 — Classify a failure from the initial HeadBucket probe so the report
@@ -159,6 +161,19 @@ export class S3StorageProvider implements StorageProvider {
 
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.full(key) }))
+  }
+
+  /**
+   * SPEC 29 — Native S3 presigned GET URL. The URL is time-limited and scoped
+   * to the single object; the bucket stays private (no public ACL needed).
+   * The caller is responsible for having validated session + tenant ownership
+   * of `key` before requesting this.
+   */
+  async presign(key: string, opts: { expiresIn?: number } = {}): Promise<string> {
+    const expiresIn = clampTtl(opts.expiresIn)
+    return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: this.full(key) }), {
+      expiresIn,
+    })
   }
 
   async healthCheck(): Promise<void> {

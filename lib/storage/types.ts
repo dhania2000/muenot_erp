@@ -93,6 +93,14 @@ export interface StorageProvider {
   list(prefix: string, opts?: { limit?: number }): Promise<StorageObjectMeta[]>
   /** Delete a single object. Idempotent. */
   delete(key: string): Promise<void>
+  /**
+   * SPEC 29 — Issue a short-lived, presigned URL that grants read access to a
+   * single object without exposing it publicly. S3-compatible backends return
+   * a NATIVE presigned URL; the managed proxy backend returns an HMAC-signed
+   * proxy path. Callers MUST validate session + tenant ownership of `key`
+   * before calling this — the returned URL is itself the capability.
+   */
+  presign(key: string, opts?: { expiresIn?: number }): Promise<string>
   /** Lightweight connectivity/permission check (throws on failure). */
   healthCheck(): Promise<void>
   /**

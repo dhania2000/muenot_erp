@@ -58,6 +58,7 @@ const navTabs: NavTab[] = [
   { label: "HR", kind: "tab" },
   { label: "Ticket", kind: "tab" },
   { label: "Finance", kind: "tab" },
+  { label: "Employee Links", kind: "link", href: "/admin/employee-links" },
 ]
 
 function KpiCard({ metric, activeNote }: { metric: Metric; activeNote?: string }) {

@@ -13,6 +13,7 @@ import {
   CLOSED_STATUSES,
 } from "@/lib/hr-offboarding"
 import { emitHrEmailEvent } from "@/lib/hr-email-automation"
+import { syncAccessStatusForEmployee } from "@/lib/employee-user-link"
 
 const EMPLOYEE_SELECT = `
   e.id AS emp_pk, e.employee_id AS employee_code, e.employee_name, e.department, e.designation,
@@ -434,11 +435,19 @@ async function completeCase(caseId: number, caseRow: any, body: any, session: an
     "UPDATE hr_employees SET employment_status = 'Ex-Employee', exit_status = 'Exited', exit_date = ?, status_changed_at = NOW() WHERE id = ?",
     [finalLwd || null, caseRow.employee_id],
   )
-  if (caseRow.user_id) {
-    try {
-      await query("UPDATE users SET status = 'inactive' WHERE id = ?", [caseRow.user_id])
-    } catch {
-      // users.status column may differ; account deactivation is best-effort.
+  // SPEC 15 — Re-derive the linked login's access status from employment. This
+  // deactivates the login when the employee has no remaining active employment,
+  // but preserves access when the same person is still active in another entity.
+  try {
+    await syncAccessStatusForEmployee(Number(caseRow.employee_id))
+  } catch {
+    // Access sync is best-effort; the exit itself has already been recorded.
+    if (caseRow.user_id) {
+      try {
+        await query("UPDATE users SET status = 'inactive' WHERE id = ?", [caseRow.user_id])
+      } catch {
+        // users.status column may differ; account deactivation is best-effort.
+      }
     }
   }
 
@@ -494,6 +503,13 @@ async function cancelCase(caseId: number, caseRow: any, body: any, session: any,
     restore,
     caseRow.employee_id,
   ])
+  // SPEC 15 — Reactivate the linked login now that employment is restored (only
+  // if it was auto-deactivated; manual suspensions are left to the lifecycle console).
+  try {
+    await syncAccessStatusForEmployee(Number(caseRow.employee_id))
+  } catch {
+    // best-effort
+  }
 
   await logEmployeeEvent({
     employeeId: caseRow.employee_id,

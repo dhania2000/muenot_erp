@@ -39,6 +39,7 @@ export const INACTIVE_EMPLOYMENT_STATUSES = [
   "resigned",
   "terminated",
   "exited",
+  "ex-employee",
   "absconded",
   "retired",
   "relieved",

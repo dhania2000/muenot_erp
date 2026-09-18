@@ -21,7 +21,13 @@ import {
   type InvoiceStatus,
   type LineInput,
 } from "@/lib/billing/billing-math"
-import { getSubscriptionView } from "@/lib/billing/subscription-engine"
+import {
+  getSubscriptionView,
+  getPlan,
+  planPriceForTerm,
+  changePlanRecord,
+} from "@/lib/billing/subscription-engine"
+import { isBillingTerm, type BillingTerm } from "@/lib/billing/subscription-lifecycle"
 
 /**
  * SPEC 20 — Billing engine (data + service layer).
@@ -1318,6 +1324,66 @@ export async function applyPlanChangeProration(
   }
 
   return { result, invoice, credit }
+}
+
+/**
+ * SPEC 25 — Change a subscription's plan and settle the money.
+ * ---------------------------------------------------------------------------
+ * Computes the new plan amount for the requested term, applies proration
+ * (immediate prorated invoice on upgrade, account credit on downgrade), then
+ * persists the plan change on the subscription record. All operations are
+ * tenant-scoped through the underlying engines.
+ */
+export type ChangePlanRequest = { subscription_id: number; plan_id: number; term?: string }
+
+export async function changeSubscriptionPlan(
+  input: ChangePlanRequest,
+  session: SessionPayload,
+  opts: { taxRate?: number } = {},
+) {
+  await ensureBillingSchema()
+  const subscriptionId = num(input.subscription_id)
+  const sub = await getSubscriptionView(subscriptionId)
+  if (!sub) throw new BillingError("Subscription not found", 404)
+
+  const plan = await getPlan(num(input.plan_id))
+  if (!plan) throw new BillingError("Plan not found", 404)
+
+  const term = (input.term && isBillingTerm(input.term) ? input.term : sub.term) as BillingTerm
+  if (sub.plan_id === plan.id && sub.term === term) {
+    throw new BillingError("This is already your current plan and term.", 409)
+  }
+
+  const newAmount = round2(planPriceForTerm(plan, term))
+  const proration = await applyPlanChangeProration(subscriptionId, newAmount, session, opts)
+  const changed = await changePlanRecord(subscriptionId, { plan_id: plan.id, term }, session)
+
+  return { ...changed, proration }
+}
+
+/**
+ * SPEC 25 — Tenant-wide payment history across all invoices (newest first).
+ * Joins each payment to its invoice number for portal display.
+ */
+export type PaymentHistoryEntry = Payment & { invoice_no: string | null }
+
+export async function listTenantPayments(limit = 100): Promise<PaymentHistoryEntry[]> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_payments", {
+    tail: `ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(500, Math.floor(limit)))}`,
+  })) as any[]
+  const payments = rows.map(mapPayment)
+  const invoiceIds = Array.from(new Set(payments.map((p) => p.invoice_id)))
+  const numberById = new Map<number, string>()
+  if (invoiceIds.length > 0) {
+    const placeholders = invoiceIds.map(() => "?").join(", ")
+    const invRows = (await tenantSelect("billing_invoices", {
+      where: `id IN (${placeholders})`,
+      params: invoiceIds,
+    })) as any[]
+    for (const r of invRows) numberById.set(Number(r.id), String(r.invoice_no))
+  }
+  return payments.map((p) => ({ ...p, invoice_no: numberById.get(p.invoice_id) ?? null }))
 }
 
 // ── Reconciliation ────────────────────────────────────────────────────────────

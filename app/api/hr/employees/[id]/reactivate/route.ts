@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { ensureEmployeeEventsSchema, logEmployeeEvent } from "@/lib/hr-employee-events"
+import { syncAccessStatusForEmployee } from "@/lib/employee-user-link"
 
 // Reverse a soft-archive, returning the employee to the active roster.
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -25,6 +26,15 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     actorId: session.userId,
     actorName: session.name,
   })
+
+  // SPEC 15 — reactivating returns the employee to the active roster; re-derive
+  // the linked login so a previously auto-deactivated account is restored (a
+  // manual suspension / pending invite is left untouched by the sync layer).
+  try {
+    await syncAccessStatusForEmployee(Number(id))
+  } catch (error) {
+    console.error("[hr/employees/reactivate] access sync failed:", (error as Error).message)
+  }
 
   return NextResponse.json({ ok: true })
 }

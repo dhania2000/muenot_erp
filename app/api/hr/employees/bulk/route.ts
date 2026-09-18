@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { ensureEmployeeEventsSchema, logEmployeeEvent } from "@/lib/hr-employee-events"
+import { syncAccessStatusForEmployee } from "@/lib/employee-user-link"
 
 type BulkAction = "set_status" | "archive" | "reactivate" | "set_department" | "set_manager" | "set_shift"
 
@@ -30,6 +31,11 @@ export async function POST(request: Request) {
     ids,
   )
   if (!rows.length) return NextResponse.json({ error: "No matching employees" }, { status: 404 })
+
+  // SPEC 15 — employee ids whose linked login access must be re-derived because
+  // this bulk action changed an access-governing field.
+  const accessActions: BulkAction[] = ["set_status", "archive", "reactivate"]
+  const syncEmployeeIds: number[] = []
 
   let affected = 0
   for (const emp of rows) {
@@ -70,6 +76,7 @@ export async function POST(request: Request) {
     }
 
     affected++
+    if (accessActions.includes(action)) syncEmployeeIds.push(Number(emp.id))
     await logEmployeeEvent({
       employeeId: Number(emp.id),
       employeeRef: emp.employee_id,
@@ -79,6 +86,16 @@ export async function POST(request: Request) {
       actorId: session.userId,
       actorName: session.name,
     })
+  }
+
+  // Re-derive linked login access for each changed employee. Best-effort per
+  // row so one failure never aborts the whole bulk operation.
+  for (const empId of syncEmployeeIds) {
+    try {
+      await syncAccessStatusForEmployee(empId)
+    } catch (error) {
+      console.error("[hr/employees/bulk] access sync failed for", empId, ":", (error as Error).message)
+    }
   }
 
   return NextResponse.json({ ok: true, affected, requested: ids.length })

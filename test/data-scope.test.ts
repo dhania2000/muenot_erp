@@ -217,6 +217,52 @@ describe("fail-closed guarantees in SQL (no accidental data exposure)", () => {
   })
 })
 
+describe("newly-wired domains — finance.entities & sales.leads", () => {
+  const entities = getDataDomain("finance.entities")!
+  const leads = getDataDomain("sales.leads")!
+
+  it("exposes both domains in the catalog with anchor columns", () => {
+    expect(entities.table).toBe("legal_entities")
+    expect(entities.entityColumns).toContain("id")
+    expect(leads.table).toBe("sales_leads")
+    expect(leads.ownerColumns).toContain("assigned_to")
+    expect(leads.branchColumns.length).toBeGreaterThan(0)
+  })
+
+  it("finance.entities entity scope restricts to the assigned entity ids", () => {
+    const finance = ctx({ userId: 5, assignedEntities: [11, 12] })
+    const p = buildDataScopeSql("entity", entities, finance, new Set(["id"]), "e")!
+    expect(p.sql).toBe("e.`id` IN (?,?)")
+    expect(p.params).toEqual([11, 12])
+    expect(recordInDataScope("entity", entities, finance, { id: 11 })).toBe(true)
+    expect(recordInDataScope("entity", entities, finance, { id: 99 })).toBe(false)
+  })
+
+  it("sales.leads self scope binds every owner column to the acting user", () => {
+    const rep = ctx({ userId: 8 })
+    const cols = new Set(["assigned_to", "created_by", "owner_id"])
+    const p = buildDataScopeSql("self", leads, rep, cols, "l")!
+    expect(p.sql).toContain("l.`assigned_to` = ?")
+    expect(p.params).toEqual([8, 8, 8])
+    // a lead assigned to someone else is invisible
+    expect(recordInDataScope("self", leads, rep, { assigned_to: 9, created_by: 9 })).toBe(false)
+    // but one this rep owns is visible
+    expect(recordInDataScope("self", leads, rep, { assigned_to: 8 })).toBe(true)
+  })
+
+  it("sales.leads team scope covers the rep's report chain only", () => {
+    const manager = ctx({ userId: 1, subordinateUserIds: [2, 3] })
+    expect(recordInDataScope("team", leads, manager, { assigned_to: 3 })).toBe(true)
+    expect(recordInDataScope("team", leads, manager, { assigned_to: 7 })).toBe(false)
+  })
+
+  it("sales.leads branch scope restricts to the regional manager's branches", () => {
+    const regional = ctx({ userId: 4, assignedBranches: ["West"] })
+    expect(recordInDataScope("branch", leads, regional, { branch: "West" })).toBe(true)
+    expect(recordInDataScope("branch", leads, regional, { branch: "East" })).toBe(false)
+  })
+})
+
 describe("cross-user isolation regression", () => {
   it("a self-scoped user can never see a peer's row via any path", () => {
     const attacker = ctx({ userId: 100 })

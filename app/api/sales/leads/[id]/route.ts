@@ -9,6 +9,7 @@ import {
   LeadConflictError,
   LeadNotFoundError,
 } from "@/lib/sales/lead-lifecycle"
+import { canAccessRecord } from "@/lib/data-scope"
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireFeature("sales.view_leads")
@@ -18,6 +19,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const { id } = await params
   const lead = await getLead(Number(id))
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 })
+  // SPEC 10 — the record must fall within the user's data-level scope.
+  if (!(await canAccessRecord(session, "sales.leads", lead))) {
+    return NextResponse.json({ error: "This lead is outside your data access scope" }, { status: 403 })
+  }
   return NextResponse.json({ lead })
 }
 
@@ -26,6 +31,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const { id } = await params
+
+  // SPEC 10 — gate the update on data-level scope before mutating.
+  const existing = await getLead(Number(id))
+  if (!existing) return NextResponse.json({ error: "Lead not found" }, { status: 404 })
+  if (!(await canAccessRecord(session, "sales.leads", existing))) {
+    return NextResponse.json({ error: "This lead is outside your data access scope" }, { status: 403 })
+  }
+
   const body = await request.json()
   const { expected_version, note, ...patch } = body
 
@@ -52,6 +65,14 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const { id } = await params
+
+  // SPEC 10 — gate the delete on data-level scope.
+  const existing = await getLead(Number(id))
+  if (!existing) return NextResponse.json({ error: "Lead not found" }, { status: 404 })
+  if (!(await canAccessRecord(session, "sales.leads", existing))) {
+    return NextResponse.json({ error: "This lead is outside your data access scope" }, { status: 403 })
+  }
+
   await query("DELETE FROM sales_leads WHERE id = ?", [id])
   await recordAudit(null, { entityType: "lead", entityId: id, action: "delete", summary: "Lead deleted", actorId: session.userId })
   return NextResponse.json({ success: true })

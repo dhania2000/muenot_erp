@@ -75,6 +75,107 @@ function ScopeSelect({
   )
 }
 
+/**
+ * Reusable permission-matrix table (set-all bar + module/action grid).
+ * Shared by the per-employee editor and the SPEC 8 custom-role editor so both
+ * present an identical grid. Callers own the matrix state and persistence.
+ */
+export function MatrixTable({
+  matrix,
+  setMatrix,
+  onDirty,
+}: {
+  matrix: PermissionMatrix
+  setMatrix: React.Dispatch<React.SetStateAction<PermissionMatrix>>
+  onDirty?: () => void
+}) {
+  function markDirty() {
+    onDirty?.()
+  }
+  function setCell(moduleKey: string, action: PermissionAction, scope: PermissionScope) {
+    setMatrix((prev) => ({ ...prev, [moduleKey]: { ...prev[moduleKey], [action]: scope } }))
+    markDirty()
+  }
+  function setExtra(moduleKey: string, actionKey: string, scope: PermissionScope) {
+    setMatrix((prev) => ({
+      ...prev,
+      [moduleKey]: {
+        ...prev[moduleKey],
+        extra: { ...(prev[moduleKey]?.extra ?? {}), [actionKey]: scope },
+      },
+    }))
+    markDirty()
+  }
+  function setAll(scope: PermissionScope) {
+    setMatrix(defaultMatrix(scope))
+    markDirty()
+  }
+  function setColumn(action: PermissionAction, scope: PermissionScope) {
+    setMatrix((prev) => {
+      const next: PermissionMatrix = {}
+      for (const key of Object.keys(prev)) next[key] = { ...prev[key], [action]: scope }
+      return next
+    })
+    markDirty()
+  }
+  function setRow(moduleKey: string, scope: PermissionScope) {
+    setMatrix((prev) => ({
+      ...prev,
+      [moduleKey]: { add: scope, view: scope, update: scope, delete: scope },
+    }))
+    markDirty()
+  }
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="font-medium">Set all permissions</span>
+          <div className="w-32">
+            <ScopeSelect value={"none"} onChange={(v) => setAll(v)} />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          None = no access · All = every record · Added = records they created · Owned = records assigned to
+          them · Both = added or owned
+        </p>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border bg-card">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead>
+            <tr className="border-b bg-muted/40 text-left">
+              <th className="px-4 py-3 font-medium">Module</th>
+              {PERMISSION_ACTIONS.map((a) => (
+                <th key={a} className="px-3 py-2 font-medium">
+                  <div className="flex flex-col gap-1">
+                    <span>{ACTION_LABEL[a]}</span>
+                    <div className="w-[92px]">
+                      <ScopeSelect value={"none"} onChange={(v) => setColumn(a, v)} />
+                    </div>
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {PERMISSION_GROUPS.map((group) => (
+              <GroupRows
+                key={group.slug}
+                group={group}
+                matrix={matrix}
+                onCell={setCell}
+                onRow={setRow}
+                onExtra={setExtra}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
 export function PermissionMatrixEditor({
   employeeId,
   employeeName,
@@ -118,44 +219,6 @@ export function PermissionMatrixEditor({
       }, 0),
     [matrix],
   )
-
-  function setCell(moduleKey: string, action: PermissionAction, scope: PermissionScope) {
-    setMatrix((prev) => ({ ...prev, [moduleKey]: { ...prev[moduleKey], [action]: scope } }))
-    setDirty(true)
-  }
-
-  function setExtra(moduleKey: string, actionKey: string, scope: PermissionScope) {
-    setMatrix((prev) => ({
-      ...prev,
-      [moduleKey]: {
-        ...prev[moduleKey],
-        extra: { ...(prev[moduleKey]?.extra ?? {}), [actionKey]: scope },
-      },
-    }))
-    setDirty(true)
-  }
-
-  function setAll(scope: PermissionScope) {
-    setMatrix(defaultMatrix(scope))
-    setDirty(true)
-  }
-
-  function setColumn(action: PermissionAction, scope: PermissionScope) {
-    setMatrix((prev) => {
-      const next: PermissionMatrix = {}
-      for (const key of Object.keys(prev)) next[key] = { ...prev[key], [action]: scope }
-      return next
-    })
-    setDirty(true)
-  }
-
-  function setRow(moduleKey: string, scope: PermissionScope) {
-    setMatrix((prev) => ({
-      ...prev,
-      [moduleKey]: { add: scope, view: scope, update: scope, delete: scope },
-    }))
-    setDirty(true)
-  }
 
   async function createLoginAccount() {
     setCreating(true)
@@ -279,50 +342,7 @@ export function PermissionMatrixEditor({
       {/* Matrix */}
       {canEdit && (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="font-medium">Set all permissions</span>
-              <div className="w-32">
-                <ScopeSelect value={"none"} onChange={(v) => setAll(v)} />
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              None = no access · All = every record · Added = records they created · Owned = records assigned to
-              them · Both = added or owned
-            </p>
-          </div>
-
-          <div className="overflow-x-auto rounded-lg border bg-card">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead>
-                <tr className="border-b bg-muted/40 text-left">
-                  <th className="px-4 py-3 font-medium">Module</th>
-                  {PERMISSION_ACTIONS.map((a) => (
-                    <th key={a} className="px-3 py-2 font-medium">
-                      <div className="flex flex-col gap-1">
-                        <span>{ACTION_LABEL[a]}</span>
-                        <div className="w-[92px]">
-                          <ScopeSelect value={"none"} onChange={(v) => setColumn(a, v)} />
-                        </div>
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {PERMISSION_GROUPS.map((group) => (
-                  <GroupRows
-                    key={group.slug}
-                    group={group}
-                    matrix={matrix}
-                    onCell={setCell}
-                    onRow={setRow}
-                    onExtra={setExtra}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <MatrixTable matrix={matrix} setMatrix={setMatrix} onDirty={() => setDirty(true)} />
 
           <div className="flex items-center justify-end gap-3">
             {dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}

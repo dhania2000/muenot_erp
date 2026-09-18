@@ -602,6 +602,145 @@ export function defaultMatrix(scope: PermissionScope = "none"): PermissionMatrix
  * "sales.manage_leads") onto a permission module + action so the existing
  * sidebar/page gating can be driven from the new matrix.
  */
+// =============================================================
+// SPEC 8 — Normalized action taxonomy
+// -------------------------------------------------------------
+// Every extended action declared on a module (File Return, Export Journals,
+// Import/Export, Email Report, Manage Settings, …) is ad-hoc by design so each
+// module can name its own high-risk verbs. For enterprise RBAC we still need a
+// SINGLE, normalized vocabulary of *capability categories* so custom roles and
+// the permission UI can group and reason about capabilities consistently
+// across modules. The four base CRUD verbs plus the categories below cover the
+// SPEC 8 action set: view / create / edit / delete, approve / reject, export,
+// import, download, email, configuration and administrative actions.
+// =============================================================
+
+export const ACTION_CATEGORIES = [
+  "view",
+  "create",
+  "edit",
+  "delete",
+  "approve",
+  "reject",
+  "export",
+  "import",
+  "download",
+  "email",
+  "configuration",
+  "administrative",
+] as const
+export type ActionCategory = (typeof ACTION_CATEGORIES)[number]
+
+export const ACTION_CATEGORY_LABEL: Record<ActionCategory, string> = {
+  view: "View",
+  create: "Create",
+  edit: "Edit",
+  delete: "Delete",
+  approve: "Approve",
+  reject: "Reject",
+  export: "Export",
+  import: "Import",
+  download: "Download",
+  email: "Email",
+  configuration: "Configuration",
+  administrative: "Administrative",
+}
+
+/** The normalized category for one of the four base CRUD actions. */
+export function baseActionCategory(action: PermissionAction): ActionCategory {
+  switch (action) {
+    case "add":
+      return "create"
+    case "update":
+      return "edit"
+    case "view":
+      return "view"
+    case "delete":
+      return "delete"
+  }
+}
+
+/**
+ * Classify a module's extended action into the normalized taxonomy above,
+ * purely from its key/label keywords. This lets the RBAC layer present every
+ * module's bespoke actions under a consistent set of capability categories
+ * (Approve/Reject, Export, Import, Download, Email, Configuration,
+ * Administrative) without changing how each action is enforced.
+ */
+export function classifyExtendedAction(action: Pick<ExtendedAction, "key" | "label">): ActionCategory {
+  const hay = `${action.key} ${action.label}`.toLowerCase()
+  const has = (...needles: string[]) => needles.some((n) => hay.includes(n))
+
+  if (has("approve", "approval")) return "approve"
+  if (has("reject", "decline", "revoke", "cancel", "reopen")) return "reject"
+  if (has("import")) return "import"
+  if (has("download")) return "download"
+  if (has("email", "mail")) return "email"
+  if (has("export")) return "export"
+  if (has("setting", "config", "retention", "rule", "manage_categories", "policy")) return "configuration"
+  return "administrative"
+}
+
+// =============================================================
+// SPEC 8 — Pure permission-matrix merge (role composition)
+// -------------------------------------------------------------
+// Custom roles compose ADDITIVELY: a user's effective permission for a cell is
+// the most-permissive grant across every role they hold plus any per-user
+// override. Kept pure (no DB) so the resolution is deterministic and unit
+// testable, and so lib/permission-store.ts can reuse it for the effective
+// matrix that enforcement reads.
+// =============================================================
+
+const SCOPE_RANK: Record<PermissionScope, number> = { none: 0, added: 1, owned: 1, both: 2, all: 3 }
+
+/**
+ * The most-permissive combination of two scopes. `all` dominates; `none` is
+ * the identity; two different partial scopes (added + owned) combine to `both`.
+ */
+export function mergeScope(a: PermissionScope, b: PermissionScope): PermissionScope {
+  if (a === "all" || b === "all") return "all"
+  if (a === "none") return b
+  if (b === "none") return a
+  if (a === b) return a
+  // Both partial and different (added/owned/both in any mix) → union is "both".
+  return "both"
+}
+
+/** Merge two module permissions cell-by-cell, including extended actions. */
+export function mergeModulePermission(a: ModulePermission, b: ModulePermission): ModulePermission {
+  const out: ModulePermission = {
+    add: mergeScope(a.add, b.add),
+    view: mergeScope(a.view, b.view),
+    update: mergeScope(a.update, b.update),
+    delete: mergeScope(a.delete, b.delete),
+  }
+  if (a.extra || b.extra) {
+    const extra: Record<string, PermissionScope> = { ...(a.extra ?? {}) }
+    for (const [k, v] of Object.entries(b.extra ?? {})) {
+      extra[k] = mergeScope(extra[k] ?? "none", v)
+    }
+    out.extra = extra
+  }
+  return out
+}
+
+/**
+ * Merge any number of matrices into one effective matrix (most-permissive
+ * wins). Returns null when there is nothing to merge, so callers can preserve
+ * the legacy "no matrix at all → full access" fallback.
+ */
+export function mergeMatrices(matrices: Array<PermissionMatrix | null | undefined>): PermissionMatrix | null {
+  const present = matrices.filter((m): m is PermissionMatrix => Boolean(m))
+  if (present.length === 0) return null
+  const out: PermissionMatrix = {}
+  for (const matrix of present) {
+    for (const [moduleKey, perm] of Object.entries(matrix)) {
+      out[moduleKey] = out[moduleKey] ? mergeModulePermission(out[moduleKey], perm) : { ...perm, extra: perm.extra ? { ...perm.extra } : undefined }
+    }
+  }
+  return out
+}
+
 export function resolveFeatureSlug(slug: string): { moduleKey: string; action: PermissionAction } | null {
   const [group, rest] = slug.split(".")
   if (!group || !rest) return null

@@ -3,10 +3,12 @@ import {
   PERMISSION_MODULES,
   getExtendedAction,
   getPermissionModule,
+  mergeMatrices,
   type PermissionAction,
   type PermissionMatrix,
   type PermissionScope,
 } from "./permission-model"
+import { getCurrentTenant } from "./tenant-context"
 
 let schemaEnsured = false
 
@@ -116,6 +118,33 @@ export async function getUserMatrix(userId: number): Promise<PermissionMatrix | 
   return matrix
 }
 
+/**
+ * SPEC 8 — the EFFECTIVE matrix enforcement reads: the most-permissive union
+ * of every custom role the user holds PLUS their per-user override matrix.
+ *
+ * Backward compatible: a user with only a personal matrix resolves to exactly
+ * that matrix; a user with neither a role nor a personal matrix resolves to
+ * `null`, preserving the legacy "no matrix at all → full access / legacy
+ * feature grants" fallback in getScope / permissions.ts.
+ *
+ * Roles are tenant-scoped, so this needs the acting tenant. When there is no
+ * tenant in context (system/pre-auth paths) it falls back to the personal
+ * matrix alone — role composition simply doesn't apply there.
+ */
+export async function getEffectiveUserMatrix(userId: number): Promise<PermissionMatrix | null> {
+  const personal = await getUserMatrix(userId)
+  const tenant = getCurrentTenant()
+  if (!tenant) return personal
+
+  // Lazy import avoids a static import cycle (role-store → permission-model,
+  // permission-store → role-store) and keeps role-store out of code paths that
+  // never touch roles.
+  const { getUserRolesMatrix } = await import("./role-store")
+  const rolesMatrix = await getUserRolesMatrix(tenant.tenantId, userId).catch(() => null)
+  if (!rolesMatrix) return personal
+  return mergeMatrices([rolesMatrix, personal])
+}
+
 /** Replace a user's entire permission matrix. */
 export async function setUserMatrix(userId: number, matrix: PermissionMatrix, grantedBy: number) {
   await ensurePermissionSchema()
@@ -176,7 +205,7 @@ export async function getScope(
   moduleKey: string,
   action: PermissionAction,
 ): Promise<PermissionScope> {
-  const matrix = await getUserMatrix(userId)
+  const matrix = await getEffectiveUserMatrix(userId)
   if (!matrix) return "all"
   return matrix[moduleKey]?.[action] ?? "none"
 }
@@ -198,7 +227,7 @@ export async function getActionScope(
   moduleKey: string,
   actionKey: string,
 ): Promise<PermissionScope> {
-  const matrix = await getUserMatrix(userId)
+  const matrix = await getEffectiveUserMatrix(userId)
   if (!matrix) return "all"
   const modPerm = matrix[moduleKey]
   const explicit = modPerm?.extra?.[actionKey]

@@ -5,7 +5,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell, type NavItem } from "@/components/app-shell"
-import { LayoutDashboard, Users2, TrendingUp, Wallet, UserPlus, Settings2, Settings } from "lucide-react"
+import { LayoutDashboard, Users2, TrendingUp, Wallet, UserPlus, Settings2, Settings, ShieldCheck } from "lucide-react"
 
 const moduleIcons: Record<string, NavItem["icon"]> = {
   hr: <Users2 className="size-4" />,

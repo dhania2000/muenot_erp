@@ -6,6 +6,9 @@ import { getNum } from "@/lib/settings/server"
 import { recordActivity } from "@/lib/notifications"
 import { resolveTenantIdForUser } from "@/lib/tenant-service"
 import { getStoredRoles } from "@/lib/platform-roles"
+import { getPublicSettings } from "@/lib/settings/server"
+import { evaluateLogin } from "@/lib/user-lifecycle-core"
+import { consumeMfaChallenge, getLoginSnapshot } from "@/lib/user-lifecycle"
 
 type UserRow = {
   id: number
@@ -23,7 +26,7 @@ function isDbConfigured() {
 
 export async function POST(request: Request) {
   try {
-    const { email, password } = await request.json()
+    const { email, password, mfaCode } = await request.json()
 
     if (!email || !password) {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
@@ -48,13 +51,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
 
-    if (user.status !== "active") {
-      return NextResponse.json({ error: "This account has been deactivated" }, { status: 403 })
-    }
-
     const valid = await verifyPassword(password, user.password_hash)
     if (!valid) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
+    }
+
+    // SPEC 14 — evaluate the full lifecycle gate (invited / suspended /
+    // deactivated / expired temporary access / email verification) AFTER the
+    // password check, so a wrong password never reveals account state.
+    const snapshot = await getLoginSnapshot(user.id)
+    if (snapshot) {
+      const settings = await getPublicSettings()
+      const decision = evaluateLogin(
+        {
+          lifecycleState: snapshot.lifecycleState,
+          accessExpiresAt: snapshot.accessExpiresAt,
+          emailVerifiedAt: snapshot.emailVerifiedAt,
+          mfaEnabled: snapshot.mfaEnabled,
+          requireEmailVerification: Boolean(settings["security.require_email_verification"]),
+        },
+        new Date(),
+      )
+      if (!decision.allowed) {
+        return NextResponse.json({ error: decision.reason, code: decision.code }, { status: 403 })
+      }
+      // SPEC 14 — MFA challenge. When enabled, the password step alone is not
+      // enough: without a code we ask the client to collect one (no session is
+      // issued); with a code we verify a live TOTP or a one-time backup code.
+      if (decision.requiresMfa) {
+        if (!mfaCode) {
+          return NextResponse.json({ mfaRequired: true }, { status: 200 })
+        }
+        const passed = await consumeMfaChallenge(user.id, String(mfaCode))
+        if (!passed) {
+          return NextResponse.json({ error: "Invalid authentication code", mfaRequired: true }, { status: 401 })
+        }
+      }
+    } else if (user.status !== "active") {
+      // Defensive fallback if the lifecycle snapshot is unavailable.
+      return NextResponse.json({ error: "This account has been deactivated" }, { status: 403 })
     }
 
     // Resolve the tenant this user belongs to (source of truth: users.tenant_id).

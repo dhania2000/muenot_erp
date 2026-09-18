@@ -1,7 +1,6 @@
-import { put } from "@vercel/blob"
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { validateUpload } from "@/lib/settings/uploads"
+import { uploadFile } from "@/lib/storage"
 
 export async function POST(request: Request) {
   const session = await getSession()
@@ -9,8 +8,10 @@ export async function POST(request: Request) {
   const form = await request.formData()
   const file = form.get("file")
   if (!(file instanceof File)) return NextResponse.json({ error: "A file is required" }, { status: 400 })
-  const uploadError = await validateUpload(file)
-  if (uploadError) return NextResponse.json({ error: uploadError }, { status: 400 })
-  const blob = await put(`hr/regularisation/${session.userId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`, file, { access: "public" })
-  return NextResponse.json({ pathname: blob.url })
+  const up = await uploadFile(
+    `hr/regularisation/${session.userId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`,
+    file,
+  )
+  if (!up.ok) return NextResponse.json({ error: up.error }, { status: 400 })
+  return NextResponse.json({ pathname: up.result.url })
 }

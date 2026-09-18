@@ -2,6 +2,7 @@ import { Settings } from "lucide-react"
 import { EnvironmentVariables } from "@/components/admin/environment-variables"
 import { CompanySettings } from "@/components/admin/company-settings"
 import { MessagePermissions } from "@/components/admin/message-permissions"
+import { StorageConnections } from "@/components/admin/storage-connections"
 
 export default function AdminSettingsPage() {
   return (
@@ -17,6 +18,7 @@ export default function AdminSettingsPage() {
         </p>
       </div>
       <CompanySettings />
+      <StorageConnections />
       <MessagePermissions />
       <EnvironmentVariables />
     </div>

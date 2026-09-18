@@ -1,13 +1,13 @@
-import { put } from "@vercel/blob"
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { validateUpload } from "@/lib/settings/uploads"
+import { uploadFile } from "@/lib/storage"
 
 /**
  * Document upload for the Expense form (Phase 22) — receipts, vendor invoices
- * and supporting files. Mirrors the existing ERP blob-upload routes: the API
- * token stays server-side, the file is validated, and the stored blob URL is
- * returned for the form to persist onto the expense row.
+ * and supporting files. Uses the SPEC 26 storage facade so uploads land in the
+ * tenant's connected storage (their own S3-compatible bucket, or the platform
+ * default) under a tenant-scoped key. The returned reference is persisted onto
+ * the expense row and resolves back through the download proxy.
  */
 export async function POST(request: NextRequest) {
   const session = await getSession()
@@ -17,12 +17,8 @@ export async function POST(request: NextRequest) {
   const file = form.get("file")
   if (!(file instanceof File)) return NextResponse.json({ error: "File is required" }, { status: 400 })
 
-  const uploadError = await validateUpload(file)
-  if (uploadError) return NextResponse.json({ error: uploadError }, { status: 400 })
+  const up = await uploadFile(`finance-expenses/${crypto.randomUUID()}-${file.name}`, file)
+  if (!up.ok) return NextResponse.json({ error: up.error }, { status: 400 })
 
-  const blob = await put(`finance-expenses/${crypto.randomUUID()}-${file.name}`, file, {
-    access: "public",
-    addRandomSuffix: false,
-  })
-  return NextResponse.json({ url: blob.url, pathname: blob.url })
+  return NextResponse.json({ url: up.result.url, pathname: up.result.url })
 }

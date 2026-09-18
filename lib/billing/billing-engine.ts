@@ -21,7 +21,7 @@ import {
   type InvoiceStatus,
   type LineInput,
 } from "@/lib/billing/billing-math"
-import { getSubscription } from "@/lib/billing/subscription-engine"
+import { getSubscriptionView } from "@/lib/billing/subscription-engine"
 
 /**
  * SPEC 20 — Billing engine (data + service layer).
@@ -1006,7 +1006,7 @@ export async function generateSubscriptionInvoice(
   opts: { taxRate?: number } = {},
 ): Promise<{ invoice: InvoiceView; created: boolean }> {
   await ensureBillingSchema()
-  const sub = await getSubscription(subscriptionId)
+  const sub = await getSubscriptionView(subscriptionId)
   if (!sub) throw new BillingError("Subscription not found", 404)
 
   const existing = (await tenantSelect("billing_invoices", {
@@ -1090,7 +1090,7 @@ export async function applyPlanChangeProration(
   opts: { taxRate?: number } = {},
 ): Promise<{ result: ReturnType<typeof computePlanChange>; invoice: InvoiceView | null; credit: CreditEntry | null }> {
   await ensureBillingSchema()
-  const sub = await getSubscription(subscriptionId)
+  const sub = await getSubscriptionView(subscriptionId)
   if (!sub) throw new BillingError("Subscription not found", 404)
 
   const result = computePlanChange({

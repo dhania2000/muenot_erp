@@ -1,7 +1,15 @@
 import "server-only"
 import { randomUUID } from "node:crypto"
-import { put, del, list, head } from "@vercel/blob"
-import type { StorageProvider, UploadResult, DownloadResult, StorageObjectMeta, HealthReport } from "./types"
+import { put, del, list, head, createMultipartUpload, uploadPart, completeMultipartUpload } from "@vercel/blob"
+import type {
+  StorageProvider,
+  UploadResult,
+  DownloadResult,
+  StorageObjectMeta,
+  HealthReport,
+  MultipartHandle,
+  MultipartPart,
+} from "./types"
 import { HealthReportBuilder } from "./health"
 import { proxyUrl } from "./s3"
 import { signedProxyUrl, DEFAULT_SIGNED_URL_TTL_SECONDS } from "./signing"
@@ -70,6 +78,51 @@ export class VercelBlobProvider implements StorageProvider {
   async presign(key: string, opts: { expiresIn?: number } = {}): Promise<string> {
     return signedProxyUrl(key, opts.expiresIn ?? DEFAULT_SIGNED_URL_TTL_SECONDS)
   }
+
+  /**
+   * SPEC 30 — Multipart upload for the managed platform storage. Blob's manual
+   * multipart API needs BOTH an `uploadId` and an opaque `key` on every part
+   * and at completion, so we pack both into the single `uploadId` handle the
+   * caller persists (they never interpret it). The pathname stays the
+   * tenant-scoped key so isolation and listing keep working.
+   */
+  async createMultipart(key: string, contentType: string): Promise<MultipartHandle> {
+    const created = await createMultipartUpload(key, {
+      access: "public",
+      addRandomSuffix: false,
+      contentType: contentType || undefined,
+    })
+    return { uploadId: packHandle(created.uploadId, created.key) }
+  }
+
+  async uploadPart(key: string, uploadId: string, partNumber: number, data: Buffer): Promise<MultipartPart> {
+    const { uploadId: realId, blobKey } = unpackHandle(uploadId)
+    const part = await uploadPart(key, data, {
+      access: "public",
+      key: blobKey,
+      uploadId: realId,
+      partNumber,
+    })
+    return { partNumber: part.partNumber, etag: part.etag }
+  }
+
+  async completeMultipart(key: string, uploadId: string, parts: MultipartPart[]): Promise<UploadResult> {
+    const { uploadId: realId, blobKey } = unpackHandle(uploadId)
+    const ordered = [...parts].sort((a, b) => a.partNumber - b.partNumber)
+    await completeMultipartUpload(
+      key,
+      ordered.map((p) => ({ partNumber: p.partNumber, etag: p.etag })),
+      { access: "public", key: blobKey, uploadId: realId },
+    )
+    return { url: proxyUrl(key), key, provider: this.id, size: 0, contentType: null }
+  }
+
+  /**
+   * SPEC 30 — Vercel Blob has no explicit multipart-abort in the manual API;
+   * incomplete multipart uploads are garbage-collected automatically, so
+   * dropping the session is enough. Kept as a no-op to satisfy the interface.
+   */
+  async abortMultipart(): Promise<void> {}
 
   async healthCheck(): Promise<void> {
     // A cheap list call verifies the token/connection is usable.
@@ -156,4 +209,18 @@ export class VercelBlobProvider implements StorageProvider {
 
     return b.build()
   }
+}
+
+/**
+ * SPEC 30 — Pack Blob's two multipart identifiers (uploadId + opaque key) into
+ * the single handle string the caller persists, and unpack them for each part.
+ */
+function packHandle(uploadId: string, blobKey: string): string {
+  return `${uploadId}:::${blobKey}`
+}
+
+function unpackHandle(handle: string): { uploadId: string; blobKey: string } {
+  const idx = handle.indexOf(":::")
+  if (idx < 0) return { uploadId: handle, blobKey: "" }
+  return { uploadId: handle.slice(0, idx), blobKey: handle.slice(idx + 3) }
 }

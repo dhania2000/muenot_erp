@@ -1,10 +1,22 @@
 import "server-only"
+import { randomUUID } from "node:crypto"
 import { currentTenantId, CrossTenantAccessError } from "@/lib/tenant-scope"
-import { validateUpload } from "@/lib/settings/uploads"
+import { validateUpload, validateLargeUpload, getLargeUploadLimits } from "@/lib/settings/uploads"
 import { getActiveConnection } from "./connection-store"
 import { VercelBlobProvider } from "./vercel-blob"
 import { S3StorageProvider } from "./s3"
 import { tenantKey, tenantPrefix, keyBelongsToTenant } from "./keys"
+import {
+  createSession,
+  getSession,
+  recordPart,
+  getParts,
+  markCompleted,
+  markAborted,
+  getSessionStatus,
+  type UploadCategory,
+  type UploadSessionStatus,
+} from "./multipart-store"
 import type { StorageProvider, UploadResult, ResolvedConnection, StorageObjectMeta, DownloadResult } from "./types"
 
 /**
@@ -155,6 +167,151 @@ export async function listFiles(subPrefix = "", opts: { limit?: number } = {}): 
   const { provider } = await getTenantStorage()
   const prefix = tenantPrefix(currentTenantId()) + subPrefix.replace(/^\/+/, "")
   return provider.list(prefix, opts)
+}
+
+/**
+ * SPEC 30 — Large / resumable multipart uploads.
+ * ---------------------------------------------------------------------------
+ * These four functions are the tenant-safe orchestration layer the API routes
+ * call. They pair the active provider's native multipart primitives with the
+ * session store so an upload can be resumed, retried per-chunk, cancelled, and
+ * progress-tracked — while every key stays inside the tenant namespace and
+ * ownership is re-checked on every part.
+ */
+
+const CATEGORIES: readonly UploadCategory[] = ["video", "image", "document", "zip", "training", "employee", "other"]
+
+function normalizeCategory(value: string | null | undefined): UploadCategory {
+  return CATEGORIES.includes(value as UploadCategory) ? (value as UploadCategory) : "other"
+}
+
+/** Begin a multipart upload: validate metadata, open a provider upload, persist a session. */
+export async function beginLargeUpload(input: {
+  path: string
+  filename: string
+  size: number
+  contentType?: string | null
+  category?: string | null
+  userId?: number | null
+}): Promise<
+  | { ok: true; session: UploadSessionStatus; partSize: number; totalParts: number }
+  | { ok: false; error: string }
+> {
+  const validationError = await validateLargeUpload({ name: input.filename, size: input.size })
+  if (validationError) return { ok: false, error: validationError }
+
+  const { partSize } = await getLargeUploadLimits()
+  const totalParts = Math.max(1, Math.ceil(input.size / partSize))
+  const contentType = input.contentType || "application/octet-stream"
+
+  // Namespace the object under the tenant + a UUID so two uploads of the same
+  // filename never collide and the key can never escape the tenant prefix.
+  const safeName = input.path.replace(/^\/+/, "")
+  const key = tenantKey(currentTenantId(), `${safeName}/${randomUUID()}`)
+
+  const { provider } = await getTenantStorage()
+  try {
+    const handle = await provider.createMultipart(key, contentType)
+    const sessionId = await createSession({
+      uploadId: handle.uploadId,
+      storageKey: key,
+      provider: provider.id,
+      filename: input.filename,
+      contentType,
+      totalSize: input.size,
+      partSize,
+      totalParts,
+      category: normalizeCategory(input.category),
+      userId: input.userId,
+    })
+    const status = await getSessionStatus(sessionId)
+    if (!status) return { ok: false, error: "Failed to open upload session" }
+    return { ok: true, session: status, partSize, totalParts }
+  } catch (err) {
+    console.error("[v0] beginLargeUpload failed:", err)
+    return { ok: false, error: "Could not start the upload. Check the connected storage configuration." }
+  }
+}
+
+/** Upload a single chunk into an active session and record it (idempotent). */
+export async function uploadLargePart(
+  sessionId: number,
+  partNumber: number,
+  data: Buffer,
+): Promise<{ ok: true; uploadedParts: number[] } | { ok: false; error: string; status?: number }> {
+  const session = await getSession(sessionId)
+  if (!session) return { ok: false, error: "Upload session not found", status: 404 }
+  if (session.status !== "active") return { ok: false, error: "Upload is no longer active", status: 409 }
+  if (!keyBelongsToTenant(session.storage_key, currentTenantId()))
+    return { ok: false, error: "File not found", status: 404 }
+  if (partNumber < 1 || partNumber > session.total_parts)
+    return { ok: false, error: "Invalid part number", status: 400 }
+
+  const { provider } = await getTenantStorage()
+  try {
+    const part = await provider.uploadPart(session.storage_key, session.upload_id, partNumber, data)
+    await recordPart(sessionId, { ...part, size: data.length })
+    const parts = await getParts(sessionId)
+    return { ok: true, uploadedParts: parts.map((p) => p.partNumber) }
+  } catch (err) {
+    console.error("[v0] uploadLargePart failed:", err)
+    return { ok: false, error: "Chunk upload failed. Retry this part.", status: 502 }
+  }
+}
+
+/** Finalize a session once every part has landed. */
+export async function completeLargeUpload(
+  sessionId: number,
+): Promise<{ ok: true; key: string; result: UploadResult } | { ok: false; error: string; status?: number }> {
+  const session = await getSession(sessionId)
+  if (!session) return { ok: false, error: "Upload session not found", status: 404 }
+  if (!keyBelongsToTenant(session.storage_key, currentTenantId()))
+    return { ok: false, error: "File not found", status: 404 }
+  if (session.status === "completed") {
+    return { ok: false, error: "Upload already completed", status: 409 }
+  }
+
+  const parts = await getParts(sessionId)
+  if (parts.length < session.total_parts) {
+    return {
+      ok: false,
+      error: `Missing chunks: received ${parts.length} of ${session.total_parts}`,
+      status: 409,
+    }
+  }
+
+  const { provider } = await getTenantStorage()
+  try {
+    const result = await provider.completeMultipart(
+      session.storage_key,
+      session.upload_id,
+      parts.map((p) => ({ partNumber: p.partNumber, etag: p.etag })),
+    )
+    await markCompleted(sessionId)
+    return { ok: true, key: session.storage_key, result }
+  } catch (err) {
+    console.error("[v0] completeLargeUpload failed:", err)
+    return { ok: false, error: "Could not finalize the upload.", status: 502 }
+  }
+}
+
+/** Cancel a session: abort the provider upload and mark the session aborted. */
+export async function abortLargeUpload(
+  sessionId: number,
+): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
+  const session = await getSession(sessionId)
+  if (!session) return { ok: false, error: "Upload session not found", status: 404 }
+  if (!keyBelongsToTenant(session.storage_key, currentTenantId()))
+    return { ok: false, error: "File not found", status: 404 }
+
+  const { provider } = await getTenantStorage()
+  try {
+    await provider.abortMultipart(session.storage_key, session.upload_id)
+  } catch (err) {
+    console.error("[v0] abortLargeUpload provider abort failed (continuing):", err)
+  }
+  await markAborted(sessionId)
+  return { ok: true }
 }
 
 export { tenantKey, tenantPrefix, keyBelongsToTenant, tenantIdFromKey } from "./keys"

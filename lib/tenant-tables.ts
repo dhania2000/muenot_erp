@@ -79,6 +79,9 @@ export const TENANT_OWNED_TABLES = [
   // Customer-owned storage (SPEC 26) — each tenant's storage backend + creds
   "tenant_storage_connections",
   "tenant_storage_audit",
+  // Large / resumable uploads (SPEC 30) — multipart session + per-chunk ledger
+  "storage_upload_sessions",
+  "storage_upload_parts",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

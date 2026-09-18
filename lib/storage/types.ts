@@ -38,6 +38,26 @@ export type StorageObjectMeta = {
   lastModified: string | null
 }
 
+/**
+ * SPEC 30 — One uploaded chunk of a multipart upload. `etag` is the provider's
+ * opaque part identifier (S3 ETag / Blob part etag) that MUST be replayed back
+ * at completion time, so it is persisted in the upload session.
+ */
+export type MultipartPart = {
+  partNumber: number
+  etag: string
+}
+
+/**
+ * SPEC 30 — Opaque handle for an in-progress multipart upload. `uploadId` is
+ * whatever the backend needs to resume the upload across separate, stateless
+ * requests (for Vercel Blob it also encodes the blob key), so callers persist
+ * it verbatim and never interpret it.
+ */
+export type MultipartHandle = {
+  uploadId: string
+}
+
 export type DownloadResult = {
   body: ReadableStream<Uint8Array> | Buffer
   contentType: string | null
@@ -101,6 +121,26 @@ export interface StorageProvider {
    * before calling this — the returned URL is itself the capability.
    */
   presign(key: string, opts?: { expiresIn?: number }): Promise<string>
+  /**
+   * SPEC 30 — Begin a resumable, chunked (multipart) upload for large files
+   * (videos, ZIPs, training/employee bundles) that cannot be sent in a single
+   * request. Returns an opaque handle the caller persists in an upload session.
+   */
+  createMultipart(key: string, contentType: string, opts?: { public?: boolean }): Promise<MultipartHandle>
+  /**
+   * SPEC 30 — Upload a single 1-based part. Returns the part's identifier which
+   * MUST be stored and replayed at completion. Re-uploading the same
+   * `partNumber` is safe (it overwrites), which is what powers failed-chunk
+   * retry and resume.
+   */
+  uploadPart(key: string, uploadId: string, partNumber: number, data: Buffer): Promise<MultipartPart>
+  /**
+   * SPEC 30 — Assemble all previously-uploaded parts into the final object.
+   * Parts may be passed in any order; implementations sort by `partNumber`.
+   */
+  completeMultipart(key: string, uploadId: string, parts: MultipartPart[]): Promise<UploadResult>
+  /** SPEC 30 — Abort an in-progress multipart upload and release its parts. */
+  abortMultipart(key: string, uploadId: string): Promise<void>
   /** Lightweight connectivity/permission check (throws on failure). */
   healthCheck(): Promise<void>
   /**

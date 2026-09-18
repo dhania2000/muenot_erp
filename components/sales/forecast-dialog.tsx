@@ -22,7 +22,17 @@ import {
 } from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2Icon } from "lucide-react"
-import type { ForecastRow } from "@/components/sales/forecast-client"
+
+export type ForecastRow = {
+  id: number
+  quarter: string
+  year: number
+  expected_revenue: number | string
+  best_case: number | string
+  worst_case: number | string
+  pipeline_coverage: string
+  owner: string
+}
 
 const QUARTERS = ["Q1", "Q2", "Q3", "Q4"]
 const COVERAGE = ["Low", "Medium", "High", "On Track"]

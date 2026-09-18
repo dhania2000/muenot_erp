@@ -370,7 +370,7 @@ export type MeterUsage = MeterDef & {
   status: UsageStatus
 }
 
-export type UsageTrendPoint = { date: string } & Record<string, number>
+export type UsageTrendPoint = { date: string; [meterKey: string]: number | string }
 
 export type UsageOverview = {
   periodStart: string

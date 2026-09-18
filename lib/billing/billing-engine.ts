@@ -1025,7 +1025,7 @@ export async function refundInvoice(invoiceId: number, input: RefundInput, sessi
     amountPaid: inv.amount_paid,
     amountRefunded: inv.amount_refunded,
   })
-  if (!check.ok) throw new BillingError(check.reason ?? "Invalid refund.", 400, { amount: check.reason ?? undefined })
+  if (!check.ok) throw new BillingError(check.reason ?? "Invalid refund.", 400, { amount: check.reason ?? "Invalid refund." })
 
   const refundNo = await nextRecordId("BREF", { digits: 5, allowCustom: true })
   const { insertId } = await tenantInsert("billing_refunds", {

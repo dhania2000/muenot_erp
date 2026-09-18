@@ -5,6 +5,7 @@ import {
   voidInvoice,
   recordPayment,
   refundInvoice,
+  issueCreditNote,
   BillingError,
 } from "@/lib/billing/billing-engine"
 
@@ -42,9 +43,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         const refund = await refundInvoice(invoiceId, body, session)
         return NextResponse.json({ ok: true, refund })
       }
+      case "credit_note": {
+        const creditNote = await issueCreditNote(invoiceId, body, session)
+        return NextResponse.json({ ok: true, invoice: creditNote })
+      }
       default:
         return NextResponse.json(
-          { error: "Unknown action. Use one of: finalize, void, pay, refund." },
+          { error: "Unknown action. Use one of: finalize, void, pay, refund, credit_note." },
           { status: 400 },
         )
     }

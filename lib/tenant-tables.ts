@@ -86,6 +86,8 @@ export const TENANT_OWNED_TABLES = [
   "file_objects",
   // File / document version audit trail (SPEC 33)
   "file_version_audit",
+  // Malware / file-security scan state (SPEC 34)
+  "file_security_scans",
   // Storage → Migration — module/sub-module data mapped to a storage folder
   "tenant_storage_migrations",
 ] as const

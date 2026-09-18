@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { getCurrentTenant } from "@/lib/tenant-context"
 import { getUserRoleIds, listRoles, setUserRoles } from "@/lib/role-store"
+import { evaluateProposedRoles, hasBlockingViolation, logSodAudit } from "@/lib/sod"
 
 async function requireAdminTenant() {
   const session = await getSession()
@@ -65,12 +66,51 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Admin accounts already have full access." }, { status: 400 })
   }
 
-  const body = (await request.json().catch(() => null)) as { roleIds?: unknown } | null
+  const body = (await request.json().catch(() => null)) as
+    | { roleIds?: unknown; overrideSod?: unknown }
+    | null
   if (!body || !Array.isArray(body.roleIds)) {
     return NextResponse.json({ error: "roleIds must be an array" }, { status: 400 })
   }
   const roleIds = body.roleIds.map((r) => Number(r)).filter((n) => Number.isInteger(n) && n > 0)
 
+  // SPEC 13 — evaluate the duties this assignment WOULD grant before persisting.
+  const override = body.overrideSod === true
+  const report = await evaluateProposedRoles(emp.user_id, roleIds)
+  const blocking = hasBlockingViolation(report.violations)
+  if (blocking && !override) {
+    await logSodAudit({
+      action: "assignment_blocked",
+      actorId: ctx.session.userId,
+      targetUserId: emp.user_id,
+      targetUserName: emp.employee_name,
+      summary: `Role assignment blocked — ${report.violations.length} segregation-of-duties conflict(s)`,
+      detail: { roleIds, violations: report.violations },
+    })
+    return NextResponse.json(
+      {
+        error: "This assignment violates segregation-of-duties policy.",
+        sodBlocked: true,
+        sodViolations: report.violations,
+      },
+      { status: 409 },
+    )
+  }
+
   await setUserRoles(ctx.tenantId, emp.user_id, roleIds, ctx.session.userId)
-  return NextResponse.json({ ok: true })
+
+  if (report.violations.length > 0) {
+    await logSodAudit({
+      action: blocking ? "assignment_overridden" : "assignment_blocked",
+      actorId: ctx.session.userId,
+      targetUserId: emp.user_id,
+      targetUserName: emp.employee_name,
+      summary: blocking
+        ? `Role assignment applied with SoD OVERRIDE — ${report.violations.length} conflict(s) accepted`
+        : `Role assignment applied with ${report.violations.length} SoD warning(s)`,
+      detail: { roleIds, violations: report.violations, overridden: blocking },
+    })
+  }
+
+  return NextResponse.json({ ok: true, sodViolations: report.violations })
 }

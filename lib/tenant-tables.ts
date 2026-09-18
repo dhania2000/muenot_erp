@@ -88,6 +88,8 @@ export const TENANT_OWNED_TABLES = [
   "file_version_audit",
   // Malware / file-security scan state (SPEC 34)
   "file_security_scans",
+  // Tenant storage quotas (SPEC 35) — custom quota / threshold / hard-limit config
+  "storage_quota_settings",
   // Storage → Migration — module/sub-module data mapped to a storage folder
   "tenant_storage_migrations",
 ] as const

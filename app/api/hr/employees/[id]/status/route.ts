@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
 import { ensureEmployeeEventsSchema, logEmployeeEvent } from "@/lib/hr-employee-events"
+import { syncAccessStatusForEmployee } from "@/lib/employee-user-link"
 
 // Change an employee's employment status and record it as a dedicated
 // timeline event. Kept separate from the generic PATCH so the listing/profile
@@ -34,6 +35,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     actorId: session.userId,
     actorName: session.name,
   })
+
+  // SPEC 15 — re-derive the linked login's access status from the new
+  // employment status. Best-effort: a sync failure must not fail the status
+  // change itself (the change is already persisted and audited).
+  try {
+    await syncAccessStatusForEmployee(Number(id))
+  } catch (error) {
+    console.error("[hr/employees/status] access sync failed:", (error as Error).message)
+  }
 
   return NextResponse.json({ ok: true })
 }

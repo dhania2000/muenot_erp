@@ -96,9 +96,15 @@ async function hasLifecycleColumn(): Promise<boolean> {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/** exit_status/employment_status that mean the employment record is closed. */
-function employeeArchived(row: { exit_status?: unknown }): boolean {
-  return String(row.exit_status ?? "").trim().toLowerCase() === "exited"
+/**
+ * True when an employment record is closed for access-derivation purposes:
+ * either it has been formally exited (`exit_status = 'Exited'`) or soft-archived
+ * off the active roster (`archived_at` set). A soft-archived employee should not
+ * keep its login active on its own, matching `deriveAccessStatus`.
+ */
+function employeeArchived(row: { exit_status?: unknown; archived_at?: unknown }): boolean {
+  if (String(row.exit_status ?? "").trim().toLowerCase() === "exited") return true
+  return row.archived_at != null && String(row.archived_at).trim() !== ""
 }
 
 async function logLinkEvent(opts: {
@@ -196,7 +202,7 @@ export async function listEmployeeLinks(tenantId: number): Promise<EmployeeLinkR
   const rows = await query<any[]>(
     `SELECT e.id AS employeePk, e.employee_id AS employeeCode, e.employee_name AS employeeName,
             e.department, e.designation, e.employment_status AS employmentStatus,
-            e.entity_id AS entityId, e.exit_status AS exitStatus,
+            e.entity_id AS entityId, e.exit_status AS exitStatus, e.archived_at AS archivedAt,
             u.id AS userId, u.name AS userName, u.email AS userEmail,
             u.role AS userRole, u.status AS userStatus, u.account_type AS accountType
        FROM hr_employees e
@@ -205,7 +211,7 @@ export async function listEmployeeLinks(tenantId: number): Promise<EmployeeLinkR
     [tenantId],
   )
   return rows.map((r) => {
-    const archived = employeeArchived({ exit_status: r.exitStatus })
+    const archived = employeeArchived({ exit_status: r.exitStatus, archived_at: r.archivedAt })
     const user = r.userId
       ? {
           id: Number(r.userId),
@@ -502,13 +508,16 @@ export async function syncAccessStatusForUser(tenantId: number, userId: number):
   if (user.account_type === "service") return { userId, skipped: true, changed: false }
 
   const linked = await query<any[]>(
-    "SELECT employment_status AS employmentStatus, exit_status AS exitStatus FROM hr_employees WHERE user_id = ?",
+    "SELECT employment_status AS employmentStatus, exit_status AS exitStatus, archived_at AS archivedAt FROM hr_employees WHERE user_id = ?",
     [userId],
   )
   if (linked.length === 0) return { userId, skipped: true, changed: false }
 
   const derived = deriveAccessStatus(
-    linked.map((e) => ({ employmentStatus: e.employmentStatus, archived: employeeArchived({ exit_status: e.exitStatus }) })),
+    linked.map((e) => ({
+      employmentStatus: e.employmentStatus,
+      archived: employeeArchived({ exit_status: e.exitStatus, archived_at: e.archivedAt }),
+    })),
   )
   const current: UserAccessStatus = user.status === "active" ? "active" : "inactive"
 

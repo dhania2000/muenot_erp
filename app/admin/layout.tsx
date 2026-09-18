@@ -1,19 +1,13 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
-import { getAllModulesWithFeatures } from "@/lib/permissions"
+import { callPermissions } from "@/lib/calls-core"
+import { CallProvider } from "@/components/calls/call-provider"
 import { getPublicSettings } from "@/lib/settings/server"
 import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
-import { AppShell, type NavItem } from "@/components/app-shell"
-import { LayoutDashboard, Users2, TrendingUp, Wallet, UserPlus, Settings2, Settings, ShieldCheck, GitBranch, ShieldAlert, UserCog } from "lucide-react"
-
-const moduleIcons: Record<string, NavItem["icon"]> = {
-  hr: <Users2 className="size-4" />,
-  sales: <TrendingUp className="size-4" />,
-  finance: <Wallet className="size-4" />,
-  recruitment: <UserPlus className="size-4" />,
-  operations: <Settings2 className="size-4" />,
-}
+import { AppShell } from "@/components/app-shell"
+import { ImpersonationBanner } from "@/components/platform/impersonation-banner"
+import { buildWorkspaceNav } from "@/lib/workspace-nav"
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession()
@@ -22,34 +16,21 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const settings = await getPublicSettings()
 
-  const HIDDEN_MODULES = new Set(["biolinks", "biometric", "letter", "monitor-center", "monitor center"])
-  const modules = (await getAllModulesWithFeatures()).filter(
-    (m) => !HIDDEN_MODULES.has(m.slug.toLowerCase()) && !HIDDEN_MODULES.has(m.name.toLowerCase()),
-  )
-
-  const navItems: NavItem[] = [
-    { label: "Overview", href: "/admin", icon: <LayoutDashboard className="size-4" /> },
-    { label: "Employees", href: "/admin/employees", icon: <Users2 className="size-4" /> },
-    { label: "User lifecycle", href: "/admin/users", icon: <UserCog className="size-4" /> },
-    { label: "Roles & permissions", href: "/admin/roles", icon: <ShieldCheck className="size-4" /> },
-    { label: "Data permissions", href: "/admin/data-permissions", icon: <ShieldCheck className="size-4" /> },
-    { label: "Approval authority", href: "/admin/approval-authority", icon: <GitBranch className="size-4" /> },
-    { label: "Maker-checker", href: "/admin/maker-checker", icon: <ShieldCheck className="size-4" /> },
-    { label: "Segregation of duties", href: "/admin/sod", icon: <ShieldAlert className="size-4" /> },
-    { label: "Settings", href: "/admin/settings", icon: <Settings className="size-4" />, children: [{ label: "Company Settings", href: "/admin/settings" }, { label: "Environment variables", href: "/admin/settings" }] },
-    ...modules.map((m) => ({
-      label: m.name,
-      href: `/modules/${m.slug}`,
-      icon: moduleIcons[m.slug] ?? <Settings2 className="size-4" />,
-    })),
-  ]
+  // Reuse the exact workspace sidebar so entering an /admin page keeps the same
+  // navigation (with Administration expanded) instead of swapping into a
+  // separate console shell — the admin routes are just sections of the same app.
+  const callPerms = await callPermissions(session)
+  const navItems = await buildWorkspaceNav(session, settings)
 
   return (
     <SettingsProvider initial={settings}>
       <SettingsBranding />
-      <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
-        {children}
-      </AppShell>
+      <CallProvider currentUserId={session.userId} permissions={callPerms}>
+        <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
+          <ImpersonationBanner />
+          {children}
+        </AppShell>
+      </CallProvider>
     </SettingsProvider>
   )
 }

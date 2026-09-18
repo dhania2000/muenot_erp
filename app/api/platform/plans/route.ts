@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
       currency: body?.currency ? String(body.currency) : undefined,
       seat_limit: body?.seat_limit != null && body.seat_limit !== "" ? Number(body.seat_limit) : null,
       features: Array.isArray(body?.features) ? body.features.map(String) : [],
+      entitlements: body?.entitlements !== undefined ? body.entitlements : undefined,
       sort_order: body?.sort_order != null ? Number(body.sort_order) : 0,
     })
     await recordPlatformAudit({

@@ -16,6 +16,7 @@ import {
   resolveDelegate,
   computeEscalations,
 } from "./approval-authority-core"
+import { violatesSegregation, SEGREGATION_MESSAGE } from "./maker-checker-core"
 
 // =============================================================================
 // SPEC 11 — Approval Authority: DB persistence + orchestration.
@@ -919,6 +920,15 @@ export async function actOnApprovalRequest(input: ActInput, opts: { isAdmin?: bo
   }
 
   if (request.status !== "pending") return { ok: false, error: "Request is already decided", code: 409 }
+
+  // SPEC 12 — segregation of duties / bypass prevention. The maker of a request
+  // can never act as its own checker, for anyone, admins included. Cancel is the
+  // maker's own withdrawal and is handled above, so only checker actions reach
+  // here. This is the single choke point every approve/reject/delegate/escalate
+  // must pass through, so there is no way to self-approve a gated operation.
+  if (violatesSegregation({ actorId: input.actorId, requesterId: request.requestedBy, action: input.action })) {
+    return { ok: false, error: SEGREGATION_MESSAGE, code: 403 }
+  }
 
   const steps = await loadSteps(request.id)
   const delegations = await loadActiveDelegations(tenantId)

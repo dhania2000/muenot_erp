@@ -145,6 +145,8 @@ function CreateInvoiceDialog({
   onCreated: () => void
 }) {
   const [customer, setCustomer] = useState("")
+  const [currency, setCurrency] = useState("USD")
+  const [invoiceType, setInvoiceType] = useState<"one_time" | "recurring">("one_time")
   const [lines, setLines] = useState<LineDraft[]>([{ description: "", quantity: "1", unit_amount: "0", taxable: true }])
   const [discountType, setDiscountType] = useState<"none" | "percent" | "fixed">("none")
   const [discountValue, setDiscountValue] = useState("0")
@@ -153,13 +155,28 @@ function CreateInvoiceDialog({
   const [adjustment, setAdjustment] = useState("0")
   const [applyCredit, setApplyCredit] = useState(false)
   const [dueDate, setDueDate] = useState("")
+  const [periodStart, setPeriodStart] = useState("")
+  const [periodEnd, setPeriodEnd] = useState("")
   const [finalize, setFinalize] = useState(true)
+  const [showBillTo, setShowBillTo] = useState(false)
+  const [bill, setBill] = useState({
+    email: "",
+    company: "",
+    taxId: "",
+    address: "",
+    city: "",
+    state: "",
+    postal: "",
+    country: "",
+  })
   const [saving, setSaving] = useState(false)
 
   const subtotal = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unit_amount) || 0), 0)
 
   function reset() {
     setCustomer("")
+    setCurrency("USD")
+    setInvoiceType("one_time")
     setLines([{ description: "", quantity: "1", unit_amount: "0", taxable: true }])
     setDiscountType("none")
     setDiscountValue("0")
@@ -168,7 +185,11 @@ function CreateInvoiceDialog({
     setAdjustment("0")
     setApplyCredit(false)
     setDueDate("")
+    setPeriodStart("")
+    setPeriodEnd("")
     setFinalize(true)
+    setShowBillTo(false)
+    setBill({ email: "", company: "", taxId: "", address: "", city: "", state: "", postal: "", country: "" })
   }
 
   function updateLine(i: number, patch: Partial<LineDraft>) {
@@ -182,8 +203,17 @@ function CreateInvoiceDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          invoice_type: "one_time",
+          invoice_type: invoiceType,
           customer_name: customer,
+          currency,
+          bill_to_email: bill.email.trim() || null,
+          bill_to_company: bill.company.trim() || null,
+          bill_to_tax_id: bill.taxId.trim() || null,
+          bill_to_address: bill.address.trim() || null,
+          bill_to_city: bill.city.trim() || null,
+          bill_to_state: bill.state.trim() || null,
+          bill_to_postal: bill.postal.trim() || null,
+          bill_to_country: bill.country.trim() || null,
           lines: lines.map((l) => ({
             description: l.description,
             quantity: Number(l.quantity) || 0,
@@ -197,6 +227,8 @@ function CreateInvoiceDialog({
           adjustment: Number(adjustment) || 0,
           apply_credit: applyCredit,
           due_date: dueDate || null,
+          period_start: periodStart || null,
+          period_end: periodEnd || null,
           finalize,
         }),
       })
@@ -221,9 +253,85 @@ function CreateInvoiceDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Customer</Label>
-            <Input value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Acme Inc." />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Customer</Label>
+              <Input value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Acme Inc." />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Currency</Label>
+                <select
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                >
+                  {["USD", "EUR", "GBP", "INR", "AUD", "CAD", "JPY", "SGD", "AED"].map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Type</Label>
+                <select
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                  value={invoiceType}
+                  onChange={(e) => setInvoiceType(e.target.value as typeof invoiceType)}
+                >
+                  <option value="one_time">One-time</option>
+                  <option value="recurring">Recurring</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium text-foreground"
+              onClick={() => setShowBillTo((v) => !v)}
+            >
+              <span>Customer billing details</span>
+              <span className="text-xs text-muted-foreground">{showBillTo ? "Hide" : "Add"}</span>
+            </button>
+            {showBillTo ? (
+              <div className="grid grid-cols-1 gap-3 border-t border-border p-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Billing email</Label>
+                  <Input type="email" value={bill.email} onChange={(e) => setBill((b) => ({ ...b, email: e.target.value }))} placeholder="billing@acme.com" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Company (bill to)</Label>
+                  <Input value={bill.company} onChange={(e) => setBill((b) => ({ ...b, company: e.target.value }))} placeholder="Acme Inc." />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Tax / VAT ID</Label>
+                  <Input value={bill.taxId} onChange={(e) => setBill((b) => ({ ...b, taxId: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Country</Label>
+                  <Input value={bill.country} onChange={(e) => setBill((b) => ({ ...b, country: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs">Address</Label>
+                  <Input value={bill.address} onChange={(e) => setBill((b) => ({ ...b, address: e.target.value }))} placeholder="123 Market St" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">City</Label>
+                  <Input value={bill.city} onChange={(e) => setBill((b) => ({ ...b, city: e.target.value }))} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">State</Label>
+                    <Input value={bill.state} onChange={(e) => setBill((b) => ({ ...b, state: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Postal</Label>
+                    <Input value={bill.postal} onChange={(e) => setBill((b) => ({ ...b, postal: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="space-y-2">
@@ -312,6 +420,14 @@ function CreateInvoiceDialog({
               <Label>Due date</Label>
               <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
             </div>
+            <div className="space-y-1.5">
+              <Label>Period start{invoiceType === "recurring" ? "" : " (optional)"}</Label>
+              <Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Period end{invoiceType === "recurring" ? "" : " (optional)"}</Label>
+              <Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+            </div>
           </div>
 
           <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
@@ -365,6 +481,38 @@ function InvoiceDetailDialog({
   const [payAmount, setPayAmount] = useState("")
   const [refundAmount, setRefundAmount] = useState("")
   const [refundAsCredit, setRefundAsCredit] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
+  const [emailTo, setEmailTo] = useState("")
+  const [emailSubject, setEmailSubject] = useState("")
+  const [emailMessage, setEmailMessage] = useState("")
+
+  async function sendInvoiceEmail() {
+    if (!invoiceId) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/billing/invoices/${invoiceId}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: emailTo.trim(),
+          subject: emailSubject.trim() || undefined,
+          message: emailMessage.trim() || undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || "Failed to send invoice")
+      toast.success(`Invoice emailed to ${json.to}`)
+      setEmailOpen(false)
+      setEmailSubject("")
+      setEmailMessage("")
+      mutate()
+      onChanged()
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const inv = data?.invoice
   const payments = data?.payments ?? []
@@ -468,9 +616,62 @@ function InvoiceDetailDialog({
               </div>
             ) : null}
 
+            {inv.bill_to_company || inv.bill_to_address || inv.bill_to_email ? (
+              <div className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
+                <p className="mb-1 font-medium text-foreground">Bill to</p>
+                {inv.bill_to_company ? <p>{inv.bill_to_company}</p> : null}
+                {inv.bill_to_address ? <p>{inv.bill_to_address}</p> : null}
+                <p>
+                  {[inv.bill_to_city, inv.bill_to_state, inv.bill_to_postal].filter(Boolean).join(", ")}
+                  {inv.bill_to_country ? ` · ${inv.bill_to_country}` : ""}
+                </p>
+                {inv.bill_to_tax_id ? <p>Tax ID: {inv.bill_to_tax_id}</p> : null}
+                {inv.bill_to_email ? <p>{inv.bill_to_email}</p> : null}
+              </div>
+            ) : null}
+
+            {inv.period_start || inv.period_end ? (
+              <p className="text-xs text-muted-foreground">
+                Subscription period: {inv.period_start ?? "—"} → {inv.period_end ?? "—"}
+              </p>
+            ) : null}
+
+            {inv.last_sent_at ? (
+              <p className="text-xs text-muted-foreground">
+                Last emailed to {inv.last_sent_to ?? "customer"} on {new Date(inv.last_sent_at).toLocaleString()}
+              </p>
+            ) : null}
+
             <Separator />
 
             <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" asChild>
+                  <a href={`/api/billing/invoices/${inv.id}/pdf`} target="_blank" rel="noopener noreferrer">
+                    Download PDF
+                  </a>
+                </Button>
+                {inv.status !== "draft" ? (
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => setEmailOpen(true)}>
+                    Email invoice
+                  </Button>
+                ) : null}
+                {inv.status !== "draft" && inv.invoice_type !== "credit_note" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => {
+                      if (confirm("Issue a credit note reversing this entire invoice?")) {
+                        action({ action: "credit_note", reason: "Full reversal" }, "Credit note issued")
+                      }
+                    }}
+                  >
+                    Issue credit note
+                  </Button>
+                ) : null}
+              </div>
+
               {inv.status === "draft" ? (
                 <div className="flex gap-2">
                   <Button size="sm" disabled={busy} onClick={() => action({ action: "finalize" }, "Invoice finalized")}>
@@ -536,6 +737,57 @@ function InvoiceDetailDialog({
                 </div>
               ) : null}
             </div>
+
+            <Dialog
+              open={emailOpen}
+              onOpenChange={(v) => {
+                setEmailOpen(v)
+                if (v) setEmailTo((prev) => prev || inv.bill_to_email || "")
+              }}
+            >
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Email invoice {inv.invoice_no}</DialogTitle>
+                  <DialogDescription>Send this invoice as a PDF attachment to your customer.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Recipient email</Label>
+                    <Input
+                      type="email"
+                      value={emailTo}
+                      onChange={(e) => setEmailTo(e.target.value)}
+                      placeholder="billing@acme.com"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Subject (optional)</Label>
+                    <Input
+                      value={emailSubject}
+                      onChange={(e) => setEmailSubject(e.target.value)}
+                      placeholder={`Invoice ${inv.invoice_no}`}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Message (optional)</Label>
+                    <textarea
+                      className="flex min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm"
+                      value={emailMessage}
+                      onChange={(e) => setEmailMessage(e.target.value)}
+                      placeholder="Add a short note for your customer…"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setEmailOpen(false)} disabled={busy}>
+                    Cancel
+                  </Button>
+                  <Button onClick={sendInvoiceEmail} disabled={busy || !emailTo.trim()}>
+                    {busy ? "Sending…" : "Send invoice"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </>
         )}
       </DialogContent>

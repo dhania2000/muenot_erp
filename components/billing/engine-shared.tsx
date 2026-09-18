@@ -27,6 +27,15 @@ export type Invoice = {
   invoice_no: string
   subscription_id: number | null
   customer_name: string
+  bill_to_email: string | null
+  bill_to_company: string | null
+  bill_to_tax_id: string | null
+  bill_to_address: string | null
+  bill_to_city: string | null
+  bill_to_state: string | null
+  bill_to_postal: string | null
+  bill_to_country: string | null
+  credit_note_of: number | null
   invoice_type: "recurring" | "one_time" | "credit_note"
   currency: string
   subtotal: number
@@ -46,6 +55,8 @@ export type Invoice = {
   period_start: string | null
   period_end: string | null
   memo: string | null
+  last_sent_at: string | null
+  last_sent_to: string | null
   created_at: string
 }
 

@@ -99,6 +99,9 @@ export type Invoice = {
   period_start: string | null
   period_end: string | null
   memo: string | null
+  /** Delivery audit: when/where the invoice PDF was last emailed. */
+  last_sent_at: string | null
+  last_sent_to: string | null
   created_at: string
   updated_at: string
 }
@@ -280,6 +283,9 @@ async function runEnsure(): Promise<void> {
   await ensureBillingColumn("billing_invoices", "bill_to_postal", "VARCHAR(30) DEFAULT NULL")
   await ensureBillingColumn("billing_invoices", "bill_to_country", "VARCHAR(120) DEFAULT NULL")
   await ensureBillingColumn("billing_invoices", "credit_note_of", "INT UNSIGNED DEFAULT NULL")
+  // Email delivery audit — when/where the invoice PDF was last sent.
+  await ensureBillingColumn("billing_invoices", "last_sent_at", "DATETIME DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "last_sent_to", "VARCHAR(190) DEFAULT NULL")
 
   await query(`CREATE TABLE IF NOT EXISTS billing_invoice_lines (
     id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -430,6 +436,8 @@ function mapInvoice(r: any): Invoice {
     period_start: dateOf(r.period_start),
     period_end: dateOf(r.period_end),
     memo: r.memo ?? null,
+    last_sent_at: r.last_sent_at ? String(r.last_sent_at) : null,
+    last_sent_to: r.last_sent_to ?? null,
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   }
@@ -964,6 +972,13 @@ export async function recordPayment(invoiceId: number, input: PaymentInput, sess
   await recomputeInvoice(invoiceId)
   const created = await requireOwnedRow("billing_payments", insertId)
   return mapPayment(created)
+}
+
+/** Stamp the email-delivery audit fields after a successful send. */
+export async function markInvoiceSent(invoiceId: number, to: string): Promise<void> {
+  await ensureBillingSchema()
+  await requireOwnedRow("billing_invoices", invoiceId)
+  await tenantUpdate("billing_invoices", { last_sent_at: now(), last_sent_to: to }, "id = ?", [invoiceId])
 }
 
 export async function finalizeInvoice(invoiceId: number): Promise<InvoiceView> {

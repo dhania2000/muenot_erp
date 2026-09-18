@@ -360,9 +360,21 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   { label: "Approval authority", href: "/admin/approval-authority" },
   { label: "Maker-checker", href: "/admin/maker-checker" },
   { label: "Segregation of duties", href: "/admin/sod" },
+  // SPEC 6 — Organization hierarchy management (org → entity → BU → … → team).
+  { label: "Organization hierarchy", href: "/modules/organization" },
+  // SPEC 7 — Multi-entity: the legal-entity registry (separate tax/bank/books).
+  { label: "Legal entities", href: "/modules/finance/legal-entities" },
   { label: "Employee Links", href: "/admin/employee-links" },
   { label: "Settings", href: "/admin/settings" },
 ]
+
+// SPECS 1/3/4/5 — The Muenot platform / super-admin console lives in its own
+// route tree (`/platform`, gated on the platform axis). Surfacing it as a
+// single Administration entry connects that already-built UI to the sidebar
+// WITHOUT merging it into the tenant Administration pages — the platform vs
+// tenant boundary (SPEC 3) is preserved because the link is only added for
+// users who actually carry a platform role.
+const PLATFORM_CONSOLE_CHILD: NavChild = { label: "Platform console", href: "/platform" }
 
 /**
  * Build the workspace sidebar navigation for a signed-in user. Shared by the
@@ -453,11 +465,15 @@ export async function buildWorkspaceNav(
   // admin management page under a single expandable entry so they are reachable
   // from the workspace sidebar and open in the same shell (no redirect).
   if (session.role === "admin") {
+    const isPlatformUser = session.platformRole != null && session.platformRole !== "none"
+    const adminChildren = isPlatformUser
+      ? [...ADMINISTRATION_CHILDREN, PLATFORM_CONSOLE_CHILD]
+      : ADMINISTRATION_CHILDREN
     navItems.push({
       label: "Administration",
       href: "/admin",
       icon: <ShieldCheck className="size-4" />,
-      children: ADMINISTRATION_CHILDREN,
+      children: adminChildren,
     })
   }
 

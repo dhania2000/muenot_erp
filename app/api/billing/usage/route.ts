@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { billingGuard } from "@/lib/billing-guard"
+import { billingGuard, bindBillingTenant } from "@/lib/billing-guard"
 import { getUsageOverview } from "@/lib/billing/usage-metering"
 
 export const runtime = "nodejs"
@@ -10,7 +10,8 @@ export const runtime = "nodejs"
  * Admin-only (billingGuard); tenant is derived from session context.
  */
 export async function GET(request: Request) {
-  await billingGuard()
+  const session = await billingGuard()
+  bindBillingTenant(session)
   const { searchParams } = new URL(request.url)
   const trendDays = Number(searchParams.get("trendDays") ?? 30)
   try {

@@ -7,6 +7,7 @@ import {
   type PermissionAction,
   type PermissionScope,
 } from "./permission-model"
+import { abacDenies } from "./abac-enforce"
 import type { SessionPayload } from "./auth"
 
 /**
@@ -241,17 +242,24 @@ export async function canActOnRecord(
   if (!mod) return true // unscoped module
 
   const scope = await getScope(session.userId, session.role, permissionKey, action)
-  if (scope === "all") return true
-  if (scope === "none") return false
 
-  const uid = String(session.userId)
-  const matchAdded = mod.scope.addedBy ? String(row[mod.scope.addedBy]) === uid : false
-  const matchOwned = mod.scope.ownedBy ? String(row[mod.scope.ownedBy]) === uid : false
+  // RBAC decision first, then the ABAC restriction layer (SPEC 9). ABAC can
+  // only further DENY an access RBAC already allowed; it never grants.
+  let rbacAllowed: boolean
+  if (scope === "all") rbacAllowed = true
+  else if (scope === "none") rbacAllowed = false
+  else {
+    const uid = String(session.userId)
+    const matchAdded = mod.scope.addedBy ? String(row[mod.scope.addedBy]) === uid : false
+    const matchOwned = mod.scope.ownedBy ? String(row[mod.scope.ownedBy]) === uid : false
+    if (scope === "added") rbacAllowed = matchAdded
+    else if (scope === "owned") rbacAllowed = matchOwned
+    else if (scope === "both") rbacAllowed = matchAdded || matchOwned
+    else rbacAllowed = false
+  }
+  if (!rbacAllowed) return false
 
-  if (scope === "added") return matchAdded
-  if (scope === "owned") return matchOwned
-  if (scope === "both") return matchAdded || matchOwned
-  return false
+  return !(await abacDenies(session, permissionKey, action, row))
 }
 
 /**
@@ -303,15 +311,22 @@ export async function canActOnRecordAction(
   const mod = getPermissionModule(permissionKey)
   if (!mod) return true
   const scope = await getActionScope(session.userId, session.role, permissionKey, actionKey)
-  if (scope === "all") return true
-  if (scope === "none") return false
 
-  const uid = String(session.userId)
-  const matchAdded = mod.scope.addedBy ? String(row[mod.scope.addedBy]) === uid : false
-  const matchOwned = mod.scope.ownedBy ? String(row[mod.scope.ownedBy]) === uid : false
+  let rbacAllowed: boolean
+  if (scope === "all") rbacAllowed = true
+  else if (scope === "none") rbacAllowed = false
+  else {
+    const uid = String(session.userId)
+    const matchAdded = mod.scope.addedBy ? String(row[mod.scope.addedBy]) === uid : false
+    const matchOwned = mod.scope.ownedBy ? String(row[mod.scope.ownedBy]) === uid : false
+    if (scope === "added") rbacAllowed = matchAdded
+    else if (scope === "owned") rbacAllowed = matchOwned
+    else if (scope === "both") rbacAllowed = matchAdded || matchOwned
+    else rbacAllowed = false
+  }
+  if (!rbacAllowed) return false
 
-  if (scope === "added") return matchAdded
-  if (scope === "owned") return matchOwned
-  if (scope === "both") return matchAdded || matchOwned
-  return false
+  // ABAC restriction layer (SPEC 9): resolve the extended action onto the ABAC
+  // action vocabulary and let attribute policies further deny.
+  return !(await abacDenies(session, permissionKey, actionKey, row))
 }

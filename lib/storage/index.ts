@@ -1,10 +1,10 @@
 import "server-only"
-import { currentTenantId } from "@/lib/tenant-scope"
+import { currentTenantId, CrossTenantAccessError } from "@/lib/tenant-scope"
 import { validateUpload } from "@/lib/settings/uploads"
 import { getActiveConnection } from "./connection-store"
 import { VercelBlobProvider } from "./vercel-blob"
 import { S3StorageProvider } from "./s3"
-import { tenantKey, tenantPrefix } from "./keys"
+import { tenantKey, tenantPrefix, keyBelongsToTenant } from "./keys"
 import type { StorageProvider, UploadResult, ResolvedConnection, StorageObjectMeta, DownloadResult } from "./types"
 
 /**
@@ -107,6 +107,47 @@ export async function openStoredObject(ref: string): Promise<DownloadResult> {
 export async function deleteFile(key: string): Promise<void> {
   const { provider } = await getTenantStorage()
   await provider.delete(key)
+}
+
+/**
+ * SPEC 29 — Issue a short-lived presigned URL for a stored object.
+ *
+ * This is the secure way to hand a file link to the browser (or embed one in a
+ * PDF/email): permission + tenant ownership are validated HERE, before any URL
+ * is minted, and the resulting URL expires quickly.
+ *
+ * - S3-compatible backends → a native presigned URL (bucket stays private).
+ * - Managed Vercel Blob     → an HMAC-signed proxy URL.
+ *
+ * `ref` may be a bare key or the app's proxy path; absolute legacy URLs are
+ * returned unchanged (nothing to sign). Throws CrossTenantAccessError when the
+ * key does not belong to the current tenant.
+ */
+export async function getSignedDownloadUrl(ref: string, opts: { expiresIn?: number } = {}): Promise<string> {
+  if (/^https?:\/\//i.test(ref)) return ref // legacy absolute URL — cannot presign
+  const key = keyFromRef(ref)
+  const tenantId = currentTenantId()
+  if (!keyBelongsToTenant(key, tenantId)) throw new CrossTenantAccessError("File not found")
+  const { provider } = await getTenantStorage()
+  return provider.presign(key, opts)
+}
+
+/** Normalize a stored `storage_url` value (proxy path or bare key) to a key. */
+function keyFromRef(ref: string): string {
+  const idx = ref.indexOf(PROXY_MARKER)
+  const raw = idx >= 0 ? ref.slice(idx + PROXY_MARKER.length) : ref
+  // Drop any query string (a previously-signed URL) before decoding segments.
+  const withoutQuery = raw.split("?")[0]
+  return withoutQuery
+    .split("/")
+    .map((s) => {
+      try {
+        return decodeURIComponent(s)
+      } catch {
+        return s
+      }
+    })
+    .join("/")
 }
 
 /** List the current tenant's objects (always scoped to their key prefix). */

@@ -7,6 +7,8 @@ import {
   Trash2,
   Pencil,
   CheckCircle2,
+  XCircle,
+  MinusCircle,
   Loader2,
   Zap,
   Power,
@@ -53,6 +55,7 @@ import {
   type StorageProviderId,
   type ServerSideEncryptionMode,
 } from "@/lib/storage/providers"
+import type { HealthCheckResult } from "@/lib/storage/types"
 
 type MaskedConnection = {
   id: number
@@ -127,7 +130,11 @@ export function StorageConnections() {
   const [form, setForm] = useState<FormState>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [testResult, setTestResult] = useState<{
+    ok: boolean
+    message: string
+    checks?: HealthCheckResult[]
+  } | null>(null)
   const [formError, setFormError] = useState("")
   const [deleteTarget, setDeleteTarget] = useState<MaskedConnection | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
@@ -221,7 +228,11 @@ export function StorageConnections() {
         body: JSON.stringify(payload()),
       })
       const data = await res.json()
-      setTestResult({ ok: Boolean(data.ok), message: data.message || data.error || "Unknown result" })
+      setTestResult({
+        ok: Boolean(data.ok),
+        message: data.message || data.error || "Unknown result",
+        checks: data.report?.checks,
+      })
     } catch (e: any) {
       setTestResult({ ok: false, message: e?.message || "Request failed" })
     } finally {
@@ -573,16 +584,51 @@ export function StorageConnections() {
             )}
 
             {testResult && (
-              <div
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm",
-                  testResult.ok
-                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                    : "bg-destructive/10 text-destructive",
+              <div className="flex flex-col gap-2">
+                <div
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm",
+                    testResult.ok
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      : "bg-destructive/10 text-destructive",
+                  )}
+                >
+                  {testResult.ok ? <CheckCircle2 className="size-4 shrink-0" /> : <Zap className="size-4 shrink-0" />}
+                  {testResult.message}
+                </div>
+                {testResult.checks && testResult.checks.length > 0 && (
+                  <ul className="flex flex-col gap-1 rounded-md border border-border p-2">
+                    {testResult.checks.map((c) => (
+                      <li key={c.id} className="flex items-start gap-2 px-1 py-1 text-sm">
+                        {c.status === "pass" ? (
+                          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                        ) : c.status === "fail" ? (
+                          <XCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
+                        ) : (
+                          <MinusCircle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium">{c.label}</span>
+                            {c.status !== "skip" && c.durationMs > 0 && (
+                              <span className="shrink-0 text-xs text-muted-foreground">{c.durationMs} ms</span>
+                            )}
+                          </div>
+                          {c.detail && (
+                            <p
+                              className={cn(
+                                "text-xs",
+                                c.status === "fail" ? "text-destructive" : "text-muted-foreground",
+                              )}
+                            >
+                              {c.detail}
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 )}
-              >
-                {testResult.ok ? <CheckCircle2 className="size-4" /> : <Zap className="size-4" />}
-                {testResult.message}
               </div>
             )}
             {formError && <p className="text-sm text-destructive">{formError}</p>}

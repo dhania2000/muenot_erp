@@ -2,6 +2,8 @@ import { query } from "./db"
 import { getCurrentActor, type Actor } from "./actor-context"
 import { PERMISSION_MODULES, type PermissionModule } from "./permission-model"
 import { ensurePermissionSchema } from "./permission-store"
+import { currentTenantIdOrNull } from "./tenant-scope"
+import { recordUsageSafe } from "./billing/usage-metering"
 
 // ---------------------------------------------------------------------------
 // Global activity notifications
@@ -143,6 +145,18 @@ async function fanOut(params: {
      VALUES ${tuples.join(", ")}`,
     values,
   )
+
+  // SPEC 19 — meter notification volume per tenant. Fire-and-forget: metering
+  // must never affect the notification delivery it is measuring. Only recorded
+  // when a tenant is in context (skips system/pre-auth paths).
+  if (currentTenantIdOrNull() != null) {
+    recordUsageSafe({
+      meterKey: "notifications",
+      quantity: recipients.length,
+      source: "notifications",
+      refId: entityId,
+    })
+  }
 }
 
 /**

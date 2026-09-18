@@ -1,8 +1,7 @@
 import { billingGuard } from "@/lib/billing-guard"
-import { BillingModuleView } from "@/components/billing/billing-module-view"
-import { BILLING_CONFIGS } from "@/lib/billing-configs"
+import { UsageMeteringConsole } from "@/components/billing/usage-metering-console"
 
 export default async function Page() {
   await billingGuard()
-  return <BillingModuleView config={BILLING_CONFIGS["usage-metering"]} />
+  return <UsageMeteringConsole />
 }

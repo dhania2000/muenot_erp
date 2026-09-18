@@ -59,6 +59,10 @@ export const TENANT_OWNED_TABLES = [
   // SaaS subscription engine (SPEC 16)
   "saas_subscriptions",
   "saas_subscription_events",
+  // Usage metering (SPEC 19)
+  "usage_events",
+  "usage_daily",
+  "usage_limits",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

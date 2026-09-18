@@ -8,7 +8,7 @@ import {
   HeadBucketCommand,
 } from "@aws-sdk/client-s3"
 import type { StorageProvider, UploadResult, DownloadResult, StorageObjectMeta, ResolvedConnection } from "./types"
-import { getProviderDefinition } from "./providers"
+import { getProviderDefinition, type ServerSideEncryptionMode } from "./providers"
 
 /**
  * A single S3 implementation that serves EVERY S3-compatible backend — AWS S3,
@@ -28,11 +28,17 @@ export class S3StorageProvider implements StorageProvider {
   private readonly client: S3Client
   private readonly bucket: string
   private readonly publicBaseUrl: string | null
+  /** SPEC 27 — bucket-level key prefix, applied transparently to every key. */
+  private readonly prefix: string
+  /** SPEC 27 — server-side encryption applied to uploaded objects. */
+  private readonly sse: ServerSideEncryptionMode
 
   constructor(conn: ResolvedConnection) {
     this.id = conn.provider
     this.bucket = conn.bucket
     this.publicBaseUrl = conn.publicBaseUrl?.replace(/\/+$/, "") || null
+    this.prefix = (conn.pathPrefix ?? "").replace(/^\/+|\/+$/g, "")
+    this.sse = conn.serverSideEncryption ?? "none"
 
     const def = getProviderDefinition(conn.provider)
     const region = conn.region || def?.defaultRegion || "us-east-1"
@@ -50,6 +56,11 @@ export class S3StorageProvider implements StorageProvider {
     })
   }
 
+  /** Map a tenant-scoped key to the physical bucket key (with the prefix). */
+  private full(key: string): string {
+    return this.prefix ? `${this.prefix}/${key}` : key
+  }
+
   async upload(
     key: string,
     data: Buffer,
@@ -59,19 +70,20 @@ export class S3StorageProvider implements StorageProvider {
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
-        Key: key,
+        Key: this.full(key),
         Body: data,
         ContentType: contentType || "application/octet-stream",
+        ...(this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}),
       }),
     )
     // For public buckets with a configured CDN base, hand back a direct link;
-    // otherwise the caller stores the key and serves via the download proxy.
-    const url = opts.public && this.publicBaseUrl ? `${this.publicBaseUrl}/${key}` : proxyUrl(key)
+    // otherwise the caller stores the (tenant) key and serves via the proxy.
+    const url = opts.public && this.publicBaseUrl ? `${this.publicBaseUrl}/${this.full(key)}` : proxyUrl(key)
     return { url, key, provider: this.id, size: data.length, contentType: contentType || null }
   }
 
   async download(key: string): Promise<DownloadResult> {
-    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }))
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: this.full(key) }))
     const body = res.Body as unknown as ReadableStream<Uint8Array>
     if (!body) throw new Error("Object not found")
     return {
@@ -83,20 +95,23 @@ export class S3StorageProvider implements StorageProvider {
 
   async list(prefix: string, opts: { limit?: number } = {}): Promise<StorageObjectMeta[]> {
     const out: StorageObjectMeta[] = []
+    const physicalPrefix = this.full(prefix)
+    const stripLen = this.prefix ? this.prefix.length + 1 : 0
     let token: string | undefined
     do {
       const res = await this.client.send(
         new ListObjectsV2Command({
           Bucket: this.bucket,
-          Prefix: prefix,
+          Prefix: physicalPrefix,
           ContinuationToken: token,
           MaxKeys: opts.limit,
         }),
       )
       for (const obj of res.Contents ?? []) {
         if (!obj.Key) continue
+        // Strip the connection prefix so callers keep seeing tenant-scoped keys.
         out.push({
-          key: obj.Key,
+          key: stripLen ? obj.Key.slice(stripLen) : obj.Key,
           size: obj.Size ?? 0,
           lastModified: obj.LastModified?.toISOString?.() ?? null,
         })
@@ -108,7 +123,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   async delete(key: string): Promise<void> {
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.full(key) }))
   }
 
   async healthCheck(): Promise<void> {

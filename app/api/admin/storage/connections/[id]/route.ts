@@ -30,6 +30,8 @@ function parseInput(body: any): ConnectionInput | null {
     secretAccessKey: body.secretAccessKey ? String(body.secretAccessKey) : null,
     forcePathStyle: Boolean(body.forcePathStyle),
     publicBaseUrl: body.publicBaseUrl != null ? String(body.publicBaseUrl) : null,
+    pathPrefix: body.pathPrefix != null ? String(body.pathPrefix) : null,
+    serverSideEncryption: body.serverSideEncryption != null ? String(body.serverSideEncryption) : null,
   }
 }
 

@@ -1,4 +1,4 @@
-import type { StorageProviderId } from "./providers"
+import type { StorageProviderId, ServerSideEncryptionMode } from "./providers"
 
 /** A resolved storage connection (secrets decrypted, ready to use). */
 export type ResolvedConnection = {
@@ -14,6 +14,10 @@ export type ResolvedConnection = {
   forcePathStyle: boolean
   /** Optional CDN/public base URL used to build direct links for public buckets. */
   publicBaseUrl: string | null
+  /** SPEC 27 — object key prefix inside the bucket (e.g. "erp/prod"). */
+  pathPrefix: string | null
+  /** SPEC 27 — server-side encryption mode applied to uploaded objects. */
+  serverSideEncryption: ServerSideEncryptionMode
   isActive: boolean
 }
 

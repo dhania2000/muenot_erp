@@ -49,7 +49,9 @@ import { cn } from "@/lib/utils"
 import {
   PROVIDER_LIST,
   getProviderDefinition,
+  ENCRYPTION_OPTIONS,
   type StorageProviderId,
+  type ServerSideEncryptionMode,
 } from "@/lib/storage/providers"
 
 type MaskedConnection = {
@@ -64,6 +66,8 @@ type MaskedConnection = {
   hasSecret: boolean
   forcePathStyle: boolean
   publicBaseUrl: string | null
+  pathPrefix: string | null
+  serverSideEncryption: ServerSideEncryptionMode
   isActive: boolean
   createdAt: string | null
   updatedAt: string | null
@@ -89,6 +93,8 @@ type FormState = {
   secretAccessKey: string
   forcePathStyle: boolean
   publicBaseUrl: string
+  pathPrefix: string
+  serverSideEncryption: ServerSideEncryptionMode
 }
 
 const emptyForm = (provider: StorageProviderId = "aws_s3"): FormState => {
@@ -104,6 +110,8 @@ const emptyForm = (provider: StorageProviderId = "aws_s3"): FormState => {
     secretAccessKey: "",
     forcePathStyle: def?.forcePathStyle ?? false,
     publicBaseUrl: "",
+    pathPrefix: "",
+    serverSideEncryption: "none",
   }
 }
 
@@ -164,6 +172,8 @@ export function StorageConnections() {
       secretAccessKey: "",
       forcePathStyle: c.forcePathStyle,
       publicBaseUrl: c.publicBaseUrl ?? "",
+      pathPrefix: c.pathPrefix ?? "",
+      serverSideEncryption: c.serverSideEncryption ?? "none",
     })
     setTestResult(null)
     setFormError("")
@@ -196,6 +206,8 @@ export function StorageConnections() {
       secretAccessKey: form.secretAccessKey || undefined,
       forcePathStyle: form.forcePathStyle,
       publicBaseUrl: form.publicBaseUrl || undefined,
+      pathPrefix: form.pathPrefix || undefined,
+      serverSideEncryption: form.serverSideEncryption,
     }
   }
 
@@ -498,13 +510,50 @@ export function StorageConnections() {
                 </div>
 
                 <div className="grid gap-2">
-                  <Label htmlFor="conn-public">Public base URL (optional)</Label>
+                  <Label htmlFor="conn-public">CDN / public base URL (optional)</Label>
                   <Input
                     id="conn-public"
                     value={form.publicBaseUrl}
                     onChange={(e) => setForm((f) => ({ ...f, publicBaseUrl: e.target.value }))}
                     placeholder="https://cdn.example.com"
                   />
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="conn-prefix">Path / key prefix (optional)</Label>
+                  <Input
+                    id="conn-prefix"
+                    value={form.pathPrefix}
+                    onChange={(e) => setForm((f) => ({ ...f, pathPrefix: e.target.value }))}
+                    placeholder="e.g. workspace-uploads"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Objects are stored under this prefix inside the bucket. Leave blank to use the bucket root.
+                  </p>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label>Server-side encryption</Label>
+                  <Select
+                    value={form.serverSideEncryption}
+                    onValueChange={(v) =>
+                      setForm((f) => ({ ...f, serverSideEncryption: v as ServerSideEncryptionMode }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ENCRYPTION_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {ENCRYPTION_OPTIONS.find((o) => o.value === form.serverSideEncryption)?.description}
+                  </p>
                 </div>
 
                 <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">

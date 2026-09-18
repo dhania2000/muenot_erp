@@ -8,8 +8,29 @@ import {
   tenantDelete,
 } from "@/lib/tenant-scope"
 import { encryptToken, decryptToken } from "@/lib/token-crypto"
-import { getProviderDefinition, isStorageProviderId, type StorageProviderId } from "./providers"
+import {
+  getProviderDefinition,
+  isStorageProviderId,
+  normalizeEncryption,
+  type StorageProviderId,
+} from "./providers"
 import type { ResolvedConnection } from "./types"
+
+/**
+ * Normalize an object key prefix: trim, strip leading/trailing slashes and any
+ * empty/".." segments so a connection prefix can never escape the bucket root
+ * or the tenant namespace. Returns null when empty.
+ */
+function normalizePathPrefix(value: string | null | undefined): string | null {
+  if (!value) return null
+  const clean = value
+    .trim()
+    .split("/")
+    .map((s) => s.trim())
+    .filter((s) => s && s !== "." && s !== "..")
+    .join("/")
+  return clean || null
+}
 
 /**
  * SPEC 26 — Tenant storage connection registry.
@@ -44,6 +65,8 @@ export async function ensureStorageSchema(): Promise<void> {
       secret_access_key TEXT DEFAULT NULL,
       force_path_style TINYINT(1) NOT NULL DEFAULT 0,
       public_base_url VARCHAR(500) DEFAULT NULL,
+      path_prefix VARCHAR(500) DEFAULT NULL,
+      server_side_encryption VARCHAR(40) NOT NULL DEFAULT 'none',
       is_active TINYINT(1) NOT NULL DEFAULT 0,
       created_by INT DEFAULT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -65,7 +88,24 @@ export async function ensureStorageSchema(): Promise<void> {
       KEY idx_tsca_conn (connection_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+  // SPEC 27 — additive columns for tables created by an earlier build. MySQL has
+  // no portable "ADD COLUMN IF NOT EXISTS", so probe information_schema first.
+  await ensureColumn(TABLE, "path_prefix", "ADD COLUMN `path_prefix` VARCHAR(500) DEFAULT NULL")
+  await ensureColumn(
+    TABLE,
+    "server_side_encryption",
+    "ADD COLUMN `server_side_encryption` VARCHAR(40) NOT NULL DEFAULT 'none'",
+  )
   ensured = true
+}
+
+async function ensureColumn(table: string, column: string, alterFragment: string): Promise<void> {
+  const rows = await query<any[]>(
+    `SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+    [table, column],
+  )
+  if (Number(rows?.[0]?.c ?? 0) > 0) return
+  await query(`ALTER TABLE \`${table}\` ${alterFragment}`).catch(() => {})
 }
 
 /** Append a tenant-scoped storage audit entry. Never throws to the caller. */
@@ -105,6 +145,8 @@ export type ConnectionInput = {
   secretAccessKey?: string | null
   forcePathStyle?: boolean
   publicBaseUrl?: string | null
+  pathPrefix?: string | null
+  serverSideEncryption?: string | null
 }
 
 /** A connection with all secrets redacted — safe to send to the client. */
@@ -120,6 +162,8 @@ export type MaskedConnection = {
   hasSecret: boolean
   forcePathStyle: boolean
   publicBaseUrl: string | null
+  pathPrefix: string | null
+  serverSideEncryption: string
   isActive: boolean
   createdAt: string | null
   updatedAt: string | null
@@ -145,6 +189,8 @@ function rowToMasked(r: any): MaskedConnection {
     hasSecret: Boolean(r.secret_access_key),
     forcePathStyle: Boolean(r.force_path_style),
     publicBaseUrl: r.public_base_url ?? null,
+    pathPrefix: r.path_prefix ?? null,
+    serverSideEncryption: normalizeEncryption(r.server_side_encryption),
     isActive: Boolean(r.is_active),
     createdAt: r.created_at ?? null,
     updatedAt: r.updated_at ?? null,
@@ -164,6 +210,8 @@ function rowToResolved(r: any): ResolvedConnection {
     secretAccessKey: decryptToken(r.secret_access_key ?? null),
     forcePathStyle: Boolean(r.force_path_style),
     publicBaseUrl: r.public_base_url ?? null,
+    pathPrefix: r.path_prefix ?? null,
+    serverSideEncryption: normalizeEncryption(r.server_side_encryption),
     isActive: Boolean(r.is_active),
   }
 }
@@ -220,6 +268,8 @@ export async function createConnection(
     secret_access_key: input.secretAccessKey ? encryptToken(input.secretAccessKey) : null,
     force_path_style: input.forcePathStyle ?? def.forcePathStyle ? 1 : 0,
     public_base_url: input.publicBaseUrl?.trim() || null,
+    path_prefix: normalizePathPrefix(input.pathPrefix),
+    server_side_encryption: normalizeEncryption(input.serverSideEncryption),
     is_active: 0,
     created_by: userId ?? null,
   })
@@ -243,6 +293,8 @@ export async function updateConnection(
     access_key_id: input.accessKeyId?.trim() || null,
     force_path_style: input.forcePathStyle ?? def.forcePathStyle ? 1 : 0,
     public_base_url: input.publicBaseUrl?.trim() || null,
+    path_prefix: normalizePathPrefix(input.pathPrefix),
+    server_side_encryption: normalizeEncryption(input.serverSideEncryption),
   }
   // Only overwrite the secret when a new one is supplied; a blank value keeps
   // the stored credential intact (so editing other fields is non-destructive).

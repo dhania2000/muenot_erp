@@ -73,6 +73,18 @@ export const GST_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
 ]
 
 /**
+ * SPEC 6 — Organization hierarchy extended actions. They live ALONGSIDE the
+ * base Add/View/Update/Delete on the Organization Hierarchy module and gate the
+ * structural operations that are riskier than a plain field edit: moving a
+ * subtree, assigning/removing users, and cascading deletes.
+ */
+export const ORG_HIERARCHY_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "reparent_unit", label: "Move / Re-parent Unit", fallback: "update", scoped: false, description: "Move a unit (and its subtree) under a different parent in the hierarchy." },
+  { key: "manage_assignments", label: "Manage User Assignments", fallback: "update", scoped: false, description: "Assign or remove users from an organizational unit and set their primary unit." },
+  { key: "cascade_delete", label: "Cascade Delete Subtree", fallback: "delete", scoped: false, description: "Delete a unit together with every descendant unit and their assignments." },
+]
+
+/**
  * Product & Inventory extended actions (Phase 44). They live ALONGSIDE the base
  * Add/View/Update/Delete on the Products module and gate the sensitive or
  * high-impact operations: moving stock, seeing cost/margin, and bulk data ops.
@@ -512,6 +524,24 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         aliases: ["subscription", "subscriptions", "company_subscription", "company_subscriptions", "saas", "license"],
         scope: { table: "company_subscriptions", addedBy: "created_by" },
         extraActions: COMPANY_SUBSCRIPTION_EXTRA_ACTIONS,
+      },
+    ],
+  },
+  {
+    // SPEC 6 — Organization hierarchy. A single module governs the org tree
+    // (units + user assignments); base Add/View/Update/Delete gate structural
+    // changes, while the extended actions separate the higher-risk operations
+    // (re-parenting a subtree, assigning users, cascading deletes).
+    slug: "organization",
+    label: "Organization",
+    modules: [
+      {
+        key: "organization.hierarchy",
+        label: "Organization Hierarchy",
+        group: "organization",
+        aliases: ["organization", "org", "hierarchy", "org_unit", "org_units", "structure"],
+        scope: { table: "org_units", addedBy: "created_by" },
+        extraActions: ORG_HIERARCHY_EXTRA_ACTIONS,
       },
     ],
   },

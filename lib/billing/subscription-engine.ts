@@ -323,7 +323,7 @@ function mapPlan(r: any): Plan {
   }
 }
 
-function planPriceForTerm(plan: Plan, term: BillingTerm): number {
+export function planPriceForTerm(plan: Plan, term: BillingTerm): number {
   switch (term) {
     case "monthly":
       return plan.price_monthly
@@ -971,6 +971,67 @@ export async function updateSubscription(
     actorName: session.name,
   })
   return (await getSubscriptionView(s.id))!
+}
+
+export type ChangePlanRecordInput = { plan_id: number; term?: string }
+
+/**
+ * SPEC 25 — Persist a plan change on an owned subscription.
+ * ---------------------------------------------------------------------------
+ * Swaps the plan reference, term, amount, seats and currency on the record and
+ * writes a `plan_upgraded` / `plan_downgraded` lifecycle event. Financial
+ * proration (prorated invoice or account credit) is orchestrated separately by
+ * the billing engine so this stays a pure subscription-record mutation.
+ */
+export async function changePlanRecord(
+  id: number,
+  input: ChangePlanRecordInput,
+  session: SessionPayload,
+): Promise<{ subscription: SubscriptionView; plan: Plan; previousPlanName: string; previousAmount: number; newAmount: number }> {
+  const s = await loadOwned(id)
+  if (isTerminal(s.status)) throw new SubscriptionError("Cannot change the plan of a terminal subscription.", 409)
+
+  const plan = await getPlan(num(input.plan_id))
+  if (!plan) throw new SubscriptionError("Plan not found.", 404, { plan_id: "Unknown plan" })
+  if (!plan.is_active) throw new SubscriptionError("That plan is not available.", 409, { plan_id: "Plan is inactive" })
+
+  const term = (input.term && isBillingTerm(input.term) ? input.term : s.term) as BillingTerm
+  if (s.plan_id === plan.id && s.term === term) {
+    throw new SubscriptionError("This is already your current plan and term.", 409)
+  }
+
+  const previousAmount = s.amount
+  const previousPlanName = s.plan_name
+  const newAmount = planPriceForTerm(plan, term)
+
+  await tenantUpdate(
+    "saas_subscriptions",
+    {
+      plan_id: plan.id,
+      plan_code: plan.plan_code,
+      plan_name: plan.name,
+      term,
+      amount: newAmount,
+      seats: plan.seats,
+      currency: plan.currency,
+    },
+    "id = ?",
+    [s.id],
+  )
+  await logEvent({
+    subscriptionId: s.id,
+    subscriptionNo: s.subscription_no,
+    eventType: newAmount >= previousAmount ? "plan_upgraded" : "plan_downgraded",
+    fromStatus: s.status,
+    toStatus: s.status,
+    amount: newAmount,
+    currency: plan.currency,
+    note: `Plan changed from ${previousPlanName} (${s.term}) to ${plan.name} (${term})`,
+    actorId: session.userId,
+    actorName: session.name,
+  })
+
+  return { subscription: (await getSubscriptionView(s.id))!, plan, previousPlanName, previousAmount, newAmount }
 }
 
 /**

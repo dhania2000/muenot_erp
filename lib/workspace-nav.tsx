@@ -388,6 +388,7 @@ export const BILLING_CHILDREN: NavChild[] = [
   { label: "Credits & Adjustments", href: "/modules/billing/credits" },
   { label: "Refunds", href: "/modules/billing/refunds" },
   { label: "Payment Reconciliation", href: "/modules/billing/reconciliation" },
+  { label: "Storage", href: "/modules/billing/storage" },
   { label: "Billing Settings", href: "/modules/billing/settings" },
   { label: "Billing Reports", href: "/modules/billing/reports" },
 ]

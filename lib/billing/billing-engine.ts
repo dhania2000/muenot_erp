@@ -69,6 +69,17 @@ export type Invoice = {
   tenant_id: number
   subscription_id: number | null
   customer_name: string
+  /** Structured customer billing details, printed on the PDF and used for email delivery. */
+  bill_to_email: string | null
+  bill_to_company: string | null
+  bill_to_tax_id: string | null
+  bill_to_address: string | null
+  bill_to_city: string | null
+  bill_to_state: string | null
+  bill_to_postal: string | null
+  bill_to_country: string | null
+  /** Credit notes reference the invoice they reverse. */
+  credit_note_of: number | null
   invoice_type: InvoiceType
   currency: string
   subtotal: number
@@ -182,6 +193,22 @@ export type BillingSummary = {
 
 let schemaEnsured: Promise<void> | null = null
 
+/**
+ * Idempotently add a column to an existing billing table. MySQL lacks
+ * `ADD COLUMN IF NOT EXISTS`, so we probe information_schema first. Safe to run
+ * on every boot; a no-op once the column exists.
+ */
+async function ensureBillingColumn(table: string, column: string, definition: string): Promise<void> {
+  const rows = (await query(
+    `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  )) as any[]
+  if (!rows.length) {
+    await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`)
+  }
+}
+
 async function runEnsure(): Promise<void> {
   await query(`CREATE TABLE IF NOT EXISTS billing_coupons (
     id               INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -241,6 +268,18 @@ async function runEnsure(): Promise<void> {
     KEY idx_billing_inv_status (status),
     KEY idx_billing_inv_sub (subscription_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  // Structured customer billing details + credit-note linkage. Added idempotently
+  // so existing installs upgrade in place (MySQL has no ADD COLUMN IF NOT EXISTS).
+  await ensureBillingColumn("billing_invoices", "bill_to_email", "VARCHAR(190) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "bill_to_company", "VARCHAR(190) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "bill_to_tax_id", "VARCHAR(60) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "bill_to_address", "VARCHAR(300) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "bill_to_city", "VARCHAR(120) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "bill_to_state", "VARCHAR(120) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "bill_to_postal", "VARCHAR(30) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "bill_to_country", "VARCHAR(120) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "credit_note_of", "INT UNSIGNED DEFAULT NULL")
 
   await query(`CREATE TABLE IF NOT EXISTS billing_invoice_lines (
     id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -363,6 +402,15 @@ function mapInvoice(r: any): Invoice {
     tenant_id: Number(r.tenant_id),
     subscription_id: r.subscription_id == null ? null : Number(r.subscription_id),
     customer_name: String(r.customer_name ?? ""),
+    bill_to_email: r.bill_to_email ?? null,
+    bill_to_company: r.bill_to_company ?? null,
+    bill_to_tax_id: r.bill_to_tax_id ?? null,
+    bill_to_address: r.bill_to_address ?? null,
+    bill_to_city: r.bill_to_city ?? null,
+    bill_to_state: r.bill_to_state ?? null,
+    bill_to_postal: r.bill_to_postal ?? null,
+    bill_to_country: r.bill_to_country ?? null,
+    credit_note_of: r.credit_note_of == null ? null : Number(r.credit_note_of),
     invoice_type: String(r.invoice_type) as InvoiceType,
     currency: String(r.currency),
     subtotal: num(r.subtotal),
@@ -687,6 +735,14 @@ export type CreateInvoiceInput = {
   invoice_type?: InvoiceType
   subscription_id?: number | null
   customer_name?: string
+  bill_to_email?: string | null
+  bill_to_company?: string | null
+  bill_to_tax_id?: string | null
+  bill_to_address?: string | null
+  bill_to_city?: string | null
+  bill_to_state?: string | null
+  bill_to_postal?: string | null
+  bill_to_country?: string | null
   currency?: string
   lines?: Array<{
     description?: string
@@ -769,6 +825,14 @@ export async function createInvoice(input: CreateInvoiceInput, session: SessionP
     invoice_no: invoiceNo,
     subscription_id: input.subscription_id ?? null,
     customer_name: String(input.customer_name ?? "").trim(),
+    bill_to_email: input.bill_to_email?.trim() || null,
+    bill_to_company: input.bill_to_company?.trim() || null,
+    bill_to_tax_id: input.bill_to_tax_id?.trim() || null,
+    bill_to_address: input.bill_to_address?.trim() || null,
+    bill_to_city: input.bill_to_city?.trim() || null,
+    bill_to_state: input.bill_to_state?.trim() || null,
+    bill_to_postal: input.bill_to_postal?.trim() || null,
+    bill_to_country: input.bill_to_country?.trim() || null,
     invoice_type: input.invoice_type ?? "one_time",
     currency,
     subtotal: totals.subtotal,
@@ -966,6 +1030,104 @@ export async function refundInvoice(invoiceId: number, input: RefundInput, sessi
 
   const created = await requireOwnedRow("billing_refunds", insertId)
   return mapRefund(created)
+}
+
+export type CreditNoteInput = {
+  /** Optional specific lines to credit; when omitted, the whole invoice is reversed. */
+  lines?: Array<{ description?: string; quantity?: number | string; unit_amount?: number | string; taxable?: boolean }>
+  reason?: string | null
+  /** When true, also post the credit-note total to the tenant's account credit ledger. */
+  as_account_credit?: boolean
+}
+
+/**
+ * Issue a credit note against a finalized invoice. A credit note is a separate,
+ * finalized `credit_note` invoice whose line amounts mirror the original (as
+ * negative-value reversals) so the ledger stays balanced. It never mutates the
+ * source invoice; it references it via `credit_note_of`. Optionally the net
+ * value is posted to account credit for use on future invoices.
+ */
+export async function issueCreditNote(
+  invoiceId: number,
+  input: CreditNoteInput,
+  session: SessionPayload,
+): Promise<InvoiceView> {
+  await ensureBillingSchema()
+  const source = await getInvoice(invoiceId)
+  if (!source) throw new BillingError("Invoice not found", 404)
+  if (source.invoice_type === "credit_note") {
+    throw new BillingError("Cannot issue a credit note against another credit note.", 409)
+  }
+  if (source.status === "draft") {
+    throw new BillingError("Finalize the invoice before issuing a credit note.", 409)
+  }
+
+  // Reverse either the requested lines or the full invoice. Amounts are stored
+  // as negatives so the credit note's total is a negative of what it reverses.
+  const reversalLines =
+    input.lines && input.lines.length > 0
+      ? input.lines.map((l) => ({
+          description: String(l.description ?? "Credit").trim() || "Credit",
+          quantity: num(l.quantity ?? 1),
+          unit_amount: -Math.abs(num(l.unit_amount ?? 0)),
+          taxable: l.taxable !== false,
+          line_type: "adjustment" as InvoiceLine["line_type"],
+        }))
+      : source.lines.map((l) => ({
+          description: `Credit — ${l.description}`,
+          quantity: l.quantity,
+          unit_amount: -Math.abs(l.unit_amount),
+          taxable: l.taxable,
+          line_type: "adjustment" as InvoiceLine["line_type"],
+        }))
+
+  if (reversalLines.length === 0) {
+    throw new BillingError("Nothing to credit on this invoice.", 400)
+  }
+
+  const creditNote = await createInvoice(
+    {
+      invoice_type: "credit_note",
+      subscription_id: source.subscription_id,
+      customer_name: source.customer_name,
+      bill_to_email: source.bill_to_email,
+      bill_to_company: source.bill_to_company,
+      bill_to_tax_id: source.bill_to_tax_id,
+      bill_to_address: source.bill_to_address,
+      bill_to_city: source.bill_to_city,
+      bill_to_state: source.bill_to_state,
+      bill_to_postal: source.bill_to_postal,
+      bill_to_country: source.bill_to_country,
+      currency: source.currency,
+      tax_rate: source.tax_rate,
+      memo: input.reason?.trim() || `Credit note for invoice ${source.invoice_no}`,
+      finalize: true,
+      lines: reversalLines,
+    },
+    session,
+  )
+
+  // Link the credit note back to the invoice it reverses.
+  await tenantUpdate("billing_invoices", { credit_note_of: source.id }, "id = ?", [creditNote.id])
+
+  // Optionally return the reversed value to the account credit ledger. The
+  // credit-note total is negative, so the posted credit is its absolute value.
+  if (input.as_account_credit) {
+    const creditValue = round2(Math.abs(creditNote.total))
+    if (creditValue > 0) {
+      await createCredit(
+        {
+          entry_type: "credit",
+          reason: `Credit note ${creditNote.invoice_no} for invoice ${source.invoice_no}`,
+          amount: creditValue,
+          currency: source.currency,
+        },
+        session,
+      )
+    }
+  }
+
+  return (await getInvoice(creditNote.id))!
 }
 
 /**

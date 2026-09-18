@@ -968,6 +968,31 @@ export async function refundInvoice(invoiceId: number, input: RefundInput, sessi
   return mapRefund(created)
 }
 
+/**
+ * All refunds across the tenant, enriched with their invoice number and
+ * customer so the refunds console can render without per-row lookups.
+ */
+export async function listRefunds(): Promise<
+  Array<Refund & { invoice_no: string | null; customer_name: string | null }>
+> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_refunds", { tail: "ORDER BY created_at DESC" })) as any[]
+  const refunds = rows.map(mapRefund)
+  if (refunds.length === 0) return []
+  const invRows = (await tenantSelect("billing_invoices", {
+    columns: "id, invoice_no, customer_name",
+  })) as any[]
+  const byId = new Map<number, any>(invRows.map((r) => [Number(r.id), r]))
+  return refunds.map((r) => {
+    const inv = byId.get(r.invoice_id)
+    return {
+      ...r,
+      invoice_no: inv ? String(inv.invoice_no) : null,
+      customer_name: inv ? String(inv.customer_name) : null,
+    }
+  })
+}
+
 // ── Recurring billing / invoice generation from subscriptions ─────────────────
 
 /**

@@ -824,7 +824,7 @@ export async function createInvoice(input: CreateInvoiceInput, session: SessionP
 // ── Invoices: money mutations ────────────────────────────────────────────────
 
 /** Recompute amount_paid / amount_refunded / balance / status from children. */
-async function recomputeInvoice(invoiceId: number): Promise<void> {
+export async function recomputeInvoice(invoiceId: number): Promise<void> {
   const inv = await getInvoice(invoiceId)
   if (!inv) return
   const payRows = (await tenantSelect("billing_payments", {

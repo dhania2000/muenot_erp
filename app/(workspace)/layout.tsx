@@ -362,9 +362,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const navItems: NavItem[] = [
     { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="size-4" /> },
-    ...(session.role === "admin"
-      ? [{ label: "Admin panel", href: "/admin", icon: <ShieldCheck className="size-4" /> }]
-      : []),
     ...modules.map((m) => {
       const item: NavItem = {
         label: m.slug === "assets" ? "Assets & Subscriptions" : m.name,
@@ -427,15 +424,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }
   }
 
-  // SPEC 10 — Data-level permissions console. Placed directly after Marketing
-  // and restricted to platform/tenant admins (same gate as the Admin panel), so
-  // the data-scope engine is reachable from the sidebar rather than buried in a
-  // tab under Roles & permissions.
+  // Administration console — surfaced directly after Marketing and restricted to
+  // platform/tenant admins. Groups every admin management page (overview,
+  // employees, RBAC/ABAC roles, SPEC 10 data-level permissions, settings) under
+  // a single expandable entry so they are reachable from the workspace sidebar
+  // instead of only via the /admin panel.
   if (session.role === "admin") {
     navItems.push({
-      label: "Data Permissions",
-      href: "/admin/data-permissions",
+      label: "Administration",
+      href: "/admin",
       icon: <ShieldCheck className="size-4" />,
+      children: [
+        { label: "Overview", href: "/admin" },
+        { label: "Employees", href: "/admin/employees" },
+        { label: "Roles & permissions", href: "/admin/roles" },
+        { label: "Data permissions", href: "/admin/data-permissions" },
+        { label: "Settings", href: "/admin/settings" },
+      ],
     })
   }
 

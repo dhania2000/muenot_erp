@@ -354,8 +354,6 @@ const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
 // exactly the same set of links — navigating into any admin page keeps the same
 // sidebar instead of swapping to a different shell.
 export const ADMINISTRATION_CHILDREN: NavChild[] = [
-  { label: "Overview", href: "/admin" },
-  { label: "Employees", href: "/admin/employees" },
   { label: "User lifecycle", href: "/admin/users" },
   { label: "Roles & permissions", href: "/admin/roles" },
   { label: "Data permissions", href: "/admin/data-permissions" },

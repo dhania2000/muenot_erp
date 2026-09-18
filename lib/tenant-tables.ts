@@ -92,6 +92,9 @@ export const TENANT_OWNED_TABLES = [
   "storage_quota_settings",
   // Storage → Migration — module/sub-module data mapped to a storage folder
   "tenant_storage_migrations",
+  // Configurable storage retention (SPEC 36) — default rule + per-module overrides
+  "storage_retention_settings",
+  "storage_retention_rules",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

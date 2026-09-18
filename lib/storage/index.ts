@@ -503,6 +503,43 @@ export {
   type QuotaAlert,
   type QuotaAlertLevel,
 } from "./storage-quota"
+// SPEC 36 — Configurable storage retention (default/module rules, sweep, legal hold).
+export {
+  ensureRetentionSchema,
+  getRetentionSettings,
+  setRetentionSettings,
+  listModuleRules,
+  setModuleRule,
+  resolveModuleRule,
+  setFileRetention,
+  clearFileRetentionOverride,
+  syncRetentionExpiry,
+  runRetentionSweep,
+  getRetentionSummary,
+  DEFAULT_RETENTION_SETTINGS,
+  type RetentionSettings,
+  type RetentionSettingsInput,
+  type ModuleRetentionRule,
+  type FileRetentionInput,
+  type RetentionSweepResult,
+  type RetentionSummary,
+} from "./retention"
+export {
+  RETENTION_UNIT_OPTIONS,
+  DEFAULT_RETENTION_RULE,
+  MIN_RETENTION_AMOUNT,
+  MAX_RETENTION_AMOUNT,
+  normalizeRetentionRule,
+  computeExpiry,
+  isExpired,
+  shouldPurge,
+  describeRetentionRule,
+  resolveRule,
+  addDuration,
+  type RetentionRule,
+  type RetentionMode,
+  type RetentionUnit,
+} from "./retention-policy"
 // SPEC 31 — CDN / media-delivery policy helpers.
 export {
   mediaKindFor,

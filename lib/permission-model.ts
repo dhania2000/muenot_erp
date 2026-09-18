@@ -85,6 +85,19 @@ export const ORG_HIERARCHY_EXTRA_ACTIONS: ExtendedAction[] = [
 ]
 
 /**
+ * SPEC 7 — Multi-entity extended actions. They live ALONGSIDE the base
+ * Add/View/Update/Delete on the Legal Entities module and gate the operations
+ * that reshape the group structure: promoting the default entity, managing an
+ * entity's bank identities, and recording inter-company transfers.
+ */
+export const ENTITY_EXTRA_ACTIONS: ExtendedAction[] = [
+  { key: "set_default", label: "Set Default Entity", fallback: "update", scoped: false, description: "Promote a legal entity to be the tenant's default booking entity." },
+  { key: "manage_bank_accounts", label: "Manage Bank Accounts", fallback: "update", scoped: false, description: "Add or remove the bank / cash accounts held under a legal entity." },
+  { key: "record_intercompany", label: "Record Inter-company Transactions", fallback: "update", scoped: false, description: "Create and update transfers between two of the tenant's own entities." },
+  { key: "view_consolidated", label: "View Consolidated Reporting", fallback: "view", scoped: false, description: "View entity-level and consolidated (group) financial roll-ups." },
+]
+
+/**
  * Product & Inventory extended actions (Phase 44). They live ALONGSIDE the base
  * Add/View/Update/Delete on the Products module and gate the sensitive or
  * high-impact operations: moving stock, seeing cost/margin, and bulk data ops.
@@ -343,6 +356,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "finance.tds_filing", label: "TDS Filing", group: "finance", aliases: ["tds"], scope: { table: "tds_filings" }, extraActions: TDS_FILING_EXTRA_ACTIONS },
       { key: "finance.journal", label: "Journal & Ledger", group: "finance", aliases: ["journal", "ledger"], scope: { table: "finance_records", addedBy: "created_by" }, extraActions: JOURNAL_EXTRA_ACTIONS },
       { key: "finance.reports", label: "Financial Reports", group: "finance", aliases: ["financial_report", "report"], scope: { table: "finance_records" }, extraActions: REPORTS_EXTRA_ACTIONS },
+  { key: "finance.entities", label: "Legal Entities", group: "finance", aliases: ["entities", "entity", "legal_entity", "multi_entity"], scope: { table: "legal_entities", addedBy: "created_by" }, extraActions: ENTITY_EXTRA_ACTIONS },
       { key: "finance.email_templates", label: "Finance Email Templates", group: "finance", aliases: ["email_template"], scope: { table: "finance_email_templates" } },
       { key: "finance.emails", label: "Finance Emails", group: "finance", aliases: ["email"], scope: { table: "finance_emails", addedBy: "created_by" } },
     ],

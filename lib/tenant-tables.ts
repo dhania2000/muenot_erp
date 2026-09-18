@@ -52,6 +52,10 @@ export const TENANT_OWNED_TABLES = [
   "org_units",
   "org_unit_assignments",
   "org_unit_change_log",
+  // Multi-entity support (SPEC 7)
+  "legal_entities",
+  "legal_entity_bank_accounts",
+  "intercompany_transactions",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

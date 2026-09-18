@@ -16,6 +16,7 @@ import {
   Rocket,
   Package,
   SlidersHorizontal,
+  KeyRound,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -30,6 +31,7 @@ const NAV: NavItem[] = [
   { href: "/platform/usage", label: "Usage & storage", icon: Gauge, group: "Operate" },
   { href: "/platform/health", label: "Health & jobs", icon: Activity, group: "Observe" },
   { href: "/platform/security", label: "Security & audit", icon: ShieldAlert, group: "Observe" },
+  { href: "/platform/secrets", label: "Secrets", icon: KeyRound, group: "Configure" },
   { href: "/platform/feature-flags", label: "Feature flags", icon: Flag, group: "Configure" },
   { href: "/platform/integrations", label: "Integrations", icon: Plug, group: "Configure" },
   { href: "/platform/config", label: "Configuration", icon: Settings2, group: "Configure" },

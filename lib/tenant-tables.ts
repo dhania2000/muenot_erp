@@ -48,6 +48,10 @@ export const TENANT_OWNED_TABLES = [
   "sales_revenue_forecast",
   // Clients master
   "clients",
+  // Organization hierarchy (SPEC 6)
+  "org_units",
+  "org_unit_assignments",
+  "org_unit_change_log",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

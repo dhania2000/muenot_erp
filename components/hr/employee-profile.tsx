@@ -32,6 +32,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { PermissionMatrixEditor } from "@/components/hr/permission-matrix-editor"
+import { EmployeeRolesAssignment } from "@/components/hr/employee-roles-assignment"
 import { EmployeeCallAction } from "@/components/calls/call-button"
 import { useCalls } from "@/components/calls/call-provider"
 import { CallHistory } from "@/components/calls/call-history"

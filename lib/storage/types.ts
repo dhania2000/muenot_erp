@@ -58,10 +58,30 @@ export type MultipartHandle = {
   uploadId: string
 }
 
+/**
+ * SPEC 31 — Options for a download. `range` is a raw HTTP `Range` header value
+ * (e.g. "bytes=0-1023"); providers that support it stream only the requested
+ * slice so video/audio can be seeked and CDNs can do partial fetches.
+ */
+export type DownloadOptions = {
+  range?: string | null
+}
+
 export type DownloadResult = {
   body: ReadableStream<Uint8Array> | Buffer
   contentType: string | null
   size: number | null
+  /** SPEC 31 — validators/metadata used for CDN caching and Range delivery. */
+  /** Total size of the underlying object (even for a partial response). */
+  totalSize?: number | null
+  /** Entity tag for conditional requests / cache validation, if known. */
+  etag?: string | null
+  /** Last-Modified timestamp (ISO or HTTP-date), if known. */
+  lastModified?: string | null
+  /** True when this body is a partial (Range) response. */
+  isPartial?: boolean
+  /** `Content-Range` header value when `isPartial` is true. */
+  contentRange?: string | null
 }
 
 /**
@@ -107,8 +127,13 @@ export interface StorageProvider {
   readonly id: StorageProviderId
   /** Upload bytes at `key`. `public` hints whether a direct URL is desired. */
   upload(key: string, data: Buffer, contentType: string, opts?: { public?: boolean }): Promise<UploadResult>
-  /** Fetch an object for streaming back to the client. */
-  download(key: string): Promise<DownloadResult>
+  /**
+   * Fetch an object for streaming back to the client. SPEC 31 — when `opts.range`
+   * is provided the provider SHOULD return only that byte slice (with
+   * `isPartial`/`contentRange` set); providers that cannot serve a range simply
+   * ignore it and return the full object.
+   */
+  download(key: string, opts?: DownloadOptions): Promise<DownloadResult>
   /** List objects under a key prefix (already tenant-namespaced by the caller). */
   list(prefix: string, opts?: { limit?: number }): Promise<StorageObjectMeta[]>
   /** Delete a single object. Idempotent. */

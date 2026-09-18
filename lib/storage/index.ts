@@ -17,7 +17,14 @@ import {
   type UploadCategory,
   type UploadSessionStatus,
 } from "./multipart-store"
-import type { StorageProvider, UploadResult, ResolvedConnection, StorageObjectMeta, DownloadResult } from "./types"
+import type {
+  StorageProvider,
+  UploadResult,
+  ResolvedConnection,
+  StorageObjectMeta,
+  DownloadResult,
+  DownloadOptions,
+} from "./types"
 
 /**
  * SPEC 26 — Storage facade.
@@ -75,9 +82,9 @@ export async function uploadFile(
 }
 
 /** Download an object for the current tenant, enforcing key ownership. */
-export async function downloadFile(key: string): Promise<DownloadResult> {
+export async function downloadFile(key: string, opts: DownloadOptions = {}): Promise<DownloadResult> {
   const { provider } = await getTenantStorage()
-  return provider.download(key)
+  return provider.download(key, opts)
 }
 
 const PROXY_MARKER = "/api/storage/file/"
@@ -316,3 +323,14 @@ export async function abortLargeUpload(
 
 export { tenantKey, tenantPrefix, keyBelongsToTenant, tenantIdFromKey } from "./keys"
 export { providerFromConnection as buildProvider }
+// SPEC 31 — CDN / media-delivery policy helpers.
+export {
+  mediaKindFor,
+  cacheControlFor,
+  contentDispositionFor,
+  cdnMaxAge,
+  isRangeable,
+  filenameFromKey,
+  type MediaKind,
+  type DeliveryAccess,
+} from "./cdn"

@@ -17,8 +17,15 @@ export async function POST(request: NextRequest) {
   const file = form.get("file")
   if (!(file instanceof File)) return NextResponse.json({ error: "File is required" }, { status: 400 })
 
-  const up = await uploadFile(`finance-expenses/${crypto.randomUUID()}-${file.name}`, file)
+  const up = await uploadFile(`finance-expenses/${crypto.randomUUID()}-${file.name}`, file, {
+    metadata: {
+      module: "finance",
+      entityType: "expense",
+      ownerId: session.userId,
+      classification: "confidential",
+    },
+  })
   if (!up.ok) return NextResponse.json({ error: up.error }, { status: 400 })
 
-  return NextResponse.json({ url: up.result.url, pathname: up.result.url })
+  return NextResponse.json({ url: up.result.url, pathname: up.result.url, file_ref: up.result.file?.fileRef ?? null })
 }

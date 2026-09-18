@@ -173,11 +173,15 @@ export function ContractDetailDrawer({
                     {contract.source_quotation_code ? ` · from ${contract.source_quotation_code}` : ""}
                   </DialogDescription>
                 </div>
-                <Button variant="outline" size="sm" asChild>
-                  <a href={`/api/sales/contracts/${contract.id}/pdf`} target="_blank" rel="noreferrer">
-                    <FileTextIcon data-icon="inline-start" />
-                    PDF
-                  </a>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  render={
+                    <a href={`/api/sales/contracts/${contract.id}/pdf`} target="_blank" rel="noreferrer" />
+                  }
+                >
+                  <FileTextIcon data-icon="inline-start" />
+                  PDF
                 </Button>
               </div>
             </DialogHeader>

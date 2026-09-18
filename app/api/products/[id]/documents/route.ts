@@ -36,7 +36,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const docType = String(form.get("doc_type") || "Product Document")
   if (!(file instanceof File)) return NextResponse.json({ error: "File is required" }, { status: 400 })
 
-  const up = await uploadFile(`products/${pk}/${crypto.randomUUID()}-${file.name}`, file)
+  const up = await uploadFile(`products/${pk}/${crypto.randomUUID()}-${file.name}`, file, {
+    metadata: {
+      module: "products",
+      entityType: "product",
+      entityId: pk,
+      ownerId: ctx.session.userId,
+      classification: docType === "Image" ? "public" : "internal",
+    },
+  })
   if (!up.ok) return NextResponse.json({ error: up.error }, { status: 400 })
   const url = up.result.url
 
@@ -59,7 +67,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     userName: ctx.session.name,
   })
 
-  return NextResponse.json({ ok: true, id: result.insertId, url: blob.url, file_name: file.name, doc_type: docType })
+  return NextResponse.json({
+    ok: true,
+    id: result.insertId,
+    url,
+    file_name: file.name,
+    doc_type: docType,
+    file_ref: up.result.file?.fileRef ?? null,
+  })
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

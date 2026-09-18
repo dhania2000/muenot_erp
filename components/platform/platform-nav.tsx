@@ -15,6 +15,7 @@ import {
   Users,
   Rocket,
   Package,
+  SlidersHorizontal,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -32,6 +33,7 @@ const NAV: NavItem[] = [
   { href: "/platform/feature-flags", label: "Feature flags", icon: Flag, group: "Configure" },
   { href: "/platform/integrations", label: "Integrations", icon: Plug, group: "Configure" },
   { href: "/platform/config", label: "Configuration", icon: Settings2, group: "Configure" },
+  { href: "/platform/environment", label: "Environment & config", icon: SlidersHorizontal, group: "Configure" },
   { href: "/platform/access", label: "Access & support", icon: Users, group: "Configure" },
 ]
 

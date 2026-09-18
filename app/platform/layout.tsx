@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation"
 import Link from "next/link"
-import { ShieldCheck } from "lucide-react"
+import { ShieldCheck, ArrowLeft } from "lucide-react"
 import { requirePlatformStaff } from "@/lib/platform-guard"
 import { platformRoleLabel } from "@/lib/role-model"
 import { PlatformNav } from "@/components/platform/platform-nav"
@@ -33,9 +33,18 @@ export default async function PlatformLayout({ children }: { children: React.Rea
               <span className="text-xs text-muted-foreground">Operator console</span>
             </div>
           </Link>
-          <div className="flex flex-col items-end leading-tight">
-            <span className="text-sm font-medium">{guard.session.name}</span>
-            <span className="text-xs text-muted-foreground">{platformRoleLabel(guard.ctx.platformRole)}</span>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <ArrowLeft className="size-3.5" />
+              Exit to workspace
+            </Link>
+            <div className="flex flex-col items-end leading-tight">
+              <span className="text-sm font-medium">{guard.session.name}</span>
+              <span className="text-xs text-muted-foreground">{platformRoleLabel(guard.ctx.platformRole)}</span>
+            </div>
           </div>
         </div>
       </header>

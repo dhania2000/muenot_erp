@@ -16,6 +16,7 @@ import type {
   StorageProvider,
   UploadResult,
   DownloadResult,
+  DownloadOptions,
   StorageObjectMeta,
   ResolvedConnection,
   HealthReport,
@@ -123,14 +124,34 @@ export class S3StorageProvider implements StorageProvider {
     return { url, key, provider: this.id, size: data.length, contentType: contentType || null }
   }
 
-  async download(key: string): Promise<DownloadResult> {
-    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: this.full(key) }))
+  async download(key: string, opts: DownloadOptions = {}): Promise<DownloadResult> {
+    const res = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: this.full(key),
+        // SPEC 31 — forward the raw Range so S3 returns a 206 byte slice.
+        ...(opts.range ? { Range: opts.range } : {}),
+      }),
+    )
     const body = res.Body as unknown as ReadableStream<Uint8Array>
     if (!body) throw new Error("Object not found")
+    const contentRange = res.ContentRange ?? null
+    // With a Range, ContentLength is the slice length and ContentRange carries
+    // the "bytes a-b/total" from which we recover the true object size.
+    const total = contentRange
+      ? Number(contentRange.split("/").pop()) || null
+      : typeof res.ContentLength === "number"
+        ? res.ContentLength
+        : null
     return {
       body,
       contentType: res.ContentType ?? null,
       size: typeof res.ContentLength === "number" ? res.ContentLength : null,
+      totalSize: total,
+      etag: res.ETag ?? null,
+      lastModified: res.LastModified?.toUTCString?.() ?? null,
+      isPartial: Boolean(contentRange),
+      contentRange,
     }
   }
 

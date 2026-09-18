@@ -5,6 +5,7 @@ import type {
   StorageProvider,
   UploadResult,
   DownloadResult,
+  DownloadOptions,
   StorageObjectMeta,
   HealthReport,
   MultipartHandle,
@@ -35,17 +36,28 @@ export class VercelBlobProvider implements StorageProvider {
     return { url: proxyUrl(key), key, provider: this.id, size: data.length, contentType: contentType || null }
   }
 
-  async download(key: string): Promise<DownloadResult> {
-    // Resolve the blob's public URL from its pathname, then stream it.
+  async download(key: string, opts: DownloadOptions = {}): Promise<DownloadResult> {
+    // Resolve the blob's public URL from its pathname, then stream it. SPEC 31 —
+    // forward a Range header so the blob store answers with a 206 byte slice,
+    // which is what makes <video>/<audio> seeking and CDN partial fetches work.
     const meta = await head(key).catch(() => null)
     const url = meta?.url
     if (!url) throw new Error("Object not found")
-    const res = await fetch(url)
+    const res = await fetch(url, opts.range ? { headers: { Range: opts.range } } : undefined)
     if (!res.ok || !res.body) throw new Error("Object not found")
+    const isPartial = res.status === 206
+    const contentRange = res.headers.get("content-range")
+    const total = contentRange ? Number(contentRange.split("/").pop()) || (meta?.size ?? null) : (meta?.size ?? null)
+    const len = Number(res.headers.get("content-length"))
     return {
       body: res.body,
       contentType: res.headers.get("content-type"),
-      size: meta?.size ?? null,
+      size: Number.isFinite(len) ? len : (meta?.size ?? null),
+      totalSize: total,
+      etag: res.headers.get("etag"),
+      lastModified: res.headers.get("last-modified") ?? meta?.uploadedAt?.toUTCString?.() ?? null,
+      isPartial,
+      contentRange,
     }
   }
 

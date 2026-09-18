@@ -1,5 +1,5 @@
 import { query } from "./db"
-import { getUserMatrix } from "./permission-store"
+import { getEffectiveUserMatrix } from "./permission-store"
 import { PERMISSION_MODULES, resolveFeatureSlug, type PermissionMatrix } from "./permission-model"
 
 export type ModuleRow = {
@@ -66,7 +66,7 @@ function matrixGroupVisible(matrix: PermissionMatrix, groupSlug: string): boolea
 export async function userHasFeature(userId: number, role: "admin" | "employee", featureSlug: string) {
   if (role === "admin") return true
 
-  const matrix = await getUserMatrix(userId)
+  const matrix = await getEffectiveUserMatrix(userId)
   if (matrix) {
     const granted = matrixGrantsSlug(matrix, featureSlug)
     if (granted !== null) return granted
@@ -99,7 +99,7 @@ export async function getFeatureChecker(
 ): Promise<(featureSlug: string) => boolean> {
   if (role === "admin") return () => true
 
-  const matrix = await getUserMatrix(userId)
+  const matrix = await getEffectiveUserMatrix(userId)
   if (matrix) {
     return (featureSlug: string) => {
       const granted = matrixGrantsSlug(matrix, featureSlug)
@@ -118,7 +118,7 @@ export async function getUserAccessibleModules(userId: number, role: "admin" | "
   const allModules = await getAllModulesWithFeatures()
   if (role === "admin") return allModules
 
-  const matrix = await getUserMatrix(userId)
+  const matrix = await getEffectiveUserMatrix(userId)
 
   if (matrix) {
     return allModules

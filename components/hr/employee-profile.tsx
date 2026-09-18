@@ -909,7 +909,8 @@ export function EmployeeProfile({
         </TabsContent>
 
         {isAdmin && (
-          <TabsContent value="permissions" className="mt-5">
+          <TabsContent value="permissions" className="mt-5 flex flex-col gap-5">
+            <EmployeeRolesAssignment employeeId={employee.id} />
             <PermissionMatrixEditor
               employeeId={employee.id}
               employeeName={employee.employee_name}

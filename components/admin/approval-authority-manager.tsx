@@ -1,13 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import {
   Select,
@@ -35,40 +34,47 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Loader2, Plus, GitBranch, Trash2, Layers, UserCog, PlayCircle, ArrowRight } from "lucide-react"
+import { Loader2, Plus, GitBranch, Trash2, Layers, UserCog, PlayCircle, ArrowRight, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 
-type ApproverTarget = {
-  kind: "user" | "role" | "department" | "entity" | "dynamic"
-  userId?: number | null
-  roleId?: number | null
-  department?: string | null
-  entityId?: number | null
-  dynamic?: string | null
-}
+// -----------------------------------------------------------------------------
+// Types mirror the backend contract exactly (lib/approval-authority-core.ts +
+// lib/approval-authority.ts). A rule matches requests by conditions, then runs
+// one or more levels in sequence; within a level, approvers combine per `mode`.
+// -----------------------------------------------------------------------------
+
+type ApproverKind = "user" | "role" | "department" | "dynamic"
+type ApproverTarget = { kind: ApproverKind; value: string }
+type LevelMode = "all" | "any" | "quorum"
 
 type RuleLevel = {
-  sequence: number
-  mode: "sequential" | "parallel"
-  minApprovals: number
+  levelNo: number
+  name?: string | null
+  mode: LevelMode
+  quorum?: number | null
   approvers: ApproverTarget[]
+  escalateAfterHours?: number | null
+  escalateTo?: ApproverTarget | null
+}
+
+type RuleConditions = {
+  entityId?: number | null
+  department?: string | null
+  role?: string | null
+  minAmount?: number | null
+  maxAmount?: number | null
 }
 
 type Rule = {
   id: number
   name: string
-  description: string | null
   moduleKey: string
   active: boolean
   priority: number
-  minAmount: number | null
-  maxAmount: number | null
-  department: string | null
-  roleId: number | null
-  entityId: number | null
-  escalationHours: number | null
+  conditions: RuleConditions
   levels: RuleLevel[]
   createdAt: string
+  updatedAt: string
 }
 
 type Options = {
@@ -80,7 +86,11 @@ type Options = {
   dynamicApprovers: { value: string; label: string }[]
 }
 
-const EMPTY_LEVEL: RuleLevel = { sequence: 1, mode: "sequential", minApprovals: 1, approvers: [] }
+const ANY = "__any"
+
+function newLevel(levelNo: number): RuleLevel {
+  return { levelNo, mode: "all", quorum: 2, approvers: [], escalateAfterHours: null, escalateTo: null }
+}
 
 export function ApprovalAuthorityManager() {
   return (
@@ -130,11 +140,11 @@ function RulesTab() {
         <div>
           <h2 className="text-lg font-semibold">Approval rules</h2>
           <p className="text-sm text-muted-foreground">
-            Configure who must approve, based on amount, department, role, entity or module. Rules with higher
-            priority win when several match.
+            Configure who must approve, based on amount, department, role, entity or module. Rules with higher priority
+            win when several match.
           </p>
         </div>
-        <Button onClick={() => setEditing("new")}>
+        <Button onClick={() => setEditing("new")} disabled={!options}>
           <Plus className="size-4" />
           New rule
         </Button>
@@ -153,7 +163,7 @@ function RulesTab() {
               Create a rule to route requests through amount, role or multi-level approval chains.
             </p>
           </div>
-          <Button variant="outline" onClick={() => setEditing("new")}>
+          <Button variant="outline" onClick={() => setEditing("new")} disabled={!options}>
             <Plus className="size-4" />
             New rule
           </Button>
@@ -161,50 +171,14 @@ function RulesTab() {
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
           {rules.map((rule) => (
-            <div key={rule.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate font-medium">{rule.name}</p>
-                    {!rule.active && <Badge variant="outline">Inactive</Badge>}
-                  </div>
-                  <p className="line-clamp-2 text-sm text-muted-foreground">{rule.description || moduleLabel(rule.moduleKey)}</p>
-                </div>
-                <Badge variant="secondary" className="shrink-0 gap-1">
-                  <Layers className="size-3" />
-                  {rule.levels.length} level{rule.levels.length === 1 ? "" : "s"}
-                </Badge>
-              </div>
-
-              <div className="flex flex-wrap gap-1.5 text-xs">
-                <Badge variant="outline">{moduleLabel(rule.moduleKey)}</Badge>
-                {(rule.minAmount != null || rule.maxAmount != null) && (
-                  <Badge variant="outline">
-                    {rule.minAmount != null ? formatMoney(rule.minAmount) : "0"}
-                    {" – "}
-                    {rule.maxAmount != null ? formatMoney(rule.maxAmount) : "∞"}
-                  </Badge>
-                )}
-                {rule.department && <Badge variant="outline">Dept: {rule.department}</Badge>}
-                {rule.escalationHours != null && <Badge variant="outline">Escalate {rule.escalationHours}h</Badge>}
-                <Badge variant="outline">Priority {rule.priority}</Badge>
-              </div>
-
-              <div className="mt-auto flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => setEditing(rule)}>
-                  Edit
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => setDeleteTarget(rule)}
-                >
-                  <Trash2 className="size-4" />
-                  <span className="sr-only">Delete {rule.name}</span>
-                </Button>
-              </div>
-            </div>
+            <RuleCard
+              key={rule.id}
+              rule={rule}
+              options={options}
+              moduleLabel={moduleLabel}
+              onEdit={() => setEditing(rule)}
+              onDelete={() => setDeleteTarget(rule)}
+            />
           ))}
         </div>
       )}
@@ -226,7 +200,9 @@ function RulesTab() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete approval rule?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `"${deleteTarget.name}" will no longer route new requests. In-flight requests are unaffected.` : ""}
+              {deleteTarget
+                ? `"${deleteTarget.name}" will no longer route new requests. In-flight requests are unaffected.`
+                : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -254,6 +230,84 @@ function RulesTab() {
   )
 }
 
+function RuleCard({
+  rule,
+  options,
+  moduleLabel,
+  onEdit,
+  onDelete,
+}: {
+  rule: Rule
+  options?: Options
+  moduleLabel: (key: string) => string
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const c = rule.conditions
+  const entityName = c.entityId != null ? options?.entities.find((e) => e.id === c.entityId)?.name : null
+  const hasEscalation = rule.levels.some((l) => (l.escalateAfterHours ?? 0) > 0)
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="truncate font-medium">{rule.name}</p>
+            {!rule.active && <Badge variant="outline">Inactive</Badge>}
+          </div>
+          <p className="line-clamp-1 text-sm text-muted-foreground">{moduleLabel(rule.moduleKey)}</p>
+        </div>
+        <Badge variant="secondary" className="shrink-0 gap-1">
+          <Layers className="size-3" />
+          {rule.levels.length} level{rule.levels.length === 1 ? "" : "s"}
+        </Badge>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 text-xs">
+        <Badge variant="outline">{moduleLabel(rule.moduleKey)}</Badge>
+        {(c.minAmount != null || c.maxAmount != null) && (
+          <Badge variant="outline">
+            {c.minAmount != null ? formatMoney(c.minAmount) : "0"}
+            {" – "}
+            {c.maxAmount != null ? formatMoney(c.maxAmount) : "∞"}
+          </Badge>
+        )}
+        {c.department && <Badge variant="outline">Dept: {c.department}</Badge>}
+        {c.role && <Badge variant="outline">Role: {c.role}</Badge>}
+        {entityName && <Badge variant="outline">Entity: {entityName}</Badge>}
+        {hasEscalation && <Badge variant="outline">Escalation</Badge>}
+        <Badge variant="outline">Priority {rule.priority}</Badge>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        {rule.levels.map((l) => (
+          <div key={l.levelNo} className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="secondary" className="shrink-0">
+              L{l.levelNo}
+            </Badge>
+            <span className="shrink-0 font-medium">{describeMode(l)}</span>
+            <span className="truncate">
+              {l.approvers.length === 0
+                ? "no approvers"
+                : l.approvers.map((a) => describeApprover(a, options)).join(", ")}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-auto flex items-center gap-2">
+        <Button size="sm" variant="outline" onClick={onEdit}>
+          Edit
+        </Button>
+        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={onDelete}>
+          <Trash2 className="size-4" />
+          <span className="sr-only">Delete {rule.name}</span>
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function RuleEditorDialog({
   rule,
   options,
@@ -266,32 +320,44 @@ function RuleEditorDialog({
   onSaved: () => void
 }) {
   const [name, setName] = useState(rule?.name ?? "")
-  const [description, setDescription] = useState(rule?.description ?? "")
   const [moduleKey, setModuleKey] = useState(rule?.moduleKey ?? options.modules[0]?.key ?? "*")
   const [active, setActive] = useState(rule?.active ?? true)
   const [priority, setPriority] = useState(rule?.priority ?? 100)
-  const [minAmount, setMinAmount] = useState(rule?.minAmount != null ? String(rule.minAmount) : "")
-  const [maxAmount, setMaxAmount] = useState(rule?.maxAmount != null ? String(rule.maxAmount) : "")
-  const [department, setDepartment] = useState(rule?.department ?? "")
-  const [escalationHours, setEscalationHours] = useState(rule?.escalationHours != null ? String(rule.escalationHours) : "")
-  const [levels, setLevels] = useState<RuleLevel[]>(rule?.levels?.length ? rule.levels : [{ ...EMPTY_LEVEL }])
+  const [minAmount, setMinAmount] = useState(rule?.conditions.minAmount != null ? String(rule.conditions.minAmount) : "")
+  const [maxAmount, setMaxAmount] = useState(rule?.conditions.maxAmount != null ? String(rule.conditions.maxAmount) : "")
+  const [department, setDepartment] = useState(rule?.conditions.department ?? "")
+  const [role, setRole] = useState(rule?.conditions.role ?? "")
+  const [entityId, setEntityId] = useState(rule?.conditions.entityId != null ? String(rule.conditions.entityId) : "")
+  const [levels, setLevels] = useState<RuleLevel[]>(
+    rule?.levels?.length ? rule.levels.map((l) => ({ ...l })) : [newLevel(1)],
+  )
   const [saving, setSaving] = useState(false)
 
   function updateLevel(index: number, patch: Partial<RuleLevel>) {
     setLevels((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)))
   }
   function addLevel() {
-    setLevels((prev) => [...prev, { ...EMPTY_LEVEL, sequence: prev.length + 1 }])
+    setLevels((prev) => [...prev, newLevel(prev.length + 1)])
   }
   function removeLevel(index: number) {
-    setLevels((prev) => prev.filter((_, i) => i !== index).map((l, i) => ({ ...l, sequence: i + 1 })))
+    setLevels((prev) => prev.filter((_, i) => i !== index).map((l, i) => ({ ...l, levelNo: i + 1 })))
   }
   function addApprover(levelIndex: number, target: ApproverTarget) {
-    setLevels((prev) => prev.map((l, i) => (i === levelIndex ? { ...l, approvers: [...l.approvers, target] } : l)))
+    setLevels((prev) =>
+      prev.map((l, i) =>
+        i === levelIndex
+          ? l.approvers.some((a) => a.kind === target.kind && a.value === target.value)
+            ? l
+            : { ...l, approvers: [...l.approvers, target] }
+          : l,
+      ),
+    )
   }
   function removeApprover(levelIndex: number, approverIndex: number) {
     setLevels((prev) =>
-      prev.map((l, i) => (i === levelIndex ? { ...l, approvers: l.approvers.filter((_, j) => j !== approverIndex) } : l)),
+      prev.map((l, i) =>
+        i === levelIndex ? { ...l, approvers: l.approvers.filter((_, j) => j !== approverIndex) } : l,
+      ),
     )
   }
 
@@ -304,19 +370,35 @@ function RuleEditorDialog({
       toast.error("Every level needs at least one approver")
       return
     }
+    const min = minAmount === "" ? null : Number(minAmount)
+    const max = maxAmount === "" ? null : Number(maxAmount)
+    if (min != null && max != null && min > max) {
+      toast.error("Min amount cannot exceed max amount")
+      return
+    }
     setSaving(true)
     try {
       const payload = {
         name: name.trim(),
-        description: description.trim() || null,
         moduleKey,
         active,
         priority: Number(priority) || 0,
-        minAmount: minAmount === "" ? null : Number(minAmount),
-        maxAmount: maxAmount === "" ? null : Number(maxAmount),
-        department: department.trim() || null,
-        escalationHours: escalationHours === "" ? null : Number(escalationHours),
-        levels: levels.map((l, i) => ({ ...l, sequence: i + 1 })),
+        conditions: {
+          entityId: entityId === "" ? null : Number(entityId),
+          department: department.trim() || null,
+          role: role.trim() || null,
+          minAmount: min,
+          maxAmount: max,
+        },
+        levels: levels.map((l, i) => ({
+          levelNo: i + 1,
+          name: l.name?.trim() || null,
+          mode: l.mode,
+          quorum: l.mode === "quorum" ? Math.max(1, l.quorum ?? 1) : null,
+          approvers: l.approvers,
+          escalateAfterHours: l.escalateAfterHours && l.escalateAfterHours > 0 ? l.escalateAfterHours : null,
+          escalateTo: l.escalateAfterHours && l.escalateAfterHours > 0 ? l.escalateTo ?? null : null,
+        })),
       }
       const res = await fetch(
         rule ? `/api/admin/approval-authority/rules/${rule.id}` : "/api/admin/approval-authority/rules",
@@ -344,8 +426,8 @@ function RuleEditorDialog({
         <DialogHeader>
           <DialogTitle>{rule ? "Edit approval rule" : "New approval rule"}</DialogTitle>
           <DialogDescription>
-            Match requests by criteria, then define one or more approval levels. Levels run in order; within a level,
-            approvers run sequentially or in parallel.
+            Match requests by criteria, then define one or more approval levels. Levels run sequentially; within a
+            level, approvers combine by the chosen mode (all / any one / quorum).
           </DialogDescription>
         </DialogHeader>
 
@@ -353,7 +435,13 @@ function RuleEditorDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-2">
               <Label htmlFor="rule-name">Rule name</Label>
-              <Input id="rule-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="e.g. High-value expenses" />
+              <Input
+                id="rule-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                placeholder="e.g. High-value expenses"
+              />
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="rule-module">Module</Label>
@@ -372,30 +460,39 @@ function RuleEditorDialog({
             </div>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="rule-desc">Description</Label>
-            <Textarea id="rule-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Optional" />
-          </div>
-
           <fieldset className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2">
             <legend className="px-1 text-sm font-medium">Match criteria</legend>
             <div className="flex flex-col gap-2">
               <Label htmlFor="rule-min">Min amount</Label>
-              <Input id="rule-min" type="number" inputMode="decimal" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} placeholder="Any" />
+              <Input
+                id="rule-min"
+                type="number"
+                inputMode="decimal"
+                value={minAmount}
+                onChange={(e) => setMinAmount(e.target.value)}
+                placeholder="Any"
+              />
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="rule-max">Max amount</Label>
-              <Input id="rule-max" type="number" inputMode="decimal" value={maxAmount} onChange={(e) => setMaxAmount(e.target.value)} placeholder="Any" />
+              <Input
+                id="rule-max"
+                type="number"
+                inputMode="decimal"
+                value={maxAmount}
+                onChange={(e) => setMaxAmount(e.target.value)}
+                placeholder="Any"
+              />
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="rule-dept">Department</Label>
               {options.departments.length > 0 ? (
-                <Select value={department || "__any"} onValueChange={(v) => setDepartment(v === "__any" ? "" : v)}>
+                <Select value={department || ANY} onValueChange={(v) => setDepartment(v === ANY ? "" : v)}>
                   <SelectTrigger id="rule-dept">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__any">Any department</SelectItem>
+                    <SelectItem value={ANY}>Any department</SelectItem>
                     {options.departments.map((d) => (
                       <SelectItem key={d} value={d}>
                         {d}
@@ -408,14 +505,58 @@ function RuleEditorDialog({
               )}
             </div>
             <div className="flex flex-col gap-2">
+              <Label htmlFor="rule-role">Requester role</Label>
+              {options.roles.length > 0 ? (
+                <Select value={role || ANY} onValueChange={(v) => setRole(v === ANY ? "" : v)}>
+                  <SelectTrigger id="rule-role">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ANY}>Any role</SelectItem>
+                    {options.roles.map((r) => (
+                      <SelectItem key={r.id} value={r.name}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input id="rule-role" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Any" />
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="rule-entity">Legal entity</Label>
+              <Select value={entityId || ANY} onValueChange={(v) => setEntityId(v === ANY ? "" : v)}>
+                <SelectTrigger id="rule-entity">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ANY}>Any entity</SelectItem>
+                  {options.entities.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>
+                      {e.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-2">
               <Label htmlFor="rule-priority">Priority</Label>
-              <Input id="rule-priority" type="number" value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
+              <Input
+                id="rule-priority"
+                type="number"
+                value={priority}
+                onChange={(e) => setPriority(Number(e.target.value))}
+              />
             </div>
           </fieldset>
 
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">Approval levels</h3>
+              <div>
+                <h3 className="text-sm font-medium">Approval levels</h3>
+                <p className="text-xs text-muted-foreground">Level 1 runs first; each level unlocks the next.</p>
+              </div>
               <Button size="sm" variant="outline" onClick={addLevel}>
                 <Plus className="size-4" />
                 Add level
@@ -423,79 +564,24 @@ function RuleEditorDialog({
             </div>
 
             {levels.map((level, li) => (
-              <div key={li} className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 text-sm font-medium">
-                    <Badge variant="secondary">Level {li + 1}</Badge>
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <Label htmlFor={`mode-${li}`} className="text-xs text-muted-foreground">
-                        {level.mode === "parallel" ? "Parallel" : "Sequential"}
-                      </Label>
-                      <Switch
-                        id={`mode-${li}`}
-                        checked={level.mode === "parallel"}
-                        onCheckedChange={(c) => updateLevel(li, { mode: c ? "parallel" : "sequential" })}
-                      />
-                    </div>
-                    {level.mode === "parallel" && (
-                      <div className="flex items-center gap-1.5">
-                        <Label htmlFor={`min-${li}`} className="text-xs text-muted-foreground">
-                          Min approvals
-                        </Label>
-                        <Input
-                          id={`min-${li}`}
-                          type="number"
-                          min={1}
-                          className="h-8 w-16"
-                          value={level.minApprovals}
-                          onChange={(e) => updateLevel(li, { minApprovals: Math.max(1, Number(e.target.value)) })}
-                        />
-                      </div>
-                    )}
-                    {levels.length > 1 && (
-                      <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => removeLevel(li)}>
-                        <Trash2 className="size-4" />
-                        <span className="sr-only">Remove level {li + 1}</span>
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-1.5">
-                  {level.approvers.length === 0 && <span className="text-xs text-muted-foreground">No approvers yet</span>}
-                  {level.approvers.map((a, ai) => (
-                    <Badge key={ai} variant="outline" className="gap-1 pr-1">
-                      {describeApprover(a, options)}
-                      <button
-                        type="button"
-                        className="ml-1 rounded-sm text-muted-foreground hover:text-destructive"
-                        onClick={() => removeApprover(li, ai)}
-                        aria-label="Remove approver"
-                      >
-                        <Trash2 className="size-3" />
-                      </button>
-                    </Badge>
-                  ))}
-                </div>
-
-                <ApproverPicker options={options} onAdd={(t) => addApprover(li, t)} />
-              </div>
+              <LevelEditor
+                key={li}
+                index={li}
+                level={level}
+                options={options}
+                canRemove={levels.length > 1}
+                onChange={(patch) => updateLevel(li, patch)}
+                onRemove={() => removeLevel(li)}
+                onAddApprover={(t) => addApprover(li, t)}
+                onRemoveApprover={(ai) => removeApprover(li, ai)}
+              />
             ))}
           </div>
 
-          <fieldset className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2">
-            <legend className="px-1 text-sm font-medium">Escalation & status</legend>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="rule-esc">Escalate after (hours)</Label>
-              <Input id="rule-esc" type="number" value={escalationHours} onChange={(e) => setEscalationHours(e.target.value)} placeholder="Never" />
-            </div>
-            <div className="flex items-center justify-between rounded-md border px-3 py-2">
-              <Label htmlFor="rule-active">Active</Label>
-              <Switch id="rule-active" checked={active} onCheckedChange={setActive} />
-            </div>
-          </fieldset>
+          <div className="flex items-center justify-between rounded-md border px-3 py-2">
+            <Label htmlFor="rule-active">Active</Label>
+            <Switch id="rule-active" checked={active} onCheckedChange={setActive} />
+          </div>
         </div>
 
         <DialogFooter>
@@ -512,43 +598,168 @@ function RuleEditorDialog({
   )
 }
 
+function LevelEditor({
+  index,
+  level,
+  options,
+  canRemove,
+  onChange,
+  onRemove,
+  onAddApprover,
+  onRemoveApprover,
+}: {
+  index: number
+  level: RuleLevel
+  options: Options
+  canRemove: boolean
+  onChange: (patch: Partial<RuleLevel>) => void
+  onRemove: () => void
+  onAddApprover: (t: ApproverTarget) => void
+  onRemoveApprover: (approverIndex: number) => void
+}) {
+  const escalationOn = (level.escalateAfterHours ?? 0) > 0
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary">Level {index + 1}</Badge>
+          <Input
+            aria-label={`Level ${index + 1} name`}
+            value={level.name ?? ""}
+            onChange={(e) => onChange({ name: e.target.value })}
+            placeholder="Level name (optional)"
+            className="h-8 w-48"
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Mode</Label>
+            <Select value={level.mode} onValueChange={(v) => onChange({ mode: v as LevelMode })}>
+              <SelectTrigger className="h-8 w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All must approve</SelectItem>
+                <SelectItem value="any">Any one approves</SelectItem>
+                <SelectItem value="quorum">Quorum</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {level.mode === "quorum" && (
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs text-muted-foreground">Required</Label>
+              <Input
+                type="number"
+                min={1}
+                className="h-8 w-16"
+                value={level.quorum ?? 1}
+                onChange={(e) => onChange({ quorum: Math.max(1, Number(e.target.value)) })}
+              />
+            </div>
+          )}
+          {canRemove && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-destructive hover:text-destructive"
+              onClick={onRemove}
+            >
+              <Trash2 className="size-4" />
+              <span className="sr-only">Remove level {index + 1}</span>
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {level.approvers.length === 0 && <span className="text-xs text-muted-foreground">No approvers yet</span>}
+        {level.approvers.map((a, ai) => (
+          <Badge key={ai} variant="outline" className="gap-1 pr-1">
+            {describeApprover(a, options)}
+            <button
+              type="button"
+              className="ml-1 rounded-sm text-muted-foreground hover:text-destructive"
+              onClick={() => onRemoveApprover(ai)}
+              aria-label="Remove approver"
+            >
+              <Trash2 className="size-3" />
+            </button>
+          </Badge>
+        ))}
+      </div>
+
+      <ApproverPicker options={options} onAdd={onAddApprover} />
+
+      <div className="flex flex-wrap items-end gap-3 border-t pt-3">
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Escalate after (hours)</Label>
+          <Input
+            type="number"
+            min={0}
+            className="h-8 w-28"
+            value={level.escalateAfterHours ?? ""}
+            onChange={(e) => {
+              const v = e.target.value === "" ? null : Math.max(0, Number(e.target.value))
+              onChange({ escalateAfterHours: v })
+            }}
+            placeholder="Never"
+          />
+        </div>
+        {escalationOn && (
+          <div className="flex flex-1 flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">Escalate to</Label>
+            <SingleApproverPicker
+              options={options}
+              value={level.escalateTo ?? null}
+              onChange={(t) => onChange({ escalateTo: t })}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* --------------------------- Approver pickers ---------------------------- */
+
+function approverChoices(kind: ApproverKind, options: Options): { v: string; label: string }[] {
+  switch (kind) {
+    case "user":
+      return options.users.map((u) => ({ v: String(u.id), label: u.name || u.email }))
+    case "role":
+      return options.roles.map((r) => ({ v: String(r.id), label: r.name }))
+    case "department":
+      return options.departments.map((d) => ({ v: d, label: d }))
+    case "dynamic":
+      return options.dynamicApprovers.map((d) => ({ v: d.value, label: d.label }))
+  }
+}
+
 function ApproverPicker({ options, onAdd }: { options: Options; onAdd: (t: ApproverTarget) => void }) {
-  const [kind, setKind] = useState<ApproverTarget["kind"]>("user")
+  const [kind, setKind] = useState<ApproverKind>("user")
   const [value, setValue] = useState("")
 
   useEffect(() => {
     setValue("")
   }, [kind])
 
+  const choices = approverChoices(kind, options)
+
   function add() {
-    if (kind === "user" && value) onAdd({ kind, userId: Number(value) })
-    else if (kind === "role" && value) onAdd({ kind, roleId: Number(value) })
-    else if (kind === "entity" && value) onAdd({ kind, entityId: Number(value) })
-    else if (kind === "department" && value) onAdd({ kind, department: value })
-    else if (kind === "dynamic" && value) onAdd({ kind, dynamic: value })
-    else {
+    if (!value) {
       toast.error("Pick an approver")
       return
     }
+    onAdd({ kind, value })
     setValue("")
   }
-
-  const choices: { v: string; label: string }[] =
-    kind === "user"
-      ? options.users.map((u) => ({ v: String(u.id), label: u.name || u.email }))
-      : kind === "role"
-        ? options.roles.map((r) => ({ v: String(r.id), label: r.name }))
-        : kind === "entity"
-          ? options.entities.map((e) => ({ v: String(e.id), label: e.name }))
-          : kind === "department"
-            ? options.departments.map((d) => ({ v: d, label: d }))
-            : options.dynamicApprovers.map((d) => ({ v: d.value, label: d.label }))
 
   return (
     <div className="flex flex-wrap items-end gap-2">
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Approver type</Label>
-        <Select value={kind} onValueChange={(v) => setKind(v as ApproverTarget["kind"])}>
+        <Select value={kind} onValueChange={(v) => setKind(v as ApproverKind)}>
           <SelectTrigger className="h-8 w-36">
             <SelectValue />
           </SelectTrigger>
@@ -556,7 +767,6 @@ function ApproverPicker({ options, onAdd }: { options: Options; onAdd: (t: Appro
             <SelectItem value="user">Specific user</SelectItem>
             <SelectItem value="role">Role</SelectItem>
             <SelectItem value="department">Department</SelectItem>
-            <SelectItem value="entity">Legal entity</SelectItem>
             <SelectItem value="dynamic">Dynamic</SelectItem>
           </SelectContent>
         </Select>
@@ -586,6 +796,53 @@ function ApproverPicker({ options, onAdd }: { options: Options; onAdd: (t: Appro
         <Plus className="size-4" />
         Add
       </Button>
+    </div>
+  )
+}
+
+function SingleApproverPicker({
+  options,
+  value,
+  onChange,
+}: {
+  options: Options
+  value: ApproverTarget | null
+  onChange: (t: ApproverTarget | null) => void
+}) {
+  const kind = value?.kind ?? "user"
+  const choices = approverChoices(kind, options)
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Select value={kind} onValueChange={(v) => onChange({ kind: v as ApproverKind, value: "" })}>
+        <SelectTrigger className="h-8 w-36">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="user">Specific user</SelectItem>
+          <SelectItem value="role">Role</SelectItem>
+          <SelectItem value="department">Department</SelectItem>
+          <SelectItem value="dynamic">Dynamic</SelectItem>
+        </SelectContent>
+      </Select>
+      <Select value={value?.value || ""} onValueChange={(v) => onChange({ kind, value: v })}>
+        <SelectTrigger className="h-8 min-w-40">
+          <SelectValue placeholder="Select…" />
+        </SelectTrigger>
+        <SelectContent>
+          {choices.length === 0 ? (
+            <SelectItem value="__none" disabled>
+              None available
+            </SelectItem>
+          ) : (
+            choices.map((c) => (
+              <SelectItem key={c.v} value={c.v}>
+                {c.label}
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
     </div>
   )
 }
@@ -694,7 +951,15 @@ function DelegationsTab() {
   )
 }
 
-function NewDelegationDialog({ options, onClose, onSaved }: { options: Options; onClose: () => void; onSaved: () => void }) {
+function NewDelegationDialog({
+  options,
+  onClose,
+  onSaved,
+}: {
+  options: Options
+  onClose: () => void
+  onSaved: () => void
+}) {
   const [fromUserId, setFromUserId] = useState("")
   const [toUserId, setToUserId] = useState("")
   const [reason, setReason] = useState("")
@@ -768,7 +1033,12 @@ function NewDelegationDialog({ options, onClose, onSaved }: { options: Options; 
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="del-reason">Reason</Label>
-            <Input id="del-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Annual leave (optional)" />
+            <Input
+              id="del-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Annual leave (optional)"
+            />
           </div>
         </div>
         <DialogFooter>
@@ -787,9 +1057,16 @@ function NewDelegationDialog({ options, onClose, onSaved }: { options: Options; 
 
 /* ----------------------------- Simulate tab ------------------------------ */
 
+type SimStep = {
+  level: number
+  levelName: string | null
+  mode: LevelMode
+  quorum: number | null
+  approvers: ApproverTarget[]
+}
 type SimResult = {
   matchedRule: { id: number; name: string } | null
-  steps: { level: number; mode: string; minApprovals: number; approvers: string[] }[]
+  steps: SimStep[]
   reason?: string
 }
 
@@ -798,6 +1075,8 @@ function SimulateTab() {
   const [moduleKey, setModuleKey] = useState("*")
   const [amount, setAmount] = useState("")
   const [department, setDepartment] = useState("")
+  const [role, setRole] = useState("")
+  const [entityId, setEntityId] = useState("")
   const [result, setResult] = useState<SimResult | null>(null)
   const [running, setRunning] = useState(false)
 
@@ -815,6 +1094,8 @@ function SimulateTab() {
           moduleKey,
           amount: amount === "" ? null : Number(amount),
           department: department.trim() || null,
+          role: role.trim() || null,
+          entityId: entityId === "" ? null : Number(entityId),
         }),
       })
       const body = await res.json().catch(() => null)
@@ -851,11 +1132,70 @@ function SimulateTab() {
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="sim-amount">Amount</Label>
-          <Input id="sim-amount" type="number" className="w-40" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+          <Input
+            id="sim-amount"
+            type="number"
+            className="w-40"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0.00"
+          />
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="sim-dept">Department</Label>
-          <Input id="sim-dept" className="w-40" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Any" />
+          {options && options.departments.length > 0 ? (
+            <Select value={department || ANY} onValueChange={(v) => setDepartment(v === ANY ? "" : v)}>
+              <SelectTrigger id="sim-dept" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY}>Any</SelectItem>
+                {options.departments.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input id="sim-dept" className="w-40" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Any" />
+          )}
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="sim-role">Role</Label>
+          {options && options.roles.length > 0 ? (
+            <Select value={role || ANY} onValueChange={(v) => setRole(v === ANY ? "" : v)}>
+              <SelectTrigger id="sim-role" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY}>Any</SelectItem>
+                {options.roles.map((r) => (
+                  <SelectItem key={r.id} value={r.name}>
+                    {r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input id="sim-role" className="w-40" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Any" />
+          )}
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="sim-entity">Entity</Label>
+          <Select value={entityId || ANY} onValueChange={(v) => setEntityId(v === ANY ? "" : v)}>
+            <SelectTrigger id="sim-entity" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY}>Any</SelectItem>
+              {options?.entities.map((e) => (
+                <SelectItem key={e.id} value={String(e.id)}>
+                  {e.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <Button onClick={run} disabled={running}>
           {running ? <Loader2 className="size-4 animate-spin" /> : <PlayCircle className="size-4" />}
@@ -876,14 +1216,15 @@ function SimulateTab() {
                   <li key={s.level} className="flex flex-col gap-1 rounded-md border bg-muted/30 p-3">
                     <div className="flex items-center gap-2 text-sm font-medium">
                       <Badge variant="secondary">Level {s.level}</Badge>
+                      {s.levelName && <span className="text-muted-foreground">{s.levelName}</span>}
                       <span className="text-muted-foreground">
-                        {s.mode === "parallel" ? `Parallel · ${s.minApprovals} of ${s.approvers.length} required` : "Sequential"}
+                        {describeMode({ mode: s.mode, quorum: s.quorum, approvers: s.approvers } as RuleLevel)}
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {s.approvers.map((a, i) => (
                         <Badge key={i} variant="outline">
-                          {a}
+                          {describeApprover(a, options)}
                         </Badge>
                       ))}
                     </div>
@@ -892,9 +1233,10 @@ function SimulateTab() {
               </ol>
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <AlertTriangle className="size-4" />
               {result.reason || "No matching rule — this request would be auto-approved or require manual routing."}
-            </p>
+            </div>
           )}
         </div>
       )}
@@ -904,18 +1246,22 @@ function SimulateTab() {
 
 /* -------------------------------- helpers -------------------------------- */
 
-function describeApprover(a: ApproverTarget, options: Options): string {
+function describeMode(level: Pick<RuleLevel, "mode" | "quorum" | "approvers">): string {
+  if (level.mode === "any") return "Any one approves"
+  if (level.mode === "quorum") return `${Math.max(1, level.quorum ?? 1)} of ${level.approvers.length} required`
+  return "All must approve"
+}
+
+function describeApprover(a: ApproverTarget, options?: Options): string {
   switch (a.kind) {
     case "user":
-      return options.users.find((u) => u.id === a.userId)?.name ?? `User #${a.userId}`
+      return options?.users.find((u) => String(u.id) === a.value)?.name ?? `User #${a.value}`
     case "role":
-      return `Role: ${options.roles.find((r) => r.id === a.roleId)?.name ?? a.roleId}`
+      return `Role: ${options?.roles.find((r) => String(r.id) === a.value)?.name ?? a.value}`
     case "department":
-      return `Dept: ${a.department}`
-    case "entity":
-      return `Entity: ${options.entities.find((e) => e.id === a.entityId)?.name ?? a.entityId}`
+      return `Dept: ${a.value}`
     case "dynamic":
-      return options.dynamicApprovers.find((d) => d.value === a.dynamic)?.label ?? String(a.dynamic)
+      return options?.dynamicApprovers.find((d) => d.value === a.value)?.label ?? a.value
     default:
       return "Unknown"
   }

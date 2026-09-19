@@ -1,6 +1,6 @@
 import Image from "next/image"
 import Link from "next/link"
-import { LoginForm, type SocialProviders } from "@/components/login-form"
+import { SignupForm } from "@/components/signup-form"
 import { getPublicSettings } from "@/lib/settings/server"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2 } from "lucide-react"
 
@@ -12,29 +12,13 @@ const modules = [
   { name: "Operations", icon: Settings2 },
 ]
 
-function enabled(v: string | undefined) {
-  if (!v) return false
-  const t = v.trim().toLowerCase()
-  return t === "enabled" || t === "true" || t === "1" || t === "yes"
-}
-
-export default async function LoginPage() {
+export default async function SignupPage() {
   const settings = await getPublicSettings()
 
   const brandName = settings["company.name"] || "Muenot"
   const logo = settings["company.login_logo"] || settings["company.logo"] || ""
   const loginBackground = settings["theme.login_background"] || ""
-  const tagline = settings["company.website"]
-    ? `${brandName} · ${settings["company.website"]}`
-    : `${brandName} brings HR, Sales, Finance, Recruitment, and Operations together, with permissions your admin controls down to the feature level.`
 
-  const social: SocialProviders = {
-    google: enabled(settings["social.google_enabled"]),
-    linkedin: enabled(settings["social.linkedin_enabled"]),
-    facebook: enabled(settings["social.facebook_enabled"]),
-  }
-
-  // Company logo can be any host, so use a plain <img>; fall back to the bundled mark.
   const BrandMark = ({ className }: { className?: string }) =>
     logo ? (
       // eslint-disable-next-line @next/next/no-img-element
@@ -60,9 +44,12 @@ export default async function LoginPage() {
 
         <div className="relative flex flex-col gap-8">
           <h1 className="max-w-md text-balance text-4xl font-semibold leading-tight tracking-tight">
-            One workspace to run every part of the business.
+            Set up your company in minutes.
           </h1>
-          <p className="max-w-md text-pretty text-sm leading-relaxed text-sidebar-foreground/70">{tagline}</p>
+          <p className="max-w-md text-pretty text-sm leading-relaxed text-sidebar-foreground/70">
+            Create your organization workspace, invite your team, and connect WhatsApp — all from one place. You become
+            the workspace owner with full administrator control.
+          </p>
 
           <div className="grid grid-cols-2 gap-3">
             {modules.map((m) => (
@@ -78,7 +65,7 @@ export default async function LoginPage() {
         </div>
 
         <p className="relative text-xs text-sidebar-foreground/50">
-          Access is granted per employee, per feature — configured by your administrator.
+          Your company data is isolated from every other organization on {brandName}.
         </p>
       </section>
 
@@ -91,23 +78,20 @@ export default async function LoginPage() {
           </div>
 
           <div className="mb-8 flex flex-col gap-1.5">
-            <h2 className="text-2xl font-semibold tracking-tight">Sign in</h2>
-            <p className="text-sm text-muted-foreground">Enter your credentials to access your workspace.</p>
-          </div>
-
-          <LoginForm social={social} signupEnabled={false} />
-
-          <div className="mt-8 flex flex-col gap-2 border-t border-border pt-6 text-center">
+            <h2 className="text-2xl font-semibold tracking-tight">Create a business account</h2>
             <p className="text-sm text-muted-foreground">
-              Setting up {brandName} for your company?{" "}
-              <Link href="/signup" className="font-medium text-primary hover:underline">
-                Create a business account
-              </Link>
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Employees: ask your administrator if you don&apos;t have a login yet.
+              Register your organization and become its administrator.
             </p>
           </div>
+
+          <SignupForm />
+
+          <p className="mt-8 text-center text-xs text-muted-foreground">
+            Looking to join an existing company?{" "}
+            <Link href="/login" className="font-medium text-primary hover:underline">
+              Sign in with your work email
+            </Link>
+          </p>
         </div>
       </section>
     </main>

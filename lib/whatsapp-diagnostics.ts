@@ -1,6 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
+import { currentTenantId, currentTenantIdOrNull } from "@/lib/tenant-scope"
 
 /**
  * WhatsApp delivery diagnostics.
@@ -23,6 +24,7 @@ export async function ensureDiagnosticsTable(): Promise<void> {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_diagnostics\` (
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED DEFAULT NULL,
       \`direction\` VARCHAR(16) NOT NULL,
       \`outcome\` VARCHAR(16) NOT NULL,
       \`context\` VARCHAR(64) NOT NULL,
@@ -35,13 +37,45 @@ export async function ensureDiagnosticsTable(): Promise<void> {
       \`message\` VARCHAR(1000) DEFAULT NULL,
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
+      KEY \`idx_marketing_whatsapp_diagnostics_tenant\` (\`tenant_id\`),
       KEY \`idx_wa_diag_outcome\` (\`outcome\`),
       KEY \`idx_wa_diag_context\` (\`context\`),
       KEY \`idx_wa_diag_campaign\` (\`campaign_id\`),
       KEY \`idx_wa_diag_created\` (\`created_at\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  // Self-heal for databases created before isolation (mirrors the SQL migration).
+  await ensureColumn("marketing_whatsapp_diagnostics", "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`")
+  await ensureIndex("marketing_whatsapp_diagnostics", "idx_marketing_whatsapp_diagnostics_tenant", "(`tenant_id`)")
   ensured = true
+}
+
+async function ensureColumn(table: string, column: string, alterFragment: string) {
+  try {
+    const rows = await query<{ c: number }[]>(
+      `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+        WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+      [table, column],
+    )
+    if ((rows[0]?.c ?? 0) > 0) return
+    await query(`ALTER TABLE \`${table}\` ${alterFragment}`)
+  } catch {
+    // Concurrent add / missing ALTER rights — safe to ignore.
+  }
+}
+
+async function ensureIndex(table: string, index: string, cols: string) {
+  try {
+    const rows = await query<{ c: number }[]>(
+      `SELECT COUNT(*) AS c FROM information_schema.STATISTICS
+        WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+      [table, index],
+    )
+    if ((rows[0]?.c ?? 0) > 0) return
+    await query(`ALTER TABLE \`${table}\` ADD KEY \`${index}\` ${cols}`)
+  } catch {
+    // Concurrent add / missing ALTER rights — safe to ignore.
+  }
 }
 
 /**
@@ -91,9 +125,10 @@ export async function logDiagnostic(entry: {
       entry.outcome === "error" ? (isRetryableErrorCode(entry.errorCode) ? 1 : 0) : null
     await query(
       `INSERT INTO \`marketing_whatsapp_diagnostics\`
-        (direction, outcome, context, phone_number, wamid, template_name, campaign_id, error_code, retryable, message)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (tenant_id, direction, outcome, context, phone_number, wamid, template_name, campaign_id, error_code, retryable, message)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        currentTenantIdOrNull(),
         entry.direction,
         entry.outcome,
         entry.context.slice(0, 64),
@@ -134,8 +169,8 @@ export async function listDiagnostics(options: {
   campaignId?: number
 } = {}): Promise<DiagnosticRow[]> {
   await ensureDiagnosticsTable()
-  const where: string[] = []
-  const params: (string | number)[] = []
+  const where: string[] = ["tenant_id = ?"]
+  const params: (string | number)[] = [currentTenantId()]
   if (options.outcome) {
     where.push("outcome = ?")
     params.push(options.outcome)
@@ -146,7 +181,7 @@ export async function listDiagnostics(options: {
   }
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
   const sql = `SELECT * FROM \`marketing_whatsapp_diagnostics\`
-    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    WHERE ${where.join(" AND ")}
     ORDER BY id DESC LIMIT ${limit}`
   return query<DiagnosticRow[]>(sql, params)
 }
@@ -159,9 +194,9 @@ export async function summarizeErrors(sinceHours = 24): Promise<
   return query(
     `SELECT error_code, retryable, COUNT(*) AS count, MAX(message) AS sample
        FROM \`marketing_whatsapp_diagnostics\`
-      WHERE outcome = 'error' AND created_at >= (NOW() - INTERVAL ? HOUR)
+      WHERE tenant_id = ? AND outcome = 'error' AND created_at >= (NOW() - INTERVAL ? HOUR)
       GROUP BY error_code, retryable
       ORDER BY count DESC`,
-    [sinceHours],
+    [currentTenantId(), sinceHours],
   )
 }

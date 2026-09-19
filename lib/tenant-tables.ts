@@ -116,6 +116,10 @@ export const TENANT_OWNED_TABLES = [
   "marketing_whatsapp_campaign_recipients",
   "marketing_whatsapp_campaign_events",
   "marketing_whatsapp_automations",
+  // Template version history — each tenant's approved/edited template revisions.
+  "marketing_whatsapp_template_versions",
+  // Delivery diagnostics / send-failure ledger — per-tenant send outcomes.
+  "marketing_whatsapp_diagnostics",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requirePlatformSuperAdmin } from "@/lib/platform-guard"
 import { cancelBackgroundJob } from "@/lib/background-jobs"
+import { backgroundJobView } from "@/lib/background-job-view"
 
 export const dynamic = "force-dynamic"
 
@@ -13,7 +14,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
   try {
     const job = await cancelBackgroundJob(jobId)
     if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 })
-    return NextResponse.json({ ok: true, job })
+    return NextResponse.json({ ok: true, job: backgroundJobView(job) })
   } catch (error) {
     console.error("[background-jobs] cancel failed", error)
     return NextResponse.json({ error: "Unable to cancel background job" }, { status: 500 })

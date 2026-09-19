@@ -43,6 +43,7 @@ export async function POST(request: Request) {
       `
       try {
         await enqueueEmailJob({
+          triggerSource: "user_request",
           payload: { to: user.email, subject: "Reset your Muenot ERP password", html, department: "hr" },
           priority: 9,
           maxAttempts: 3,

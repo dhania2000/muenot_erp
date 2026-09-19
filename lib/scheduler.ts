@@ -137,6 +137,7 @@ async function notifyFailure(job: SchedulerJob, scheduledFor: string, attempts: 
       const safeError = escapeHtml(errorMessage ?? "Unknown error")
       for (const to of job.notification_emails.split(",").map((email) => email.trim()).filter(Boolean)) {
         await enqueueEmailJob({
+          triggerSource: "scheduler",
           payload: {
             to,
             subject: `Muenot scheduled job failed: ${job.name}`,

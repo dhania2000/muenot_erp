@@ -56,6 +56,7 @@ export type BackgroundJob = {
 }
 
 export type EnqueueBackgroundJobInput = {
+  triggerSource?: "scheduler" | "user_request" | "system"
   jobType: BackgroundJobType
   payload: BackgroundJobPayload
   tenantId?: number | null
@@ -168,6 +169,14 @@ async function runEnsure() {
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id), KEY idx_background_job_event (job_id, created_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  const columns = await query<any[]>("SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='platform_background_jobs' AND column_name='trigger_source'")
+  if (!columns.length) {
+    try {
+      await query("ALTER TABLE platform_background_jobs ADD COLUMN trigger_source VARCHAR(30) NOT NULL DEFAULT 'unknown'")
+    } catch (error: any) {
+      if (error?.code !== "ER_DUP_FIELDNAME") throw error
+    }
+  }
 }
 
 export function ensureBackgroundJobSchema() {
@@ -195,9 +204,9 @@ export async function enqueueBackgroundJob(input: EnqueueBackgroundJobInput): Pr
   try {
     const result = await query<any>(
       `INSERT INTO platform_background_jobs
-       (job_type, tenant_id, payload, priority, max_attempts, backoff_seconds, timeout_seconds, concurrency_key, concurrency_limit, idempotency_key, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [input.jobType, tenantId, JSON.stringify(payload), priority, maxAttempts, backoffSeconds, timeoutSeconds, concurrencyKey || null, concurrencyLimit, idempotencyKey, input.createdBy ?? null],
+       (job_type, tenant_id, payload, priority, max_attempts, backoff_seconds, timeout_seconds, concurrency_key, concurrency_limit, idempotency_key, created_by, trigger_source)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [input.jobType, tenantId, JSON.stringify(payload), priority, maxAttempts, backoffSeconds, timeoutSeconds, concurrencyKey || null, concurrencyLimit, idempotencyKey, input.createdBy ?? null, input.triggerSource ?? "system"],
     )
     const job = await getBackgroundJob(Number(result.insertId))
     if (!job) throw new Error("Queued job could not be read")

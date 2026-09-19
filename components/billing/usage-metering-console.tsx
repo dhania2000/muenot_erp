@@ -152,8 +152,10 @@ export function UsageMeteringConsole() {
 
   if (error) {
     return (
-      <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-6 text-sm text-destructive">
-        Failed to load usage data. Please try again.
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-6 text-sm text-destructive">
+          Failed to load usage data. Please try again.
+        </div>
       </div>
     )
   }
@@ -161,7 +163,7 @@ export function UsageMeteringConsole() {
   const summary = data?.summary
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Usage Metering</h1>

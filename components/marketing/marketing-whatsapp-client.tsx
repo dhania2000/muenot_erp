@@ -34,6 +34,7 @@ import { AutomationsTab } from "@/components/marketing/whatsapp/automations-tab"
 import { AnalyticsTab } from "@/components/marketing/whatsapp/analytics-tab"
 import { SettingsTab } from "@/components/marketing/whatsapp/settings-tab"
 import { IntegrateManuallyDialog } from "@/components/marketing/whatsapp/integrate-dialog"
+import { EmbeddedSignupConnect } from "@/components/marketing/whatsapp/embedded-signup-connect"
 import type { StatusResponse } from "@/components/marketing/whatsapp/types"
 
 /**
@@ -159,12 +160,13 @@ function NotConnected({ onConnected }: { onConnected: () => void }) {
           <div className="space-y-1.5">
             <h2 className="text-lg font-semibold tracking-tight">Connect your WhatsApp Business number</h2>
             <p className="mx-auto max-w-md text-sm text-muted-foreground text-pretty">
-              Connect your WhatsApp Cloud API credentials to bring your number into the ERP shared inbox. Paste your
-              WABA ID, Phone Number ID and permanent access token to get started.
+              Connect in one step with Meta — sign in, pick your WhatsApp Business number and we handle the rest
+              (webhook subscription and template sync). Prefer to paste Cloud API credentials? You can do that too.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <IntegrateManuallyDialog onConnected={onConnected} />
+            <EmbeddedSignupConnect onConnected={onConnected} />
+            <IntegrateManuallyDialog onConnected={onConnected} variant="outline" label="Connect with credentials" />
             <a
               href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
               target="_blank"

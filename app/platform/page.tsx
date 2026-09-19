@@ -200,6 +200,9 @@ export default async function PlatformOverviewPage() {
             <Link href="/platform/cron-jobs" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
               Manage scheduled jobs <ArrowUpRight className="size-3.5" />
             </Link>
+            <Link href="/platform/scheduler" className="ml-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+              View central scheduler <ArrowUpRight className="size-3.5" />
+            </Link>
           </CardContent>
         </Card>
       </section>

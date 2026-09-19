@@ -183,8 +183,8 @@ export async function routeConversation(input: {
     note: `Auto-routed to ${dept.name} (${dept.routing_method})`,
   })
   await query(
-    "INSERT INTO `marketing_whatsapp_agent_settings` (user_id, last_assigned_at) VALUES (?, NOW()) ON DUPLICATE KEY UPDATE last_assigned_at = NOW()",
-    [chosen.user_id],
+    "INSERT INTO `marketing_whatsapp_agent_settings` (user_id, tenant_id, last_assigned_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE last_assigned_at = NOW(), tenant_id = VALUES(tenant_id)",
+    [chosen.user_id, tenantId],
   )
 
   return { departmentId: dept.id, departmentName: dept.name, agentId: chosen.user_id }
@@ -193,12 +193,15 @@ export async function routeConversation(input: {
 /** Moves a conversation to a different department, recording an audit transfer. */
 export async function setConversationDepartment(conversationId: number, departmentId: number | null): Promise<void> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
   if (departmentId !== null) {
+    // getDepartment is tenant-scoped, so this rejects cross-tenant department ids.
     const dept = await getDepartment(departmentId)
     if (!dept) throw new Error("Department not found")
   }
-  await query("UPDATE `marketing_whatsapp_conversations` SET department_id = ? WHERE id = ?", [
+  await query("UPDATE `marketing_whatsapp_conversations` SET department_id = ? WHERE id = ? AND tenant_id = ?", [
     departmentId,
     conversationId,
+    tenantId,
   ])
 }

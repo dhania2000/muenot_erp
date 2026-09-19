@@ -1,5 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { currentTenantId } from "@/lib/tenant-scope"
 import { assignConversation } from "@/lib/whatsapp-store"
 import { ensureWhatsAppPlatformTables, getDepartment, type DepartmentRow } from "@/lib/whatsapp-platform"
 import { DEFAULT_WORKING_HOURS } from "@/lib/whatsapp-config"
@@ -65,7 +66,8 @@ export function isWithinWorkingHours(
 async function pickDepartment(messageText: string, currentDepartmentId: number | null): Promise<DepartmentRow | null> {
   await ensureWhatsAppPlatformTables()
   const departments = await query<DepartmentRow[]>(
-    "SELECT * FROM `marketing_whatsapp_departments` WHERE is_active = 1 ORDER BY sort_order ASC, id ASC",
+    "SELECT * FROM `marketing_whatsapp_departments` WHERE tenant_id = ? AND is_active = 1 ORDER BY sort_order ASC, id ASC",
+    [currentTenantId()],
   )
   if (!departments.length) return null
 
@@ -91,17 +93,18 @@ type RoutableAgent = { user_id: number; open_count: number; last_assigned_at: st
 
 /** Available agents in a department (is_active membership + is_available flag). */
 async function departmentRoutableAgents(departmentId: number): Promise<RoutableAgent[]> {
+  const tenantId = currentTenantId()
   return query<RoutableAgent[]>(
     `SELECT da.user_id,
             COALESCE(s.last_assigned_at, NULL) AS last_assigned_at,
             (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c
-              WHERE c.assigned_agent_id = da.user_id AND c.status <> 'closed') AS open_count
+              WHERE c.assigned_agent_id = da.user_id AND c.status <> 'closed' AND c.tenant_id = ?) AS open_count
        FROM \`marketing_whatsapp_department_agents\` da
-       LEFT JOIN \`marketing_whatsapp_agent_settings\` s ON s.user_id = da.user_id
-      WHERE da.department_id = ? AND da.is_active = 1
+       LEFT JOIN \`marketing_whatsapp_agent_settings\` s ON s.user_id = da.user_id AND s.tenant_id = da.tenant_id
+      WHERE da.department_id = ? AND da.is_active = 1 AND da.tenant_id = ?
         AND COALESCE(s.is_available, 1) = 1
         AND COALESCE(s.can_send, 1) = 1`,
-    [departmentId],
+    [tenantId, departmentId, tenantId],
   )
 }
 
@@ -135,10 +138,11 @@ export async function routeConversation(input: {
   messageText: string
 }): Promise<RoutingResult> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
 
   const rows = await query<{ assigned_agent_id: number | null; department_id: number | null; status: string }[]>(
-    "SELECT assigned_agent_id, department_id, status FROM `marketing_whatsapp_conversations` WHERE id = ? LIMIT 1",
-    [input.conversationId],
+    "SELECT assigned_agent_id, department_id, status FROM `marketing_whatsapp_conversations` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    [input.conversationId, tenantId],
   )
   const convo = rows[0]
   if (!convo) return { departmentId: null, departmentName: null, agentId: null }
@@ -148,9 +152,10 @@ export async function routeConversation(input: {
 
   // Stamp the department if it changed.
   if (convo.department_id !== dept.id) {
-    await query("UPDATE `marketing_whatsapp_conversations` SET department_id = ? WHERE id = ?", [
+    await query("UPDATE `marketing_whatsapp_conversations` SET department_id = ? WHERE id = ? AND tenant_id = ?", [
       dept.id,
       input.conversationId,
+      tenantId,
     ])
   }
 

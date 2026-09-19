@@ -84,6 +84,11 @@ UPDATE `marketing_whatsapp_conversations` SET `tenant_id` = @default_tenant WHER
 UPDATE `marketing_whatsapp_conversations` SET `integration_id` = @legacy_integration WHERE `integration_id` IS NULL AND @legacy_integration IS NOT NULL;
 ALTER TABLE `marketing_whatsapp_conversations`
   ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_conversations_tenant` (`tenant_id`);
+-- A foreign key on `contact_id` is backed by the old unique index, so MariaDB
+-- refuses to drop it (#1553). Add a standalone index on `contact_id` FIRST so
+-- the FK has another index to lean on, THEN the old unique key is free to drop.
+ALTER TABLE `marketing_whatsapp_conversations`
+  ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_conversations_contact` (`contact_id`);
 ALTER TABLE `marketing_whatsapp_conversations` DROP INDEX IF EXISTS `uniq_wa_convo_contact_number`;
 ALTER TABLE `marketing_whatsapp_conversations`
   ADD UNIQUE KEY IF NOT EXISTS `uniq_wa_convo_tenant_contact_number` (`tenant_id`, `contact_id`, `phone_number_id`);

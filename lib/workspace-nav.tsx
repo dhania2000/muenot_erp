@@ -18,7 +18,9 @@ import {
   LayoutDashboard,
   CreditCard,
   HardDrive,
+  ClipboardList,
 } from "lucide-react"
+import { MANAGEMENT_ENTITIES } from "@/lib/management-entities"
 
 function settingEnabled(v: string | undefined, fallback = true) {
   if (v == null) return fallback
@@ -469,6 +471,21 @@ export async function buildWorkspaceNav(
     const messagesIndex = navItems.findIndex((i) => i.href === "/modules/messages")
     if (messagesIndex >= 0) navItems.splice(messagesIndex + 1, 0, whatsappItem)
     else navItems.push(whatsappItem)
+  }
+
+  // Inject the Management module (GLPI-style master data — not stored in the
+  // modules table). Groups the 13 management entities under one expandable
+  // sidebar entry, each routing to /modules/management/<entity>.
+  if (!navItems.some((i) => i.href === "/modules/management")) {
+    navItems.push({
+      label: "Management",
+      href: "/modules/management",
+      icon: <ClipboardList className="size-4" />,
+      children: MANAGEMENT_ENTITIES.map((e) => ({
+        label: e.label,
+        href: `/modules/management/${e.key}`,
+      })),
+    })
   }
 
   // Inject the Marketing module (not stored in the modules table).

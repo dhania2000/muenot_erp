@@ -1,5 +1,6 @@
 import type { PoolConnection } from "mysql2/promise"
 import { pool, query } from "@/lib/db"
+import { claimOperation, ensureIdempotencySchema, finishOperation } from "@/lib/job-idempotency"
 import { nextRecordId } from "@/lib/record-ids"
 import { financialYearFor } from "@/lib/finance-calc"
 import {
@@ -242,6 +243,10 @@ async function currentSignedBalance(
 }
 
 type PostArgs = {
+  /** Stable source-row/period identity shared by manual and scheduled callers. */
+  idempotencyKey?: string
+  /** Business state transition in the SAME transaction as journal and receipt. */
+  afterPosting?: (connection: PoolConnection, result: PostingResult) => Promise<void>
   entityType: string
   entityId: number
   entityRef: string
@@ -307,11 +312,19 @@ export async function postLines(lines: PostingLine[], args: PostArgs): Promise<P
   // duplicate guard) before we open the transaction; an ALTER cannot run inside
   // one.
   await ensureGeneralLedgerColumns()
+  if (args.idempotencyKey) await ensureIdempotencySchema()
 
   const voucherNo = await nextRecordId("VCH")
   const conn = await pool.getConnection()
   try {
     await conn.beginTransaction()
+    const receipt = args.idempotencyKey
+      ? await claimOperation<PostingResult>(conn, args.idempotencyKey, { lines: oriented, entityType: args.entityType, entityId: args.entityId, date: args.date, reverse: Boolean(args.reverse) })
+      : null
+    if (receipt?.replay) {
+      await conn.commit()
+      return receipt.result
+    }
     const journalEntryIds: string[] = []
     const ledgerIds: string[] = []
 
@@ -370,8 +383,11 @@ export async function postLines(lines: PostingLine[], args: PostArgs): Promise<P
       ledgerIds.push(ledgerId)
     }
 
+    const result = { voucherNo, journalEntryIds, ledgerIds, totalDebit: debit, totalCredit: credit }
+    if (args.afterPosting) await args.afterPosting(conn, result)
+    if (receipt) await finishOperation(conn, receipt.key, result)
     await conn.commit()
-    return { voucherNo, journalEntryIds, ledgerIds, totalDebit: debit, totalCredit: credit }
+    return result
   } catch (error) {
     await conn.rollback()
     throw error

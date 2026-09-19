@@ -7,7 +7,7 @@ import "server-only"
  * schedule and operational policy; it never stores shell commands or arbitrary
  * URLs. The dispatcher can therefore invoke only endpoints declared here.
  */
-import { query } from "@/lib/db"
+import { query, withTransaction } from "@/lib/db"
 
 export type CronJobDefinition = {
   key: string
@@ -267,15 +267,19 @@ export function isCronConfigDue(job: CronJobConfig, now = new Date()): boolean {
 export async function claimCronRun(job: CronJobConfig, now = new Date()): Promise<{ id: number; scheduledFor: string } | null> {
   await ensureCronJobSchema()
   const scheduledFor = slotDate(now)
-  const running = await query<{ n: number }[]>("SELECT COUNT(*) AS n FROM platform_cron_runs WHERE job_key=? AND status='running'", [job.key])
-  if (Number(running[0]?.n ?? 0) >= job.concurrency_limit) return null
-  try {
-    const result = await query<any>("INSERT INTO platform_cron_runs (job_key, scheduled_for, status, attempt, started_at, trigger_source) VALUES (?,?,?,?,?,?)", [job.key, scheduledFor, "running", 1, now, "scheduler"])
-    return { id: Number(result.insertId), scheduledFor }
-  } catch (error: any) {
-    if (error?.code === "ER_DUP_ENTRY") return null
-    throw error
-  }
+  return withTransaction(async connection => {
+    // Serialize admission for this job across scheduler instances.
+    await connection.query("SELECT job_key FROM platform_cron_jobs WHERE job_key=? FOR UPDATE", [job.key])
+    const [running] = await connection.query<any[]>("SELECT id FROM platform_cron_runs WHERE job_key=? AND status='running' FOR UPDATE", [job.key])
+    if (running.length >= job.concurrency_limit) return null
+    try {
+      const [result] = await connection.query<any>("INSERT INTO platform_cron_runs (job_key, scheduled_for, status, attempt, started_at, trigger_source) VALUES (?,?,?,?,?,?)", [job.key, scheduledFor, "running", 1, now, "scheduler"])
+      return { id: Number(result.insertId), scheduledFor }
+    } catch (error: any) {
+      if (error?.code === "ER_DUP_ENTRY") return null
+      throw error
+    }
+  })
 }
 
 export async function finishCronRun(id: number, status: CronRun["status"], startedAt: number, errorMessage: string | null) {

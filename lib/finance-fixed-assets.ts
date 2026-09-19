@@ -343,6 +343,20 @@ export async function depreciateAsset(
   try {
     const result = await postLines(lines, {
       entityType: "fixed_asset_depreciation",
+      idempotencyKey: `asset-depreciation:${row.id}:${period}`,
+      afterPosting: async (connection, posting) => {
+        await connection.query(
+          `INSERT INTO fixed_asset_depreciation
+           (asset_id, period, depreciation_date, amount, method, opening_nbv, closing_nbv, voucher_no, financial_year, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          [assetId, period, depDate, amount, row.depreciation_method || "Straight Line", openingNbv, closingNbv, posting.voucherNo, financialYearFor(depDate), opts.createdBy ?? null],
+        )
+        await connection.query(
+          `UPDATE fixed_assets SET accumulated_depreciation=accumulated_depreciation+?,
+           net_book_value=(CASE WHEN capitalised_cost>0 THEN capitalised_cost ELSE cost END)-accumulated_depreciation,
+           last_depreciation_date=? WHERE id=?`, [amount, depDate, row.id],
+        )
+      },
       entityId: Number(row.id),
       entityRef: assetId,
       date: depDate,
@@ -353,20 +367,6 @@ export async function depreciateAsset(
       sourceModule: "Fixed Assets",
       createdBy: opts.createdBy ?? null,
     })
-    await query(
-      `INSERT INTO fixed_asset_depreciation
-         (asset_id, period, depreciation_date, amount, method, opening_nbv, closing_nbv, voucher_no, financial_year, created_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [assetId, period, depDate, amount, row.depreciation_method || "Straight Line", openingNbv, closingNbv, result.voucherNo, financialYearFor(depDate), opts.createdBy ?? null],
-    )
-    await query(
-      `UPDATE fixed_assets
-          SET accumulated_depreciation = accumulated_depreciation + ?,
-              net_book_value = (CASE WHEN capitalised_cost > 0 THEN capitalised_cost ELSE cost END) - (accumulated_depreciation + ?),
-              last_depreciation_date = ?
-        WHERE id = ?`,
-      [amount, amount, depDate, row.id],
-    )
     return { ok: true, amount, voucherNo: result.voucherNo }
   } catch (error) {
     return { ok: false, error: (error as Error).message }

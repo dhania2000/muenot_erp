@@ -2,6 +2,7 @@ import "server-only"
 
 import crypto from "crypto"
 import { query, withTransaction } from "@/lib/db"
+import { fingerprint } from "@/lib/job-idempotency"
 
 /**
  * SPEC 42 — Durable background queue.
@@ -198,7 +199,8 @@ export async function enqueueBackgroundJob(input: EnqueueBackgroundJobInput): Pr
   const timeoutSeconds = bounded(input.timeoutSeconds, 300, 5, 900)
   const concurrencyLimit = bounded(input.concurrencyLimit, 1, 1, 20)
   const concurrencyKey = input.concurrencyKey == null ? input.jobType : String(input.concurrencyKey).trim().slice(0, 160)
-  const idempotencyKey = (input.idempotencyKey || crypto.randomUUID()).trim().slice(0, 160)
+  const rawKey = (input.idempotencyKey ?? crypto.randomUUID()).trim()
+  const idempotencyKey = rawKey.length > 160 ? fingerprint(rawKey) : rawKey
   if (!idempotencyKey) throw new Error("An idempotency key is required")
   await ensureBackgroundJobSchema()
   try {
@@ -217,6 +219,7 @@ export async function enqueueBackgroundJob(input: EnqueueBackgroundJobInput): Pr
     const rows = await query<any[]>("SELECT * FROM platform_background_jobs WHERE job_type=? AND tenant_id=? AND idempotency_key=? LIMIT 1", [input.jobType, tenantId, idempotencyKey])
     const existing = rows[0] ? mapJob(rows[0]) : null
     if (!existing) throw error
+    if (fingerprint(existing.payload) !== fingerprint(payload)) throw new Error("Idempotency key reused with different job payload")
     return existing
   }
 }
@@ -274,7 +277,7 @@ export function retryDelaySeconds(attempt: number, baseSeconds: number): number 
 
 async function recoverExpiredJobs(): Promise<number> {
   const rows = await query<any[]>("SELECT * FROM platform_background_jobs WHERE status='running' AND locked_at < DATE_SUB(NOW(), INTERVAL timeout_seconds SECOND) LIMIT 100")
-  for (const row of rows) await failBackgroundJob(mapJob(row), "Job execution timed out")
+  for (const row of rows) await failBackgroundJob(mapJob(row), "Job execution timed out; delivery outcome unknown", true)
   return rows.length
 }
 
@@ -287,18 +290,19 @@ async function claimQueuedJobs(limit: number, workerId: string): Promise<Backgro
     const claimed: BackgroundJob[] = []
     for (const row of candidateRows) {
       const job = mapJob(row)
+      const executionId = crypto.randomUUID()
       if (job.concurrency_key) {
         const [countRows] = await connection.query<any[]>("SELECT COUNT(*) AS count FROM platform_background_jobs WHERE concurrency_key=? AND status='running'", [job.concurrency_key])
         if (Number(countRows[0]?.count ?? 0) >= job.concurrency_limit) continue
       }
-      const [result] = await connection.query<any>("UPDATE platform_background_jobs SET status='running', attempts=attempts+1, locked_at=NOW(), worker_id=?, started_at=COALESCE(started_at, NOW()) WHERE id=? AND status='queued'", [workerId, job.id])
+      const [result] = await connection.query<any>("UPDATE platform_background_jobs SET status='running', attempts=attempts+1, locked_at=NOW(), worker_id=?, started_at=COALESCE(started_at, NOW()) WHERE id=? AND status='queued'", [executionId, job.id])
       if (Number(result.affectedRows) !== 1) continue
       job.status = "running"
       job.attempts += 1
       job.locked_at = new Date().toISOString()
-      job.worker_id = workerId
+      job.worker_id = executionId
       claimed.push(job)
-      await connection.query("INSERT INTO platform_background_job_events (job_id, event_type, detail) VALUES (?,?,?)", [job.id, "running", JSON.stringify({ workerId, attempt: job.attempts })])
+      await connection.query("INSERT INTO platform_background_job_events (job_id, event_type, detail) VALUES (?,?,?)", [job.id, "running", JSON.stringify({ workerId, executionId, attempt: job.attempts })])
     }
     return claimed
   })
@@ -317,35 +321,43 @@ const JOB_HANDLERS: Record<BackgroundJobType, JobHandler> = {
   },
 }
 
-async function completeBackgroundJob(job: BackgroundJob, result: Record<string, unknown> | void) {
-  const latest = await getBackgroundJob(job.id)
-  const cancelled = latest?.cancel_requested === true
-  const status: BackgroundJobStatus = cancelled ? "cancelled" : "completed"
-  await query("UPDATE platform_background_jobs SET status=?, completed_at=NOW(), locked_at=NULL, result=?, error_message=NULL WHERE id=? AND status='running'", [status, JSON.stringify(result ?? {}), job.id])
-  await appendEvent(job.id, status, result ?? {})
-  return status
+/** Row lock + attempt identity prevent stale workers from finishing another attempt. */
+export function ownsJobAttempt(job: BackgroundJob, latest: BackgroundJob): boolean {
+  return latest.status === "running" && latest.worker_id === job.worker_id && latest.attempts === job.attempts
 }
 
-async function failBackgroundJob(job: BackgroundJob, errorMessage: string) {
-  const latest = await getBackgroundJob(job.id)
-  if (!latest || latest.status !== "running") return latest?.status ?? "failed"
-  if (latest.cancel_requested) {
-    await query("UPDATE platform_background_jobs SET status='cancelled', completed_at=NOW(), locked_at=NULL, error_message=? WHERE id=?", [errorMessage.slice(0, 4000), job.id])
-    await appendEvent(job.id, "cancelled", { error: errorMessage.slice(0, 500) })
-    return "cancelled"
-  }
-  if (latest.attempts >= latest.max_attempts) {
-    await query("UPDATE platform_background_jobs SET status='dead_letter', completed_at=NOW(), locked_at=NULL, error_message=? WHERE id=?", [errorMessage.slice(0, 4000), job.id])
-    await appendEvent(job.id, "dead_letter", { error: errorMessage.slice(0, 500), attempts: latest.attempts })
-    return "dead_letter"
-  }
-  const delay = retryDelaySeconds(latest.attempts, latest.backoff_seconds)
-  await query("UPDATE platform_background_jobs SET status='queued', available_at=DATE_ADD(NOW(), INTERVAL ? SECOND), locked_at=NULL, worker_id=NULL, error_message=? WHERE id=?", [delay, errorMessage.slice(0, 4000), job.id])
-  await appendEvent(job.id, "retry_scheduled", { error: errorMessage.slice(0, 500), delaySeconds: delay, nextAttempt: latest.attempts + 1 })
-  return "queued"
+async function settleBackgroundJob(job: BackgroundJob, result: Record<string, unknown> | void, errorMessage: string | null, uncertain = false): Promise<BackgroundJobStatus> {
+  return withTransaction(async connection => {
+    const [rows] = await connection.query<any[]>("SELECT * FROM platform_background_jobs WHERE id=? FOR UPDATE", [job.id])
+    if (!rows[0]) return "failed"
+    const latest = mapJob(rows[0])
+    if (!ownsJobAttempt(job, latest)) return latest.status
+    const status: BackgroundJobStatus = latest.cancel_requested ? "cancelled"
+      : !errorMessage ? "completed"
+      : uncertain || latest.attempts >= latest.max_attempts ? "dead_letter" : "queued"
+    const delay = retryDelaySeconds(latest.attempts, latest.backoff_seconds)
+    await connection.query(
+      `UPDATE platform_background_jobs SET status=?, result=?, error_message=?, locked_at=NULL,
+       worker_id=NULL, completed_at=IF(?='queued',NULL,NOW()),
+       available_at=IF(?='queued',DATE_ADD(NOW(),INTERVAL ? SECOND),available_at) WHERE id=?`,
+      [status, JSON.stringify(result ?? {}), errorMessage?.slice(0, 4000) ?? null, status, status, delay, job.id],
+    )
+    await connection.query("INSERT INTO platform_background_job_events (job_id, event_type, detail) VALUES (?,?,?)",
+      [job.id, status === "queued" ? "retry_scheduled" : status, JSON.stringify({ attempt: job.attempts, executionId: job.worker_id, uncertain, delaySeconds: status === "queued" ? delay : null })])
+    return status
+  })
+}
+async function completeBackgroundJob(job: BackgroundJob, result: Record<string, unknown> | void) {
+  return settleBackgroundJob(job, result, null)
+}
+async function failBackgroundJob(job: BackgroundJob, errorMessage: string, uncertain = false) {
+  return settleBackgroundJob(job, undefined, errorMessage, uncertain)
 }
 
 async function executeBackgroundJob(job: BackgroundJob): Promise<BackgroundJobStatus> {
+  const latest = await getBackgroundJob(job.id)
+  if (!latest || !ownsJobAttempt(job, latest)) return latest?.status ?? "failed"
+  if (latest.cancel_requested) return completeBackgroundJob(job, undefined)
   const controller = new AbortController()
   const handler = JOB_HANDLERS[job.job_type]
   const work = handler(job.payload, { signal: controller.signal, job })
@@ -364,7 +376,7 @@ async function executeBackgroundJob(job: BackgroundJob): Promise<BackgroundJobSt
     ])
     return completeBackgroundJob(job, result)
   } catch (error) {
-    return failBackgroundJob(job, error instanceof Error ? error.message : "Unknown background job failure")
+    return failBackgroundJob(job, error instanceof Error ? error.message : "Unknown background job failure", controller.signal.aborted)
   } finally {
     if (timer) clearTimeout(timer)
   }
@@ -384,7 +396,8 @@ async function runWithConcurrency<T>(items: T[], limit: number, action: (item: T
 export async function runBackgroundQueueWorker(input: { limit?: number; workerId?: string } = {}) {
   await ensureBackgroundJobSchema()
   const recovered = await recoverExpiredJobs()
-  const limit = bounded(input.limit, 10, 1, 50)
+  // Do not acquire leases for jobs waiting behind this worker's local slots.
+  const limit = bounded(input.limit, 5, 1, 5)
   const workerId = (input.workerId || `scheduler-${process.pid}-${crypto.randomUUID().slice(0, 8)}`).slice(0, 120)
   const jobs = await claimQueuedJobs(limit, workerId)
   const outcomes: Record<BackgroundJobStatus, number> = { queued: 0, running: 0, completed: 0, failed: 0, dead_letter: 0, cancelled: 0 }

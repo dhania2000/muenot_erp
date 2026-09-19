@@ -230,6 +230,10 @@ export async function postDueProvisionEntries(opts: { asOf?: string; provisionId
     }
     try {
       const result = await postLines(periodicLines(inst, amount), {
+        idempotencyKey: `provision-period:${inst.id}`,
+        afterPosting: async (connection, posting) => {
+          await connection.query("UPDATE provisions_accruals_schedule SET posting_status='Posted', voucher_no=?, posted_at=NOW() WHERE id=?", [posting.voucherNo, inst.id])
+        },
         entityType: "provision_accrual_period",
         entityId: Number(inst.id),
         entityRef: `${inst.provision_id}-P${inst.installment_no}`,
@@ -241,10 +245,6 @@ export async function postDueProvisionEntries(opts: { asOf?: string; provisionId
         sourceModule: "Provisions & Accruals",
         createdBy: opts.createdBy ?? null,
       })
-      await query(
-        `UPDATE provisions_accruals_schedule SET posting_status = 'Posted', voucher_no = ?, posted_at = NOW() WHERE id = ?`,
-        [result.voucherNo, inst.id],
-      )
       posted++
     } catch (error) {
       console.log("[v0] provision periodic posting failed for", inst.provision_id, inst.installment_no, (error as Error)?.message)

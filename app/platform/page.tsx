@@ -186,6 +186,23 @@ export default async function PlatformOverviewPage() {
           </CardContent>
         </Card>
       </section>
+
+      <section>
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="size-4 text-muted-foreground" />
+              Scheduled jobs
+            </CardTitle>
+            <CardDescription>Configure safe schedules, retries, timeouts and failure notifications.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/platform/cron-jobs" className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+              Manage scheduled jobs <ArrowUpRight className="size-3.5" />
+            </Link>
+          </CardContent>
+        </Card>
+      </section>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
-import { currentTenantId } from "@/lib/tenant-scope"
+import { currentTenantId, currentTenantIdOrNull } from "@/lib/tenant-scope"
 import type { WhatsAppPriority, WhatsAppStatus, WhatsAppTeam } from "@/lib/whatsapp-shared"
 
 /**
@@ -570,17 +570,20 @@ export async function updateMessageStatusByWamid(input: {
   const column =
     input.status === "delivered" ? "delivered_at" : input.status === "read" ? "read_at" : input.status === "sent" ? "sent_at" : null
 
+  // Scope the update to the acting tenant so a status webhook can only ever
+  // touch THIS tenant's message with that wamid, never another tenant's.
+  const tenantId = currentTenantId()
   const setTimestamp = column ? `, \`${column}\` = COALESCE(\`${column}\`, ?)` : ""
   const params: (string | number | null)[] = [input.status, rank]
   if (column) params.push(tsSql)
-  params.push(input.errorCode ?? null, input.errorMessage ?? null, input.wamid, rank)
+  params.push(input.errorCode ?? null, input.errorMessage ?? null, tenantId, input.wamid, rank)
 
   const result = await query<{ affectedRows: number }>(
     `UPDATE \`marketing_whatsapp_messages\`
        SET status = ?, status_rank = ?${setTimestamp},
            error_code = COALESCE(?, error_code),
            error_message = COALESCE(?, error_message)
-     WHERE wamid = ? AND status_rank <= ?`,
+     WHERE tenant_id = ? AND wamid = ? AND status_rank <= ?`,
     params,
   )
   return result.affectedRows > 0
@@ -684,8 +687,10 @@ export async function listConversations(
   scope?: InboxScope,
 ): Promise<ConversationListItem[]> {
   await ensureWhatsAppMessagingTables()
-  const where: string[] = []
-  const params: (string | number)[] = []
+  // Every conversation query is scoped to the acting tenant first; RBAC and
+  // the caller's filters narrow within that tenant, never across tenants.
+  const where: string[] = ["c.tenant_id = ?"]
+  const params: (string | number)[] = [currentTenantId()]
 
   // RBAC: non-privileged agents only see unassigned conversations or ones
   // assigned to them, so they can never open another agent's private threads.
@@ -741,7 +746,10 @@ export async function listConversations(
 
 export async function getConversation(id: number): Promise<ConversationListItem | null> {
   await ensureWhatsAppMessagingTables()
-  const list = await query<ConversationJoinRow[]>(`${CONVERSATION_SELECT} WHERE c.id = ? LIMIT 1`, [id])
+  const list = await query<ConversationJoinRow[]>(
+    `${CONVERSATION_SELECT} WHERE c.id = ? AND c.tenant_id = ? LIMIT 1`,
+    [id, currentTenantId()],
+  )
   const r = list[0]
   return r ? mapConversationRow(r) : null
 }
@@ -788,51 +796,61 @@ export async function assignConversation(input: {
   note?: string | null
 }): Promise<void> {
   await ensureWhatsAppMessagingTables()
+  const tenantId = currentTenantId()
   const prev = await query<{ assigned_agent_id: number | null; assigned_team: string | null }[]>(
-    "SELECT assigned_agent_id, assigned_team FROM `marketing_whatsapp_conversations` WHERE id = ? LIMIT 1",
-    [input.conversationId],
+    "SELECT assigned_agent_id, assigned_team FROM `marketing_whatsapp_conversations` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    [input.conversationId, tenantId],
   )
   const hadAssignment = Boolean(prev[0]?.assigned_agent_id || prev[0]?.assigned_team)
   const hasAssignment = Boolean(input.agentId || input.team)
   const action = !hasAssignment ? "unassign" : hadAssignment ? "reassign" : "assign"
 
   await query(
-    "UPDATE `marketing_whatsapp_conversations` SET assigned_agent_id = ?, assigned_team = ? WHERE id = ?",
-    [input.agentId, input.team, input.conversationId],
+    "UPDATE `marketing_whatsapp_conversations` SET assigned_agent_id = ?, assigned_team = ? WHERE id = ? AND tenant_id = ?",
+    [input.agentId, input.team, input.conversationId, tenantId],
   )
   await query(
     `INSERT INTO \`marketing_whatsapp_assignments\`
-       (conversation_id, action, assigned_agent_id, assigned_team, assigned_by, note)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [input.conversationId, action, input.agentId, input.team, input.byUserId, input.note ?? null],
+       (tenant_id, conversation_id, action, assigned_agent_id, assigned_team, assigned_by, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [tenantId, input.conversationId, action, input.agentId, input.team, input.byUserId, input.note ?? null],
   )
 }
 
 export async function setConversationStatus(conversationId: number, status: WhatsAppStatus): Promise<void> {
   await ensureWhatsAppMessagingTables()
-  await query("UPDATE `marketing_whatsapp_conversations` SET status = ? WHERE id = ?", [status, conversationId])
+  await query("UPDATE `marketing_whatsapp_conversations` SET status = ? WHERE id = ? AND tenant_id = ?", [
+    status,
+    conversationId,
+    currentTenantId(),
+  ])
 }
 
 export async function setConversationPriority(conversationId: number, priority: WhatsAppPriority): Promise<void> {
   await ensureWhatsAppMessagingTables()
-  await query("UPDATE `marketing_whatsapp_conversations` SET priority = ? WHERE id = ?", [priority, conversationId])
+  await query("UPDATE `marketing_whatsapp_conversations` SET priority = ? WHERE id = ? AND tenant_id = ?", [
+    priority,
+    conversationId,
+    currentTenantId(),
+  ])
 }
 
 export async function listMessages(conversationId: number): Promise<WhatsAppMessageRow[]> {
   await ensureWhatsAppMessagingTables()
   return query<WhatsAppMessageRow[]>(
     `SELECT * FROM \`marketing_whatsapp_messages\`
-      WHERE conversation_id = ?
+      WHERE conversation_id = ? AND tenant_id = ?
       ORDER BY COALESCE(meta_timestamp, created_at) ASC, id ASC
       LIMIT 500`,
-    [conversationId],
+    [conversationId, currentTenantId()],
   )
 }
 
 export async function markConversationRead(conversationId: number) {
   await ensureWhatsAppMessagingTables()
-  await query("UPDATE `marketing_whatsapp_conversations` SET unread_count = 0 WHERE id = ?", [
+  await query("UPDATE `marketing_whatsapp_conversations` SET unread_count = 0 WHERE id = ? AND tenant_id = ?", [
     conversationId,
+    currentTenantId(),
   ])
 }
 
@@ -840,9 +858,9 @@ export async function markConversationRead(conversationId: number) {
 export async function getUnreadInboundWamids(conversationId: number): Promise<string[]> {
   const rows = await query<{ wamid: string }[]>(
     `SELECT wamid FROM \`marketing_whatsapp_messages\`
-      WHERE conversation_id = ? AND direction = 'inbound' AND status <> 'read' AND wamid IS NOT NULL
+      WHERE conversation_id = ? AND tenant_id = ? AND direction = 'inbound' AND status <> 'read' AND wamid IS NOT NULL
       ORDER BY id DESC LIMIT 20`,
-    [conversationId],
+    [conversationId, currentTenantId()],
   )
   return rows.map((r) => r.wamid)
 }
@@ -892,15 +910,27 @@ export async function logWebhookEvent(input: {
   dedupKey?: string | null
   processingStatus?: "received" | "processed" | "skipped" | "error"
   error?: string | null
+  integrationId?: number | null
 }): Promise<boolean> {
   await ensureWhatsAppMessagingTables()
+  // The webhook logs both tenant-owned events (inside runForTenant, so
+  // currentTenantId resolves) and unmapped events (no tenant in context).
+  // Fall back to NULL for the latter rather than throwing.
+  let tenantId: number | null = null
+  try {
+    tenantId = currentTenantId()
+  } catch {
+    tenantId = null
+  }
   try {
     const result = await query<{ affectedRows: number }>(
       `INSERT INTO \`marketing_whatsapp_webhook_events\`
-        (event_type, wamid, phone_number_id, dedup_key, processing_status, error)
-       VALUES (?, ?, ?, ?, ?, ?)
+        (tenant_id, integration_id, event_type, wamid, phone_number_id, dedup_key, processing_status, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE processing_status = VALUES(processing_status), error = VALUES(error)`,
       [
+        tenantId,
+        input.integrationId ?? null,
         input.eventType,
         input.wamid ?? null,
         input.phoneNumberId ?? null,

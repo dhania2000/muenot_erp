@@ -1,5 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { currentTenantId } from "@/lib/tenant-scope"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
 import { getWhatsAppIntegration, sendWhatsAppTemplateWithComponents } from "@/lib/whatsapp"
 import { recordTemplateUsage, findLocalTemplate } from "@/lib/whatsapp-templates"
@@ -503,40 +504,44 @@ export async function cancelCampaign(id: number): Promise<void> {
 /** Advances a campaign recipient's delivery state from a status callback. */
 export async function applyCampaignStatusByWamid(wamid: string, status: "delivered" | "read" | "failed"): Promise<void> {
   await ensureCampaignTables()
+  // Scoped to the acting tenant: a status callback may only advance THIS
+  // tenant's recipient row, never one that happens to share a wamid.
+  const tenantId = currentTenantId()
   const rows = await query<{ id: number; campaign_id: number; status: string }[]>(
-    "SELECT id, campaign_id, status FROM `marketing_whatsapp_campaign_recipients` WHERE wamid = ? LIMIT 1",
-    [wamid],
+    "SELECT id, campaign_id, status FROM `marketing_whatsapp_campaign_recipients` WHERE tenant_id = ? AND wamid = ? LIMIT 1",
+    [tenantId, wamid],
   )
   const recipient = rows[0]
   if (!recipient) return
 
   if (status === "delivered" && recipient.status === "sent") {
-    await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'delivered', delivered_at = NOW() WHERE id = ?", [recipient.id])
-    await query("UPDATE `marketing_whatsapp_campaigns` SET delivered_count = delivered_count + 1 WHERE id = ?", [recipient.campaign_id])
+    await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'delivered', delivered_at = NOW() WHERE id = ? AND tenant_id = ?", [recipient.id, tenantId])
+    await query("UPDATE `marketing_whatsapp_campaigns` SET delivered_count = delivered_count + 1 WHERE id = ? AND tenant_id = ?", [recipient.campaign_id, tenantId])
   } else if (status === "read" && (recipient.status === "sent" || recipient.status === "delivered")) {
-    await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'read', read_at = NOW() WHERE id = ?", [recipient.id])
-    await query("UPDATE `marketing_whatsapp_campaigns` SET read_count = read_count + 1 WHERE id = ?", [recipient.campaign_id])
+    await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'read', read_at = NOW() WHERE id = ? AND tenant_id = ?", [recipient.id, tenantId])
+    await query("UPDATE `marketing_whatsapp_campaigns` SET read_count = read_count + 1 WHERE id = ? AND tenant_id = ?", [recipient.campaign_id, tenantId])
   } else if (status === "failed" && recipient.status !== "failed") {
     // Only count a failure once — a retried webhook must not inflate failed_count.
-    await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'failed' WHERE id = ?", [recipient.id])
-    await query("UPDATE `marketing_whatsapp_campaigns` SET failed_count = failed_count + 1 WHERE id = ?", [recipient.campaign_id])
+    await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'failed' WHERE id = ? AND tenant_id = ?", [recipient.id, tenantId])
+    await query("UPDATE `marketing_whatsapp_campaigns` SET failed_count = failed_count + 1 WHERE id = ? AND tenant_id = ?", [recipient.campaign_id, tenantId])
   }
 }
 
 /** Marks the most recent campaign recipient for a phone number as replied. */
 export async function markCampaignReplied(phone: string): Promise<void> {
   await ensureCampaignTables()
+  const tenantId = currentTenantId()
   const normalized = normalizePhone(phone)
   const rows = await query<{ id: number; campaign_id: number }[]>(
     `SELECT id, campaign_id FROM \`marketing_whatsapp_campaign_recipients\`
-      WHERE phone_number = ? AND status IN ('sent','delivered','read')
+      WHERE tenant_id = ? AND phone_number = ? AND status IN ('sent','delivered','read')
       ORDER BY sent_at DESC LIMIT 1`,
-    [normalized],
+    [tenantId, normalized],
   )
   const recipient = rows[0]
   if (!recipient) return
-  await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'replied', replied_at = NOW() WHERE id = ?", [recipient.id])
-  await query("UPDATE `marketing_whatsapp_campaigns` SET replied_count = replied_count + 1 WHERE id = ?", [recipient.campaign_id])
+  await query("UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'replied', replied_at = NOW() WHERE id = ? AND tenant_id = ?", [recipient.id, tenantId])
+  await query("UPDATE `marketing_whatsapp_campaigns` SET replied_count = replied_count + 1 WHERE id = ? AND tenant_id = ?", [recipient.campaign_id, tenantId])
 }
 
 /* ------------------------------------------------------------------ */

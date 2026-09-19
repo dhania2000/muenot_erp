@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server"
 import {
-  getWhatsAppIntegration,
+  getWhatsAppIntegrationByPhoneNumberId,
   getWebhookVerifyToken,
   verifyWebhookSignature,
+  type WhatsAppIntegrationRow,
 } from "@/lib/whatsapp"
+import { runForTenant } from "@/lib/tenant-scope"
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -194,8 +196,6 @@ export async function POST(request: Request) {
 }
 
 async function processWebhook(body: MetaWebhookBody) {
-  const integration = await getWhatsAppIntegration()
-
   for (const entry of body.entry ?? []) {
     const wabaId = entry.id ?? null
     for (const change of entry.changes ?? []) {
@@ -207,142 +207,182 @@ async function processWebhook(body: MetaWebhookBody) {
 
       const phoneNumberId = value.metadata?.phone_number_id ?? null
 
-      // Confirm the event targets the number we actually have connected.
-      if (integration && phoneNumberId && phoneNumberId !== integration.phone_number_id) {
+      // The webhook has NO ERP session, so the incoming phone_number_id is the
+      // only trustworthy way to discover which tenant owns this delivery.
+      // Resolve it to a tenant-owned integration — NEVER guess a tenant and
+      // never fall back to the env/global credential for an unknown number.
+      const integration = phoneNumberId
+        ? await getWhatsAppIntegrationByPhoneNumberId(phoneNumberId)
+        : null
+
+      if (!integration || integration.tenant_id == null || integration.id === 0) {
+        // Unknown / unmapped / env-only number: do not attribute it to any
+        // tenant. Log it without tenant context and skip. We still answer 200
+        // upstream so Meta stops retrying a structurally valid but unowned event.
         await logWebhookEvent({
-          eventType: `${change.field}.foreign`,
+          eventType: `${change.field}.unmapped`,
           phoneNumberId,
-          dedupKey: `foreign:${phoneNumberId}:${Date.now()}`,
+          dedupKey: `unmapped:${phoneNumberId ?? "none"}:${Date.now()}`,
           processingStatus: "skipped",
         })
         continue
       }
 
-      const nameByWaId = new Map<string, string>()
-      for (const c of value.contacts ?? []) {
-        if (c.wa_id && c.profile?.name) nameByWaId.set(c.wa_id, c.profile.name)
-      }
+      // Everything below runs inside the OWNING tenant's context so every
+      // read/write is scoped to exactly this tenant.
+      await runForTenant({ tenantId: integration.tenant_id }, () =>
+        processChange({ value, wabaId, phoneNumberId, integration }),
+      )
+    }
+  }
+}
 
-      /* ----- inbound messages ----- */
-      for (const m of value.messages ?? []) {
-        if (!m.id || !m.from) continue
-        const dedupKey = `msg:${m.id}`
+/** Processes one Meta change payload inside its owning tenant's context. */
+async function processChange(input: {
+  value: MetaValue
+  wabaId: string | null
+  phoneNumberId: string | null
+  integration: WhatsAppIntegrationRow
+}) {
+  const { value, wabaId, phoneNumberId, integration } = input
+  const integrationId = integration.id
+
+  const nameByWaId = new Map<string, string>()
+  for (const c of value.contacts ?? []) {
+    if (c.wa_id && c.profile?.name) nameByWaId.set(c.wa_id, c.profile.name)
+  }
+
+  /* ----- inbound messages ----- */
+  for (const m of value.messages ?? []) {
+    if (!m.id || !m.from) continue
+    const dedupKey = `msg:${m.id}`
+    try {
+      const fromPhone = normalizePhone(m.from)
+      const contact = await findOrCreateContact({
+        phone: fromPhone,
+        profileName: nameByWaId.get(m.from) ?? null,
+        waContactId: m.from,
+        integrationId,
+      })
+      const conversation = await findOrCreateConversation({
+        contactId: contact.id,
+        phoneNumberId: phoneNumberId ?? integration.phone_number_id,
+        wabaId,
+        integrationId,
+      })
+      const parsed = extractInbound(m)
+      const created = await recordInboundMessage({
+        conversationId: conversation.id,
+        wamid: m.id,
+        messageType: parsed.type,
+        body: parsed.body,
+        mediaId: parsed.mediaId,
+        mediaMimeType: parsed.mediaMime,
+        mediaFilename: parsed.mediaFilename,
+        senderPhone: fromPhone,
+        recipientPhone: value.metadata?.display_phone_number
+          ? normalizePhone(value.metadata.display_phone_number)
+          : integration.display_phone_number
+            ? normalizePhone(integration.display_phone_number)
+            : "",
+        metaTimestamp: tsToDate(m.timestamp),
+        integrationId,
+      })
+      await logWebhookEvent({
+        eventType: `message.${parsed.type}`,
+        wamid: m.id,
+        phoneNumberId,
+        integrationId,
+        dedupKey,
+        processingStatus: created ? "processed" : "skipped",
+      })
+
+      // Only run routing/automations for genuinely new (non-duplicate)
+      // inbound messages. All of it is best-effort: a failure here must
+      // never turn a delivered customer message into a webhook error.
+      if (created) {
+        const messageText = parsed.body ?? ""
+        // A customer reply closes the loop on any campaign they were sent.
+        // Awaited (not fire-and-forget) so it stays inside this tenant's context.
         try {
-          const fromPhone = normalizePhone(m.from)
-          const contact = await findOrCreateContact({
-            phone: fromPhone,
-            profileName: nameByWaId.get(m.from) ?? null,
-            waContactId: m.from,
-          })
-          const conversation = await findOrCreateConversation({
-            contactId: contact.id,
-            phoneNumberId: phoneNumberId ?? integration?.phone_number_id ?? "",
-            wabaId,
-          })
-          const parsed = extractInbound(m)
-          const created = await recordInboundMessage({
+          await markCampaignReplied(fromPhone)
+        } catch (err) {
+          console.error("[v0] campaign reply tracking failed:", (err as Error).message)
+        }
+        try {
+          const ctx = await getInboundContext({
             conversationId: conversation.id,
-            wamid: m.id,
-            messageType: parsed.type,
-            body: parsed.body,
-            mediaId: parsed.mediaId,
-            mediaMimeType: parsed.mediaMime,
-            mediaFilename: parsed.mediaFilename,
-            senderPhone: fromPhone,
-            recipientPhone: value.metadata?.display_phone_number
-              ? normalizePhone(value.metadata.display_phone_number)
-              : integration?.display_phone_number
-                ? normalizePhone(integration.display_phone_number)
-                : "",
-            metaTimestamp: tsToDate(m.timestamp),
+            contactId: contact.id,
           })
-          await logWebhookEvent({
-            eventType: `message.${parsed.type}`,
-            wamid: m.id,
-            phoneNumberId,
-            dedupKey,
-            processingStatus: created ? "processed" : "skipped",
+          await routeConversation({ conversationId: conversation.id, messageText })
+          await runInboundAutomations({
+            conversationId: conversation.id,
+            phone: fromPhone,
+            messageText,
+            isNewContact: ctx.isNewContact,
+            isNewConversation: ctx.isNewConversation,
+            isAssigned: ctx.assignedAgentId != null,
           })
-
-          // Only run routing/automations for genuinely new (non-duplicate)
-          // inbound messages. All of it is best-effort: a failure here must
-          // never turn a delivered customer message into a webhook error.
-          if (created) {
-            const messageText = parsed.body ?? ""
-            // A customer reply closes the loop on any campaign they were sent.
-            markCampaignReplied(fromPhone).catch((err) =>
-              console.error("[v0] campaign reply tracking failed:", (err as Error).message),
-            )
-            try {
-              const ctx = await getInboundContext({
-                conversationId: conversation.id,
-                contactId: contact.id,
-              })
-              await routeConversation({ conversationId: conversation.id, messageText })
-              await runInboundAutomations({
-                conversationId: conversation.id,
-                phone: fromPhone,
-                messageText,
-                isNewContact: ctx.isNewContact,
-                isNewConversation: ctx.isNewConversation,
-                isAssigned: ctx.assignedAgentId != null,
-              })
-            } catch (err) {
-              console.error("[v0] inbound routing/automation failed:", (err as Error).message)
-            }
-          }
         } catch (err) {
-          await logWebhookEvent({
-            eventType: "message.error",
-            wamid: m.id,
-            phoneNumberId,
-            dedupKey,
-            processingStatus: "error",
-            error: (err as Error).message,
-          })
+          console.error("[v0] inbound routing/automation failed:", (err as Error).message)
         }
       }
+    } catch (err) {
+      await logWebhookEvent({
+        eventType: "message.error",
+        wamid: m.id,
+        phoneNumberId,
+        integrationId,
+        dedupKey,
+        processingStatus: "error",
+        error: (err as Error).message,
+      })
+    }
+  }
 
-      /* ----- outbound status updates ----- */
-      for (const s of value.statuses ?? []) {
-        if (!s.id || !s.status) continue
-        const status = s.status as MessageStatus
-        if (!KNOWN_STATUSES.includes(status)) continue
-        const dedupKey = `status:${s.id}:${status}`
+  /* ----- outbound status updates ----- */
+  for (const s of value.statuses ?? []) {
+    if (!s.id || !s.status) continue
+    const status = s.status as MessageStatus
+    if (!KNOWN_STATUSES.includes(status)) continue
+    const dedupKey = `status:${s.id}:${status}`
+    try {
+      const firstError = s.errors?.[0]
+      const updated = await updateMessageStatusByWamid({
+        wamid: s.id,
+        status,
+        timestamp: tsToDate(s.timestamp),
+        errorCode: firstError?.code != null ? String(firstError.code) : null,
+        errorMessage: firstError?.message || firstError?.title || null,
+      })
+      // Mirror delivery progress onto any campaign recipient row that
+      // shares this wamid so campaign analytics stay accurate. Awaited so it
+      // runs inside this tenant's context.
+      if (status === "delivered" || status === "read" || status === "failed") {
         try {
-          const firstError = s.errors?.[0]
-          const updated = await updateMessageStatusByWamid({
-            wamid: s.id,
-            status,
-            timestamp: tsToDate(s.timestamp),
-            errorCode: firstError?.code != null ? String(firstError.code) : null,
-            errorMessage: firstError?.message || firstError?.title || null,
-          })
-          // Mirror delivery progress onto any campaign recipient row that
-          // shares this wamid so campaign analytics stay accurate.
-          if (status === "delivered" || status === "read" || status === "failed") {
-            applyCampaignStatusByWamid(s.id, status).catch((err) =>
-              console.error("[v0] campaign status tracking failed:", (err as Error).message),
-            )
-          }
-          await logWebhookEvent({
-            eventType: `status.${status}`,
-            wamid: s.id,
-            phoneNumberId,
-            dedupKey,
-            processingStatus: updated ? "processed" : "skipped",
-          })
+          await applyCampaignStatusByWamid(s.id, status)
         } catch (err) {
-          await logWebhookEvent({
-            eventType: "status.error",
-            wamid: s.id,
-            phoneNumberId,
-            dedupKey,
-            processingStatus: "error",
-            error: (err as Error).message,
-          })
+          console.error("[v0] campaign status tracking failed:", (err as Error).message)
         }
       }
+      await logWebhookEvent({
+        eventType: `status.${status}`,
+        wamid: s.id,
+        phoneNumberId,
+        integrationId,
+        dedupKey,
+        processingStatus: updated ? "processed" : "skipped",
+      })
+    } catch (err) {
+      await logWebhookEvent({
+        eventType: "status.error",
+        wamid: s.id,
+        phoneNumberId,
+        integrationId,
+        dedupKey,
+        processingStatus: "error",
+        error: (err as Error).message,
+      })
     }
   }
 }

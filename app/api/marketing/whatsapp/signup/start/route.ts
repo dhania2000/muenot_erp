@@ -1,6 +1,16 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { createWhatsAppSignupSessionForSystemAdmin } from "@/lib/whatsapp-signup"
+import { createWhatsAppSignupSessionForSystemAdmin, getSignupReadiness } from "@/lib/whatsapp-signup"
+
+/** Read-only probe used by the client to disable the button when Meta config is missing. */
+export async function GET() {
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (session.role !== "admin") {
+    return NextResponse.json({ error: "Only an administrator can connect WhatsApp." }, { status: 403 })
+  }
+  return NextResponse.json(getSignupReadiness())
+}
 
 /**
  * Starts a WhatsApp Embedded Signup for the acting tenant. Returns the CSRF

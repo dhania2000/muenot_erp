@@ -88,6 +88,25 @@ export function getSignupConfigId(): string | null {
   )
 }
 
+export type SignupReadiness = {
+  appId: string | null
+  configId: string | null
+  graphVersion: string
+  ready: boolean
+  missing: string[]
+}
+
+/** Read-only configuration probe used to disable an unusable Meta button. */
+export function getSignupReadiness(): SignupReadiness {
+  const appId = getAppId()
+  const configId = getSignupConfigId()
+  const missing = [
+    ...(appId ? [] : ["WHATSAPP_APP_ID"]),
+    ...(configId ? [] : ["WHATSAPP_CONFIG_ID"]),
+  ]
+  return { appId, configId, graphVersion: GRAPH_VERSION, ready: missing.length === 0, missing }
+}
+
 export type SignupSessionRow = {
   id: number
   state: string
@@ -116,6 +135,8 @@ export type StartSignupResult = {
   expiresAt: string
   /** True when the server has everything it needs to launch Embedded Signup. */
   ready: boolean
+  /** Environment keys still missing when Embedded Signup is not configured. */
+  missing: string[]
 }
 
 /**
@@ -137,15 +158,15 @@ export async function createWhatsAppSignupSession(userId: number): Promise<Start
     [state, tenantId, userId, expiresSql],
   )
 
-  const appId = getAppId()
-  const configId = getSignupConfigId()
+  const readiness = getSignupReadiness()
   return {
     state,
-    appId,
-    configId,
-    graphVersion: GRAPH_VERSION,
+    appId: readiness.appId,
+    configId: readiness.configId,
+    graphVersion: readiness.graphVersion,
     expiresAt: expiresAt.toISOString(),
-    ready: Boolean(appId && configId),
+    ready: readiness.ready,
+    missing: readiness.missing,
   }
 }
 

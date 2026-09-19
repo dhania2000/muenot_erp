@@ -49,7 +49,8 @@ export function PlatformWhatsAppTenants({ tenants }: { tenants: WhatsAppTenantCo
               <div className="flex flex-wrap items-center gap-3">
                 {active ? (
                   <EmbeddedSignupConnect
-                    startUrl="/api/platform/whatsapp/signup/start"
+                    startUrl={`/api/platform/whatsapp/signup/start?tenantId=${tenant.tenantId}`}
+                    readinessUrl="/api/platform/whatsapp/signup/start"
                     startBody={{ tenantId: tenant.tenantId }}
                     onConnected={() => router.refresh()}
                     variant={integration ? "outline" : "default"}

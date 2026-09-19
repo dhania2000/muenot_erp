@@ -2,8 +2,15 @@ import { type NextRequest, NextResponse } from "next/server"
 import { requirePlatformStaff } from "@/lib/platform-guard"
 import { getTenantById } from "@/lib/tenant-service"
 import { runForTenant } from "@/lib/tenant-scope"
-import { createWhatsAppSignupSession } from "@/lib/whatsapp-signup"
+import { createWhatsAppSignupSession, getSignupReadiness } from "@/lib/whatsapp-signup"
 import { recordPlatformAudit } from "@/lib/platform-roles"
+
+/** Read-only probe used by each platform tenant card before launch. */
+export async function GET() {
+  const guard = await requirePlatformStaff()
+  if (!guard.ok) return NextResponse.json({ error: guard.reason }, { status: guard.status })
+  return NextResponse.json(getSignupReadiness())
+}
 
 /** Start Meta Embedded Signup for one explicitly selected tenant. */
 export async function POST(request: NextRequest) {

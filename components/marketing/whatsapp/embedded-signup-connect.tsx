@@ -5,27 +5,14 @@ import { toast } from "sonner"
 import { MessageCircle, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
-/**
- * "Connect with Meta" — the primary, self-service WhatsApp onboarding path.
- *
- * Launches Meta's Embedded Signup popup with the Facebook JS SDK. The popup
- * lets the tenant admin create/select their WhatsApp Business Account and phone
- * number entirely on Meta, then hands us:
- *   - an authorization `code` (via FB.login's authResponse), and
- *   - the WABA id + phone number id (via a postMessage "session info" event).
- *
- * We echo those, together with the server-minted CSRF `state`, back to
- * /signup/callback which resolves the tenant from the state, exchanges the code
- * for a token and connects + auto-configures the number. No secrets touch the
- * client: the app id / config id are fetched from /signup/start on demand.
- */
-
+/** Meta Embedded Signup launcher shared by tenant and platform workspaces. */
 type StartResult = {
-  state: string
+  state?: string
   appId: string | null
   configId: string | null
   graphVersion: string
   ready: boolean
+  missing?: string[]
 }
 
 declare global {
@@ -44,29 +31,57 @@ type FbLoginResponse = {
 }
 
 const SDK_ID = "facebook-jssdk"
+const SDK_TIMEOUT_MS = 15000
+let sdkPromise: Promise<NonNullable<Window["FB"]>> | null = null
 
-/** Loads the Facebook JS SDK once and resolves when window.FB is ready. */
 function loadFacebookSdk(appId: string, graphVersion: string): Promise<NonNullable<Window["FB"]>> {
-  return new Promise((resolve, reject) => {
-    if (window.FB) {
-      window.FB.init({ appId, autoLogAppEvents: true, xfbml: false, version: graphVersion })
-      resolve(window.FB)
-      return
-    }
-    window.fbAsyncInit = () => {
-      window.FB!.init({ appId, autoLogAppEvents: true, xfbml: false, version: graphVersion })
-      resolve(window.FB!)
-    }
-    if (document.getElementById(SDK_ID)) return
-    const script = document.createElement("script")
-    script.id = SDK_ID
-    script.src = "https://connect.facebook.net/en_US/sdk.js"
-    script.async = true
-    script.defer = true
-    script.crossOrigin = "anonymous"
-    script.onerror = () => reject(new Error("Could not load the Meta SDK. Check your network and try again."))
-    document.body.appendChild(script)
-  })
+  const init = () => {
+    window.FB!.init({ appId, autoLogAppEvents: true, xfbml: false, version: graphVersion })
+    return window.FB!
+  }
+  if (window.FB) return Promise.resolve(init())
+
+  if (!sdkPromise) {
+    sdkPromise = new Promise((resolve, reject) => {
+      const fail = (message: string) => {
+        sdkPromise = null
+        reject(new Error(message))
+      }
+      const timer = setTimeout(
+        () => fail("The Meta SDK could not be loaded. An ad blocker, extension or network policy may be blocking connect.facebook.net."),
+        SDK_TIMEOUT_MS,
+      )
+      window.fbAsyncInit = () => {
+        clearTimeout(timer)
+        resolve(init())
+      }
+
+      const existing = document.getElementById(SDK_ID) as HTMLScriptElement | null
+      if (existing) {
+        existing.addEventListener("load", () => window.fbAsyncInit?.(), { once: true })
+        existing.addEventListener("error", () => {
+          clearTimeout(timer)
+          existing.remove()
+          fail("Could not load the Meta SDK. Check your network and try again.")
+        }, { once: true })
+        return
+      }
+
+      const script = document.createElement("script")
+      script.id = SDK_ID
+      script.src = "https://connect.facebook.net/en_US/sdk.js"
+      script.async = true
+      script.defer = true
+      script.crossOrigin = "anonymous"
+      script.onerror = () => {
+        clearTimeout(timer)
+        script.remove()
+        fail("Could not load the Meta SDK. Check your network and try again.")
+      }
+      document.body.appendChild(script)
+    })
+  }
+  return sdkPromise
 }
 
 export function EmbeddedSignupConnect({
@@ -74,20 +89,39 @@ export function EmbeddedSignupConnect({
   variant = "default",
   className,
   startUrl = "/api/marketing/whatsapp/signup/start",
+  readinessUrl = startUrl,
   startBody,
 }: {
   onConnected: () => void
   variant?: React.ComponentProps<typeof Button>["variant"]
   className?: string
   startUrl?: string
+  readinessUrl?: string
   startBody?: Record<string, unknown>
 }) {
   const [busy, setBusy] = React.useState(false)
-  // Captured from Meta's postMessage session-info event during the popup.
+  const [missing, setMissing] = React.useState<string[] | null>(null)
   const sessionInfo = React.useRef<{ wabaId?: string; phoneNumberId?: string; businessId?: string }>({})
 
-  // Listen for the Embedded Signup "session info" message for the whole time the
-  // component is mounted, so it is already captured when FB.login resolves.
+  React.useEffect(() => {
+    let cancelled = false
+    fetch(readinessUrl, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return
+        setMissing(data?.ready ? [] : (data?.missing ?? []))
+        if (data?.ready && data.appId) {
+          loadFacebookSdk(data.appId, data.graphVersion ?? "v26.0").catch(() => undefined)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setMissing([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [readinessUrl])
+
   React.useEffect(() => {
     function onMessage(event: MessageEvent) {
       if (event.origin !== "https://www.facebook.com" && event.origin !== "https://web.facebook.com") return
@@ -102,7 +136,7 @@ export function EmbeddedSignupConnect({
           }
         }
       } catch {
-        /* non-JSON messages from other Meta widgets — ignore */
+        /* Ignore unrelated non-JSON messages from Meta widgets. */
       }
     }
     window.addEventListener("message", onMessage)
@@ -120,14 +154,13 @@ export function EmbeddedSignupConnect({
       })
       const start = (await startRes.json().catch(() => ({}))) as StartResult & { error?: string }
       if (!startRes.ok) throw new Error(start.error || "Could not start WhatsApp signup.")
-      if (!start.ready || !start.appId || !start.configId) {
+      if (!start.ready || !start.appId || !start.configId || !start.state) {
         throw new Error(
-          "Embedded Signup is not configured on the server yet. Set WHATSAPP_APP_ID and WHATSAPP_CONFIG_ID, or connect with credentials instead.",
+          `Embedded Signup is not configured on the server yet. Set ${start.missing?.join(" and ") || "WHATSAPP_APP_ID and WHATSAPP_CONFIG_ID"}, or connect with credentials instead.`,
         )
       }
 
       const FB = await loadFacebookSdk(start.appId, start.graphVersion)
-
       const authResponse = await new Promise<FbLoginResponse>((resolve) => {
         FB.login((res) => resolve(res), {
           config_id: start.configId,
@@ -138,11 +171,7 @@ export function EmbeddedSignupConnect({
       })
 
       const code = authResponse?.authResponse?.code
-      if (!code) {
-        // User closed the popup or denied — not an error worth a red toast.
-        setBusy(false)
-        return
-      }
+      if (!code) return
 
       const { wabaId, phoneNumberId, businessId } = sessionInfo.current
       if (!wabaId || !phoneNumberId) {
@@ -172,8 +201,19 @@ export function EmbeddedSignupConnect({
     }
   }
 
+  const unconfigured = (missing?.length ?? 0) > 0
   return (
-    <Button variant={variant} className={className} onClick={connect} disabled={busy}>
+    <Button
+      variant={variant}
+      className={className}
+      onClick={connect}
+      disabled={busy || unconfigured}
+      title={
+        unconfigured
+          ? `Embedded Signup is not configured on the server. Set ${missing?.join(" and ")}, then restart. You can connect with credentials instead.`
+          : undefined
+      }
+    >
       {busy ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
       Connect with Meta
     </Button>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { billingGuard } from "@/lib/billing-guard"
+import { billingGuard, bindBillingTenant } from "@/lib/billing-guard"
 import { changeSubscriptionPlan, BillingError } from "@/lib/billing/billing-engine"
 
 export const runtime = "nodejs"
@@ -14,6 +14,7 @@ export const runtime = "nodejs"
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  bindBillingTenant(session)
 
   const { id } = await params
   const subscriptionId = Number(id)

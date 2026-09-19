@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { requireFeature } from "@/lib/api-auth"
+import { currentTenantId } from "@/lib/tenant-scope"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -79,7 +80,8 @@ export async function GET() {
   ).catch(() => [{}])
   const [waVol] = await query<any[]>(
     `SELECT COUNT(*) AS n FROM marketing_whatsapp_campaign_recipients
-      WHERE status IN ('sent','delivered','read','replied') AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
+      WHERE tenant_id = ? AND status IN ('sent','delivered','read','replied') AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
+    [currentTenantId()],
   ).catch(() => [{}])
   const [socialVol] = await query<any[]>(
     `SELECT COUNT(*) AS n FROM marketing_social_posts

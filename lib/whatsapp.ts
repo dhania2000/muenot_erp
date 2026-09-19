@@ -83,6 +83,7 @@ export async function ensureWhatsAppTable() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_integration\` (
       \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
       \`waba_id\` VARCHAR(191) NOT NULL,
       \`phone_number_id\` VARCHAR(191) NOT NULL,
       \`display_phone_number\` VARCHAR(64) DEFAULT NULL,
@@ -95,7 +96,8 @@ export async function ensureWhatsAppTable() {
       \`connected_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
-      UNIQUE KEY \`uniq_phone_number\` (\`phone_number_id\`)
+      UNIQUE KEY \`uniq_wa_integration_tenant_phone\` (\`tenant_id\`, \`phone_number_id\`),
+      KEY \`idx_marketing_whatsapp_integration_tenant\` (\`tenant_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
   // Older deployments predate the platform_type column — add it idempotently.
@@ -242,10 +244,10 @@ export function getEnvIntegration(): WhatsAppIntegrationRow | null {
  */
 export async function getWhatsAppIntegration(): Promise<WhatsAppIntegrationRow | null> {
   const tenantId = currentTenantIdOrNull()
-  if (tenantId == null) {
-    await ensureWhatsAppTable()
-    return getEnvIntegration()
-  }
+  // Never let a request with no authenticated tenant fall through to global
+  // environment credentials. Platform-only callers that intentionally need
+  // those credentials must call getEnvIntegration() directly.
+  if (tenantId == null) return null
   return getWhatsAppIntegrationForTenant(tenantId)
 }
 
@@ -258,7 +260,7 @@ export async function getWhatsAppIntegrationForTenant(
     "SELECT * FROM `marketing_whatsapp_integration` WHERE tenant_id = ? ORDER BY connected_at DESC LIMIT 1",
     [tenantId],
   )
-  return rows[0] ?? getEnvIntegration()
+  return rows[0] ?? null
 }
 
 /** Every integration connected by the current tenant (for multi-number UIs). */
@@ -274,11 +276,12 @@ export async function listWhatsAppIntegrationsForTenant(): Promise<WhatsAppInteg
 /** A specific integration by id, scoped to the current tenant (IDOR-safe). */
 export async function getWhatsAppIntegrationByIdForTenant(
   id: number,
+  tenantId = currentTenantId(),
 ): Promise<WhatsAppIntegrationRow | null> {
   await ensureWhatsAppTable()
   const rows = await query<WhatsAppIntegrationRow[]>(
     "SELECT * FROM `marketing_whatsapp_integration` WHERE id = ? AND tenant_id = ? LIMIT 1",
-    [id, currentTenantId()],
+    [id, tenantId],
   )
   return rows[0] ?? null
 }
@@ -299,9 +302,7 @@ export async function getWhatsAppIntegrationByPhoneNumberId(
     [phoneNumberId],
   )
   if (rows[0]) return rows[0]
-  // Fall back to the env number when it matches the delivery's phone id.
-  const env = getEnvIntegration()
-  return env && env.phone_number_id === phoneNumberId ? env : null
+  return null
 }
 
 export type PhoneNumberProfile = {

@@ -30,6 +30,7 @@ export async function POST(request: Request) {
     mediaLink?: string | null
     headerMediaId?: string | null
     scheduledAt?: string | null
+    integrationId?: number | null
   }
   if (!body.name?.trim()) return NextResponse.json({ error: "Name is required" }, { status: 400 })
   if (!body.templateName?.trim()) return NextResponse.json({ error: "Template is required" }, { status: 400 })
@@ -46,6 +47,7 @@ export async function POST(request: Request) {
     headerMediaId: body.headerMediaId ?? null,
     scheduledAt: body.scheduledAt ?? null,
     createdBy: session.userId,
+    integrationId: body.integrationId == null ? null : Number(body.integrationId),
   })
   const campaigns = await listCampaigns()
   return NextResponse.json({ ok: true, id, campaigns }, { status: 201 })

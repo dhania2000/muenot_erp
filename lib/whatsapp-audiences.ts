@@ -1,6 +1,8 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
+import { currentTenantId } from "@/lib/tenant-scope"
+import { getWhatsAppIntegrationByIdForTenant } from "@/lib/whatsapp"
 import type { AudienceCondition, AudienceFilter } from "@/lib/whatsapp-config"
 
 /**
@@ -24,6 +26,8 @@ export async function ensureAudienceTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_audiences\` (
       \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED DEFAULT NULL,
       \`name\` VARCHAR(191) NOT NULL,
       \`description\` VARCHAR(500) DEFAULT NULL,
       \`filter_json\` TEXT DEFAULT NULL,
@@ -33,11 +37,22 @@ export async function ensureAudienceTables() {
       PRIMARY KEY (\`id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  await ensureColumn("marketing_whatsapp_audiences", "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL")
+  await ensureColumn("marketing_whatsapp_audiences", "integration_id", "ADD COLUMN `integration_id` INT UNSIGNED DEFAULT NULL")
   ensured = true
+}
+
+async function ensureColumn(table: string, column: string, ddl: string) {
+  try {
+    const rows = await query<{ c: number }[]>("SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?", [table, column])
+    if (!rows[0]?.c) await query(`ALTER TABLE \`${table}\` ${ddl}`)
+  } catch { /* request paths remain fail-closed when ALTER is unavailable */ }
 }
 
 export type Audience = {
   id: number
+  tenantId: number
+  integrationId: number | null
   name: string
   description: string | null
   filter: AudienceFilter
@@ -62,9 +77,12 @@ function parseFilter(json: string | null): AudienceFilter {
 
 export async function listAudiences(): Promise<Audience[]> {
   await ensureAudienceTables()
+  const tenantId = currentTenantId()
   const rows = await query<
     {
       id: number
+      tenant_id: number
+      integration_id: number | null
       name: string
       description: string | null
       filter_json: string | null
@@ -76,11 +94,15 @@ export async function listAudiences(): Promise<Audience[]> {
   >(
     `SELECT a.*, u.name AS created_by_name
        FROM \`marketing_whatsapp_audiences\` a
-       LEFT JOIN \`users\` u ON u.id = a.created_by
+       LEFT JOIN \`users\` u ON u.id = a.created_by AND u.tenant_id = a.tenant_id
+      WHERE a.tenant_id = ?
       ORDER BY a.created_at DESC`,
+    [tenantId],
   )
   return rows.map((r) => ({
     id: r.id,
+    tenantId: tenantId,
+    integrationId: r.integration_id,
     name: r.name,
     description: r.description,
     filter: parseFilter(r.filter_json),
@@ -94,12 +116,14 @@ export async function listAudiences(): Promise<Audience[]> {
 export async function getAudience(id: number): Promise<Audience | null> {
   await ensureAudienceTables()
   const rows = await query<
-    { id: number; name: string; description: string | null; filter_json: string | null; created_by: number | null; created_at: string; updated_at: string }[]
-  >("SELECT * FROM `marketing_whatsapp_audiences` WHERE id = ? LIMIT 1", [id])
+    { id: number; tenant_id: number; integration_id: number | null; name: string; description: string | null; filter_json: string | null; created_by: number | null; created_at: string; updated_at: string }[]
+  >("SELECT * FROM `marketing_whatsapp_audiences` WHERE id = ? AND tenant_id = ? LIMIT 1", [id, currentTenantId()])
   const r = rows[0]
   if (!r) return null
   return {
     id: r.id,
+    tenantId: r.tenant_id,
+    integrationId: r.integration_id,
     name: r.name,
     description: r.description,
     filter: parseFilter(r.filter_json),
@@ -115,11 +139,16 @@ export async function createAudience(input: {
   description?: string | null
   filter: AudienceFilter
   createdBy: number | null
+  integrationId?: number | null
 }): Promise<number> {
   await ensureAudienceTables()
+  const tenantId = currentTenantId()
+  if (input.integrationId != null && !(await getWhatsAppIntegrationByIdForTenant(input.integrationId, tenantId))) {
+    throw new Error("WhatsApp integration is not owned by this tenant")
+  }
   const result = await query<{ insertId: number }>(
-    "INSERT INTO `marketing_whatsapp_audiences` (name, description, filter_json, created_by) VALUES (?, ?, ?, ?)",
-    [input.name.trim(), input.description?.trim() || null, JSON.stringify(input.filter ?? EMPTY_FILTER), input.createdBy],
+    "INSERT INTO `marketing_whatsapp_audiences` (tenant_id, integration_id, name, description, filter_json, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+    [tenantId, input.integrationId ?? null, input.name.trim(), input.description?.trim() || null, JSON.stringify(input.filter ?? EMPTY_FILTER), input.createdBy],
   )
   return result.insertId
 }
@@ -129,6 +158,8 @@ export async function updateAudience(
   patch: { name?: string; description?: string | null; filter?: AudienceFilter },
 ): Promise<void> {
   await ensureAudienceTables()
+  const tenantId = currentTenantId()
+  if (!(await getAudience(id))) throw new Error("Audience not found")
   const sets: string[] = []
   const params: (string | null)[] = []
   if (patch.name !== undefined) {
@@ -144,12 +175,12 @@ export async function updateAudience(
     params.push(JSON.stringify(patch.filter))
   }
   if (!sets.length) return
-  await query(`UPDATE \`marketing_whatsapp_audiences\` SET ${sets.join(", ")} WHERE id = ?`, [...params, String(id)])
+  await query(`UPDATE \`marketing_whatsapp_audiences\` SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`, [...params, id, tenantId])
 }
 
 export async function deleteAudience(id: number): Promise<void> {
   await ensureAudienceTables()
-  await query("DELETE FROM `marketing_whatsapp_audiences` WHERE id = ?", [id])
+  await query("DELETE FROM `marketing_whatsapp_audiences` WHERE id = ? AND tenant_id = ?", [id, currentTenantId()])
 }
 
 /* ------------------------------------------------------------------ */
@@ -192,18 +223,18 @@ function compileCondition(cond: AudienceCondition): { sql: string; params: (stri
       return { sql: "c.last_interaction_at >= (NOW() - INTERVAL ? DAY)", params: [days] }
     }
     case "has_conversation":
-      return { sql: "EXISTS (SELECT 1 FROM `marketing_whatsapp_conversations` cc WHERE cc.contact_id = c.id)", params: [] }
+      return { sql: "EXISTS (SELECT 1 FROM `marketing_whatsapp_conversations` cc WHERE cc.contact_id = c.id AND cc.tenant_id = c.tenant_id)", params: [] }
     case "lead_status":
       if (!value) return null
       return {
-        sql: "EXISTS (SELECT 1 FROM `sales_leads` l WHERE l.id = c.lead_id AND l.status = ?)",
+        sql: "EXISTS (SELECT 1 FROM `sales_leads` l WHERE l.id = c.lead_id AND l.tenant_id = c.tenant_id AND l.status = ?)",
         params: [value],
       }
     case "department": {
       const deptId = Number(value)
       if (!Number.isFinite(deptId)) return null
       return {
-        sql: "EXISTS (SELECT 1 FROM `marketing_whatsapp_conversations` cc WHERE cc.contact_id = c.id AND cc.department_id = ?)",
+        sql: "EXISTS (SELECT 1 FROM `marketing_whatsapp_conversations` cc WHERE cc.contact_id = c.id AND cc.tenant_id = c.tenant_id AND cc.department_id = ?)",
         params: [deptId],
       }
     }
@@ -211,7 +242,7 @@ function compileCondition(cond: AudienceCondition): { sql: string; params: (stri
       const agentId = Number(value)
       if (!Number.isFinite(agentId)) return null
       return {
-        sql: "EXISTS (SELECT 1 FROM `marketing_whatsapp_conversations` cc WHERE cc.contact_id = c.id AND cc.assigned_agent_id = ?)",
+        sql: "EXISTS (SELECT 1 FROM `marketing_whatsapp_conversations` cc WHERE cc.contact_id = c.id AND cc.tenant_id = c.tenant_id AND cc.assigned_agent_id = ?)",
         params: [agentId],
       }
     }
@@ -238,24 +269,27 @@ function buildWhere(filter: AudienceFilter): { where: string; params: (string | 
 export async function countAudience(filter: AudienceFilter, optedInOnly = true): Promise<number> {
   await ensureAudienceTables()
   const { where, params } = buildWhere(filter)
-  const optClause = optedInOnly ? (where ? " AND c.opted_in = 1" : "WHERE c.opted_in = 1") : ""
+  const tenantPrefix = where ? " AND c.tenant_id = ?" : "WHERE c.tenant_id = ?"
+  const optClause = `${tenantPrefix}${optedInOnly ? " AND c.opted_in = 1" : ""}`
   const rows = await query<{ c: number }[]>(
     `SELECT COUNT(*) AS c FROM \`marketing_whatsapp_contacts\` c ${where}${optClause}`,
-    params,
+    [...params, currentTenantId()],
   )
   return Number(rows[0]?.c ?? 0)
 }
 
 /** Resolves a filter into the concrete recipient list (opted-in only). */
-export async function resolveAudience(filter: AudienceFilter, limit = 5000): Promise<AudienceContact[]> {
+export async function resolveAudience(filter: AudienceFilter, limit = 5000, integrationId?: number | null): Promise<AudienceContact[]> {
   await ensureAudienceTables()
   const { where, params } = buildWhere(filter)
-  const optClause = where ? " AND c.opted_in = 1" : "WHERE c.opted_in = 1"
+  const tenantClause = where ? " AND c.tenant_id = ?" : "WHERE c.tenant_id = ?"
+  const integrationClause = integrationId != null ? " AND c.integration_id = ?" : ""
+  const optClause = `${tenantClause}${integrationClause} AND c.opted_in = 1`
   const rows = await query<{ id: number; phone_number: string; profile_name: string | null; opted_in: number }[]>(
     `SELECT c.id, c.phone_number, c.profile_name, c.opted_in
        FROM \`marketing_whatsapp_contacts\` c ${where}${optClause}
        ORDER BY c.id ASC LIMIT ?`,
-    [...params, limit],
+    [...params, currentTenantId(), ...(integrationId != null ? [integrationId] : []), limit],
   )
   return rows.map((r) => ({
     contactId: r.id,

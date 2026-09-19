@@ -1,8 +1,8 @@
 import "server-only"
 import { query } from "@/lib/db"
-import { currentTenantId } from "@/lib/tenant-scope"
+import { currentTenantId, forEachActiveTenant } from "@/lib/tenant-scope"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
-import { getWhatsAppIntegration, sendWhatsAppTemplateWithComponents } from "@/lib/whatsapp"
+import { getWhatsAppIntegrationForTenant, getWhatsAppIntegrationByIdForTenant, sendWhatsAppTemplateWithComponents } from "@/lib/whatsapp"
 import { recordTemplateUsage, findLocalTemplate } from "@/lib/whatsapp-templates"
 import {
   findOrCreateContact,
@@ -31,6 +31,8 @@ export async function ensureCampaignTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_campaigns\` (
       \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED NOT NULL,
       \`name\` VARCHAR(191) NOT NULL,
       \`type\` VARCHAR(48) NOT NULL DEFAULT 'promotional',
       \`department_id\` INT UNSIGNED DEFAULT NULL,
@@ -65,6 +67,8 @@ export async function ensureCampaignTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_campaign_recipients\` (
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED NOT NULL,
       \`campaign_id\` INT UNSIGNED NOT NULL,
       \`contact_id\` INT UNSIGNED DEFAULT NULL,
       \`phone_number\` VARCHAR(32) NOT NULL,
@@ -87,6 +91,8 @@ export async function ensureCampaignTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_campaign_events\` (
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED NOT NULL,
       \`campaign_id\` INT UNSIGNED NOT NULL,
       \`recipient_id\` BIGINT UNSIGNED DEFAULT NULL,
       \`event_type\` VARCHAR(32) NOT NULL,
@@ -97,11 +103,24 @@ export async function ensureCampaignTables() {
       KEY \`idx_wa_camp_event_type\` (\`event_type\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  for (const table of ["marketing_whatsapp_campaigns", "marketing_whatsapp_campaign_recipients", "marketing_whatsapp_campaign_events"]) {
+    await ensureColumn(table, "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL")
+    await ensureColumn(table, "integration_id", "ADD COLUMN `integration_id` INT UNSIGNED DEFAULT NULL")
+  }
   ensured = true
+}
+
+async function ensureColumn(table: string, column: string, ddl: string) {
+  try {
+    const rows = await query<{ c: number }[]>("SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?", [table, column])
+    if (!rows[0]?.c) await query(`ALTER TABLE \`${table}\` ${ddl}`)
+  } catch { /* keep runtime safe on installations without ALTER privileges */ }
 }
 
 export type CampaignRow = {
   id: number
+  tenant_id: number
+  integration_id: number
   name: string
   type: string
   department_id: number | null
@@ -139,6 +158,8 @@ function toCampaign(r: CampaignRow & { created_by_name?: string | null; audience
   }
   return {
     id: r.id,
+    tenantId: r.tenant_id,
+    integrationId: r.integration_id,
     name: r.name,
     type: r.type,
     departmentId: r.department_id,
@@ -169,25 +190,29 @@ function toCampaign(r: CampaignRow & { created_by_name?: string | null; audience
 
 export async function listCampaigns(): Promise<Campaign[]> {
   await ensureCampaignTables()
+  const tenantId = currentTenantId()
   const rows = await query<(CampaignRow & { created_by_name: string | null; audience_name: string | null })[]>(
     `SELECT c.*, u.name AS created_by_name, a.name AS audience_name
        FROM \`marketing_whatsapp_campaigns\` c
-       LEFT JOIN \`users\` u ON u.id = c.created_by
-       LEFT JOIN \`marketing_whatsapp_audiences\` a ON a.id = c.audience_id
+       LEFT JOIN \`users\` u ON u.id = c.created_by AND u.tenant_id = c.tenant_id
+       LEFT JOIN \`marketing_whatsapp_audiences\` a ON a.id = c.audience_id AND a.tenant_id = c.tenant_id
+      WHERE c.tenant_id = ?
       ORDER BY c.created_at DESC`,
+    [tenantId],
   )
   return rows.map(toCampaign)
 }
 
 export async function getCampaign(id: number): Promise<Campaign | null> {
   await ensureCampaignTables()
+  const tenantId = currentTenantId()
   const rows = await query<(CampaignRow & { created_by_name: string | null; audience_name: string | null })[]>(
     `SELECT c.*, u.name AS created_by_name, a.name AS audience_name
        FROM \`marketing_whatsapp_campaigns\` c
-       LEFT JOIN \`users\` u ON u.id = c.created_by
-       LEFT JOIN \`marketing_whatsapp_audiences\` a ON a.id = c.audience_id
-      WHERE c.id = ? LIMIT 1`,
-    [id],
+       LEFT JOIN \`users\` u ON u.id = c.created_by AND u.tenant_id = c.tenant_id
+       LEFT JOIN \`marketing_whatsapp_audiences\` a ON a.id = c.audience_id AND a.tenant_id = c.tenant_id
+      WHERE c.id = ? AND c.tenant_id = ? LIMIT 1`,
+    [id, tenantId],
   )
   return rows[0] ? toCampaign(rows[0]) : null
 }
@@ -204,15 +229,27 @@ export async function createCampaign(input: {
   headerMediaId?: string | null
   scheduledAt?: string | null
   createdBy: number | null
+  integrationId?: number | null
 }): Promise<number> {
   await ensureCampaignTables()
+  const tenantId = currentTenantId()
+  const integration = input.integrationId
+    ? await getWhatsAppIntegrationByIdForTenant(input.integrationId, tenantId)
+    : await getWhatsAppIntegrationForTenant(tenantId)
+  if (!integration) throw new Error("WhatsApp is not connected for this tenant")
+  if (input.audienceId != null) {
+    const audience = await getAudience(input.audienceId)
+    if (!audience) throw new Error("Audience not found")
+  }
   const status = input.scheduledAt ? "scheduled" : "draft"
   const result = await query<{ insertId: number }>(
     `INSERT INTO \`marketing_whatsapp_campaigns\`
-       (name, type, department_id, audience_id, template_name, template_language, variables_json,
+       (tenant_id, integration_id, name, type, department_id, audience_id, template_name, template_language, variables_json,
         media_link, header_media_id, scheduled_at, status, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      tenantId,
+      integration.id,
       input.name.trim(),
       input.type || "promotional",
       input.departmentId ?? null,
@@ -247,6 +284,10 @@ export async function updateCampaign(
   }>,
 ): Promise<void> {
   await ensureCampaignTables()
+  const tenantId = currentTenantId()
+  const campaign = await getCampaign(id)
+  if (!campaign) throw new Error("Campaign not found")
+  if (patch.audienceId !== undefined && patch.audienceId != null && !(await getAudience(patch.audienceId))) throw new Error("Audience not found")
   const map: Record<string, string> = {
     name: "name",
     type: "type",
@@ -273,19 +314,21 @@ export async function updateCampaign(
     params.push(JSON.stringify(patch.variables))
   }
   if (!sets.length) return
-  params.push(id)
-  await query(`UPDATE \`marketing_whatsapp_campaigns\` SET ${sets.join(", ")} WHERE id = ?`, params)
+  params.push(id, tenantId)
+  await query(`UPDATE \`marketing_whatsapp_campaigns\` SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`, params)
 }
 
 export async function deleteCampaign(id: number): Promise<void> {
   await ensureCampaignTables()
-  await query("DELETE FROM `marketing_whatsapp_campaigns` WHERE id = ?", [id])
+  await query("DELETE FROM `marketing_whatsapp_campaigns` WHERE id = ? AND tenant_id = ?", [id, currentTenantId()])
 }
 
 async function logEvent(campaignId: number, type: string, detail?: string | null, recipientId?: number | null) {
+  const campaign = await getCampaign(campaignId)
+  if (!campaign) throw new Error("Campaign not found")
   await query(
-    "INSERT INTO `marketing_whatsapp_campaign_events` (campaign_id, recipient_id, event_type, detail) VALUES (?, ?, ?, ?)",
-    [campaignId, recipientId ?? null, type, detail ?? null],
+    "INSERT INTO `marketing_whatsapp_campaign_events` (tenant_id, integration_id, campaign_id, recipient_id, event_type, detail) VALUES (?, ?, ?, ?, ?, ?)",
+    [currentTenantId(), campaign.integrationId, campaignId, recipientId ?? null, type, detail ?? null],
   )
 }
 
@@ -298,12 +341,14 @@ export async function buildCampaignRecipients(campaignId: number): Promise<numbe
   let recipients: AudienceContact[] = []
   if (campaign.audienceId) {
     const audience = await getAudience(campaign.audienceId)
-    if (audience) recipients = await resolveAudience(audience.filter)
+    if (!audience) throw new Error("Audience not found")
+    if (audience.integrationId != null && audience.integrationId !== campaign.integrationId) throw new Error("Audience is linked to a different WhatsApp integration")
+    recipients = await resolveAudience(audience.filter, 5000, campaign.integrationId)
   } else if (campaign.status !== "draft") {
     // No audience → whole opted-in book.
-    recipients = await resolveAudience({ match: "AND", conditions: [] } as AudienceFilter)
+    recipients = await resolveAudience({ match: "AND", conditions: [] } as AudienceFilter, 5000, campaign.integrationId)
   } else {
-    recipients = await resolveAudience({ match: "AND", conditions: [] } as AudienceFilter)
+    recipients = await resolveAudience({ match: "AND", conditions: [] } as AudienceFilter, 5000, campaign.integrationId)
   }
 
   let inserted = 0
@@ -313,14 +358,14 @@ export async function buildCampaignRecipients(campaignId: number): Promise<numbe
     const vars = campaign.variables.map((v) => substituteVariable(v, r))
     const res = await query<{ affectedRows: number }>(
       `INSERT IGNORE INTO \`marketing_whatsapp_campaign_recipients\`
-         (campaign_id, contact_id, phone_number, variables_json, status)
-       VALUES (?, ?, ?, ?, 'pending')`,
-      [campaignId, r.contactId, phone, JSON.stringify(vars)],
+         (tenant_id, integration_id, campaign_id, contact_id, phone_number, variables_json, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      [currentTenantId(), campaign.integrationId, campaignId, r.contactId, phone, JSON.stringify(vars)],
     )
     if (res.affectedRows) inserted++
   }
 
-  await query("UPDATE `marketing_whatsapp_campaigns` SET total_recipients = ? WHERE id = ?", [inserted, campaignId])
+  await query("UPDATE `marketing_whatsapp_campaigns` SET total_recipients = ? WHERE id = ? AND tenant_id = ?", [inserted, campaignId, currentTenantId()])
   return inserted
 }
 
@@ -342,22 +387,22 @@ export async function launchCampaign(id: number, userId: number, batchSize = 50)
   // Guard: WhatsApp only delivers APPROVED templates. Block launch (with a clear
   // reason) when the chosen template is missing locally or not approved, so the
   // campaign never reports "sent" for messages Meta will silently reject.
-  const tpl = await findLocalTemplate(campaign.templateName, campaign.templateLanguage || undefined)
+  const tpl = await findLocalTemplate(campaign.templateName, campaign.templateLanguage || undefined, campaign.integrationId)
   if (!tpl) {
     const msg = `Template "${campaign.templateName}" (${campaign.templateLanguage || "en_US"}) was not found. Sync templates from Meta and choose an approved template.`
-    await query("UPDATE `marketing_whatsapp_campaigns` SET last_error = ? WHERE id = ?", [msg, id])
+    await query("UPDATE `marketing_whatsapp_campaigns` SET last_error = ? WHERE id = ? AND tenant_id = ?", [msg, id, currentTenantId()])
     throw new Error(msg)
   }
   if ((tpl.status || "").toUpperCase() !== "APPROVED") {
     const msg = `Template "${campaign.templateName}" is ${tpl.status || "not approved"}. Only APPROVED templates can be broadcast.`
-    await query("UPDATE `marketing_whatsapp_campaigns` SET last_error = ? WHERE id = ?", [msg, id])
+    await query("UPDATE `marketing_whatsapp_campaigns` SET last_error = ? WHERE id = ? AND tenant_id = ?", [msg, id, currentTenantId()])
     throw new Error(msg)
   }
 
   const total = await buildCampaignRecipients(id)
   await query(
-    "UPDATE `marketing_whatsapp_campaigns` SET status = 'running', launched_by = ?, launched_at = NOW(), last_error = NULL WHERE id = ?",
-    [userId, id],
+    "UPDATE `marketing_whatsapp_campaigns` SET status = 'running', launched_by = ?, launched_at = NOW(), last_error = NULL WHERE id = ? AND tenant_id = ?",
+    [userId, id, currentTenantId()],
   )
   await logEvent(id, "launched", `${total} recipients`)
 
@@ -376,18 +421,19 @@ export async function processCampaignBatch(id: number, limit = 50): Promise<{ pr
   const campaign = await getCampaign(id)
   if (!campaign || campaign.status !== "running") return { processed: 0, remaining: 0 }
 
-  const integration = await getWhatsAppIntegration()
+  const integration = await getWhatsAppIntegrationByIdForTenant(campaign.integrationId, currentTenantId())
   if (!integration) {
-    await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'failed', last_error = ? WHERE id = ?", [
+    await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'failed', last_error = ? WHERE id = ? AND tenant_id = ?", [
       "No WhatsApp account connected",
       id,
+      currentTenantId(),
     ])
     return { processed: 0, remaining: 0 }
   }
 
   const pending = await query<{ id: number; contact_id: number | null; phone_number: string; variables_json: string | null }[]>(
-    "SELECT id, contact_id, phone_number, variables_json FROM `marketing_whatsapp_campaign_recipients` WHERE campaign_id = ? AND status = 'pending' ORDER BY id ASC LIMIT ?",
-    [id, limit],
+    "SELECT id, contact_id, phone_number, variables_json FROM `marketing_whatsapp_campaign_recipients` WHERE campaign_id = ? AND tenant_id = ? AND integration_id = ? AND status = 'pending' ORDER BY id ASC LIMIT ?",
+    [id, currentTenantId(), campaign.integrationId, limit],
   )
 
   let processed = 0
@@ -413,19 +459,20 @@ export async function processCampaignBatch(id: number, limit = 50): Promise<{ pr
 
     if (result.ok) {
       await query(
-        "UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'sent', wamid = ?, sent_at = NOW(), error_message = NULL WHERE id = ?",
-        [result.messageId ?? null, r.id],
+        "UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'sent', wamid = ?, sent_at = NOW(), error_message = NULL WHERE id = ? AND tenant_id = ? AND campaign_id = ?",
+        [result.messageId ?? null, r.id, currentTenantId(), id],
       )
-      await query("UPDATE `marketing_whatsapp_campaigns` SET sent_count = sent_count + 1 WHERE id = ?", [id])
+      await query("UPDATE `marketing_whatsapp_campaigns` SET sent_count = sent_count + 1 WHERE id = ? AND tenant_id = ?", [id, currentTenantId()])
       // Mirror the broadcast into the inbox so replies thread correctly.
       try {
         const contact = r.contact_id
           ? { id: r.contact_id }
-          : await findOrCreateContact({ phone: r.phone_number })
+          : await findOrCreateContact({ phone: r.phone_number, integrationId: integration.id })
         const conversation = await findOrCreateConversation({
           contactId: contact.id,
           phoneNumberId: integration.phone_number_id,
           wabaId: integration.waba_id,
+          integrationId: integration.id,
         })
         const messageId = await recordOutboundMessage({
           conversationId: conversation.id,
@@ -436,35 +483,36 @@ export async function processCampaignBatch(id: number, limit = 50): Promise<{ pr
           recipientPhone: r.phone_number,
           status: "sent",
           sentByUserId: campaign.createdBy,
+          integrationId: integration.id,
         })
-        await query("UPDATE `marketing_whatsapp_messages` SET campaign_id = ? WHERE id = ?", [id, messageId])
+        await query("UPDATE `marketing_whatsapp_messages` SET campaign_id = ? WHERE id = ? AND tenant_id = ? AND integration_id = ?", [id, messageId, currentTenantId(), integration.id])
       } catch (err) {
         console.error("[v0] campaign inbox mirror failed:", (err as Error).message)
       }
     } else {
       await query(
-        "UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'failed', error_message = ? WHERE id = ?",
-        [(result.error || "send failed").slice(0, 500), r.id],
+        "UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'failed', error_message = ? WHERE id = ? AND tenant_id = ? AND campaign_id = ?",
+        [(result.error || "send failed").slice(0, 500), r.id, currentTenantId(), id],
       )
-      await query("UPDATE `marketing_whatsapp_campaigns` SET failed_count = failed_count + 1 WHERE id = ?", [id])
+      await query("UPDATE `marketing_whatsapp_campaigns` SET failed_count = failed_count + 1 WHERE id = ? AND tenant_id = ?", [id, currentTenantId()])
       await logEvent(id, "failed", result.error ?? null, r.id)
     }
     processed++
   }
 
   const remainingRows = await query<{ c: number }[]>(
-    "SELECT COUNT(*) AS c FROM `marketing_whatsapp_campaign_recipients` WHERE campaign_id = ? AND status = 'pending'",
-    [id],
+    "SELECT COUNT(*) AS c FROM `marketing_whatsapp_campaign_recipients` WHERE campaign_id = ? AND tenant_id = ? AND status = 'pending'",
+    [id, currentTenantId()],
   )
   const remaining = Number(remainingRows[0]?.c ?? 0)
 
   // Attribute this batch's sends to the template's usage counter.
   if (campaign.templateName && processed > 0) {
-    await recordTemplateUsage(campaign.templateName, campaign.templateLanguage || undefined, processed).catch(() => {})
+    await recordTemplateUsage(campaign.templateName, campaign.templateLanguage || undefined, processed, campaign.integrationId).catch(() => {})
   }
 
   if (remaining === 0) {
-    await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'completed', completed_at = NOW() WHERE id = ?", [id])
+    await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'completed', completed_at = NOW() WHERE id = ? AND tenant_id = ?", [id, currentTenantId()])
     await logEvent(id, "completed")
   }
 
@@ -473,13 +521,13 @@ export async function processCampaignBatch(id: number, limit = 50): Promise<{ pr
 
 export async function pauseCampaign(id: number): Promise<void> {
   await ensureCampaignTables()
-  await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'paused' WHERE id = ? AND status = 'running'", [id])
+  await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'paused' WHERE id = ? AND tenant_id = ? AND status = 'running'", [id, currentTenantId()])
   await logEvent(id, "paused")
 }
 
 export async function resumeCampaign(id: number, batchSize = 50): Promise<void> {
   await ensureCampaignTables()
-  await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'running' WHERE id = ? AND status = 'paused'", [id])
+  await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'running' WHERE id = ? AND tenant_id = ? AND status = 'paused'", [id, currentTenantId()])
   await logEvent(id, "resumed")
   await processCampaignBatch(id, batchSize)
 }
@@ -487,12 +535,12 @@ export async function resumeCampaign(id: number, batchSize = 50): Promise<void> 
 export async function cancelCampaign(id: number): Promise<void> {
   await ensureCampaignTables()
   await query(
-    "UPDATE `marketing_whatsapp_campaigns` SET status = 'cancelled' WHERE id = ? AND status IN ('draft','scheduled','running','paused')",
-    [id],
+    "UPDATE `marketing_whatsapp_campaigns` SET status = 'cancelled' WHERE id = ? AND tenant_id = ? AND status IN ('draft','scheduled','running','paused')",
+    [id, currentTenantId()],
   )
   await query(
-    "UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'failed', error_message = 'Campaign cancelled' WHERE campaign_id = ? AND status = 'pending'",
-    [id],
+    "UPDATE `marketing_whatsapp_campaign_recipients` SET status = 'failed', error_message = 'Campaign cancelled' WHERE campaign_id = ? AND tenant_id = ? AND status = 'pending'",
+    [id, currentTenantId()],
   )
   await logEvent(id, "cancelled")
 }
@@ -507,8 +555,8 @@ export async function applyCampaignStatusByWamid(wamid: string, status: "deliver
   // Scoped to the acting tenant: a status callback may only advance THIS
   // tenant's recipient row, never one that happens to share a wamid.
   const tenantId = currentTenantId()
-  const rows = await query<{ id: number; campaign_id: number; status: string }[]>(
-    "SELECT id, campaign_id, status FROM `marketing_whatsapp_campaign_recipients` WHERE tenant_id = ? AND wamid = ? LIMIT 1",
+  const rows = await query<{ id: number; campaign_id: number; status: string; integration_id: number }[]>(
+    "SELECT r.id, r.campaign_id, r.status, r.integration_id FROM `marketing_whatsapp_campaign_recipients` r JOIN `marketing_whatsapp_campaigns` c ON c.id = r.campaign_id AND c.tenant_id = r.tenant_id AND c.integration_id = r.integration_id WHERE r.tenant_id = ? AND r.wamid = ? LIMIT 1",
     [tenantId, wamid],
   )
   const recipient = rows[0]
@@ -553,32 +601,24 @@ export async function markCampaignReplied(phone: string): Promise<void> {
  * drains a batch for each running campaign. Meant to be pinged by a cron job.
  */
 export async function runCampaignScheduler(batchSize = 50): Promise<{ launched: number; drained: number }> {
-  await ensureCampaignTables()
   let launched = 0
   let drained = 0
-
-  const due = await query<{ id: number; created_by: number | null }[]>(
-    "SELECT id, created_by FROM `marketing_whatsapp_campaigns` WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()",
-  )
-  for (const c of due) {
-    try {
-      await launchCampaign(c.id, c.created_by ?? 0, batchSize)
-      launched++
-    } catch (err) {
-      console.error("[v0] scheduler launch failed:", (err as Error).message)
+  await forEachActiveTenant(async () => {
+    await ensureCampaignTables()
+    const due = await query<{ id: number; created_by: number | null }[]>(
+      "SELECT id, created_by FROM `marketing_whatsapp_campaigns` WHERE tenant_id = ? AND status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()",
+      [currentTenantId()],
+    )
+    for (const c of due) {
+      try { await launchCampaign(c.id, c.created_by ?? 0, batchSize); launched++ }
+      catch (err) { console.error("[whatsapp] scheduler launch failed:", (err as Error).message) }
     }
-  }
-
-  const running = await query<{ id: number }[]>("SELECT id FROM `marketing_whatsapp_campaigns` WHERE status = 'running'")
-  for (const c of running) {
-    try {
-      const { processed } = await processCampaignBatch(c.id, batchSize)
-      if (processed) drained++
-    } catch (err) {
-      console.error("[v0] scheduler drain failed:", (err as Error).message)
+    const running = await query<{ id: number }[]>("SELECT id FROM `marketing_whatsapp_campaigns` WHERE tenant_id = ? AND status = 'running'", [currentTenantId()])
+    for (const c of running) {
+      try { const result = await processCampaignBatch(c.id, batchSize); if (result.processed) drained++ }
+      catch (err) { console.error("[whatsapp] scheduler drain failed:", (err as Error).message) }
     }
-  }
-
+  })
   return { launched, drained }
 }
 
@@ -587,7 +627,7 @@ export async function getCampaignRecipients(id: number, limit = 200) {
   return query<
     { id: number; phone_number: string; status: string; error_message: string | null; sent_at: string | null }[]
   >(
-    "SELECT id, phone_number, status, error_message, sent_at FROM `marketing_whatsapp_campaign_recipients` WHERE campaign_id = ? ORDER BY id ASC LIMIT ?",
-    [id, limit],
+    "SELECT id, phone_number, status, error_message, sent_at FROM `marketing_whatsapp_campaign_recipients` WHERE campaign_id = ? AND tenant_id = ? ORDER BY id ASC LIMIT ?",
+    [id, currentTenantId(), limit],
   )
 }

@@ -1,6 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
+import { currentTenantId } from "@/lib/tenant-scope"
 
 /**
  * Read-only analytics aggregations for the WhatsApp platform. Everything is
@@ -40,6 +41,7 @@ export type WhatsAppAnalytics = {
 
 export async function getWhatsAppAnalytics(): Promise<WhatsAppAnalytics> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
 
   const [
     contactRows,
@@ -53,7 +55,8 @@ export async function getWhatsAppAnalytics(): Promise<WhatsAppAnalytics> {
     automationRows,
   ] = await Promise.all([
     query<{ total: number; opted: number }[]>(
-      "SELECT COUNT(*) AS total, SUM(opted_in = 1) AS opted FROM `marketing_whatsapp_contacts`",
+      "SELECT COUNT(*) AS total, SUM(opted_in = 1) AS opted FROM `marketing_whatsapp_contacts` WHERE tenant_id = ?",
+      [tenantId],
     ),
     query<{ open_count: number; closed_count: number; unassigned: number; unread: number }[]>(
       `SELECT
@@ -61,56 +64,66 @@ export async function getWhatsAppAnalytics(): Promise<WhatsAppAnalytics> {
          SUM(status = 'closed') AS closed_count,
          SUM(status <> 'closed' AND assigned_agent_id IS NULL) AS unassigned,
          SUM(unread_count) AS unread
-       FROM \`marketing_whatsapp_conversations\``,
+       FROM \`marketing_whatsapp_conversations\` WHERE tenant_id = ?`,
+      [tenantId],
     ),
     query<{ inbound: number; outbound: number }[]>(
       `SELECT
          SUM(direction = 'inbound') AS inbound,
          SUM(direction = 'outbound') AS outbound
        FROM \`marketing_whatsapp_messages\`
-      WHERE created_at >= (NOW() - INTERVAL 7 DAY)`,
+        WHERE tenant_id = ? AND created_at >= (NOW() - INTERVAL 7 DAY)`,
+      [tenantId],
     ),
     query<{ avg_minutes: number | null }[]>(
       `SELECT AVG(TIMESTAMPDIFF(MINUTE, created_at, first_response_at)) AS avg_minutes
          FROM \`marketing_whatsapp_conversations\`
-        WHERE first_response_at IS NOT NULL`,
+        WHERE tenant_id = ? AND first_response_at IS NOT NULL`,
+      [tenantId],
     ),
     query<{ d: string; inbound: number; outbound: number }[]>(
       `SELECT DATE(created_at) AS d,
               SUM(direction = 'inbound') AS inbound,
               SUM(direction = 'outbound') AS outbound
          FROM \`marketing_whatsapp_messages\`
-        WHERE created_at >= (NOW() - INTERVAL 14 DAY)
+        WHERE tenant_id = ? AND created_at >= (NOW() - INTERVAL 14 DAY)
         GROUP BY DATE(created_at)
         ORDER BY d ASC`,
+      [tenantId],
     ),
     query<{ id: number; name: string; open_count: number; agent_count: number }[]>(
       `SELECT d.id, d.name,
-              (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c WHERE c.department_id = d.id AND c.status <> 'closed') AS open_count,
-              (SELECT COUNT(*) FROM \`marketing_whatsapp_department_agents\` da WHERE da.department_id = d.id AND da.is_active = 1) AS agent_count
+              (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c WHERE c.department_id = d.id AND c.tenant_id = d.tenant_id AND c.status <> 'closed') AS open_count,
+              (SELECT COUNT(*) FROM \`marketing_whatsapp_department_agents\` da WHERE da.department_id = d.id AND da.tenant_id = d.tenant_id AND da.is_active = 1) AS agent_count
          FROM \`marketing_whatsapp_departments\` d
-        WHERE d.is_active = 1
+        WHERE d.tenant_id = ? AND d.is_active = 1
         ORDER BY d.sort_order ASC`,
+      [tenantId],
     ),
     query<{ user_id: number; name: string; open_count: number; closed7d: number; sent7d: number }[]>(
       `SELECT u.id AS user_id, u.name,
-              (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c WHERE c.assigned_agent_id = u.id AND c.status <> 'closed') AS open_count,
-              (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c WHERE c.closed_by = u.id AND c.closed_at >= (NOW() - INTERVAL 7 DAY)) AS closed7d,
-              (SELECT COUNT(*) FROM \`marketing_whatsapp_messages\` m WHERE m.sent_by_user_id = u.id AND m.created_at >= (NOW() - INTERVAL 7 DAY)) AS sent7d
+              (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c WHERE c.assigned_agent_id = u.id AND c.tenant_id = ?) AS open_count,
+              (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c WHERE c.closed_by = u.id AND c.tenant_id = ? AND c.closed_at >= (NOW() - INTERVAL 7 DAY)) AS closed7d,
+              (SELECT COUNT(*) FROM \`marketing_whatsapp_messages\` m WHERE m.sent_by_user_id = u.id AND m.tenant_id = ? AND m.created_at >= (NOW() - INTERVAL 7 DAY)) AS sent7d
          FROM \`users\` u
-         JOIN \`marketing_whatsapp_agent_settings\` s ON s.user_id = u.id AND s.is_agent = 1
+         JOIN \`marketing_whatsapp_agent_settings\` s ON s.user_id = u.id AND s.tenant_id = ? AND s.is_agent = 1
+        WHERE u.tenant_id = ?
         ORDER BY open_count DESC, u.name ASC
-        LIMIT 50`,
+      LIMIT 50`,
+      [tenantId, tenantId, tenantId, tenantId, tenantId],
     ),
     query<
       { id: number; name: string; status: string; total_recipients: number; sent_count: number; delivered_count: number; read_count: number; failed_count: number; replied_count: number }[]
     >(
       `SELECT id, name, status, total_recipients, sent_count, delivered_count, read_count, failed_count, replied_count
          FROM \`marketing_whatsapp_campaigns\`
+        WHERE tenant_id = ?
         ORDER BY created_at DESC LIMIT 20`,
+      [tenantId],
     ).catch(() => []),
     query<{ c: number }[]>(
-      "SELECT COUNT(*) AS c FROM `marketing_whatsapp_automations` WHERE is_active = 1",
+      "SELECT COUNT(*) AS c FROM `marketing_whatsapp_automations` WHERE tenant_id = ? AND is_active = 1",
+      [tenantId],
     ).catch(() => [{ c: 0 }]),
   ])
 

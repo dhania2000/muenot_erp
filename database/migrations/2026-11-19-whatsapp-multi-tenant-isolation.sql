@@ -20,9 +20,9 @@
 --   2. Adds `integration_id` to the data tables that hang off a connected
 --      number (contacts, conversations, messages, webhook_events, campaigns,
 --      templates, media).
---   3. Backfills tenant_id -> the default platform-owner tenant and
---      integration_id -> the single existing integration row, so existing data
---      keeps working with zero downtime.
+--   3. Backfills tenant_id only when an existing ERP ownership relationship
+--      proves the owner; ambiguous legacy rows remain NULL for administrator
+--      mapping instead of being assigned to an arbitrary tenant.
 --   4. Replaces globally-unique keys with tenant-scoped composite unique keys
 --      so two tenants can legitimately hold the same phone number / wamid /
 --      template name without a collision.
@@ -36,18 +36,21 @@
 SET NAMES utf8mb4;
 
 -- -------------------------------------------------------------
--- Resolve the backfill targets once.
---   @default_tenant -> the platform-owner tenant every legacy row belongs to.
---   @legacy_integration -> the single pre-existing integration row (if any).
+-- Resolve only ownership that is proven by existing ERP relationships. Legacy
+-- rows without a provable owner intentionally remain NULL and are unavailable
+-- to tenant APIs until an administrator maps them; never guess the first tenant.
 -- -------------------------------------------------------------
-SET @default_tenant := (SELECT `id` FROM `tenants` ORDER BY `id` ASC LIMIT 1);
-SET @legacy_integration := (SELECT `id` FROM `marketing_whatsapp_integration` ORDER BY `id` ASC LIMIT 1);
+SET @default_tenant := NULL;
 
 -- =============================================================
 -- 1. marketing_whatsapp_integration
 -- =============================================================
 ALTER TABLE `marketing_whatsapp_integration`
   ADD COLUMN IF NOT EXISTS `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`;
+UPDATE `marketing_whatsapp_integration` i
+JOIN `users` u ON u.`id` = i.`connected_by_user_id` AND u.`tenant_id` IS NOT NULL
+SET i.`tenant_id` = u.`tenant_id`
+WHERE i.`tenant_id` IS NULL;
 UPDATE `marketing_whatsapp_integration` SET `tenant_id` = @default_tenant WHERE `tenant_id` IS NULL AND @default_tenant IS NOT NULL;
 ALTER TABLE `marketing_whatsapp_integration`
   ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_integration_tenant` (`tenant_id`);
@@ -210,11 +213,22 @@ UPDATE `marketing_whatsapp_templates` SET `integration_id` = @legacy_integration
 ALTER TABLE `marketing_whatsapp_templates`
   ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_templates_tenant` (`tenant_id`);
 ALTER TABLE `marketing_whatsapp_templates` DROP INDEX IF EXISTS `uniq_wa_template`;
+ALTER TABLE `marketing_whatsapp_templates` DROP INDEX IF EXISTS `uniq_wa_template_tenant`;
 ALTER TABLE `marketing_whatsapp_templates`
-  ADD UNIQUE KEY IF NOT EXISTS `uniq_wa_template_tenant` (`tenant_id`, `name`, `language`);
+  ADD UNIQUE KEY IF NOT EXISTS `uniq_wa_template_tenant_integration` (`tenant_id`, `integration_id`, `name`, `language`);
 
 -- =============================================================
--- 14. marketing_whatsapp_audiences
+-- 14. marketing_whatsapp_template_versions
+-- =============================================================
+ALTER TABLE `marketing_whatsapp_template_versions`
+  ADD COLUMN IF NOT EXISTS `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`;
+ALTER TABLE `marketing_whatsapp_template_versions`
+  ADD COLUMN IF NOT EXISTS `integration_id` INT UNSIGNED DEFAULT NULL AFTER `tenant_id`;
+ALTER TABLE `marketing_whatsapp_template_versions`
+  ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_template_versions_tenant` (`tenant_id`);
+
+-- =============================================================
+-- 15. marketing_whatsapp_audiences
 -- =============================================================
 ALTER TABLE `marketing_whatsapp_audiences`
   ADD COLUMN IF NOT EXISTS `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`;
@@ -223,7 +237,7 @@ ALTER TABLE `marketing_whatsapp_audiences`
   ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_audiences_tenant` (`tenant_id`);
 
 -- =============================================================
--- 15. marketing_whatsapp_campaigns
+-- 16. marketing_whatsapp_campaigns
 -- =============================================================
 ALTER TABLE `marketing_whatsapp_campaigns`
   ADD COLUMN IF NOT EXISTS `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`;
@@ -235,28 +249,61 @@ ALTER TABLE `marketing_whatsapp_campaigns`
   ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_campaigns_tenant` (`tenant_id`);
 
 -- =============================================================
--- 16. marketing_whatsapp_campaign_recipients
+-- 17. marketing_whatsapp_campaign_recipients
 -- =============================================================
 ALTER TABLE `marketing_whatsapp_campaign_recipients`
   ADD COLUMN IF NOT EXISTS `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`;
+ALTER TABLE `marketing_whatsapp_campaign_recipients`
+  ADD COLUMN IF NOT EXISTS `integration_id` INT UNSIGNED DEFAULT NULL AFTER `tenant_id`;
 UPDATE `marketing_whatsapp_campaign_recipients` SET `tenant_id` = @default_tenant WHERE `tenant_id` IS NULL AND @default_tenant IS NOT NULL;
 ALTER TABLE `marketing_whatsapp_campaign_recipients`
   ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_campaign_recipients_tenant` (`tenant_id`);
 
 -- =============================================================
--- 17. marketing_whatsapp_campaign_events
+-- 18. marketing_whatsapp_campaign_events
 -- =============================================================
 ALTER TABLE `marketing_whatsapp_campaign_events`
   ADD COLUMN IF NOT EXISTS `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`;
+ALTER TABLE `marketing_whatsapp_campaign_events`
+  ADD COLUMN IF NOT EXISTS `integration_id` INT UNSIGNED DEFAULT NULL AFTER `tenant_id`;
 UPDATE `marketing_whatsapp_campaign_events` SET `tenant_id` = @default_tenant WHERE `tenant_id` IS NULL AND @default_tenant IS NOT NULL;
 ALTER TABLE `marketing_whatsapp_campaign_events`
   ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_campaign_events_tenant` (`tenant_id`);
 
 -- =============================================================
--- 18. marketing_whatsapp_automations
+-- 19. marketing_whatsapp_automations
 -- =============================================================
 ALTER TABLE `marketing_whatsapp_automations`
   ADD COLUMN IF NOT EXISTS `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`;
+ALTER TABLE `marketing_whatsapp_automations`
+  ADD COLUMN IF NOT EXISTS `integration_id` INT UNSIGNED DEFAULT NULL AFTER `tenant_id`;
 UPDATE `marketing_whatsapp_automations` SET `tenant_id` = @default_tenant WHERE `tenant_id` IS NULL AND @default_tenant IS NOT NULL;
 ALTER TABLE `marketing_whatsapp_automations`
   ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_automations_tenant` (`tenant_id`);
+
+-- Diagnostics are tenant-owned as well; an unmapped legacy row stays NULL and
+-- is never returned by a normal tenant query. The table may be runtime-created
+-- on older deployments, so create the compatible shape before altering it.
+CREATE TABLE IF NOT EXISTS `marketing_whatsapp_diagnostics` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` INT UNSIGNED DEFAULT NULL,
+  `integration_id` INT UNSIGNED DEFAULT NULL,
+  `direction` VARCHAR(16) NOT NULL,
+  `outcome` VARCHAR(16) NOT NULL,
+  `context` VARCHAR(64) NOT NULL,
+  `phone_number` VARCHAR(32) DEFAULT NULL,
+  `wamid` VARCHAR(191) DEFAULT NULL,
+  `template_name` VARCHAR(191) DEFAULT NULL,
+  `campaign_id` INT UNSIGNED DEFAULT NULL,
+  `error_code` INT DEFAULT NULL,
+  `retryable` TINYINT(1) DEFAULT NULL,
+  `message` VARCHAR(1000) DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+ALTER TABLE `marketing_whatsapp_diagnostics`
+  ADD COLUMN IF NOT EXISTS `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`;
+ALTER TABLE `marketing_whatsapp_diagnostics`
+  ADD COLUMN IF NOT EXISTS `integration_id` INT UNSIGNED DEFAULT NULL AFTER `tenant_id`;
+ALTER TABLE `marketing_whatsapp_diagnostics`
+  ADD KEY IF NOT EXISTS `idx_marketing_whatsapp_diagnostics_tenant` (`tenant_id`);

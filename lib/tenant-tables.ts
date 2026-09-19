@@ -111,11 +111,13 @@ export const TENANT_OWNED_TABLES = [
   "marketing_whatsapp_transfers",
   "marketing_whatsapp_media",
   "marketing_whatsapp_templates",
+  "marketing_whatsapp_template_versions",
   "marketing_whatsapp_audiences",
   "marketing_whatsapp_campaigns",
   "marketing_whatsapp_campaign_recipients",
   "marketing_whatsapp_campaign_events",
   "marketing_whatsapp_automations",
+  "marketing_whatsapp_diagnostics",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

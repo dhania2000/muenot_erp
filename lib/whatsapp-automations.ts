@@ -1,7 +1,8 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
-import { getWhatsAppIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
+import { getWhatsAppIntegrationForTenant, getWhatsAppIntegrationByIdForTenant, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
+import { currentTenantId, currentTenantIdOrNull, forEachActiveTenant } from "@/lib/tenant-scope"
 import { assignConversation, recordOutboundMessage } from "@/lib/whatsapp-store"
 import { setConversationDepartment } from "@/lib/whatsapp-routing"
 import type { AutomationAction, AutomationTrigger } from "@/lib/whatsapp-config"
@@ -24,6 +25,8 @@ export async function ensureAutomationTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_automations\` (
       \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED DEFAULT NULL,
       \`name\` VARCHAR(191) NOT NULL,
       \`is_active\` TINYINT(1) NOT NULL DEFAULT 1,
       \`trigger_type\` VARCHAR(48) NOT NULL,
@@ -42,11 +45,22 @@ export async function ensureAutomationTables() {
       KEY \`idx_wa_automation_trigger\` (\`trigger_type\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  await ensureColumn("marketing_whatsapp_automations", "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL")
+  await ensureColumn("marketing_whatsapp_automations", "integration_id", "ADD COLUMN `integration_id` INT UNSIGNED DEFAULT NULL")
   ensured = true
+}
+
+async function ensureColumn(table: string, column: string, ddl: string) {
+  try {
+    const rows = await query<{ c: number }[]>("SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?", [table, column])
+    if (!rows[0]?.c) await query(`ALTER TABLE \`${table}\` ${ddl}`)
+  } catch { /* fail closed if the deployment cannot alter its legacy schema */ }
 }
 
 export type AutomationRow = {
   id: number
+  tenant_id: number
+  integration_id: number | null
   name: string
   is_active: number
   trigger_type: string
@@ -62,6 +76,8 @@ export type AutomationRow = {
 
 export type Automation = {
   id: number
+  tenantId: number
+  integrationId: number | null
   name: string
   isActive: boolean
   triggerType: string
@@ -89,6 +105,8 @@ function parseJson(json: string | null): Record<string, unknown> {
 function toAutomation(r: AutomationRow & { department_name?: string | null }): Automation {
   return {
     id: r.id,
+    tenantId: r.tenant_id,
+    integrationId: r.integration_id,
     name: r.name,
     isActive: r.is_active === 1,
     triggerType: r.trigger_type,
@@ -106,11 +124,14 @@ function toAutomation(r: AutomationRow & { department_name?: string | null }): A
 
 export async function listAutomations(): Promise<Automation[]> {
   await ensureAutomationTables()
+  const tenantId = currentTenantId()
   const rows = await query<(AutomationRow & { department_name: string | null })[]>(
     `SELECT a.*, d.name AS department_name
        FROM \`marketing_whatsapp_automations\` a
-       LEFT JOIN \`marketing_whatsapp_departments\` d ON d.id = a.department_id
+       LEFT JOIN \`marketing_whatsapp_departments\` d ON d.id = a.department_id AND d.tenant_id = a.tenant_id
+      WHERE a.tenant_id = ?
       ORDER BY a.priority DESC, a.id ASC`,
+    [tenantId],
   )
   return rows.map(toAutomation)
 }
@@ -124,13 +145,21 @@ export async function createAutomation(input: {
   departmentId?: number | null
   priority?: number
   createdBy: number | null
+  integrationId?: number | null
 }): Promise<number> {
   await ensureAutomationTables()
+  const tenantId = currentTenantId()
+  const integration = input.integrationId
+    ? await getWhatsAppIntegrationByIdForTenant(input.integrationId, tenantId)
+    : await getWhatsAppIntegrationForTenant(tenantId)
+  if (!integration) throw new Error("WhatsApp is not connected for this tenant")
   const result = await query<{ insertId: number }>(
     `INSERT INTO \`marketing_whatsapp_automations\`
-       (name, trigger_type, trigger_config_json, action_type, action_config_json, department_id, priority, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, integration_id, name, trigger_type, trigger_config_json, action_type, action_config_json, department_id, priority, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      tenantId,
+      integration.id,
       input.name.trim(),
       input.triggerType,
       JSON.stringify(input.triggerConfig ?? {}),
@@ -158,6 +187,9 @@ export async function updateAutomation(
   }>,
 ): Promise<void> {
   await ensureAutomationTables()
+  const tenantId = currentTenantId()
+  const owned = await query<{ integration_id: number | null }[]>("SELECT integration_id FROM `marketing_whatsapp_automations` WHERE id = ? AND tenant_id = ? LIMIT 1", [id, tenantId])
+  if (!owned[0]) throw new Error("Automation not found")
   const sets: string[] = []
   const params: (string | number | null)[] = []
   if (patch.name !== undefined) (sets.push("name = ?"), params.push(patch.name.trim()))
@@ -169,13 +201,13 @@ export async function updateAutomation(
   if (patch.departmentId !== undefined) (sets.push("department_id = ?"), params.push(patch.departmentId))
   if (patch.priority !== undefined) (sets.push("priority = ?"), params.push(patch.priority))
   if (!sets.length) return
-  params.push(id)
-  await query(`UPDATE \`marketing_whatsapp_automations\` SET ${sets.join(", ")} WHERE id = ?`, params)
+  params.push(id, tenantId)
+  await query(`UPDATE \`marketing_whatsapp_automations\` SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`, params)
 }
 
 export async function deleteAutomation(id: number): Promise<void> {
   await ensureAutomationTables()
-  await query("DELETE FROM `marketing_whatsapp_automations` WHERE id = ?", [id])
+  await query("DELETE FROM `marketing_whatsapp_automations` WHERE id = ? AND tenant_id = ?", [id, currentTenantId()])
 }
 
 /* ------------------------------------------------------------------ */
@@ -224,7 +256,12 @@ function triggerMatches(automation: Automation, ctx: InboundAutomationContext): 
 }
 
 async function runAction(automation: Automation, ctx: InboundAutomationContext): Promise<void> {
-  const integration = await getWhatsAppIntegration()
+  const owner = await query<{ tenant_id: number }[]>("SELECT tenant_id FROM `marketing_whatsapp_conversations` WHERE id = ? AND tenant_id = ? LIMIT 1", [ctx.conversationId, currentTenantId()])
+  if (!owner[0] || owner[0].tenant_id !== currentTenantId() || automation.tenantId !== currentTenantId()) throw new Error("Cross-tenant automation execution rejected")
+  const integration = automation.integrationId == null
+    ? await getWhatsAppIntegrationForTenant(currentTenantId())
+    : await getWhatsAppIntegrationByIdForTenant(automation.integrationId, currentTenantId())
+  if (automation.integrationId != null && !integration) throw new Error("Automation integration is not owned by this tenant")
   const cfg = automation.actionConfig
 
   switch (automation.actionType as AutomationAction) {
@@ -246,6 +283,7 @@ async function runAction(automation: Automation, ctx: InboundAutomationContext):
           recipientPhone: ctx.phone,
           status: "sent",
           sentByUserId: null,
+          integrationId: integration.id,
         })
       }
       break
@@ -266,6 +304,7 @@ async function runAction(automation: Automation, ctx: InboundAutomationContext):
           recipientPhone: ctx.phone,
           status: "sent",
           sentByUserId: null,
+          integrationId: integration.id,
         })
       }
       break
@@ -307,6 +346,11 @@ async function runAction(automation: Automation, ctx: InboundAutomationContext):
  * rule fires at most once per conversation when the scheduler runs hourly.
  */
 export async function runNoReplyAutomations(): Promise<number> {
+  if (currentTenantIdOrNull() == null) {
+    let total = 0
+    await forEachActiveTenant(async () => { total += await runNoReplyAutomations() })
+    return total
+  }
   await ensureAutomationTables()
   const automations = (await listAutomations()).filter(
     (a) => a.isActive && a.triggerType === "no_reply",
@@ -323,12 +367,12 @@ export async function runNoReplyAutomations(): Promise<number> {
               c.last_message_preview AS last_body
          FROM \`marketing_whatsapp_conversations\` c
          JOIN \`marketing_whatsapp_contacts\` ct ON ct.id = c.contact_id
-        WHERE c.status <> 'closed'
+        WHERE c.tenant_id = ? AND ct.tenant_id = c.tenant_id AND c.status <> 'closed'
           AND c.last_customer_message_at IS NOT NULL
           AND c.last_customer_message_at <= (NOW() - INTERVAL ? HOUR)
           AND c.last_customer_message_at >= (NOW() - INTERVAL ? HOUR)
           AND (c.last_message_at IS NULL OR c.last_message_at <= c.last_customer_message_at)`,
-      [hours, hours + 6],
+      [currentTenantId(), hours, hours + 6],
     )
     for (const convo of candidates) {
       try {
@@ -347,8 +391,8 @@ export async function runNoReplyAutomations(): Promise<number> {
     }
     if (candidates.length) {
       await query(
-        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + ?, last_run_at = NOW() WHERE id = ?",
-        [candidates.length, a.id],
+        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + ?, last_run_at = NOW() WHERE id = ? AND tenant_id = ?",
+        [candidates.length, a.id, currentTenantId()],
       )
     }
   }
@@ -372,8 +416,8 @@ export async function runInboundAutomations(ctx: InboundAutomationContext): Prom
       await runAction(a, ctx)
       if (isSend) sentOne = true
       await query(
-        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + 1, last_run_at = NOW() WHERE id = ?",
-        [a.id],
+        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + 1, last_run_at = NOW() WHERE id = ? AND tenant_id = ?",
+        [a.id, currentTenantId()],
       )
       fired++
     } catch (err) {

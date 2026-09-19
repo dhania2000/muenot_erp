@@ -7,6 +7,7 @@ import {
   type TemplateComponent,
   type WhatsAppIntegrationRow,
 } from "@/lib/whatsapp"
+import { currentTenantId, currentTenantIdOrNull, forEachActiveTenant } from "@/lib/tenant-scope"
 
 /**
  * Local template catalog + lifecycle for the WhatsApp platform.
@@ -31,6 +32,8 @@ export async function ensureWhatsAppTemplateTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_templates\` (
       \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED NOT NULL,
       \`name\` VARCHAR(191) NOT NULL,
       \`language\` VARCHAR(16) NOT NULL,
       \`category\` VARCHAR(48) DEFAULT NULL,
@@ -44,7 +47,7 @@ export async function ensureWhatsAppTemplateTables() {
       \`meta_id\` VARCHAR(64) DEFAULT NULL,
       \`synced_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
-      UNIQUE KEY \`uniq_wa_template\` (\`name\`, \`language\`),
+      UNIQUE KEY \`uniq_wa_template_tenant_integration\` (\`tenant_id\`, \`integration_id\`, \`name\`, \`language\`),
       KEY \`idx_wa_template_status\` (\`status\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
@@ -64,6 +67,8 @@ export async function ensureWhatsAppTemplateTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_template_versions\` (
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED NOT NULL,
       \`template_id\` INT UNSIGNED NOT NULL,
       \`version\` INT UNSIGNED NOT NULL DEFAULT 1,
       \`status\` VARCHAR(32) DEFAULT NULL,
@@ -77,6 +82,11 @@ export async function ensureWhatsAppTemplateTables() {
       KEY \`idx_wa_tplver_template\` (\`template_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+
+  await ensureColumn("marketing_whatsapp_templates", "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL")
+  await ensureColumn("marketing_whatsapp_templates", "integration_id", "ADD COLUMN `integration_id` INT UNSIGNED DEFAULT NULL")
+  await ensureColumn("marketing_whatsapp_template_versions", "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL")
+  await ensureColumn("marketing_whatsapp_template_versions", "integration_id", "ADD COLUMN `integration_id` INT UNSIGNED DEFAULT NULL")
 
   templatesEnsured = true
 }
@@ -174,7 +184,24 @@ export type TemplateSyncResult = {
 export async function syncTemplatesFromMeta(
   integration?: WhatsAppIntegrationRow | null,
 ): Promise<TemplateSyncResult> {
+  if (!integration && currentTenantIdOrNull() == null) {
+    const aggregate: TemplateSyncResult = { ok: true, total: 0, created: 0, updated: 0, statusChanges: 0, removed: 0 }
+    await forEachActiveTenant(async () => {
+      const result = await syncTemplatesFromMeta()
+      aggregate.ok = aggregate.ok && result.ok
+      aggregate.total += result.total
+      aggregate.created += result.created
+      aggregate.updated += result.updated
+      aggregate.statusChanges += result.statusChanges
+      aggregate.removed += result.removed
+      if (!result.ok) aggregate.error = result.error
+    })
+    return aggregate
+  }
   await ensureWhatsAppTemplateTables()
+  if (integration && integration.tenant_id !== currentTenantIdOrNull()) {
+    return { ok: false, error: "WhatsApp integration does not belong to the active tenant.", total: 0, created: 0, updated: 0, statusChanges: 0, removed: 0 }
+  }
   const wa = integration ?? (await getWhatsAppIntegration())
   if (!wa) return { ok: false, error: "No WhatsApp account is connected.", total: 0, created: 0, updated: 0, statusChanges: 0, removed: 0 }
 
@@ -193,7 +220,7 @@ export async function syncTemplatesFromMeta(
       body_text: string | null
       is_deleted: number
     }[]
-  >("SELECT id, name, language, status, category, body_text, is_deleted FROM `marketing_whatsapp_templates`")
+  >("SELECT id, name, language, status, category, body_text, is_deleted FROM `marketing_whatsapp_templates` WHERE tenant_id = ? AND integration_id = ?", [currentTenantId(), wa.id])
   const byKey = new Map(existing.map((r) => [`${r.name}::${r.language}`, r]))
 
   let created = 0
@@ -211,11 +238,13 @@ export async function syncTemplatesFromMeta(
     if (!prev) {
       const result = await query<{ insertId: number }>(
         `INSERT INTO \`marketing_whatsapp_templates\`
-          (name, language, category, status, header_type, header_text, body_text, footer_text,
+          (tenant_id, integration_id, name, language, category, status, header_type, header_text, body_text, footer_text,
            buttons_json, variable_count, meta_id, quality_score, rejected_reason, status_changed_at,
            created_at, synced_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
         [
+          currentTenantId(),
+          wa.id,
           t.name,
           t.language,
           t.category,
@@ -232,7 +261,7 @@ export async function syncTemplatesFromMeta(
         ],
       )
       created++
-      await recordVersion(result.insertId, 1, status, t.category, parsed.bodyText, t.rejectedReason, "created", "Discovered on Meta")
+      await recordVersion(result.insertId, 1, status, t.category, parsed.bodyText, t.rejectedReason, "created", "Discovered on Meta", wa.id)
       continue
     }
 
@@ -250,7 +279,7 @@ export async function syncTemplatesFromMeta(
              quality_score = ?, rejected_reason = ?, is_deleted = 0, ${versionBump}
              previous_status = ?, status_changed_at = ${statusChanged ? "NOW()" : "status_changed_at"},
              synced_at = NOW()
-       WHERE id = ?`,
+       WHERE id = ? AND tenant_id = ? AND integration_id = ?`,
       [
         t.category,
         status,
@@ -265,6 +294,8 @@ export async function syncTemplatesFromMeta(
         t.rejectedReason,
         prev.status,
         prev.id,
+        currentTenantId(),
+        wa.id,
       ],
     )
 
@@ -277,10 +308,10 @@ export async function syncTemplatesFromMeta(
           ? "Body content changed on Meta"
           : "Template reappeared on Meta"
       const verRow = await query<{ version: number }[]>(
-        "SELECT version FROM `marketing_whatsapp_templates` WHERE id = ? LIMIT 1",
-        [prev.id],
+        "SELECT version FROM `marketing_whatsapp_templates` WHERE id = ? AND tenant_id = ? AND integration_id = ? LIMIT 1",
+        [prev.id, currentTenantId(), wa.id],
       )
-      await recordVersion(prev.id, verRow[0]?.version ?? 1, status, t.category, parsed.bodyText, t.rejectedReason, changeType, detail)
+      await recordVersion(prev.id, verRow[0]?.version ?? 1, status, t.category, parsed.bodyText, t.rejectedReason, changeType, detail, wa.id)
     }
   }
 
@@ -290,8 +321,8 @@ export async function syncTemplatesFromMeta(
   for (const r of existing) {
     const key = `${r.name}::${r.language}`
     if (seen.has(key) || r.is_deleted === 1) continue
-    await query("UPDATE `marketing_whatsapp_templates` SET is_deleted = 1, synced_at = NOW() WHERE id = ?", [r.id])
-    await recordVersion(r.id, 1, r.status, r.category, r.body_text, null, "removed", "No longer present on Meta")
+    await query("UPDATE `marketing_whatsapp_templates` SET is_deleted = 1, synced_at = NOW() WHERE id = ? AND tenant_id = ? AND integration_id = ?", [r.id, currentTenantId(), wa.id])
+    await recordVersion(r.id, 1, r.status, r.category, r.body_text, null, "removed", "No longer present on Meta", wa.id)
     removed++
   }
 
@@ -307,13 +338,14 @@ async function recordVersion(
   rejectedReason: string | null,
   changeType: string,
   detail: string | null,
+  integrationId: number,
 ) {
   try {
     await query(
       `INSERT INTO \`marketing_whatsapp_template_versions\`
-        (template_id, version, status, category, body_text, rejected_reason, change_type, detail)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [templateId, version, status, category, bodyText, rejectedReason, changeType, detail],
+        (tenant_id, integration_id, template_id, version, status, category, body_text, rejected_reason, change_type, detail)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [currentTenantId(), integrationId, templateId, version, status, category, bodyText, rejectedReason, changeType, detail],
     )
   } catch {
     // Non-fatal: history is best-effort.
@@ -418,25 +450,31 @@ export async function listLocalTemplates(opts?: {
   const where: string[] = []
   if (!opts?.includeDeleted) where.push("is_deleted = 0")
   if (opts?.approvedOnly) where.push("status = 'APPROVED'")
+  where.push("tenant_id = ?")
   const rows = await query<TemplateRow[]>(
     `SELECT * FROM \`marketing_whatsapp_templates\`
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY (status = 'APPROVED') DESC, name ASC, language ASC`,
+    [currentTenantId()],
   )
   return rows.map(mapRow)
 }
 
 export async function getLocalTemplate(id: number): Promise<LocalTemplate | null> {
   await ensureWhatsAppTemplateTables()
-  const rows = await query<TemplateRow[]>("SELECT * FROM `marketing_whatsapp_templates` WHERE id = ? LIMIT 1", [id])
+  const rows = await query<TemplateRow[]>("SELECT * FROM `marketing_whatsapp_templates` WHERE id = ? AND tenant_id = ? LIMIT 1", [id, currentTenantId()])
   return rows[0] ? mapRow(rows[0]) : null
 }
 
 /** Looks up a template by name (+ optional language) for send-time validation. */
-export async function findLocalTemplate(name: string, language?: string): Promise<LocalTemplate | null> {
+export async function findLocalTemplate(name: string, language?: string, integrationId?: number | null): Promise<LocalTemplate | null> {
   await ensureWhatsAppTemplateTables()
-  const params: (string | number)[] = [name]
-  let sql = "SELECT * FROM `marketing_whatsapp_templates` WHERE name = ? AND is_deleted = 0"
+  const params: (string | number)[] = [name, currentTenantId()]
+  let sql = "SELECT * FROM `marketing_whatsapp_templates` WHERE name = ? AND tenant_id = ? AND is_deleted = 0"
+  if (integrationId != null) {
+    sql += " AND integration_id = ?"
+    params.push(integrationId)
+  }
   if (language) {
     sql += " AND language = ?"
     params.push(language)
@@ -473,8 +511,10 @@ export async function listTemplateVersions(templateId: number): Promise<Template
       created_at: string
     }[]
   >(
-    `SELECT * FROM \`marketing_whatsapp_template_versions\` WHERE template_id = ? ORDER BY id DESC LIMIT 100`,
-    [templateId],
+    `SELECT v.* FROM \`marketing_whatsapp_template_versions\` v
+       JOIN \`marketing_whatsapp_templates\` t ON t.id = v.template_id AND t.tenant_id = v.tenant_id AND t.integration_id = v.integration_id
+      WHERE v.template_id = ? AND v.tenant_id = ? ORDER BY v.id DESC LIMIT 100`,
+    [templateId, currentTenantId()],
   )
   return rows.map((r) => ({
     id: r.id,
@@ -498,12 +538,16 @@ export async function listTemplateVersions(templateId: number): Promise<Template
  * Called from the send and campaign paths. Best-effort and never throws so it
  * cannot break an actual send.
  */
-export async function recordTemplateUsage(name: string, language?: string, count = 1): Promise<void> {
+export async function recordTemplateUsage(name: string, language?: string, count = 1, integrationId?: number | null): Promise<void> {
   try {
     await ensureWhatsAppTemplateTables()
-    const params: (string | number)[] = [count, name]
+    const params: (string | number)[] = [count, name, currentTenantId()]
     let sql =
-      "UPDATE `marketing_whatsapp_templates` SET usage_count = usage_count + ?, last_used_at = NOW() WHERE name = ?"
+      "UPDATE `marketing_whatsapp_templates` SET usage_count = usage_count + ?, last_used_at = NOW() WHERE name = ? AND tenant_id = ?"
+    if (integrationId != null) {
+      sql += " AND integration_id = ?"
+      params.push(integrationId)
+    }
     if (language) {
       sql += " AND language = ?"
       params.push(language)
@@ -518,8 +562,8 @@ export async function recordTemplateUsage(name: string, language?: string, count
 export async function templateExists(name: string, language: string): Promise<boolean> {
   await ensureWhatsAppTemplateTables()
   const rows = await query<{ c: number }[]>(
-    "SELECT COUNT(*) AS c FROM `marketing_whatsapp_templates` WHERE name = ? AND language = ? AND is_deleted = 0",
-    [name, language],
+    "SELECT COUNT(*) AS c FROM `marketing_whatsapp_templates` WHERE name = ? AND language = ? AND tenant_id = ? AND is_deleted = 0",
+    [name, language, currentTenantId()],
   )
   return (rows[0]?.c ?? 0) > 0
 }

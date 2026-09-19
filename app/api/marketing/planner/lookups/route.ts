@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { requireFeature } from "@/lib/api-auth"
 import { query } from "@/lib/db"
+import { currentTenantId } from "@/lib/tenant-scope"
 import { getWhatsAppIntegration, getWhatsAppTemplates } from "@/lib/whatsapp"
 import { CHANNELS, CONTENT_TYPES } from "@/lib/marketing/planner-constants"
 
@@ -26,7 +27,7 @@ export async function GET(_request: Request) {
 
   const [employees, campaigns, journeys, segments, emailTemplates] = await Promise.all([
     query<any[]>(`SELECT id, name, email FROM users WHERE status = 'active' ORDER BY name ASC LIMIT 500`).catch(() => []),
-    query<any[]>(`SELECT id, name, status FROM marketing_whatsapp_campaigns ORDER BY created_at DESC LIMIT 500`).catch(
+    query<any[]>(`SELECT id, name, status FROM marketing_whatsapp_campaigns WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 500`, [currentTenantId()]).catch(
       () => [],
     ),
     query<any[]>(`SELECT id, name FROM marketing_journeys ORDER BY name ASC LIMIT 500`).catch(() => []),

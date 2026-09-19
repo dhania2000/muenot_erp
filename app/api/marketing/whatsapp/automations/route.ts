@@ -48,6 +48,7 @@ export async function POST(request: Request) {
     actionConfig?: Record<string, unknown>
     departmentId?: number | null
     priority?: number
+    integrationId?: number | null
   }
 
   if (!body.name?.trim()) return NextResponse.json({ error: "Name is required" }, { status: 400 })
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
     departmentId: body.departmentId ?? null,
     priority: Number(body.priority) || 0,
     createdBy: session.userId,
+    integrationId: body.integrationId == null ? null : Number(body.integrationId),
   })
   const automations = await listAutomations()
   return NextResponse.json({ ok: true, id, automations }, { status: 201 })

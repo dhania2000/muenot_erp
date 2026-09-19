@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     name?: string
     description?: string | null
     filter?: unknown
+    integrationId?: number | null
   }
   if (!body.name?.trim()) return NextResponse.json({ error: "Name is required" }, { status: 400 })
 
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     filter: (body.filter ?? { match: "all", conditions: [] }) as any,
     createdBy: session.userId,
+    integrationId: body.integrationId == null ? null : Number(body.integrationId),
   })
   const audiences = await listAudiences()
   return NextResponse.json({ ok: true, id, audiences }, { status: 201 })

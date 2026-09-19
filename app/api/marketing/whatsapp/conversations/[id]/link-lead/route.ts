@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { getConversation, linkContactToLead, normalizePhone } from "@/lib/whatsapp-store"
+import { currentTenantId } from "@/lib/tenant-scope"
 
 type LeadCandidate = {
   id: number
@@ -34,21 +35,21 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     candidates = await query<LeadCandidate[]>(
       `SELECT id, lead_code, contact_person, company_name, contact_number, status
          FROM \`sales_leads\`
-        WHERE (? = '' OR contact_person LIKE ? OR company_name LIKE ? OR lead_code LIKE ? OR contact_number LIKE ?)
-           OR RIGHT(REGEXP_REPLACE(COALESCE(contact_number,''), '[^0-9]', ''), 10) = ?
+        WHERE tenant_id = ? AND ((? = '' OR contact_person LIKE ? OR company_name LIKE ? OR lead_code LIKE ? OR contact_number LIKE ?)
+           OR RIGHT(REGEXP_REPLACE(COALESCE(contact_number,''), '[^0-9]', ''), 10) = ?)
         ORDER BY created_at DESC
         LIMIT 20`,
-      [term, like, like, like, like, last10],
+      [currentTenantId(), term, like, like, like, like, last10],
     )
   } catch {
     // Fallback for MySQL < 8 (no REGEXP_REPLACE): text search only.
     candidates = await query<LeadCandidate[]>(
       `SELECT id, lead_code, contact_person, company_name, contact_number, status
          FROM \`sales_leads\`
-        WHERE ? = '' OR contact_person LIKE ? OR company_name LIKE ? OR lead_code LIKE ? OR contact_number LIKE ?
+        WHERE tenant_id = ? AND (? = '' OR contact_person LIKE ? OR company_name LIKE ? OR lead_code LIKE ? OR contact_number LIKE ?)
         ORDER BY created_at DESC
         LIMIT 20`,
-      [term, like, like, like, like],
+      [currentTenantId(), term, like, like, like, like],
     )
   }
 
@@ -85,15 +86,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
 
     const [{ next }] = await query<{ next: number }[]>(
-      "SELECT COALESCE(MAX(CAST(SUBSTRING(lead_code, 5) AS UNSIGNED)), 0) + 1 AS next FROM sales_leads",
+      "SELECT COALESCE(MAX(CAST(SUBSTRING(lead_code, 5) AS UNSIGNED)), 0) + 1 AS next FROM sales_leads WHERE tenant_id = ?",
+      [currentTenantId()],
     )
     const leadCode = `MLD-${String(next).padStart(3, "0")}`
 
     const result = await query<{ insertId: number }>(
       `INSERT INTO sales_leads
-        (lead_code, lead_date, contact_person, contact_number, lead_source, company_name, status, created_by)
-       VALUES (?, ?, ?, ?, 'WhatsApp', ?, 'New', ?)`,
-      [leadCode, new Date(), contactPerson, conversation.phoneNumber, companyName, session.userId],
+        (tenant_id, lead_code, lead_date, contact_person, contact_number, lead_source, company_name, status, created_by)
+       VALUES (?, ?, ?, ?, ?, 'WhatsApp', ?, 'New', ?)`,
+      [currentTenantId(), leadCode, new Date(), contactPerson, conversation.phoneNumber, companyName, session.userId],
     )
     await linkContactToLead(conversation.contactId, result.insertId)
     return NextResponse.json({ ok: true, leadId: result.insertId, leadCode })

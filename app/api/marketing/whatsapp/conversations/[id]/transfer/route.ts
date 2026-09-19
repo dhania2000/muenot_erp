@@ -4,6 +4,7 @@ import { query } from "@/lib/db"
 import { assignConversation, canManageInbox, getConversation } from "@/lib/whatsapp-store"
 import { resolveWhatsAppCaps, listTransfers, recordTransfer } from "@/lib/whatsapp-platform"
 import { setConversationDepartment } from "@/lib/whatsapp-routing"
+import { currentTenantId } from "@/lib/tenant-scope"
 
 /** Full transfer history for a conversation. */
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -50,8 +51,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   const rows = await query<{ department_id: number | null; assigned_agent_id: number | null }[]>(
-    "SELECT department_id, assigned_agent_id FROM `marketing_whatsapp_conversations` WHERE id = ? LIMIT 1",
-    [conversationId],
+    "SELECT department_id, assigned_agent_id FROM `marketing_whatsapp_conversations` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    [conversationId, currentTenantId()],
   )
   const fromDepartmentId = rows[0]?.department_id ?? null
   const fromAgentId = rows[0]?.assigned_agent_id ?? null

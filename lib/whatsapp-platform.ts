@@ -1,6 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { DEFAULT_WORKING_HOURS } from "@/lib/whatsapp-config"
+import { currentTenantId, currentTenantIdOrNull } from "@/lib/tenant-scope"
 
 /**
  * Data-access layer for the WhatsApp multi-agent PLATFORM: departments, agent
@@ -19,6 +20,7 @@ export async function ensureWhatsAppPlatformTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_departments\` (
       \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
       \`name\` VARCHAR(120) NOT NULL,
       \`slug\` VARCHAR(120) NOT NULL,
       \`description\` VARCHAR(500) DEFAULT NULL,
@@ -33,7 +35,8 @@ export async function ensureWhatsAppPlatformTables() {
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
-      UNIQUE KEY \`uniq_wa_dept_slug\` (\`slug\`),
+      UNIQUE KEY \`uniq_wa_dept_tenant_slug\` (\`tenant_id\`, \`slug\`),
+      KEY \`idx_wa_dept_tenant\` (\`tenant_id\`),
       KEY \`idx_wa_dept_active\` (\`is_active\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
@@ -41,13 +44,14 @@ export async function ensureWhatsAppPlatformTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_department_agents\` (
       \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
       \`department_id\` INT UNSIGNED NOT NULL,
       \`user_id\` INT UNSIGNED NOT NULL,
       \`role\` ENUM('agent','manager') NOT NULL DEFAULT 'agent',
       \`is_active\` TINYINT(1) NOT NULL DEFAULT 1,
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
-      UNIQUE KEY \`uniq_wa_dept_agent\` (\`department_id\`, \`user_id\`),
+      UNIQUE KEY \`uniq_wa_dept_agent\` (\`tenant_id\`, \`department_id\`, \`user_id\`),
       KEY \`idx_wa_dept_agent_user\` (\`user_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
@@ -55,6 +59,7 @@ export async function ensureWhatsAppPlatformTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_agent_settings\` (
       \`user_id\` INT UNSIGNED NOT NULL,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
       \`is_agent\` TINYINT(1) NOT NULL DEFAULT 0,
       \`is_available\` TINYINT(1) NOT NULL DEFAULT 1,
       \`can_view_all\` TINYINT(1) NOT NULL DEFAULT 0,
@@ -71,7 +76,7 @@ export async function ensureWhatsAppPlatformTables() {
       \`last_assigned_at\` DATETIME DEFAULT NULL,
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (\`user_id\`),
+      PRIMARY KEY (\`user_id\`, \`tenant_id\`),
       KEY \`idx_wa_agent_is_agent\` (\`is_agent\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
@@ -79,6 +84,7 @@ export async function ensureWhatsAppPlatformTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_internal_notes\` (
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
       \`conversation_id\` INT UNSIGNED NOT NULL,
       \`user_id\` INT UNSIGNED DEFAULT NULL,
       \`note\` TEXT NOT NULL,
@@ -91,6 +97,7 @@ export async function ensureWhatsAppPlatformTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_transfers\` (
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
       \`conversation_id\` INT UNSIGNED NOT NULL,
       \`from_department_id\` INT UNSIGNED DEFAULT NULL,
       \`to_department_id\` INT UNSIGNED DEFAULT NULL,
@@ -107,6 +114,8 @@ export async function ensureWhatsAppPlatformTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_media\` (
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED DEFAULT NULL,
       \`message_id\` INT UNSIGNED DEFAULT NULL,
       \`conversation_id\` INT UNSIGNED DEFAULT NULL,
       \`media_id\` VARCHAR(191) NOT NULL,
@@ -116,7 +125,7 @@ export async function ensureWhatsAppPlatformTables() {
       \`sha256\` VARCHAR(128) DEFAULT NULL,
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
-      UNIQUE KEY \`uniq_wa_media_id\` (\`media_id\`),
+      UNIQUE KEY \`uniq_wa_media_tenant_id\` (\`tenant_id\`, \`media_id\`),
       KEY \`idx_wa_media_message\` (\`message_id\`),
       KEY \`idx_wa_media_convo\` (\`conversation_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -141,6 +150,21 @@ export async function ensureWhatsAppPlatformTables() {
 
   // Message campaign linkage.
   await ensureColumn("marketing_whatsapp_messages", "campaign_id", "ADD COLUMN `campaign_id` INT UNSIGNED DEFAULT NULL")
+
+  // All platform records are tenant-owned. Keep runtime self-healing aligned
+  // with the migration so a partially upgraded deployment cannot recreate a
+  // global WhatsApp table.
+  for (const table of [
+    "marketing_whatsapp_departments",
+    "marketing_whatsapp_department_agents",
+    "marketing_whatsapp_agent_settings",
+    "marketing_whatsapp_internal_notes",
+    "marketing_whatsapp_transfers",
+    "marketing_whatsapp_media",
+  ]) {
+    await ensureColumn(table, "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL")
+  }
+  await ensureColumn("marketing_whatsapp_media", "integration_id", "ADD COLUMN `integration_id` INT UNSIGNED DEFAULT NULL")
 
   await seedDefaultDepartments()
   platformEnsured = true
@@ -176,12 +200,14 @@ const DEFAULT_DEPARTMENTS = [
 
 async function seedDefaultDepartments() {
   try {
-    const rows = await query<{ c: number }[]>("SELECT COUNT(*) AS c FROM `marketing_whatsapp_departments`")
+    const tenantId = currentTenantIdOrNull()
+    if (tenantId == null) return
+    const rows = await query<{ c: number }[]>("SELECT COUNT(*) AS c FROM `marketing_whatsapp_departments` WHERE tenant_id = ?", [tenantId])
     if ((rows[0]?.c ?? 0) > 0) return
     for (const d of DEFAULT_DEPARTMENTS) {
       await query(
-        "INSERT INTO `marketing_whatsapp_departments` (name, slug, description, sort_order) VALUES (?, ?, ?, ?)",
-        [d.name, d.slug, d.description, d.order],
+        "INSERT INTO `marketing_whatsapp_departments` (tenant_id, name, slug, description, sort_order) VALUES (?, ?, ?, ?, ?)",
+        [tenantId, d.name, d.slug, d.description, d.order],
       )
     }
   } catch {
@@ -246,13 +272,16 @@ function parseKeywords(raw: string | null): string[] {
 
 export async function listDepartments(): Promise<Department[]> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
   const rows = await query<(DepartmentRow & { manager_name: string | null; agent_count: number; open_count: number })[]>(
     `SELECT d.*, u.name AS manager_name,
-            (SELECT COUNT(*) FROM \`marketing_whatsapp_department_agents\` da WHERE da.department_id = d.id AND da.is_active = 1) AS agent_count,
-            (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c WHERE c.department_id = d.id AND c.status <> 'closed') AS open_count
+            (SELECT COUNT(*) FROM \`marketing_whatsapp_department_agents\` da WHERE da.department_id = d.id AND da.tenant_id = d.tenant_id AND da.is_active = 1) AS agent_count,
+            (SELECT COUNT(*) FROM \`marketing_whatsapp_conversations\` c WHERE c.department_id = d.id AND c.tenant_id = d.tenant_id AND c.status <> 'closed') AS open_count
        FROM \`marketing_whatsapp_departments\` d
-       LEFT JOIN \`users\` u ON u.id = d.manager_user_id
+       LEFT JOIN \`users\` u ON u.id = d.manager_user_id AND u.tenant_id = d.tenant_id
+      WHERE d.tenant_id = ?
       ORDER BY d.sort_order ASC, d.name ASC`,
+    [tenantId],
   )
   return rows.map((r) => ({
     id: r.id,
@@ -275,8 +304,17 @@ export async function listDepartments(): Promise<Department[]> {
 
 export async function getDepartment(id: number): Promise<DepartmentRow | null> {
   await ensureWhatsAppPlatformTables()
-  const rows = await query<DepartmentRow[]>("SELECT * FROM `marketing_whatsapp_departments` WHERE id = ? LIMIT 1", [id])
+  const rows = await query<DepartmentRow[]>("SELECT * FROM `marketing_whatsapp_departments` WHERE id = ? AND tenant_id = ? LIMIT 1", [id, currentTenantId()])
   return rows[0] ?? null
+}
+
+async function requireTenantUser(userId: number | null | undefined, label = "User"): Promise<void> {
+  if (userId == null) return
+  const rows = await query<{ id: number }[]>(
+    "SELECT id FROM `users` WHERE id = ? AND tenant_id = ? AND status = 'active' LIMIT 1",
+    [userId, currentTenantId()],
+  )
+  if (!rows[0]) throw new Error(`${label} not found`)
 }
 
 function slugify(name: string): string {
@@ -293,22 +331,26 @@ export async function createDepartment(input: {
   autoAssign?: boolean
 }): Promise<number> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
+  await requireTenantUser(input.managerUserId, "Manager")
   let slug = slugify(input.name)
   // ensure unique slug
   const clash = await query<{ c: number }[]>(
-    "SELECT COUNT(*) AS c FROM `marketing_whatsapp_departments` WHERE slug = ?",
-    [slug],
+    "SELECT COUNT(*) AS c FROM `marketing_whatsapp_departments` WHERE tenant_id = ? AND slug = ?",
+    [tenantId, slug],
   )
   if ((clash[0]?.c ?? 0) > 0) slug = `${slug}-${Date.now().toString().slice(-4)}`
 
   const maxOrder = await query<{ m: number | null }[]>(
-    "SELECT MAX(sort_order) AS m FROM `marketing_whatsapp_departments`",
+    "SELECT MAX(sort_order) AS m FROM `marketing_whatsapp_departments` WHERE tenant_id = ?",
+    [tenantId],
   )
   const result = await query<{ insertId: number }>(
     `INSERT INTO \`marketing_whatsapp_departments\`
-       (name, slug, description, routing_method, manager_user_id, keywords, color, auto_assign, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, name, slug, description, routing_method, manager_user_id, keywords, color, auto_assign, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      tenantId,
       input.name.trim(),
       slug,
       input.description?.trim() || null,
@@ -338,6 +380,8 @@ export async function updateDepartment(
   },
 ): Promise<void> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
+  await requireTenantUser(patch.managerUserId, "Manager")
   const sets: string[] = []
   const params: (string | number | null)[] = []
   const push = (col: string, val: string | number | null) => {
@@ -354,15 +398,16 @@ export async function updateDepartment(
   if (patch.color !== undefined) push("color", patch.color?.trim() || null)
   if (patch.workingHours !== undefined) push("working_hours", JSON.stringify(patch.workingHours))
   if (!sets.length) return
-  params.push(id)
-  await query(`UPDATE \`marketing_whatsapp_departments\` SET ${sets.join(", ")} WHERE id = ?`, params)
+  params.push(id, tenantId)
+  await query(`UPDATE \`marketing_whatsapp_departments\` SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`, params)
 }
 
 export async function deleteDepartment(id: number): Promise<void> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
   // Detach conversations first so we never orphan a FK.
-  await query("UPDATE `marketing_whatsapp_conversations` SET department_id = NULL WHERE department_id = ?", [id])
-  await query("DELETE FROM `marketing_whatsapp_departments` WHERE id = ?", [id])
+  await query("UPDATE `marketing_whatsapp_conversations` SET department_id = NULL WHERE department_id = ? AND tenant_id = ?", [id, tenantId])
+  await query("DELETE FROM `marketing_whatsapp_departments` WHERE id = ? AND tenant_id = ?", [id, tenantId])
 }
 
 /* ------------------------------------------------------------------ */
@@ -379,17 +424,18 @@ export type DepartmentMember = {
 
 export async function listDepartmentAgents(departmentId: number): Promise<DepartmentMember[]> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
   const rows = await query<
     { user_id: number; name: string; role: "agent" | "manager"; is_active: number; is_available: number | null }[]
   >(
     `SELECT da.user_id, u.name, da.role, da.is_active,
             COALESCE(s.is_available, 1) AS is_available
        FROM \`marketing_whatsapp_department_agents\` da
-       JOIN \`users\` u ON u.id = da.user_id
-       LEFT JOIN \`marketing_whatsapp_agent_settings\` s ON s.user_id = da.user_id
-      WHERE da.department_id = ?
+       JOIN \`users\` u ON u.id = da.user_id AND u.tenant_id = da.tenant_id
+       LEFT JOIN \`marketing_whatsapp_agent_settings\` s ON s.user_id = da.user_id AND s.tenant_id = da.tenant_id
+      WHERE da.department_id = ? AND da.tenant_id = ?
       ORDER BY da.role DESC, u.name ASC`,
-    [departmentId],
+    [departmentId, tenantId],
   )
   return rows.map((r) => ({
     userId: r.user_id,
@@ -405,20 +451,23 @@ export async function setDepartmentAgents(
   members: { userId: number; role: "agent" | "manager" }[],
 ): Promise<void> {
   await ensureWhatsAppPlatformTables()
-  await query("DELETE FROM `marketing_whatsapp_department_agents` WHERE department_id = ?", [departmentId])
+  const tenantId = currentTenantId()
+  if (!(await getDepartment(departmentId))) throw new Error("Department not found")
+  for (const m of members) await requireTenantUser(m.userId, "Agent")
+  await query("DELETE FROM `marketing_whatsapp_department_agents` WHERE department_id = ? AND tenant_id = ?", [departmentId, tenantId])
   for (const m of members) {
     await query(
-      `INSERT INTO \`marketing_whatsapp_department_agents\` (department_id, user_id, role, is_active)
-       VALUES (?, ?, ?, 1)
+      `INSERT INTO \`marketing_whatsapp_department_agents\` (tenant_id, department_id, user_id, role, is_active)
+       VALUES (?, ?, ?, ?, 1)
        ON DUPLICATE KEY UPDATE role = VALUES(role), is_active = 1`,
-      [departmentId, m.userId, m.role],
+      [tenantId, departmentId, m.userId, m.role],
     )
     // Anyone added to a department is implicitly a WhatsApp agent.
     await query(
-      `INSERT INTO \`marketing_whatsapp_agent_settings\` (user_id, is_agent)
-       VALUES (?, 1)
+      `INSERT INTO \`marketing_whatsapp_agent_settings\` (user_id, tenant_id, is_agent)
+       VALUES (?, ?, 1)
        ON DUPLICATE KEY UPDATE is_agent = 1`,
-      [m.userId],
+      [m.userId, tenantId],
     )
   }
 }
@@ -486,19 +535,20 @@ const CAP_COLUMNS = [
 export async function getAgentSettings(userId: number): Promise<AgentSettingsRow | null> {
   await ensureWhatsAppPlatformTables()
   const rows = await query<AgentSettingsRow[]>(
-    "SELECT * FROM `marketing_whatsapp_agent_settings` WHERE user_id = ? LIMIT 1",
-    [userId],
+    "SELECT * FROM `marketing_whatsapp_agent_settings` WHERE user_id = ? AND tenant_id = ? LIMIT 1",
+    [userId, currentTenantId()],
   )
   return rows[0] ?? null
 }
 
 export async function listAgentProfiles(): Promise<AgentProfile[]> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
   const users = await query<
     { id: number; name: string; email: string; role: "admin" | "employee"; designation: string | null }[]
-  >("SELECT id, name, email, role, designation FROM `users` WHERE status = 'active' ORDER BY name ASC")
+  >("SELECT id, name, email, role, designation FROM `users` WHERE status = 'active' AND tenant_id = ? ORDER BY name ASC", [tenantId])
 
-  const settings = await query<AgentSettingsRow[]>("SELECT * FROM `marketing_whatsapp_agent_settings`")
+  const settings = await query<AgentSettingsRow[]>("SELECT * FROM `marketing_whatsapp_agent_settings` WHERE tenant_id = ?", [tenantId])
   const settingsByUser = new Map(settings.map((s) => [s.user_id, s]))
 
   const memberships = await query<
@@ -506,8 +556,9 @@ export async function listAgentProfiles(): Promise<AgentProfile[]> {
   >(
     `SELECT da.user_id, da.department_id, d.name, da.role
        FROM \`marketing_whatsapp_department_agents\` da
-       JOIN \`marketing_whatsapp_departments\` d ON d.id = da.department_id
-      WHERE da.is_active = 1`,
+       JOIN \`marketing_whatsapp_departments\` d ON d.id = da.department_id AND d.tenant_id = da.tenant_id
+      WHERE da.is_active = 1 AND da.tenant_id = ?`,
+    [tenantId],
   )
   const memByUser = new Map<number, { id: number; name: string; role: "agent" | "manager" }[]>()
   for (const m of memberships) {
@@ -596,6 +647,8 @@ export async function upsertAgentSettings(
   patch: Record<string, boolean>,
 ): Promise<void> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
+  await requireTenantUser(userId, "Agent")
   const allowed = new Set<string>(["is_agent", "is_available", ...CAP_COLUMNS])
   const cols: string[] = []
   const vals: number[] = []
@@ -607,19 +660,19 @@ export async function upsertAgentSettings(
   if (!cols.length) {
     // Ensure a row exists even if nothing changed.
     await query(
-      "INSERT INTO `marketing_whatsapp_agent_settings` (user_id) VALUES (?) ON DUPLICATE KEY UPDATE user_id = user_id",
-      [userId],
+      "INSERT INTO `marketing_whatsapp_agent_settings` (user_id, tenant_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE user_id = user_id",
+      [userId, tenantId],
     )
     return
   }
-  const insertCols = ["user_id", ...cols].map((c) => `\`${c}\``).join(", ")
-  const placeholders = ["?", ...cols.map(() => "?")].join(", ")
+  const insertCols = ["user_id", "tenant_id", ...cols].map((c) => `\`${c}\``).join(", ")
+  const placeholders = ["?", "?", ...cols.map(() => "?")].join(", ")
   const updates = cols.map((c) => `\`${c}\` = VALUES(\`${c}\`)`).join(", ")
   await query(
     `INSERT INTO \`marketing_whatsapp_agent_settings\` (${insertCols})
      VALUES (${placeholders})
      ON DUPLICATE KEY UPDATE ${updates}`,
-    [userId, ...vals],
+    [userId, tenantId, ...vals],
   )
 }
 
@@ -638,15 +691,16 @@ export type InternalNote = {
 
 export async function listInternalNotes(conversationId: number): Promise<InternalNote[]> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
   const rows = await query<
     { id: number; conversation_id: number; user_id: number | null; user_name: string | null; note: string; created_at: string }[]
   >(
     `SELECT n.id, n.conversation_id, n.user_id, u.name AS user_name, n.note, n.created_at
        FROM \`marketing_whatsapp_internal_notes\` n
        LEFT JOIN \`users\` u ON u.id = n.user_id
-      WHERE n.conversation_id = ?
+      WHERE n.conversation_id = ? AND n.tenant_id = ?
       ORDER BY n.created_at ASC`,
-    [conversationId],
+    [conversationId, tenantId],
   )
   return rows.map((r) => ({
     id: r.id,
@@ -664,9 +718,16 @@ export async function addInternalNote(input: {
   note: string
 }): Promise<number> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
+  const conversation = await query<{ id: number }[]>(
+    "SELECT id FROM `marketing_whatsapp_conversations` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    [input.conversationId, tenantId],
+  )
+  if (!conversation[0]) throw new Error("Conversation not found")
+  await requireTenantUser(input.userId, "User")
   const result = await query<{ insertId: number }>(
-    "INSERT INTO `marketing_whatsapp_internal_notes` (conversation_id, user_id, note) VALUES (?, ?, ?)",
-    [input.conversationId, input.userId, input.note.trim()],
+    "INSERT INTO `marketing_whatsapp_internal_notes` (tenant_id, conversation_id, user_id, note) VALUES (?, ?, ?, ?)",
+    [tenantId, input.conversationId, input.userId, input.note.trim()],
   )
   return result.insertId
 }
@@ -685,11 +746,24 @@ export async function recordTransfer(input: {
   reason?: string | null
 }): Promise<void> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
+  const conversation = await query<{ department_id: number | null; assigned_agent_id: number | null }[]>(
+    "SELECT department_id, assigned_agent_id FROM `marketing_whatsapp_conversations` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    [input.conversationId, tenantId],
+  )
+  if (!conversation[0]) throw new Error("Conversation not found")
+  for (const id of [input.fromDepartmentId, input.toDepartmentId]) {
+    if (id != null && !(await getDepartment(id))) throw new Error("Department not found")
+  }
+  for (const id of [input.fromAgentId, input.toAgentId, input.transferredBy]) {
+    if (id != null) await requireTenantUser(id, "Agent")
+  }
   await query(
     `INSERT INTO \`marketing_whatsapp_transfers\`
-       (conversation_id, from_department_id, to_department_id, from_agent_id, to_agent_id, transferred_by, reason)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, conversation_id, from_department_id, to_department_id, from_agent_id, to_agent_id, transferred_by, reason)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      tenantId,
       input.conversationId,
       input.fromDepartmentId,
       input.toDepartmentId,
@@ -714,6 +788,7 @@ export type TransferLogItem = {
 
 export async function listTransfers(conversationId: number): Promise<TransferLogItem[]> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
   const rows = await query<
     {
       id: number
@@ -730,14 +805,14 @@ export async function listTransfers(conversationId: number): Promise<TransferLog
             fa.name AS from_agent, ta.name AS to_agent, bu.name AS by_name,
             t.reason, t.created_at
        FROM \`marketing_whatsapp_transfers\` t
-       LEFT JOIN \`marketing_whatsapp_departments\` fd ON fd.id = t.from_department_id
-       LEFT JOIN \`marketing_whatsapp_departments\` td ON td.id = t.to_department_id
-       LEFT JOIN \`users\` fa ON fa.id = t.from_agent_id
-       LEFT JOIN \`users\` ta ON ta.id = t.to_agent_id
-       LEFT JOIN \`users\` bu ON bu.id = t.transferred_by
-      WHERE t.conversation_id = ?
+       LEFT JOIN \`marketing_whatsapp_departments\` fd ON fd.id = t.from_department_id AND fd.tenant_id = t.tenant_id
+       LEFT JOIN \`marketing_whatsapp_departments\` td ON td.id = t.to_department_id AND td.tenant_id = t.tenant_id
+       LEFT JOIN \`users\` fa ON fa.id = t.from_agent_id AND fa.tenant_id = t.tenant_id
+       LEFT JOIN \`users\` ta ON ta.id = t.to_agent_id AND ta.tenant_id = t.tenant_id
+       LEFT JOIN \`users\` bu ON bu.id = t.transferred_by AND bu.tenant_id = t.tenant_id
+      WHERE t.conversation_id = ? AND t.tenant_id = ?
       ORDER BY t.created_at ASC`,
-    [conversationId],
+    [conversationId, tenantId],
   )
   return rows.map((r) => ({
     id: r.id,
@@ -756,19 +831,27 @@ export async function recordMedia(input: {
   messageId?: number | null
   conversationId?: number | null
   mediaId: string
+  integrationId?: number | null
   mimeType?: string | null
   filename?: string | null
   fileSize?: number | null
   sha256?: string | null
 }): Promise<void> {
   await ensureWhatsAppPlatformTables()
+  const tenantId = currentTenantId()
+  if (input.conversationId != null) {
+    const owned = await query<{ id: number }[]>("SELECT id FROM `marketing_whatsapp_conversations` WHERE id = ? AND tenant_id = ? LIMIT 1", [input.conversationId, tenantId])
+    if (!owned[0]) throw new Error("Conversation not found")
+  }
   await query(
     `INSERT INTO \`marketing_whatsapp_media\`
-       (message_id, conversation_id, media_id, mime_type, filename, file_size, sha256)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE mime_type = VALUES(mime_type), filename = VALUES(filename),
+       (tenant_id, integration_id, message_id, conversation_id, media_id, mime_type, filename, file_size, sha256)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE integration_id = VALUES(integration_id), mime_type = VALUES(mime_type), filename = VALUES(filename),
        file_size = VALUES(file_size), sha256 = VALUES(sha256)`,
     [
+      tenantId,
+      input.integrationId ?? null,
       input.messageId ?? null,
       input.conversationId ?? null,
       input.mediaId,

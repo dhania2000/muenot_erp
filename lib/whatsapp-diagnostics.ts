@@ -1,6 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
+import { currentTenantIdOrNull } from "@/lib/tenant-scope"
 
 /**
  * WhatsApp delivery diagnostics.
@@ -23,6 +24,8 @@ export async function ensureDiagnosticsTable(): Promise<void> {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_diagnostics\` (
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED NOT NULL,
+      \`integration_id\` INT UNSIGNED DEFAULT NULL,
       \`direction\` VARCHAR(16) NOT NULL,
       \`outcome\` VARCHAR(16) NOT NULL,
       \`context\` VARCHAR(64) NOT NULL,
@@ -84,16 +87,21 @@ export async function logDiagnostic(entry: {
   campaignId?: number | null
   errorCode?: number | null
   message?: string | null
+  integrationId?: number | null
 }): Promise<void> {
   try {
+    const tenantId = currentTenantIdOrNull()
+    if (tenantId == null) return
     await ensureDiagnosticsTable()
     const retryable =
       entry.outcome === "error" ? (isRetryableErrorCode(entry.errorCode) ? 1 : 0) : null
     await query(
       `INSERT INTO \`marketing_whatsapp_diagnostics\`
-        (direction, outcome, context, phone_number, wamid, template_name, campaign_id, error_code, retryable, message)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (tenant_id, integration_id, direction, outcome, context, phone_number, wamid, template_name, campaign_id, error_code, retryable, message)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        tenantId,
+        entry.integrationId ?? null,
         entry.direction,
         entry.outcome,
         entry.context.slice(0, 64),
@@ -114,6 +122,8 @@ export async function logDiagnostic(entry: {
 
 export type DiagnosticRow = {
   id: number
+  tenant_id: number
+  integration_id: number | null
   direction: string
   outcome: string
   context: string
@@ -134,8 +144,8 @@ export async function listDiagnostics(options: {
   campaignId?: number
 } = {}): Promise<DiagnosticRow[]> {
   await ensureDiagnosticsTable()
-  const where: string[] = []
-  const params: (string | number)[] = []
+  const where: string[] = ["tenant_id = ?"]
+  const params: (string | number)[] = [currentTenantIdOrNull() ?? -1]
   if (options.outcome) {
     where.push("outcome = ?")
     params.push(options.outcome)
@@ -159,9 +169,9 @@ export async function summarizeErrors(sinceHours = 24): Promise<
   return query(
     `SELECT error_code, retryable, COUNT(*) AS count, MAX(message) AS sample
        FROM \`marketing_whatsapp_diagnostics\`
-      WHERE outcome = 'error' AND created_at >= (NOW() - INTERVAL ? HOUR)
+      WHERE tenant_id = ? AND outcome = 'error' AND created_at >= (NOW() - INTERVAL ? HOUR)
       GROUP BY error_code, retryable
       ORDER BY count DESC`,
-    [sinceHours],
+    [currentTenantIdOrNull() ?? -1, sinceHours],
   )
 }

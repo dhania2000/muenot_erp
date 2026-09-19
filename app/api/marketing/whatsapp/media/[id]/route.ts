@@ -26,6 +26,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   // Best-effort metadata capture (never blocks the response).
   recordMedia({
+    integrationId: integration.id,
     mediaId,
     mimeType: result.contentType,
     fileSize: result.data.byteLength,

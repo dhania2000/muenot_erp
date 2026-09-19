@@ -2,6 +2,7 @@ import "server-only"
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { query } from "@/lib/db"
 import { encryptToken, decryptToken } from "@/lib/token-crypto"
+import { currentTenantId, currentTenantIdOrNull } from "@/lib/tenant-scope"
 
 /**
  * WhatsApp Business Cloud API integration.
@@ -103,11 +104,44 @@ export async function ensureWhatsAppTable() {
     "platform_type",
     "`platform_type` VARCHAR(32) DEFAULT NULL",
   )
+  // Multi-tenant isolation: every integration belongs to exactly one tenant.
+  // Mirrors database/migrations/2026-11-19-whatsapp-multi-tenant-isolation.sql
+  // so a deployment that has not imported that SQL still isolates correctly.
+  await ensureColumn(
+    "marketing_whatsapp_integration",
+    "tenant_id",
+    "`tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`",
+  )
+  await ensureTenantScopedUniquePhone()
   tableEnsured = true
+}
+
+/**
+ * Replaces the legacy global `UNIQUE(phone_number_id)` with a tenant-scoped
+ * `UNIQUE(tenant_id, phone_number_id)` so two tenants may legitimately connect
+ * the same number. Idempotent and non-fatal (the app-layer scoping still
+ * isolates even if the DDL cannot run on a legacy engine).
+ */
+async function ensureTenantScopedUniquePhone() {
+  try {
+    const composite = await query<{ c: number }[]>(
+      `SELECT COUNT(*) AS c FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'marketing_whatsapp_integration'
+          AND INDEX_NAME = 'uniq_wa_integration_tenant_phone'`,
+    )
+    if (composite[0]?.c) return
+    await query("ALTER TABLE `marketing_whatsapp_integration` DROP INDEX `uniq_phone_number`").catch(() => {})
+    await query(
+      "ALTER TABLE `marketing_whatsapp_integration` ADD UNIQUE KEY `uniq_wa_integration_tenant_phone` (`tenant_id`, `phone_number_id`)",
+    ).catch(() => {})
+  } catch {
+    /* non-fatal: app-layer tenant scoping still isolates */
+  }
 }
 
 export type WhatsAppIntegrationRow = {
   id: number
+  tenant_id: number | null
   waba_id: string
   phone_number_id: string
   display_phone_number: string | null
@@ -177,6 +211,9 @@ export function getEnvIntegration(): WhatsAppIntegrationRow | null {
     // id 0 marks an env-provisioned integration — it lives in no DB row, so the
     // UI's "Disconnect" (DELETE by id) is a harmless no-op against it.
     id: 0,
+    // The env number is a legacy single-number provision; it is attributed to
+    // whichever tenant is currently in context (or unknown before auth).
+    tenant_id: currentTenantIdOrNull(),
     waba_id: wabaId,
     phone_number_id: phoneNumberId,
     display_phone_number: process.env.WHATSAPP_DISPLAY_PHONE_NUMBER?.trim() || null,
@@ -193,16 +230,78 @@ export function getEnvIntegration(): WhatsAppIntegrationRow | null {
 }
 
 /**
- * Returns the active WhatsApp integration. A row saved through the UI (Embedded
- * Signup or manual credentials) takes precedence; otherwise we fall back to the
- * env-provisioned number so the connection works out of the box.
+ * Returns the active WhatsApp integration FOR THE CURRENT TENANT. Derives the
+ * tenant from the verified session context (never from client input): a row
+ * saved through the UI takes precedence, otherwise it falls back to the
+ * env-provisioned number. When there is no tenant in context (system/boot) it
+ * returns only the env number so nothing leaks a tenant's saved credentials.
+ *
+ * Existing session-scoped callers keep calling this unchanged and are now
+ * automatically isolated. Background jobs must establish a tenant first with
+ * runForTenant() (or call getWhatsAppIntegrationForTenant explicitly).
  */
 export async function getWhatsAppIntegration(): Promise<WhatsAppIntegrationRow | null> {
+  const tenantId = currentTenantIdOrNull()
+  if (tenantId == null) {
+    await ensureWhatsAppTable()
+    return getEnvIntegration()
+  }
+  return getWhatsAppIntegrationForTenant(tenantId)
+}
+
+/** The active integration for an explicit tenant id. */
+export async function getWhatsAppIntegrationForTenant(
+  tenantId: number,
+): Promise<WhatsAppIntegrationRow | null> {
   await ensureWhatsAppTable()
   const rows = await query<WhatsAppIntegrationRow[]>(
-    "SELECT * FROM `marketing_whatsapp_integration` ORDER BY connected_at DESC LIMIT 1",
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE tenant_id = ? ORDER BY connected_at DESC LIMIT 1",
+    [tenantId],
   )
   return rows[0] ?? getEnvIntegration()
+}
+
+/** Every integration connected by the current tenant (for multi-number UIs). */
+export async function listWhatsAppIntegrationsForTenant(): Promise<WhatsAppIntegrationRow[]> {
+  await ensureWhatsAppTable()
+  const rows = await query<WhatsAppIntegrationRow[]>(
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE tenant_id = ? ORDER BY connected_at DESC",
+    [currentTenantId()],
+  )
+  return rows
+}
+
+/** A specific integration by id, scoped to the current tenant (IDOR-safe). */
+export async function getWhatsAppIntegrationByIdForTenant(
+  id: number,
+): Promise<WhatsAppIntegrationRow | null> {
+  await ensureWhatsAppTable()
+  const rows = await query<WhatsAppIntegrationRow[]>(
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    [id, currentTenantId()],
+  )
+  return rows[0] ?? null
+}
+
+/**
+ * Resolves an integration by its Meta phone_number_id WITHOUT a tenant filter.
+ * This is the ONLY tenant-agnostic lookup and exists purely so the inbound
+ * webhook — which has no session — can discover WHICH tenant a delivery belongs
+ * to before entering that tenant's context via runForTenant(). The returned
+ * row carries `tenant_id`, which the webhook uses to scope everything after.
+ */
+export async function getWhatsAppIntegrationByPhoneNumberId(
+  phoneNumberId: string,
+): Promise<WhatsAppIntegrationRow | null> {
+  await ensureWhatsAppTable()
+  const rows = await query<WhatsAppIntegrationRow[]>(
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE phone_number_id = ? ORDER BY connected_at DESC LIMIT 1",
+    [phoneNumberId],
+  )
+  if (rows[0]) return rows[0]
+  // Fall back to the env number when it matches the delivery's phone id.
+  const env = getEnvIntegration()
+  return env && env.phone_number_id === phoneNumberId ? env : null
 }
 
 export type PhoneNumberProfile = {
@@ -305,11 +404,15 @@ export type ConnectWhatsApp = {
 
 export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
   await ensureWhatsAppTable()
+  // Tenant is derived from the verified session context, never from the caller,
+  // and stamped so the row belongs to exactly one tenant. The tenant-scoped
+  // unique key (tenant_id, phone_number_id) makes the upsert per-tenant.
+  const tenantId = currentTenantId()
   await query(
     `INSERT INTO \`marketing_whatsapp_integration\`
-      (waba_id, phone_number_id, display_phone_number, verified_name, business_name,
+      (tenant_id, waba_id, phone_number_id, display_phone_number, verified_name, business_name,
        quality_rating, platform_type, access_token, connected_by_user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        waba_id = VALUES(waba_id),
        display_phone_number = VALUES(display_phone_number),
@@ -320,6 +423,7 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
        access_token = VALUES(access_token),
        connected_by_user_id = VALUES(connected_by_user_id)`,
     [
+      tenantId,
       data.wabaId,
       data.phoneNumberId,
       data.displayPhoneNumber,
@@ -335,7 +439,12 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
 
 export async function deleteWhatsAppIntegration(id: number) {
   await ensureWhatsAppTable()
-  await query("DELETE FROM `marketing_whatsapp_integration` WHERE id = ?", [id])
+  // Scope the delete to the acting tenant so a forged id can never disconnect
+  // another tenant's number.
+  await query("DELETE FROM `marketing_whatsapp_integration` WHERE id = ? AND tenant_id = ?", [
+    id,
+    currentTenantId(),
+  ])
 }
 
 /* ------------------------------------------------------------------ */

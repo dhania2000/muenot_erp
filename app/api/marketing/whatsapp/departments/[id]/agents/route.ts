@@ -31,11 +31,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   if (!departmentId) return NextResponse.json({ error: "Invalid id" }, { status: 400 })
 
   const body = (await request.json().catch(() => ({}))) as { userIds?: unknown }
-  const userIds = Array.isArray(body.userIds)
-    ? body.userIds.map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0)
+  const members = Array.isArray(body.userIds)
+    ? body.userIds
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n > 0)
+        .map((userId) => ({ userId, role: "agent" as const }))
     : []
 
-  await setDepartmentAgents(departmentId, userIds)
+  await setDepartmentAgents(departmentId, members)
   const agents = await listDepartmentAgents(departmentId)
   return NextResponse.json({ ok: true, agents })
 }

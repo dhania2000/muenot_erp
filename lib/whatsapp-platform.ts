@@ -290,6 +290,7 @@ export async function createDepartment(input: {
   managerUserId?: number | null
   keywords?: string | null
   color?: string | null
+  autoAssign?: boolean
 }): Promise<number> {
   await ensureWhatsAppPlatformTables()
   let slug = slugify(input.name)
@@ -305,8 +306,8 @@ export async function createDepartment(input: {
   )
   const result = await query<{ insertId: number }>(
     `INSERT INTO \`marketing_whatsapp_departments\`
-       (name, slug, description, routing_method, manager_user_id, keywords, color, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (name, slug, description, routing_method, manager_user_id, keywords, color, auto_assign, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.name.trim(),
       slug,
@@ -315,6 +316,7 @@ export async function createDepartment(input: {
       input.managerUserId ?? null,
       input.keywords?.trim() || null,
       input.color?.trim() || null,
+      input.autoAssign ? 1 : 0,
       (maxOrder[0]?.m ?? 0) + 1,
     ],
   )

@@ -66,7 +66,6 @@ export async function POST(request: Request) {
     businessName,
     qualityRating: profile.qualityRating,
     platformType: profile.platformType,
-    isOnBizApp: profile.isOnBizApp,
     accessToken,
     connectedByUserId: session.userId,
   })

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { getWhatsAppIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
+import { getWhatsAppIntegration, resolveTenantIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
 import { recordTemplateUsage } from "@/lib/whatsapp-templates"
 import {
   assignConversation,
@@ -35,11 +35,6 @@ export async function POST(request: Request) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const integration = await getWhatsAppIntegration()
-  if (!integration) {
-    return NextResponse.json({ error: "No WhatsApp account is connected yet." }, { status: 400 })
-  }
-
   const body = (await request.json().catch(() => ({}))) as {
     to?: string
     message?: string
@@ -55,12 +50,16 @@ export async function POST(request: Request) {
   // target the right contact even if the client omits `to`.
   let to = body.to?.trim().replace(/[^\d]/g, "") || ""
   let conversationId = Number(body.conversationId) || null
+  // When a conversation already carries an explicit integration_id we MUST send
+  // from that exact number — never the tenant's active/latest one.
+  let explicitIntegrationId: number | null = null
 
   if (conversationId) {
     const conversation = await getConversation(conversationId)
     if (!conversation) {
       return NextResponse.json({ error: "Conversation not found" }, { status: 404 })
     }
+    explicitIntegrationId = conversation.integrationId
 
     // Shared-inbox RBAC: an agent may only reply to a thread that is theirs or
     // still unassigned. Admins may reply to anything.
@@ -106,6 +105,22 @@ export async function POST(request: Request) {
   if (!to) {
     return NextResponse.json(
       { error: "A recipient phone number (with country code) is required." },
+      { status: 400 },
+    )
+  }
+
+  // Honor the conversation's explicit integration when it has one; otherwise
+  // fall back to the tenant's active number (ad-hoc/first-touch sends only).
+  const integration = explicitIntegrationId
+    ? await resolveTenantIntegration(explicitIntegrationId)
+    : await getWhatsAppIntegration()
+  if (!integration) {
+    return NextResponse.json(
+      {
+        error: explicitIntegrationId
+          ? "The WhatsApp number for this conversation is no longer connected. Reconnect it to reply."
+          : "No WhatsApp account is connected yet.",
+      },
       { status: 400 },
     )
   }

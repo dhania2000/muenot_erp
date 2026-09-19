@@ -2,7 +2,7 @@ import "server-only"
 import { query } from "@/lib/db"
 import { currentTenantId, forEachActiveTenant } from "@/lib/tenant-scope"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
-import { getWhatsAppIntegration, sendWhatsAppTemplateWithComponents } from "@/lib/whatsapp"
+import { getWhatsAppIntegration, resolveTenantIntegration, sendWhatsAppTemplateWithComponents } from "@/lib/whatsapp"
 import { recordTemplateUsage, findLocalTemplate } from "@/lib/whatsapp-templates"
 import {
   findOrCreateContact,
@@ -143,6 +143,7 @@ export type CampaignRow = {
   id: number
   name: string
   type: string
+  integration_id: number | null
   department_id: number | null
   audience_id: number | null
   audience_filter_json: string | null
@@ -180,6 +181,7 @@ function toCampaign(r: CampaignRow & { created_by_name?: string | null; audience
     id: r.id,
     name: r.name,
     type: r.type,
+    integrationId: r.integration_id ?? null,
     departmentId: r.department_id,
     audienceId: r.audience_id,
     audienceName: r.audience_name ?? null,
@@ -419,7 +421,11 @@ export async function processCampaignBatch(id: number, limit = 50): Promise<{ pr
   if (!campaign || campaign.status !== "running") return { processed: 0, remaining: 0 }
 
   const tenantId = currentTenantId()
-  const integration = await getWhatsAppIntegration()
+  // A campaign pinned to a specific WABA must always send from that number;
+  // only unpinned campaigns fall back to the tenant's active integration.
+  const integration = campaign.integrationId
+    ? await resolveTenantIntegration(campaign.integrationId)
+    : await getWhatsAppIntegration()
   if (!integration) {
     await query("UPDATE `marketing_whatsapp_campaigns` SET status = 'failed', last_error = ? WHERE id = ? AND tenant_id = ?", [
       "No WhatsApp account connected",

@@ -1,7 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
-import { getWhatsAppIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
+import { getWhatsAppIntegration, resolveTenantIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
 import { assignConversation, recordOutboundMessage } from "@/lib/whatsapp-store"
 import { setConversationDepartment } from "@/lib/whatsapp-routing"
 import { currentTenantId, forEachActiveTenant } from "@/lib/tenant-scope"
@@ -231,6 +231,12 @@ const HUMAN_REQUEST_PATTERNS = [
 
 export type InboundAutomationContext = {
   conversationId: number
+  /**
+   * The integration that owns this conversation. When set, automation replies
+   * go out from that exact number; when null we fall back to the tenant's
+   * active integration (legacy conversations with no explicit id).
+   */
+  integrationId?: number | null
   phone: string
   messageText: string
   isNewContact: boolean
@@ -260,7 +266,11 @@ function triggerMatches(automation: Automation, ctx: InboundAutomationContext): 
 }
 
 async function runAction(automation: Automation, ctx: InboundAutomationContext): Promise<void> {
-  const integration = await getWhatsAppIntegration()
+  // Reply from the conversation's own number when it has one; otherwise fall
+  // back to the tenant's active integration.
+  const integration = ctx.integrationId
+    ? await resolveTenantIntegration(ctx.integrationId)
+    : await getWhatsAppIntegration()
   const cfg = automation.actionConfig
 
   switch (automation.actionType as AutomationAction) {
@@ -353,9 +363,9 @@ export async function runNoReplyAutomations(): Promise<number> {
   for (const a of automations) {
     const hours = Math.max(1, Number(a.triggerConfig.hours) || 2)
     const candidates = await query<
-      { id: number; phone_number: string; last_body: string | null }[]
+      { id: number; integration_id: number | null; phone_number: string; last_body: string | null }[]
     >(
-      `SELECT c.id, ct.phone_number,
+      `SELECT c.id, c.integration_id, ct.phone_number,
               c.last_message_preview AS last_body
          FROM \`marketing_whatsapp_conversations\` c
          JOIN \`marketing_whatsapp_contacts\` ct ON ct.id = c.contact_id
@@ -371,6 +381,7 @@ export async function runNoReplyAutomations(): Promise<number> {
       try {
         await runAction(a, {
           conversationId: convo.id,
+          integrationId: convo.integration_id ?? null,
           phone: convo.phone_number,
           messageText: convo.last_body ?? "",
           isNewContact: false,

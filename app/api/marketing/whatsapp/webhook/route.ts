@@ -315,9 +315,10 @@ async function processChange(input: {
             contactId: contact.id,
           })
           await routeConversation({ conversationId: conversation.id, messageText })
-          await runInboundAutomations({
-            conversationId: conversation.id,
-            phone: fromPhone,
+        await runInboundAutomations({
+          conversationId: conversation.id,
+          integrationId,
+          phone: fromPhone,
             messageText,
             isNewContact: ctx.isNewContact,
             isNewConversation: ctx.isNewConversation,

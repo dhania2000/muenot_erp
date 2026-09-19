@@ -95,6 +95,27 @@ export const TENANT_OWNED_TABLES = [
   // Configurable storage retention (SPEC 36) — default rule + per-module overrides
   "storage_retention_settings",
   "storage_retention_rules",
+  // WhatsApp Business platform (SPEC — multi-tenant WhatsApp isolation).
+  // Each tenant connects its own WhatsApp Business number(s); every row below
+  // belongs to exactly one tenant and must never be visible to another.
+  "marketing_whatsapp_integration",
+  "marketing_whatsapp_contacts",
+  "marketing_whatsapp_conversations",
+  "marketing_whatsapp_messages",
+  "marketing_whatsapp_webhook_events",
+  "marketing_whatsapp_assignments",
+  "marketing_whatsapp_departments",
+  "marketing_whatsapp_department_agents",
+  "marketing_whatsapp_agent_settings",
+  "marketing_whatsapp_internal_notes",
+  "marketing_whatsapp_transfers",
+  "marketing_whatsapp_media",
+  "marketing_whatsapp_templates",
+  "marketing_whatsapp_audiences",
+  "marketing_whatsapp_campaigns",
+  "marketing_whatsapp_campaign_recipients",
+  "marketing_whatsapp_campaign_events",
+  "marketing_whatsapp_automations",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

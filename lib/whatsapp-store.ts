@@ -1,5 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { currentTenantId } from "@/lib/tenant-scope"
 import type { WhatsAppPriority, WhatsAppStatus, WhatsAppTeam } from "@/lib/whatsapp-shared"
 
 /**
@@ -130,8 +131,38 @@ export async function ensureWhatsAppMessagingTables() {
   await ensureColumn("marketing_whatsapp_contacts", "notes", "ADD COLUMN `notes` TEXT DEFAULT NULL")
   await ensureColumn("marketing_whatsapp_contacts", "tags", "ADD COLUMN `tags` VARCHAR(500) DEFAULT NULL")
   await ensureStatusSupportsPending()
+  await ensureTenantIsolationColumns()
 
   tablesEnsured = true
+}
+
+/**
+ * Multi-tenant isolation self-heal. Mirrors
+ * database/migrations/2026-11-19-whatsapp-multi-tenant-isolation.sql so a
+ * deployment that has not imported that SQL still isolates correctly. Adds the
+ * `tenant_id` discriminator to every messaging table and an `integration_id`
+ * to the tables that hang off a connected number. Idempotent and non-fatal.
+ */
+async function ensureTenantIsolationColumns() {
+  const tenantTables = [
+    "marketing_whatsapp_contacts",
+    "marketing_whatsapp_conversations",
+    "marketing_whatsapp_messages",
+    "marketing_whatsapp_webhook_events",
+    "marketing_whatsapp_assignments",
+  ]
+  for (const t of tenantTables) {
+    await ensureColumn(t, "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL")
+  }
+  const integrationTables = [
+    "marketing_whatsapp_contacts",
+    "marketing_whatsapp_conversations",
+    "marketing_whatsapp_messages",
+    "marketing_whatsapp_webhook_events",
+  ]
+  for (const t of integrationTables) {
+    await ensureColumn(t, "integration_id", "ADD COLUMN `integration_id` INT UNSIGNED DEFAULT NULL")
+  }
 }
 
 /** True when the named column exists on the given table in the current schema. */
@@ -282,20 +313,23 @@ export async function findOrCreateContact(input: {
   phone: string
   profileName?: string | null
   waContactId?: string | null
+  integrationId?: number | null
 }): Promise<WhatsAppContactRow> {
   await ensureWhatsAppMessagingTables()
+  const tenantId = currentTenantId()
   const phone = normalizePhone(input.phone)
 
   const existing = await query<WhatsAppContactRow[]>(
-    "SELECT * FROM `marketing_whatsapp_contacts` WHERE phone_number = ? LIMIT 1",
-    [phone],
+    "SELECT * FROM `marketing_whatsapp_contacts` WHERE tenant_id = ? AND phone_number = ? LIMIT 1",
+    [tenantId, phone],
   )
   if (existing[0]) {
     // Keep the profile name fresh when Meta gives us a newer one.
     if (input.profileName && input.profileName !== existing[0].profile_name) {
-      await query("UPDATE `marketing_whatsapp_contacts` SET profile_name = ? WHERE id = ?", [
+      await query("UPDATE `marketing_whatsapp_contacts` SET profile_name = ? WHERE id = ? AND tenant_id = ?", [
         input.profileName,
         existing[0].id,
+        tenantId,
       ])
       existing[0].profile_name = input.profileName
     }
@@ -304,20 +338,24 @@ export async function findOrCreateContact(input: {
 
   const leadId = await findLeadIdByPhone(phone)
   const result = await query<{ insertId: number }>(
-    `INSERT INTO \`marketing_whatsapp_contacts\` (phone_number, profile_name, wa_contact_id, lead_id)
-     VALUES (?, ?, ?, ?)`,
-    [phone, input.profileName ?? null, input.waContactId ?? null, leadId],
+    `INSERT INTO \`marketing_whatsapp_contacts\` (tenant_id, integration_id, phone_number, profile_name, wa_contact_id, lead_id)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [tenantId, input.integrationId ?? null, phone, input.profileName ?? null, input.waContactId ?? null, leadId],
   )
   const rows = await query<WhatsAppContactRow[]>(
-    "SELECT * FROM `marketing_whatsapp_contacts` WHERE id = ? LIMIT 1",
-    [result.insertId],
+    "SELECT * FROM `marketing_whatsapp_contacts` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    [result.insertId, tenantId],
   )
   return rows[0]
 }
 
 export async function linkContactToLead(contactId: number, leadId: number | null) {
   await ensureWhatsAppMessagingTables()
-  await query("UPDATE `marketing_whatsapp_contacts` SET lead_id = ? WHERE id = ?", [leadId, contactId])
+  await query("UPDATE `marketing_whatsapp_contacts` SET lead_id = ? WHERE id = ? AND tenant_id = ?", [
+    leadId,
+    contactId,
+    currentTenantId(),
+  ])
 }
 
 export type ContactListItem = {
@@ -332,8 +370,12 @@ export type ContactListItem = {
 export async function listContacts(search = "", limit = 200): Promise<ContactListItem[]> {
   await ensureWhatsAppMessagingTables()
   const term = search.trim()
-  const where = term ? "WHERE phone_number LIKE ? OR profile_name LIKE ?" : ""
-  const params: (string | number)[] = term ? [`%${term}%`, `%${term}%`] : []
+  const where = term
+    ? "WHERE tenant_id = ? AND (phone_number LIKE ? OR profile_name LIKE ?)"
+    : "WHERE tenant_id = ?"
+  const params: (string | number)[] = term
+    ? [currentTenantId(), `%${term}%`, `%${term}%`]
+    : [currentTenantId()]
   params.push(Math.min(Math.max(limit, 1), 500))
   const rows = await query<
     { id: number; phone_number: string; profile_name: string | null; lead_id: number | null; created_at: string | null }[]
@@ -360,22 +402,24 @@ export async function findOrCreateConversation(input: {
   contactId: number
   phoneNumberId: string
   wabaId?: string | null
+  integrationId?: number | null
 }): Promise<WhatsAppConversationRow> {
   await ensureWhatsAppMessagingTables()
+  const tenantId = currentTenantId()
   const existing = await query<WhatsAppConversationRow[]>(
-    "SELECT * FROM `marketing_whatsapp_conversations` WHERE contact_id = ? AND phone_number_id = ? LIMIT 1",
-    [input.contactId, input.phoneNumberId],
+    "SELECT * FROM `marketing_whatsapp_conversations` WHERE tenant_id = ? AND contact_id = ? AND phone_number_id = ? LIMIT 1",
+    [tenantId, input.contactId, input.phoneNumberId],
   )
   if (existing[0]) return existing[0]
 
   const result = await query<{ insertId: number }>(
-    `INSERT INTO \`marketing_whatsapp_conversations\` (contact_id, phone_number_id, waba_id)
-     VALUES (?, ?, ?)`,
-    [input.contactId, input.phoneNumberId, input.wabaId ?? null],
+    `INSERT INTO \`marketing_whatsapp_conversations\` (tenant_id, integration_id, contact_id, phone_number_id, waba_id)
+     VALUES (?, ?, ?, ?, ?)`,
+    [tenantId, input.integrationId ?? null, input.contactId, input.phoneNumberId, input.wabaId ?? null],
   )
   const rows = await query<WhatsAppConversationRow[]>(
-    "SELECT * FROM `marketing_whatsapp_conversations` WHERE id = ? LIMIT 1",
-    [result.insertId],
+    "SELECT * FROM `marketing_whatsapp_conversations` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    [result.insertId, tenantId],
   )
   return rows[0]
 }
@@ -409,6 +453,7 @@ export type InboundMessageInput = {
   senderPhone: string
   recipientPhone: string
   metaTimestamp: Date
+  integrationId?: number | null
 }
 
 /**
@@ -421,12 +466,15 @@ export async function recordInboundMessage(input: InboundMessageInput): Promise<
   const ts = input.metaTimestamp
   const tsSql = ts.toISOString().slice(0, 19).replace("T", " ")
 
+  const tenantId = currentTenantId()
   const result = await query<{ insertId: number; affectedRows: number }>(
     `INSERT IGNORE INTO \`marketing_whatsapp_messages\`
-      (conversation_id, wamid, direction, message_type, message_body, media_id, media_mime_type,
+      (tenant_id, integration_id, conversation_id, wamid, direction, message_type, message_body, media_id, media_mime_type,
        media_filename, sender_phone, recipient_phone, status, status_rank, meta_timestamp)
-     VALUES (?, ?, 'inbound', ?, ?, ?, ?, ?, ?, ?, 'received', 0, ?)`,
+     VALUES (?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?, ?, 'received', 0, ?)`,
     [
+      tenantId,
+      input.integrationId ?? null,
       input.conversationId,
       input.wamid,
       input.messageType,
@@ -448,8 +496,8 @@ export async function recordInboundMessage(input: InboundMessageInput): Promise<
            last_customer_message_at = ?,
            last_message_preview = ?,
            status = 'open'
-     WHERE id = ?`,
-    [tsSql, tsSql, preview(input.messageType, input.body), input.conversationId],
+     WHERE id = ? AND tenant_id = ?`,
+    [tsSql, tsSql, preview(input.messageType, input.body), input.conversationId, tenantId],
   )
   return true
 }
@@ -463,20 +511,24 @@ export type OutboundMessageInput = {
   recipientPhone: string
   status: MessageStatus
   sentByUserId?: number | null
+  integrationId?: number | null
 }
 
 /** Inserts an outbound message we just sent and refreshes the conversation. */
 export async function recordOutboundMessage(input: OutboundMessageInput): Promise<number> {
   await ensureWhatsAppMessagingTables()
+  const tenantId = currentTenantId()
   const nowSql = new Date().toISOString().slice(0, 19).replace("T", " ")
   const rank = STATUS_RANK[input.status]
 
   const result = await query<{ insertId: number }>(
     `INSERT INTO \`marketing_whatsapp_messages\`
-      (conversation_id, wamid, direction, message_type, message_body, sender_phone, recipient_phone,
+      (tenant_id, integration_id, conversation_id, wamid, direction, message_type, message_body, sender_phone, recipient_phone,
        status, status_rank, meta_timestamp, sent_at, sent_by_user_id)
-     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      tenantId,
+      input.integrationId ?? null,
       input.conversationId,
       input.wamid,
       input.messageType,
@@ -494,8 +546,8 @@ export async function recordOutboundMessage(input: OutboundMessageInput): Promis
   await query(
     `UPDATE \`marketing_whatsapp_conversations\`
        SET last_message_at = ?, last_message_preview = ?
-     WHERE id = ?`,
-    [nowSql, preview(input.messageType, input.body), input.conversationId],
+     WHERE id = ? AND tenant_id = ?`,
+    [nowSql, preview(input.messageType, input.body), input.conversationId, tenantId],
   )
   return result.insertId
 }

@@ -17,6 +17,7 @@ import {
   Package,
   SlidersHorizontal,
   KeyRound,
+  MessageCircle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -25,6 +26,7 @@ type NavItem = { href: string; label: string; icon: React.ComponentType<{ classN
 const NAV: NavItem[] = [
   { href: "/platform", label: "Overview", icon: LayoutDashboard, group: "Operate" },
   { href: "/platform/tenants", label: "Tenants & lifecycle", icon: Building2, group: "Operate" },
+  { href: "/platform/whatsapp", label: "WhatsApp tenants", icon: MessageCircle, group: "Operate" },
   { href: "/platform/onboarding", label: "Organization onboarding", icon: Rocket, group: "Operate" },
   { href: "/platform/plans", label: "Plans & entitlements", icon: Package, group: "Operate" },
   { href: "/platform/subscriptions", label: "Subscriptions & billing", icon: CreditCard, group: "Operate" },

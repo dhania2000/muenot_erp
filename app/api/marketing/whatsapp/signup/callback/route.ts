@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { handleWhatsAppSignupCallback } from "@/lib/whatsapp-signup"
+import { getStoredRoles } from "@/lib/platform-roles"
 
 /**
  * Completes WhatsApp Embedded Signup. The client posts the authorization
@@ -12,7 +13,9 @@ import { handleWhatsAppSignupCallback } from "@/lib/whatsapp-signup"
 export async function POST(request: Request) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  if (session.role !== "admin") {
+  const storedRoles = await getStoredRoles(session.userId).catch(() => null)
+  const isPlatformOperator = storedRoles?.platformRole !== undefined && storedRoles.platformRole !== "none"
+  if (session.role !== "admin" && !isPlatformOperator) {
     return NextResponse.json({ error: "Only an administrator can connect WhatsApp." }, { status: 403 })
   }
 
@@ -43,7 +46,8 @@ export async function POST(request: Request) {
       wabaId,
       phoneNumberId,
       businessId: body.businessId?.trim() || null,
-      expectedTenantId: session.tenantId ?? null,
+      expectedTenantId: isPlatformOperator ? null : session.tenantId ?? null,
+      expectedUserId: session.userId,
     })
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 422 })

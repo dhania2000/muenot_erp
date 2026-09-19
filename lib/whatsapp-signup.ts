@@ -335,6 +335,7 @@ export async function handleWhatsAppSignupCallback(input: {
   phoneNumberId: string
   businessId?: string | null
   expectedTenantId?: number | null
+  expectedUserId?: number | null
 }): Promise<ConnectResult> {
   const resolved = await resolveTenantFromSignupState(input.state)
   if (!resolved) {
@@ -343,6 +344,9 @@ export async function handleWhatsAppSignupCallback(input: {
   if (input.expectedTenantId != null && input.expectedTenantId !== resolved.tenantId) {
     // Never let one tenant consume another tenant's signup state.
     return { ok: false, error: "This WhatsApp signup does not belong to your organization." }
+  }
+  if (input.expectedUserId != null && input.expectedUserId !== resolved.userId) {
+    return { ok: false, error: "This WhatsApp signup was started by another administrator." }
   }
 
   const code = input.code?.trim()

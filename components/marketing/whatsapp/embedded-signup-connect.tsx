@@ -73,10 +73,14 @@ export function EmbeddedSignupConnect({
   onConnected,
   variant = "default",
   className,
+  startUrl = "/api/marketing/whatsapp/signup/start",
+  startBody,
 }: {
   onConnected: () => void
   variant?: React.ComponentProps<typeof Button>["variant"]
   className?: string
+  startUrl?: string
+  startBody?: Record<string, unknown>
 }) {
   const [busy, setBusy] = React.useState(false)
   // Captured from Meta's postMessage session-info event during the popup.
@@ -109,7 +113,11 @@ export function EmbeddedSignupConnect({
     setBusy(true)
     sessionInfo.current = {}
     try {
-      const startRes = await fetch("/api/marketing/whatsapp/signup/start", { method: "POST" })
+      const startRes = await fetch(startUrl, {
+        method: "POST",
+        headers: startBody ? { "Content-Type": "application/json" } : undefined,
+        body: startBody ? JSON.stringify(startBody) : undefined,
+      })
       const start = (await startRes.json().catch(() => ({}))) as StartResult & { error?: string }
       if (!startRes.ok) throw new Error(start.error || "Could not start WhatsApp signup.")
       if (!start.ready || !start.appId || !start.configId) {

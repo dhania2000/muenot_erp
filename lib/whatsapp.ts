@@ -306,6 +306,84 @@ export async function listWhatsAppIntegrationsForTenant(): Promise<WhatsAppInteg
   return rows
 }
 
+export type WhatsAppTenantConnection = {
+  tenantId: number
+  tenantName: string
+  tenantSlug: string
+  tenantStatus: string
+  integration: WhatsAppIntegrationPublic | null
+}
+
+/** Platform-only directory of the latest WhatsApp connection per tenant. */
+export async function listWhatsAppTenantConnections(): Promise<WhatsAppTenantConnection[]> {
+  await ensureWhatsAppTable()
+  const rows = await query<
+    {
+      tenant_id: number
+      tenant_name: string
+      tenant_slug: string
+      tenant_status: string
+      integration_id: number | null
+      waba_id: string | null
+      phone_number_id: string | null
+      display_phone_number: string | null
+      verified_name: string | null
+      business_name: string | null
+      business_id: string | null
+      quality_rating: string | null
+      platform_type: string | null
+      access_token: string | null
+      connected_by_user_id: number | null
+      connected_at: string | null
+      updated_at: string | null
+    }[]
+  >(
+    `SELECT t.id AS tenant_id, t.name AS tenant_name, t.slug AS tenant_slug, t.status AS tenant_status,
+            i.id AS integration_id, i.waba_id, i.phone_number_id, i.display_phone_number,
+            i.verified_name, i.business_name, i.business_id, i.quality_rating, i.platform_type,
+            i.access_token, i.connected_by_user_id, i.connected_at, i.updated_at
+       FROM \`tenants\` t
+       LEFT JOIN \`marketing_whatsapp_integration\` i
+         ON i.id = (
+           SELECT i2.id
+             FROM \`marketing_whatsapp_integration\` i2
+            WHERE i2.tenant_id = t.id
+            ORDER BY i2.connected_at DESC, i2.id DESC
+            LIMIT 1
+         )
+      ORDER BY t.is_platform_owner DESC, t.name ASC`,
+  )
+
+  return rows.map((row) => {
+    const integration = row.integration_id != null
+      ? toPublicIntegration({
+          id: Number(row.integration_id),
+          tenant_id: Number(row.tenant_id),
+          waba_id: row.waba_id ?? "",
+          phone_number_id: row.phone_number_id ?? "",
+          display_phone_number: row.display_phone_number,
+          verified_name: row.verified_name,
+          business_name: row.business_name,
+          business_id: row.business_id,
+          quality_rating: row.quality_rating,
+          platform_type: row.platform_type,
+          access_token: row.access_token ?? "",
+          connected_by_user_id: row.connected_by_user_id,
+          connected_at: row.connected_at ?? "",
+          updated_at: row.updated_at ?? "",
+        })
+      : null
+
+    return {
+      tenantId: Number(row.tenant_id),
+      tenantName: row.tenant_name,
+      tenantSlug: row.tenant_slug,
+      tenantStatus: row.tenant_status,
+      integration,
+    }
+  })
+}
+
 /** A specific integration by id, scoped to the current tenant (IDOR-safe). */
 export async function getWhatsAppIntegrationByIdForTenant(
   id: number,

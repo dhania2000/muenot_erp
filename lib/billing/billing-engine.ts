@@ -294,6 +294,34 @@ async function runEnsure(): Promise<void> {
   await ensureBillingColumn("billing_invoices", "last_sent_at", "DATETIME DEFAULT NULL")
   await ensureBillingColumn("billing_invoices", "last_sent_to", "VARCHAR(190) DEFAULT NULL")
 
+  // Core money/meta columns. These live in the CREATE TABLE above, but on
+  // installs whose `billing_invoices` table predates a given column, the
+  // `CREATE TABLE IF NOT EXISTS` is a no-op and never adds it — so an INSERT
+  // that writes the column fails with ER_BAD_FIELD_ERROR. Patch them all
+  // idempotently (no-op when present) so create/finalize can never 500 on a
+  // drifted schema.
+  await ensureBillingColumn("billing_invoices", "subscription_id", "INT UNSIGNED DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "customer_name", "VARCHAR(190) NOT NULL DEFAULT ''")
+  await ensureBillingColumn("billing_invoices", "invoice_type", "VARCHAR(20) NOT NULL DEFAULT 'one_time'")
+  await ensureBillingColumn("billing_invoices", "currency", "VARCHAR(10) NOT NULL DEFAULT 'USD'")
+  await ensureBillingColumn("billing_invoices", "subtotal", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "discount_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "coupon_code", "VARCHAR(40) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "tax_rate", "DECIMAL(7,4) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "tax_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "credit_applied", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "adjustment_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "amount_paid", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "amount_refunded", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "balance", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "status", "VARCHAR(20) NOT NULL DEFAULT 'draft'")
+  await ensureBillingColumn("billing_invoices", "issue_date", "DATE NULL")
+  await ensureBillingColumn("billing_invoices", "due_date", "DATE DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "period_start", "DATE DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "period_end", "DATE DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "memo", "VARCHAR(500) DEFAULT NULL")
+
   await query(`CREATE TABLE IF NOT EXISTS billing_invoice_lines (
     id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
     tenant_id     INT UNSIGNED NOT NULL,
@@ -1465,7 +1493,7 @@ export async function ingestReconciliation(input: ReconInput, session: SessionPa
   return mapRecon(created)
 }
 
-// ── Summary ─────────────────────────────────────────────────────────────────
+// ── Summary ─────────────────────────────────────────────────────────���───────
 
 export async function getBillingSummary(): Promise<BillingSummary> {
   await ensureBillingSchema()

@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils"
 import { fetcher } from "@/lib/fetcher"
 import { WhatsAppWebhookSetup } from "@/components/marketing/whatsapp-webhook-setup"
 import { IntegrateManuallyDialog } from "@/components/marketing/whatsapp/integrate-dialog"
+import { EmbeddedSignupConnect } from "@/components/marketing/whatsapp/embedded-signup-connect"
 import { TabState, formatDateTime } from "./shared"
 import type { ConnectionHealth, StatusResponse } from "./types"
 
@@ -176,10 +177,16 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
           <Separator />
           <div className="flex flex-wrap items-center gap-3">
             {isAdmin ? (
+              <EmbeddedSignupConnect
+                onConnected={refreshAll}
+                variant={needsOnboarding ? "default" : "outline"}
+              />
+            ) : null}
+            {isAdmin ? (
               <IntegrateManuallyDialog
                 onConnected={refreshAll}
-                label={needsOnboarding ? "Connect WhatsApp Cloud API" : "Update credentials"}
-                variant={needsOnboarding ? "default" : "outline"}
+                label={needsOnboarding ? "Connect with credentials" : "Update credentials"}
+                variant="outline"
               />
             ) : null}
             <SendTestDialog />

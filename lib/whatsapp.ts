@@ -89,6 +89,7 @@ export async function ensureWhatsAppTable() {
       \`display_phone_number\` VARCHAR(64) DEFAULT NULL,
       \`verified_name\` VARCHAR(191) DEFAULT NULL,
       \`business_name\` VARCHAR(191) DEFAULT NULL,
+      \`business_id\` VARCHAR(191) DEFAULT NULL,
       \`quality_rating\` VARCHAR(32) DEFAULT NULL,
       \`platform_type\` VARCHAR(32) DEFAULT NULL,
       \`access_token\` TEXT NOT NULL,
@@ -113,6 +114,12 @@ export async function ensureWhatsAppTable() {
     "marketing_whatsapp_integration",
     "tenant_id",
     "`tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`",
+  )
+  // Older deployments predate the Meta business id column — add it idempotently.
+  await ensureColumn(
+    "marketing_whatsapp_integration",
+    "business_id",
+    "`business_id` VARCHAR(191) DEFAULT NULL",
   )
   await ensureTenantScopedUniquePhone()
   tableEnsured = true
@@ -149,6 +156,7 @@ export type WhatsAppIntegrationRow = {
   display_phone_number: string | null
   verified_name: string | null
   business_name: string | null
+  business_id: string | null
   quality_rating: string | null
   platform_type: string | null
   access_token: string
@@ -165,9 +173,18 @@ export type WhatsAppIntegrationPublic = {
   displayPhoneNumber: string | null
   verifiedName: string | null
   businessName: string | null
+  businessId: string | null
   qualityRating: string | null
   platformType: string | null
   connectedAt: string
+  updatedAt: string
+  /**
+   * Whether the encrypted access token is present and decryptable at rest.
+   * This is a cheap, offline signal ("do we hold a usable secret?") and is NOT
+   * a live Meta validity probe — that lives in the per-integration health test.
+   * The token value itself is NEVER included in any public shape.
+   */
+  tokenStatus: "stored" | "missing"
 }
 
 export function toPublicIntegration(row: WhatsAppIntegrationRow): WhatsAppIntegrationPublic {
@@ -178,9 +195,12 @@ export function toPublicIntegration(row: WhatsAppIntegrationRow): WhatsAppIntegr
     displayPhoneNumber: row.display_phone_number,
     verifiedName: row.verified_name,
     businessName: row.business_name,
+    businessId: row.business_id,
     qualityRating: row.quality_rating,
     platformType: row.platform_type,
     connectedAt: row.connected_at,
+    updatedAt: row.updated_at,
+    tokenStatus: decryptToken(row.access_token) ? "stored" : "missing",
   }
 }
 
@@ -221,6 +241,7 @@ export function getEnvIntegration(): WhatsAppIntegrationRow | null {
     display_phone_number: process.env.WHATSAPP_DISPLAY_PHONE_NUMBER?.trim() || null,
     verified_name: businessName,
     business_name: businessName,
+    business_id: process.env.WHATSAPP_BUSINESS_ID?.trim() || null,
     quality_rating: null,
     // Unknown until Meta confirms it live.
     platform_type: null,
@@ -251,7 +272,19 @@ export async function getWhatsAppIntegration(): Promise<WhatsAppIntegrationRow |
   return getWhatsAppIntegrationForTenant(tenantId)
 }
 
-/** The active integration for an explicit tenant id. */
+/**
+ * The active integration for an explicit tenant id.
+ *
+ * Returns ONLY the tenant's own connected row. We deliberately do NOT fall back
+ * to the env-provisioned number here: that fallback is a single, global,
+ * legacy number and surfacing it per-tenant both breaks isolation and makes
+ * "Disconnect" appear to do nothing (deleting the row would just re-reveal the
+ * env number as connected). The env number is still available for the
+ * no-session/system path (getWhatsAppIntegration) and the webhook phone-number
+ * lookup (getWhatsAppIntegrationByPhoneNumberId). A tenant that wants to use the
+ * env credentials connects them once via the UI, which persists a real,
+ * disconnectable row.
+ */
 export async function getWhatsAppIntegrationForTenant(
   tenantId: number,
 ): Promise<WhatsAppIntegrationRow | null> {
@@ -284,6 +317,32 @@ export async function getWhatsAppIntegrationByIdForTenant(
     [id, tenantId],
   )
   return rows[0] ?? null
+}
+
+/**
+ * Resolves the exact integration a tenant-owned record (campaign, automation,
+ * conversation, media, …) must use for a Meta API call.
+ *
+ * Rules (see PHASE 11/12/15 of the WhatsApp multi-tenant hardening):
+ *   - When the record carries an explicit `integration_id`, that integration
+ *     MUST belong to the current tenant. It is looked up tenant-scoped, so a
+ *     forged/foreign id resolves to null and we FAIL SAFE (never fall back to
+ *     another/default integration for an explicitly-configured record).
+ *   - When the record has no integration_id (legacy rows created before
+ *     multi-integration support), fall back to the tenant's active integration.
+ *
+ * Must be called inside a tenant context (session request or a background job
+ * already inside runForTenant); it never crosses tenants.
+ */
+export async function resolveTenantIntegration(
+  integrationId: number | null | undefined,
+): Promise<WhatsAppIntegrationRow | null> {
+  if (integrationId != null && integrationId > 0) {
+    // Explicit selection: only ever this tenant's integration, or nothing.
+    return getWhatsAppIntegrationByIdForTenant(integrationId)
+  }
+  // Legacy record without an explicit integration: the tenant's active number.
+  return getWhatsAppIntegration()
 }
 
 /**
@@ -397,6 +456,7 @@ export type ConnectWhatsApp = {
   displayPhoneNumber: string | null
   verifiedName: string | null
   businessName: string | null
+  businessId?: string | null
   qualityRating: string | null
   platformType: string | null
   accessToken: string
@@ -412,13 +472,14 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
   await query(
     `INSERT INTO \`marketing_whatsapp_integration\`
       (tenant_id, waba_id, phone_number_id, display_phone_number, verified_name, business_name,
-       quality_rating, platform_type, access_token, connected_by_user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       business_id, quality_rating, platform_type, access_token, connected_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        waba_id = VALUES(waba_id),
        display_phone_number = VALUES(display_phone_number),
        verified_name = VALUES(verified_name),
        business_name = VALUES(business_name),
+       business_id = VALUES(business_id),
        quality_rating = VALUES(quality_rating),
        platform_type = VALUES(platform_type),
        access_token = VALUES(access_token),
@@ -430,6 +491,7 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
       data.displayPhoneNumber,
       data.verifiedName,
       data.businessName,
+      data.businessId ?? null,
       data.qualityRating,
       data.platformType,
       encryptToken(data.accessToken),

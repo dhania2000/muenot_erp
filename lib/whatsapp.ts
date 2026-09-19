@@ -284,6 +284,32 @@ export async function getWhatsAppIntegrationByIdForTenant(
 }
 
 /**
+ * Resolves the exact integration a tenant-owned record (campaign, automation,
+ * conversation, media, …) must use for a Meta API call.
+ *
+ * Rules (see PHASE 11/12/15 of the WhatsApp multi-tenant hardening):
+ *   - When the record carries an explicit `integration_id`, that integration
+ *     MUST belong to the current tenant. It is looked up tenant-scoped, so a
+ *     forged/foreign id resolves to null and we FAIL SAFE (never fall back to
+ *     another/default integration for an explicitly-configured record).
+ *   - When the record has no integration_id (legacy rows created before
+ *     multi-integration support), fall back to the tenant's active integration.
+ *
+ * Must be called inside a tenant context (session request or a background job
+ * already inside runForTenant); it never crosses tenants.
+ */
+export async function resolveTenantIntegration(
+  integrationId: number | null | undefined,
+): Promise<WhatsAppIntegrationRow | null> {
+  if (integrationId != null && integrationId > 0) {
+    // Explicit selection: only ever this tenant's integration, or nothing.
+    return getWhatsAppIntegrationByIdForTenant(integrationId)
+  }
+  // Legacy record without an explicit integration: the tenant's active number.
+  return getWhatsAppIntegration()
+}
+
+/**
  * Resolves an integration by its Meta phone_number_id WITHOUT a tenant filter.
  * This is the ONLY tenant-agnostic lookup and exists purely so the inbound
  * webhook — which has no session — can discover WHICH tenant a delivery belongs

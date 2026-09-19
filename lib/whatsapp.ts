@@ -270,7 +270,19 @@ export async function getWhatsAppIntegration(): Promise<WhatsAppIntegrationRow |
   return getWhatsAppIntegrationForTenant(tenantId)
 }
 
-/** The active integration for an explicit tenant id. */
+/**
+ * The active integration for an explicit tenant id.
+ *
+ * Returns ONLY the tenant's own connected row. We deliberately do NOT fall back
+ * to the env-provisioned number here: that fallback is a single, global,
+ * legacy number and surfacing it per-tenant both breaks isolation and makes
+ * "Disconnect" appear to do nothing (deleting the row would just re-reveal the
+ * env number as connected). The env number is still available for the
+ * no-session/system path (getWhatsAppIntegration) and the webhook phone-number
+ * lookup (getWhatsAppIntegrationByPhoneNumberId). A tenant that wants to use the
+ * env credentials connects them once via the UI, which persists a real,
+ * disconnectable row.
+ */
 export async function getWhatsAppIntegrationForTenant(
   tenantId: number,
 ): Promise<WhatsAppIntegrationRow | null> {
@@ -279,7 +291,7 @@ export async function getWhatsAppIntegrationForTenant(
     "SELECT * FROM `marketing_whatsapp_integration` WHERE tenant_id = ? ORDER BY connected_at DESC LIMIT 1",
     [tenantId],
   )
-  return rows[0] ?? getEnvIntegration()
+  return rows[0] ?? null
 }
 
 /** Every integration connected by the current tenant (for multi-number UIs). */

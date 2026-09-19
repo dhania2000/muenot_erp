@@ -176,7 +176,12 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
 
           <Separator />
           <div className="flex flex-wrap items-center gap-3">
-            {isAdmin && needsOnboarding ? <EmbeddedSignupConnect onConnected={refreshAll} /> : null}
+            {isAdmin ? (
+              <EmbeddedSignupConnect
+                onConnected={refreshAll}
+                variant={needsOnboarding ? "default" : "outline"}
+              />
+            ) : null}
             {isAdmin ? (
               <IntegrateManuallyDialog
                 onConnected={refreshAll}

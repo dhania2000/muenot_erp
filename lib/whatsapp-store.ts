@@ -596,6 +596,7 @@ export async function updateMessageStatusByWamid(input: {
 export type ConversationListItem = {
   id: number
   contactId: number
+  integrationId: number | null
   phoneNumber: string
   profileName: string | null
   leadId: number | null
@@ -615,6 +616,7 @@ export type ConversationListItem = {
 type ConversationJoinRow = {
   id: number
   contact_id: number
+  integration_id: number | null
   phone_number: string
   profile_name: string | null
   lead_id: number | null
@@ -633,7 +635,7 @@ type ConversationJoinRow = {
 
 // Shared projection so the list and the detail query never drift apart.
 const CONVERSATION_SELECT = `
-  SELECT c.id, c.contact_id, ct.phone_number, ct.profile_name, ct.lead_id,
+  SELECT c.id, c.contact_id, c.integration_id, ct.phone_number, ct.profile_name, ct.lead_id,
          l.lead_code, l.contact_person AS lead_name, c.status, c.priority,
          c.assigned_agent_id, u.name AS assigned_agent_name, c.assigned_team,
          c.unread_count, c.last_message_preview, c.last_message_at, c.last_customer_message_at
@@ -646,6 +648,7 @@ function mapConversationRow(r: ConversationJoinRow): ConversationListItem {
   return {
     id: r.id,
     contactId: r.contact_id,
+    integrationId: r.integration_id ?? null,
     phoneNumber: r.phone_number,
     profileName: r.profile_name,
     leadId: r.lead_id,

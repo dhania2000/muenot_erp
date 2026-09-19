@@ -16,7 +16,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Search } from "lucide-react"
+import { toast } from "sonner"
 
 export type Stat = { label: string; value: string; hint?: string }
 export type Column = { key: string; label: string }
@@ -28,6 +44,7 @@ export type BillingModuleConfig = {
   title: string
   description: string
   primaryAction?: string
+  actionKind?: "connect-gateway"
   layout: "table" | "settings" | "reports"
   stats?: Stat[]
   columns?: Column[]
@@ -66,12 +83,24 @@ function StatusBadge({ value }: { value: string }) {
 
 export function BillingModuleView({ config }: { config: BillingModuleConfig }) {
   const [query, setQuery] = useState("")
+  const [rows, setRows] = useState<Row[]>(config.rows ?? [])
+  const [actionOpen, setActionOpen] = useState(false)
 
-  const filteredRows = (config.rows ?? []).filter((row) =>
+  const filteredRows = rows.filter((row) =>
     query.trim() === ""
       ? true
       : Object.values(row).some((v) => v.toLowerCase().includes(query.trim().toLowerCase())),
   )
+
+  function handleGatewayConnect(next: Row) {
+    setRows((current) => {
+      const idx = current.findIndex((r) => r.gateway?.toLowerCase() === next.gateway?.toLowerCase())
+      if (idx === -1) return [...current, next]
+      const copy = [...current]
+      copy[idx] = { ...copy[idx], ...next }
+      return copy
+    })
+  }
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -80,8 +109,37 @@ export function BillingModuleView({ config }: { config: BillingModuleConfig }) {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{config.title}</h1>
           <p className="max-w-2xl text-sm text-muted-foreground">{config.description}</p>
         </div>
-        {config.primaryAction ? <Button className="shrink-0">{config.primaryAction}</Button> : null}
+        {config.primaryAction ? (
+          <Button className="shrink-0" onClick={() => setActionOpen(true)}>
+            {config.primaryAction}
+          </Button>
+        ) : null}
       </header>
+
+      {config.actionKind === "connect-gateway" ? (
+        <ConnectGatewayDialog
+          open={actionOpen}
+          onOpenChange={setActionOpen}
+          existingGateways={rows.map((r) => r.gateway).filter(Boolean)}
+          onConnect={handleGatewayConnect}
+        />
+      ) : config.primaryAction ? (
+        <Dialog open={actionOpen} onOpenChange={setActionOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{config.primaryAction}</DialogTitle>
+              <DialogDescription>
+                This action isn&apos;t available in this environment yet.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setActionOpen(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       {config.stats && config.stats.length > 0 ? (
         <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -203,5 +261,139 @@ export function BillingModuleView({ config }: { config: BillingModuleConfig }) {
         </div>
       ) : null}
     </div>
+  )
+}
+
+const GATEWAY_PRESETS: Record<string, { currencies: string; methods: string }> = {
+  Stripe: { currencies: "USD, EUR, GBP", methods: "Card, UPI" },
+  Razorpay: { currencies: "INR", methods: "Card, UPI, Netbanking" },
+  PayPal: { currencies: "USD, EUR", methods: "Card, Wallet" },
+}
+
+function ConnectGatewayDialog({
+  open,
+  onOpenChange,
+  existingGateways,
+  onConnect,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  existingGateways: string[]
+  onConnect: (row: Row) => void
+}) {
+  const options = Object.keys(GATEWAY_PRESETS)
+  const [gateway, setGateway] = useState(options[0])
+  const [mode, setMode] = useState<"Test" | "Live">("Test")
+  const [apiKey, setApiKey] = useState("")
+  const [makeDefault, setMakeDefault] = useState(false)
+
+  function reset() {
+    setGateway(options[0])
+    setMode("Test")
+    setApiKey("")
+    setMakeDefault(false)
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (apiKey.trim() === "") {
+      toast.error("Enter an API key to connect the gateway.")
+      return
+    }
+    const preset = GATEWAY_PRESETS[gateway]
+    onConnect({
+      gateway,
+      mode,
+      currencies: preset?.currencies ?? "—",
+      methods: preset?.methods ?? "—",
+      status: "Connected",
+    })
+    toast.success(`${gateway} connected in ${mode.toLowerCase()} mode.`)
+    reset()
+    onOpenChange(false)
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) reset()
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent>
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>Connect gateway</DialogTitle>
+            <DialogDescription>
+              Add API credentials for a payment processor to start collecting payments.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="gateway-select">Gateway</Label>
+              <Select value={gateway} onValueChange={setGateway}>
+                <SelectTrigger id="gateway-select">
+                  <SelectValue placeholder="Select gateway" />
+                </SelectTrigger>
+                <SelectContent>
+                  {options.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                      {existingGateways.some((g) => g.toLowerCase() === name.toLowerCase())
+                        ? " (reconfigure)"
+                        : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="gateway-mode">Environment</Label>
+              <Select value={mode} onValueChange={(v) => setMode(v as "Test" | "Live")}>
+                <SelectTrigger id="gateway-mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Test">Test</SelectItem>
+                  <SelectItem value="Live">Live</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="gateway-key">API secret key</Label>
+              <Input
+                id="gateway-key"
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="sk_..."
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="flex items-start justify-between gap-4 rounded-md border border-border p-3">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium">Set as default</Label>
+                <p className="text-xs text-muted-foreground">
+                  Use this gateway for new subscription and invoice charges.
+                </p>
+              </div>
+              <Switch checked={makeDefault} onCheckedChange={setMakeDefault} />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">Connect</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

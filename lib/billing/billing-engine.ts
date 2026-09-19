@@ -26,6 +26,7 @@ import {
   getPlan,
   planPriceForTerm,
   changePlanRecord,
+  ensureSubscriptionSchema,
 } from "@/lib/billing/subscription-engine"
 import { isBillingTerm, type BillingTerm } from "@/lib/billing/subscription-lifecycle"
 
@@ -1238,6 +1239,10 @@ export async function runRecurringBilling(
   opts: { taxRate?: number } = {},
 ): Promise<{ generated: number; skipped: number; invoiceNos: string[] }> {
   await ensureBillingSchema()
+  // The subscription tables are owned by the subscription engine. Ensure they
+  // exist before we read them so a fresh install (no subscription created yet)
+  // doesn't 500 on a missing `saas_subscriptions` table.
+  await ensureSubscriptionSchema()
   const subs = (await tenantSelect("saas_subscriptions", {
     columns: "id, status",
     where: "status IN ('active','trial','past_due','grace')",
@@ -1464,6 +1469,10 @@ export async function ingestReconciliation(input: ReconInput, session: SessionPa
 
 export async function getBillingSummary(): Promise<BillingSummary> {
   await ensureBillingSchema()
+  // MRR is derived from `saas_subscriptions`, owned by the subscription engine.
+  // Ensure that schema exists so the summary works before any subscription is
+  // created (otherwise a missing table 500s the whole invoices endpoint).
+  await ensureSubscriptionSchema()
   const invoices = await listInvoices()
   const [creditBal, coupons, mrrRows] = await Promise.all([
     creditBalance(),

@@ -41,6 +41,8 @@ export function CompanySettings() {
   const [search, setSearch] = useState("")
   const [values, setValues] = useState<Record<string, string>>(getSectionDefaults())
   const [dirty, setDirty] = useState(false)
+  const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set())
+  const [overriddenKeys, setOverriddenKeys] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState(0)
 
@@ -51,6 +53,7 @@ export function CompanySettings() {
       .then((data) => {
         if (cancelled || !data?.values) return
         setValues((prev) => ({ ...prev, ...data.values }))
+        setOverriddenKeys(new Set(data?.meta?.overriddenKeys ?? []))
       })
       .catch(() => {})
     return () => {
@@ -86,13 +89,15 @@ export function CompanySettings() {
 
   function setValue(key: string, value: string) {
     setValues((prev) => ({ ...prev, [key]: value }))
+    setDirtyKeys((prev) => new Set(prev).add(key))
     setDirty(true)
   }
 
   async function saveSection() {
-    setSaving(true)
     const payload: Record<string, string> = {}
-    for (const f of active.fields) payload[f.key] = values[f.key] ?? ""
+    for (const key of dirtyKeys) payload[key] = values[key] ?? ""
+    if (Object.keys(payload).length === 0) return
+    setSaving(true)
     try {
       const res = await fetch("/api/admin/company-settings", {
         method: "POST",
@@ -101,6 +106,15 @@ export function CompanySettings() {
       })
       if (!res.ok) throw new Error("save failed")
       setDirty(false)
+      setDirtyKeys(new Set())
+      setOverriddenKeys((prev) => {
+        const next = new Set(prev)
+        for (const [key, value] of Object.entries(payload)) {
+          if (value === "") next.delete(key)
+          else next.add(key)
+        }
+        return next
+      })
       setSavedAt(Date.now())
       setTimeout(() => setSavedAt(0), 2500)
     } catch {
@@ -215,6 +229,11 @@ export function CompanySettings() {
             </Button>
           </div>
         </header>
+
+        <div className="mx-5 mt-4 rounded-lg border border-primary/20 bg-primary/5 px-3.5 py-3 text-sm text-muted-foreground">
+          These settings belong to the active tenant. Values inherited from the platform baseline are shown here until
+          you save an override; clearing a value restores the inherited setting. {overriddenKeys.size} tenant override{overriddenKeys.size === 1 ? "" : "s"} currently active.
+        </div>
 
         <div className="grid gap-5 p-5 md:grid-cols-2">
           {active.fields.map((field) => (

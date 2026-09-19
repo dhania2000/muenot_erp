@@ -95,6 +95,11 @@ export const TENANT_OWNED_TABLES = [
   // Configurable storage retention (SPEC 36) — default rule + per-module overrides
   "storage_retention_settings",
   "storage_retention_rules",
+  // Canonical tenant configuration and its append-only change history
+  // (SPEC 39). These replace the legacy global company_settings writes while
+  // keeping the legacy table available as an inherited platform baseline.
+  "tenant_settings",
+  "tenant_settings_audit",
   // WhatsApp Business platform (SPEC — multi-tenant WhatsApp isolation).
   // Each tenant connects its own WhatsApp Business number(s); every row below
   // belongs to exactly one tenant and must never be visible to another.

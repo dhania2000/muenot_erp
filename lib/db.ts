@@ -51,6 +51,24 @@ export async function query<T = any>(sql: string, params: any[] = []): Promise<T
   return rows as T
 }
 
+/** Execute a group of statements atomically. Callers still include their normal tenant predicates. */
+export async function withTransaction<T>(
+  fn: (connection: mysql.PoolConnection) => Promise<T>,
+): Promise<T> {
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const result = await fn(connection)
+    await connection.commit()
+    return result
+  } catch (error) {
+    await connection.rollback().catch(() => {})
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Automatic write capture -> notifications
 // ---------------------------------------------------------------------------

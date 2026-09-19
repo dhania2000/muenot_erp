@@ -1,62 +1,75 @@
 import { NextResponse } from "next/server"
-import { getSession } from "@/lib/auth"
-import { query } from "@/lib/db"
-import { companySettingsSections } from "@/lib/company-settings-config"
+import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
+import {
+  MASKED_SECRET,
+  getEffectiveTenantSettings,
+  getTenantSettingDefinition,
+  getTenantSettingsAudit,
+  getTenantSettingsPublic,
+  listTenantSettingDefinitions,
+  setTenantSettings,
+} from "@/lib/tenant-settings"
 import { invalidateSettingsCache } from "@/lib/settings/server"
 
-// Keys that must never be returned in plain text.
 const secretKeys = new Set(
-  companySettingsSections.flatMap((s) => s.fields.filter((f) => f.secret).map((f) => f.key)),
+  listTenantSettingDefinitions().filter((definition) => definition.secret).map((definition) => definition.key),
 )
 
-async function ensureTable() {
-  await query(
-    `CREATE TABLE IF NOT EXISTS company_settings (
-      skey VARCHAR(160) NOT NULL PRIMARY KEY,
-      svalue TEXT DEFAULT NULL,
-      updated_by BIGINT UNSIGNED DEFAULT NULL,
-      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )`,
-  )
-}
-
-async function guard() {
-  const s = await getSession()
-  return s?.role === "admin" ? s : null
+function forbidden(result: { status: number; reason: string }) {
+  return NextResponse.json({ error: result.reason }, { status: result.status })
 }
 
 export async function GET() {
-  if (!(await guard())) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
-  await ensureTable()
-  const rows = await query<any[]>("SELECT skey, svalue FROM company_settings")
-  const values: Record<string, string> = {}
-  for (const r of rows) {
-    values[r.skey] = secretKeys.has(r.skey) && r.svalue ? "••••••••" : (r.svalue ?? "")
+  const guard = await requireTenantAdmin()
+  if (!guard.ok) return forbidden(guard)
+  const tenantId = effectiveTenantId(guard.ctx)
+  if (tenantId == null) return NextResponse.json({ error: "No tenant in context" }, { status: 403 })
+
+  try {
+    const values = await getEffectiveTenantSettings(tenantId)
+    const publicTenant = await getTenantSettingsPublic(tenantId)
+    const audit = await getTenantSettingsAudit(50, tenantId)
+    const allSecretKeys = new Set([...secretKeys, ...publicTenant.secretKeys])
+    for (const key of allSecretKeys) {
+      if (values[key]) values[key] = MASKED_SECRET
+    }
+    return NextResponse.json({
+      values,
+      meta: { scope: "tenant", tenantId, overriddenKeys: publicTenant.overriddenKeys, inherited: true, audit },
+    })
+  } catch (error) {
+    console.error("[company-settings] read failed", error)
+    return NextResponse.json({ error: "Unable to load tenant settings" }, { status: 500 })
   }
-  return NextResponse.json({ values })
 }
 
 export async function POST(req: Request) {
-  const s = await guard()
-  if (!s) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  const guard = await requireTenantAdmin()
+  if (!guard.ok) return forbidden(guard)
+  const tenantId = effectiveTenantId(guard.ctx)
+  if (tenantId == null) return NextResponse.json({ error: "No tenant in context" }, { status: 403 })
+
   const body = await req.json().catch(() => null)
-  if (!body || typeof body.values !== "object" || body.values === null) {
+  if (!body || typeof body.values !== "object" || body.values === null || Array.isArray(body.values)) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 })
   }
-  await ensureTable()
-  const entries = Object.entries(body.values as Record<string, unknown>)
-  for (const [key, value] of entries) {
-    if (typeof key !== "string" || key.length > 160) continue
-    // Skip masked secret values so we never overwrite a stored secret with dots.
-    if (secretKeys.has(key) && value === "••••••••") continue
-    const v = value == null ? "" : String(value)
-    await query(
-      "INSERT INTO company_settings (skey, svalue, updated_by) VALUES (?,?,?) ON DUPLICATE KEY UPDATE svalue=VALUES(svalue), updated_by=VALUES(updated_by)",
-      [key, v, s.userId],
-    )
+
+  const values = { ...(body.values as Record<string, unknown>) }
+  // A masked value means “leave the existing secret untouched”.
+  for (const [key, value] of Object.entries(values)) {
+    if (getTenantSettingDefinition(key)?.secret && value === MASKED_SECRET) delete values[key]
   }
-  // Ensure server-side consumers (nav gating, numbering, formatting) pick up
-  // the new values on the next read.
-  invalidateSettingsCache()
-  return NextResponse.json({ ok: true, saved: entries.length })
+
+  try {
+    const result = await setTenantSettings(values, guard.session.userId, tenantId)
+    invalidateSettingsCache(tenantId)
+    return NextResponse.json({ ok: true, tenantId, saved: result.saved, cleared: result.cleared })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to save tenant settings"
+    if (/Unknown setting|must be|has an invalid|too long|SETTINGS_ENCRYPTION_KEY/.test(message)) {
+      return NextResponse.json({ error: message }, { status: 400 })
+    }
+    console.error("[company-settings] write failed", error)
+    return NextResponse.json({ error: "Unable to save tenant settings" }, { status: 500 })
+  }
 }

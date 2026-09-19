@@ -27,6 +27,8 @@ import {
   type ResolvedConfigEntry,
 } from "./resolve"
 import { listConfig, listFeatureFlags } from "@/lib/platform-console"
+import { currentTenantIdOrNull } from "@/lib/tenant-scope"
+import { getTenantSettingsMap } from "@/lib/tenant-settings"
 
 /**
  * Build the map of platform-store values keyed exactly like the registry:
@@ -53,6 +55,17 @@ async function loadPlatformValues(): Promise<Map<string, string>> {
   return map
 }
 
+async function loadTenantValues(): Promise<Map<string, string>> {
+  const tenantId = currentTenantIdOrNull()
+  if (tenantId == null) return new Map()
+  try {
+    return new Map(Object.entries(await getTenantSettingsMap(tenantId)))
+  } catch (err) {
+    console.error("[v0] config service: tenant config unavailable", err)
+    return new Map()
+  }
+}
+
 /**
  * The effective, secret-safe configuration across every category. Safe to send
  * to any platform-staff surface: the result is asserted free of secret
@@ -60,10 +73,12 @@ async function loadPlatformValues(): Promise<Map<string, string>> {
  */
 export async function getEffectiveConfig(): Promise<ResolvedConfigEntry[]> {
   const platformValues = await loadPlatformValues()
+  const tenantValues = await loadTenantValues()
   const entries = CONFIG_REGISTRY.map((d) => {
     const env = d.envVar ? process.env[d.envVar] : undefined
     const platform = d.scope === "platform" ? platformValues.get(d.key) : undefined
-    const raw = resolveConfigValue(d, { env, platform })
+    const tenant = d.scope === "tenant" ? tenantValues.get(d.key) : undefined
+    const raw = resolveConfigValue(d, { env, tenant, platform })
     return toPublicEntry(d, raw)
   })
   // Fail closed: never hand back a set that leaked a secret.
@@ -98,9 +113,14 @@ export async function getConfigValue(key: string): Promise<string | null> {
   if (!descriptor) return null
   const env = descriptor.envVar ? process.env[descriptor.envVar] : undefined
   let platform: string | undefined
+  let tenant: string | undefined
   if (descriptor.scope === "platform") {
     const values = await loadPlatformValues()
     platform = values.get(descriptor.key)
   }
-  return resolveConfigValue(descriptor, { env, platform }).value
+  if (descriptor.scope === "tenant") {
+    const values = await loadTenantValues()
+    tenant = values.get(descriptor.key)
+  }
+  return resolveConfigValue(descriptor, { env, tenant, platform }).value
 }

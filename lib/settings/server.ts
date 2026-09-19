@@ -3,6 +3,8 @@ import { cache } from "react"
 import { query } from "@/lib/db"
 import { companySettingsSections, getSectionDefaults } from "@/lib/company-settings-config"
 import type { SettingsMap } from "@/lib/settings/format"
+import { currentTenantIdOrNull } from "@/lib/tenant-scope"
+import { getTenantSettingsMap } from "@/lib/tenant-settings"
 
 // Keys that must never leave the server in plain text.
 const SECRET_KEYS = new Set(
@@ -32,23 +34,33 @@ const PUBLIC_PREFIXES = [
 ]
 
 // Short cross-request cache so many consumers in one render don't re-query.
-let memo: { at: number; data: SettingsMap } | null = null
+const memo = new Map<string, { at: number; data: SettingsMap }>()
 const TTL_MS = 10_000
 
 async function load(): Promise<SettingsMap> {
   const defaults = getSectionDefaults()
+  const tenantId = currentTenantIdOrNull()
+  const merged: SettingsMap = { ...defaults }
   try {
     const rows = await query<any[]>("SELECT skey, svalue FROM company_settings")
-    const merged: SettingsMap = { ...defaults }
     for (const r of rows) {
       if (r.svalue != null && String(r.svalue) !== "") merged[r.skey] = String(r.svalue)
     }
-    return merged
   } catch {
-    // DB not configured yet (e.g. fresh preview) — fall back to defaults so the
-    // app still renders instead of crashing.
-    return defaults
+    // A fresh install may not have the legacy table yet. Tenant overrides can
+    // still be loaded independently below.
   }
+  // Legacy global values remain the inherited baseline during migration;
+  // tenant overrides always win and are loaded through the isolated store.
+  if (tenantId != null) {
+    try {
+      const tenantValues = await getTenantSettingsMap(tenantId)
+      Object.assign(merged, tenantValues)
+    } catch {
+      // DB not configured yet (e.g. fresh preview) — keep defaults/baseline.
+    }
+  }
+  return merged
 }
 
 /**
@@ -58,15 +70,19 @@ async function load(): Promise<SettingsMap> {
  */
 export const getSettings = cache(async (): Promise<SettingsMap> => {
   const now = Date.now()
-  if (memo && now - memo.at < TTL_MS) return memo.data
+  const tenantId = currentTenantIdOrNull()
+  const cacheKey = tenantId == null ? "global" : `tenant:${tenantId}`
+  const cached = memo.get(cacheKey)
+  if (cached && now - cached.at < TTL_MS) return cached.data
   const data = await load()
-  memo = { at: now, data }
+  memo.set(cacheKey, { at: now, data })
   return data
 })
 
 /** Force the next getSettings() call to re-read from the database. */
-export function invalidateSettingsCache() {
-  memo = null
+export function invalidateSettingsCache(tenantId?: number | null) {
+  if (tenantId == null) memo.clear()
+  else memo.delete(`tenant:${tenantId}`)
 }
 
 function truthy(v?: string) {

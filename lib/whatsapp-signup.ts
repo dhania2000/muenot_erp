@@ -1,7 +1,7 @@
 import "server-only"
 import { randomBytes } from "node:crypto"
 import { query } from "@/lib/db"
-import { currentTenantId, runForTenant } from "@/lib/tenant-scope"
+import { currentTenantId, currentTenantIdOrNull, runForTenant } from "@/lib/tenant-scope"
 import {
   GRAPH_VERSION,
   getAppId,
@@ -147,6 +147,40 @@ export async function createWhatsAppSignupSession(userId: number): Promise<Start
     expiresAt: expiresAt.toISOString(),
     ready: Boolean(appId && configId),
   }
+}
+
+/**
+ * Start Embedded Signup for a legacy/system administrator that has no home
+ * tenant in the session. This is intentionally narrow: we bind the request
+ * only to the single active platform-owner tenant, never to an arbitrary
+ * tenant or to the first row returned by the database.
+ *
+ * Normal tenant administrators continue to use the tenant context populated
+ * by getSession(). The fallback exists for the original System Admin account,
+ * which predates the tenant-role rollout and therefore has tenant_id = NULL.
+ */
+export async function createWhatsAppSignupSessionForSystemAdmin(userId: number): Promise<StartSignupResult> {
+  const currentTenant = currentTenantIdOrNull()
+  if (currentTenant != null) {
+    return createWhatsAppSignupSession(userId)
+  }
+
+  const owners = await query<{ id: number }[]>(
+    `SELECT \`id\`
+       FROM \`tenants\`
+      WHERE \`status\` = 'active' AND \`is_platform_owner\` = 1
+      ORDER BY \`id\` ASC`,
+  )
+
+  if (owners.length !== 1) {
+    throw new Error(
+      owners.length === 0
+        ? "System Admin signup requires an active platform-owner tenant."
+        : "System Admin signup requires exactly one active platform-owner tenant.",
+    )
+  }
+
+  return runForTenant({ tenantId: Number(owners[0].id) }, () => createWhatsAppSignupSession(userId))
 }
 
 /**

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { createWhatsAppSignupSession } from "@/lib/whatsapp-signup"
+import { createWhatsAppSignupSessionForSystemAdmin } from "@/lib/whatsapp-signup"
 
 /**
  * Starts a WhatsApp Embedded Signup for the acting tenant. Returns the CSRF
@@ -15,10 +15,18 @@ export async function POST() {
   }
 
   try {
-    const result = await createWhatsAppSignupSession(session.userId)
+    // getSession() normally binds a tenant from the signed session / users
+    // table. The original System Admin account may legitimately have no
+    // tenant_id, so its Meta signup is bound to the single platform-owner
+    // tenant by the service. No client-supplied tenant id is accepted.
+    const result = await createWhatsAppSignupSessionForSystemAdmin(session.userId)
     return NextResponse.json(result)
   } catch (err) {
     console.error("[v0] whatsapp signup start error:", err)
+    const message = err instanceof Error ? err.message : ""
+    if (message.includes("platform-owner tenant")) {
+      return NextResponse.json({ error: message }, { status: 409 })
+    }
     return NextResponse.json({ error: "Could not start WhatsApp signup. Please try again." }, { status: 500 })
   }
 }

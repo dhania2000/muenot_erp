@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { billingGuard } from "@/lib/billing-guard"
+import { billingGuard, bindBillingTenant } from "@/lib/billing-guard"
 import { runRecurringBilling, BillingError } from "@/lib/billing/billing-engine"
 import { runRenewalCycle } from "@/lib/billing/renewal-engine"
 
@@ -17,6 +17,7 @@ export const runtime = "nodejs"
 export async function POST(request: Request) {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  bindBillingTenant(session)
   try {
     const body = await request.json().catch(() => ({}))
     const taxRate = body.tax_rate == null ? 0 : Number(body.tax_rate)

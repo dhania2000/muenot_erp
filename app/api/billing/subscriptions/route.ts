@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { billingGuard } from "@/lib/billing-guard"
+import { billingGuard, bindBillingTenant } from "@/lib/billing-guard"
 import {
   listSubscriptions,
   getSummary,
@@ -18,6 +18,7 @@ export const runtime = "nodejs"
 export async function GET() {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  bindBillingTenant(session)
   try {
     const [subscriptions, summary] = await Promise.all([listSubscriptions(), getSummary()])
     return NextResponse.json({ subscriptions, summary })
@@ -30,6 +31,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  bindBillingTenant(session)
   try {
     const body = await request.json()
     const subscription = await subscribe(body, session)

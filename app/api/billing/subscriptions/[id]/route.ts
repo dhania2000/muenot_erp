@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { billingGuard } from "@/lib/billing-guard"
+import { billingGuard, bindBillingTenant } from "@/lib/billing-guard"
 import {
   getSubscriptionView,
   listEvents,
@@ -12,6 +12,7 @@ export const runtime = "nodejs"
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  bindBillingTenant(session)
   const { id } = await params
   const subscription = await getSubscriptionView(Number(id))
   if (!subscription) return NextResponse.json({ error: "Subscription not found" }, { status: 404 })
@@ -22,6 +23,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  bindBillingTenant(session)
   const { id } = await params
   try {
     const body = await request.json()

@@ -4,6 +4,7 @@ import { ensureWhatsAppPlatformTables } from "@/lib/whatsapp-platform"
 import { getWhatsAppIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
 import { assignConversation, recordOutboundMessage } from "@/lib/whatsapp-store"
 import { setConversationDepartment } from "@/lib/whatsapp-routing"
+import { currentTenantId, forEachActiveTenant } from "@/lib/tenant-scope"
 import type { AutomationAction, AutomationTrigger } from "@/lib/whatsapp-config"
 
 /**
@@ -24,6 +25,7 @@ export async function ensureAutomationTables() {
   await query(
     `CREATE TABLE IF NOT EXISTS \`marketing_whatsapp_automations\` (
       \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      \`tenant_id\` INT UNSIGNED DEFAULT NULL,
       \`name\` VARCHAR(191) NOT NULL,
       \`is_active\` TINYINT(1) NOT NULL DEFAULT 1,
       \`trigger_type\` VARCHAR(48) NOT NULL,
@@ -38,11 +40,42 @@ export async function ensureAutomationTables() {
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
+      KEY \`idx_marketing_whatsapp_automations_tenant\` (\`tenant_id\`),
       KEY \`idx_wa_automation_active\` (\`is_active\`),
       KEY \`idx_wa_automation_trigger\` (\`trigger_type\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  await ensureColumn("marketing_whatsapp_automations", "tenant_id", "ADD COLUMN `tenant_id` INT UNSIGNED DEFAULT NULL AFTER `id`")
+  await ensureIndex("marketing_whatsapp_automations", "idx_marketing_whatsapp_automations_tenant", "(`tenant_id`)")
   ensured = true
+}
+
+async function ensureColumn(table: string, column: string, alterFragment: string) {
+  try {
+    const rows = await query<{ c: number }[]>(
+      `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+        WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+      [table, column],
+    )
+    if ((rows[0]?.c ?? 0) > 0) return
+    await query(`ALTER TABLE \`${table}\` ${alterFragment}`)
+  } catch {
+    // Concurrent add / missing ALTER rights — safe to ignore.
+  }
+}
+
+async function ensureIndex(table: string, index: string, cols: string) {
+  try {
+    const rows = await query<{ c: number }[]>(
+      `SELECT COUNT(*) AS c FROM information_schema.STATISTICS
+        WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+      [table, index],
+    )
+    if ((rows[0]?.c ?? 0) > 0) return
+    await query(`ALTER TABLE \`${table}\` ADD KEY \`${index}\` ${cols}`)
+  } catch {
+    // Concurrent add / missing ALTER rights — safe to ignore.
+  }
 }
 
 export type AutomationRow = {
@@ -110,7 +143,9 @@ export async function listAutomations(): Promise<Automation[]> {
     `SELECT a.*, d.name AS department_name
        FROM \`marketing_whatsapp_automations\` a
        LEFT JOIN \`marketing_whatsapp_departments\` d ON d.id = a.department_id
+      WHERE a.tenant_id = ?
       ORDER BY a.priority DESC, a.id ASC`,
+    [currentTenantId()],
   )
   return rows.map(toAutomation)
 }
@@ -128,9 +163,10 @@ export async function createAutomation(input: {
   await ensureAutomationTables()
   const result = await query<{ insertId: number }>(
     `INSERT INTO \`marketing_whatsapp_automations\`
-       (name, trigger_type, trigger_config_json, action_type, action_config_json, department_id, priority, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, name, trigger_type, trigger_config_json, action_type, action_config_json, department_id, priority, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      currentTenantId(),
       input.name.trim(),
       input.triggerType,
       JSON.stringify(input.triggerConfig ?? {}),
@@ -169,13 +205,13 @@ export async function updateAutomation(
   if (patch.departmentId !== undefined) (sets.push("department_id = ?"), params.push(patch.departmentId))
   if (patch.priority !== undefined) (sets.push("priority = ?"), params.push(patch.priority))
   if (!sets.length) return
-  params.push(id)
-  await query(`UPDATE \`marketing_whatsapp_automations\` SET ${sets.join(", ")} WHERE id = ?`, params)
+  params.push(id, currentTenantId())
+  await query(`UPDATE \`marketing_whatsapp_automations\` SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`, params)
 }
 
 export async function deleteAutomation(id: number): Promise<void> {
   await ensureAutomationTables()
-  await query("DELETE FROM `marketing_whatsapp_automations` WHERE id = ?", [id])
+  await query("DELETE FROM `marketing_whatsapp_automations` WHERE id = ? AND tenant_id = ?", [id, currentTenantId()])
 }
 
 /* ------------------------------------------------------------------ */
@@ -323,12 +359,13 @@ export async function runNoReplyAutomations(): Promise<number> {
               c.last_message_preview AS last_body
          FROM \`marketing_whatsapp_conversations\` c
          JOIN \`marketing_whatsapp_contacts\` ct ON ct.id = c.contact_id
-        WHERE c.status <> 'closed'
+        WHERE c.tenant_id = ?
+          AND c.status <> 'closed'
           AND c.last_customer_message_at IS NOT NULL
           AND c.last_customer_message_at <= (NOW() - INTERVAL ? HOUR)
           AND c.last_customer_message_at >= (NOW() - INTERVAL ? HOUR)
           AND (c.last_message_at IS NULL OR c.last_message_at <= c.last_customer_message_at)`,
-      [hours, hours + 6],
+      [currentTenantId(), hours, hours + 6],
     )
     for (const convo of candidates) {
       try {
@@ -347,8 +384,8 @@ export async function runNoReplyAutomations(): Promise<number> {
     }
     if (candidates.length) {
       await query(
-        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + ?, last_run_at = NOW() WHERE id = ?",
-        [candidates.length, a.id],
+        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + ?, last_run_at = NOW() WHERE id = ? AND tenant_id = ?",
+        [candidates.length, a.id, currentTenantId()],
       )
     }
   }
@@ -372,8 +409,8 @@ export async function runInboundAutomations(ctx: InboundAutomationContext): Prom
       await runAction(a, ctx)
       if (isSend) sentOne = true
       await query(
-        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + 1, last_run_at = NOW() WHERE id = ?",
-        [a.id],
+        "UPDATE `marketing_whatsapp_automations` SET run_count = run_count + 1, last_run_at = NOW() WHERE id = ? AND tenant_id = ?",
+        [a.id, currentTenantId()],
       )
       fired++
     } catch (err) {

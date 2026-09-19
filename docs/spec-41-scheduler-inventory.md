@@ -14,7 +14,7 @@ The platform has one scheduler trigger at `/api/cron/dispatcher`. It loads the r
 | Payroll | Extension slot — no existing job was registered in the repository |
 | GST / TDS | Daily/monthly GST, daily/monthly/quarterly TDS |
 | Email campaigns | Sales, finance, journeys and planner queues |
-| Integrations | Contracts, e-signature and WhatsApp schedulers |
+| Integrations | Contracts, e-signature, WhatsApp and background-queue workers |
 | AI tasks | Extension slot — no existing job was registered in the repository |
 
 Platform staff can inspect the inventory and recent runs at `/platform/scheduler`; schedule policy editing remains restricted to `/platform/cron-jobs` for platform super admins.

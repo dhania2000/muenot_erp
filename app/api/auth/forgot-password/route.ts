@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { createResetToken } from "@/lib/password-reset"
-import { hydrateDepartmentSMTP, isEmailConfigured, resolveBaseUrl, sendEmail } from "@/lib/email"
+import { hydrateDepartmentSMTP, isEmailConfigured, resolveBaseUrl } from "@/lib/email"
+import { enqueueEmailJob } from "@/lib/background-jobs"
 
 type UserRow = { id: number; name: string; email: string; status: "active" | "inactive" }
 
@@ -41,9 +42,18 @@ export async function POST(request: Request) {
         <p>This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
       `
       try {
-        await sendEmail({ to: user.email, subject: "Reset your Muenot ERP password", html, department: "hr" })
+        await enqueueEmailJob({
+          payload: { to: user.email, subject: "Reset your Muenot ERP password", html, department: "hr" },
+          priority: 9,
+          maxAttempts: 3,
+          backoffSeconds: 15,
+          concurrencyKey: "password-reset-email",
+          concurrencyLimit: 5,
+          idempotencyKey: `password-reset:${user.id}:${token}`,
+          createdBy: user.id,
+        })
       } catch (error) {
-        console.error("[v0] forgot-password email send error:", error)
+        console.error("[v0] forgot-password email queue error:", error)
       }
     } else {
       console.warn("[v0] forgot-password: SMTP is not configured, reset email was not sent")

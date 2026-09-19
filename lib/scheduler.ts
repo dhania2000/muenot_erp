@@ -75,6 +75,7 @@ const CATEGORY_BY_JOB: Record<string, SchedulerCategory> = {
   contracts: "integrations",
   esign_scheduler: "integrations",
   whatsapp_scheduler: "integrations",
+  background_queue: "integrations",
 }
 
 export function getSchedulerCategory(jobKey: string): SchedulerCategory | null {
@@ -121,7 +122,7 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!)
 }
 
-async function notifyFailure(job: SchedulerJob, attempts: number, errorMessage: string | null) {
+async function notifyFailure(job: SchedulerJob, scheduledFor: string, attempts: number, errorMessage: string | null) {
   if (!job.notify_on_failure) return
   try {
     const { recordActivity } = await import("@/lib/notifications")
@@ -132,14 +133,22 @@ async function notifyFailure(job: SchedulerJob, attempts: number, errorMessage: 
       link: "/platform/scheduler",
     })
     if (job.notification_emails) {
-      const { sendEmail } = await import("@/lib/email")
+      const { enqueueEmailJob } = await import("@/lib/background-jobs")
       const safeError = escapeHtml(errorMessage ?? "Unknown error")
       for (const to of job.notification_emails.split(",").map((email) => email.trim()).filter(Boolean)) {
-        await sendEmail({
-          to,
-          subject: `Muenot scheduled job failed: ${job.name}`,
-          html: `<p>The scheduled job <strong>${escapeHtml(job.name)}</strong> failed after ${attempts} attempt(s).</p><p>${safeError}</p>`,
-        }).catch((error) => console.error("[scheduler] failure email failed", error))
+        await enqueueEmailJob({
+          payload: {
+            to,
+            subject: `Muenot scheduled job failed: ${job.name}`,
+            html: `<p>The scheduled job <strong>${escapeHtml(job.name)}</strong> failed after ${attempts} attempt(s).</p><p>${safeError}</p>`,
+          },
+          priority: 9,
+          maxAttempts: 3,
+          backoffSeconds: 30,
+          concurrencyKey: "scheduler-failure-email",
+          concurrencyLimit: 2,
+          idempotencyKey: `scheduler-failure:${job.key}:${scheduledFor}:${to}`,
+        }).catch((error) => console.error("[scheduler] failure email queueing failed", error))
       }
     }
   } catch (error) {
@@ -183,7 +192,7 @@ async function executeScheduledJob(job: SchedulerJob, request: SchedulerRequest)
 
   await finishCronRun(claim.id, "failed", startedAt, lastError)
   console.error(`[scheduler] ${job.key} failed after ${attempts} attempt(s): ${lastError}`)
-  await notifyFailure(job, attempts, lastError)
+  await notifyFailure(job, claim.scheduledFor, attempts, lastError)
   return { key: job.key, category: job.category, status: "failed", error: lastError }
 }
 

@@ -79,6 +79,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["subscription_lifecycle", "Subscription lifecycle", "/api/cron/subscription-lifecycle", "0 2 * * *"],
   ["marketing_library", "Marketing library", "/api/cron/marketing-library", "0 7 * * *"],
   ["storage_retention", "Storage retention", "/api/cron/storage-retention", "0 3 * * *"],
+  ["background_queue", "Background queue worker", "/api/cron/background-queue", "* * * * *"],
 ].map(([key, name, endpoint, expression]) => ({
   key,
   name,

@@ -106,6 +106,10 @@ export const TENANT_OWNED_TABLES = [
   "erp_workflow_events",
   "erp_workflow_notices",
   "erp_workflow_tasks",
+  "erp_business_events",
+  "erp_event_subscriptions",
+  "erp_event_deliveries",
+  "erp_event_delivery_log",
   // WhatsApp Business platform (SPEC — multi-tenant WhatsApp isolation).
   // Each tenant connects its own WhatsApp Business number(s); every row below
   // belongs to exactly one tenant and must never be visible to another.

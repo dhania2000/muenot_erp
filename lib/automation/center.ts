@@ -4,6 +4,7 @@ import { ensureWorkflowSchema } from "@/lib/workflows/schema"
 import { validateWorkflow } from "@/lib/workflows/model"
 import { ensureNotificationsSchema } from "@/lib/notifications"
 import { isEmailConfigured, hydrateDepartmentSMTP } from "@/lib/email"
+import { eventSummary } from "@/lib/events/bus"
 
 // ---------------------------------------------------------------------------
 // Automation Center — read-only aggregation over the ALREADY-BUILT automation
@@ -20,8 +21,8 @@ const parse = (v: unknown) => {
   }
 }
 
-// A run of the workflow engine IS an automation event instance. We surface it
-// with the vocabulary Spec 48 asks for (event type / module / entity / …).
+// Legacy workflow-run monitor DTO. Retained for compatibility; actual business
+// events and subscriber deliveries live in the SPEC 48 event bus.
 export type AutomationEvent = {
   id: number
   workflowId: number
@@ -408,10 +409,11 @@ export async function emailCenter(filters: EmailFilters = {}) {
 }
 
 export async function automationOverview(tenant: number) {
-  const [events, notifications, email] = await Promise.all([
+  const [events, notifications, email, businessEvents] = await Promise.all([
     automationEvents(tenant),
     notificationCenter(),
     emailCenter(),
+    eventSummary(tenant),
   ])
   const activeSubscribers = events.subscribers.filter((s) => s.enabled).length
   const pending = ["queued", "waiting", "approval", "external"].reduce(
@@ -428,8 +430,8 @@ export async function automationOverview(tenant: number) {
       failed: events.statusSummary.failed ?? 0,
     },
     events: {
-      recent: events.total,
-      failed: events.failed.length,
+      recent: businessEvents.recent,
+      failed: businessEvents.failed,
     },
     notifications: {
       total: notifications.summary.total,

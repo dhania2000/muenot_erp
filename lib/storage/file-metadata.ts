@@ -1,10 +1,11 @@
 import "server-only"
 import { createHash } from "node:crypto"
-import { query } from "@/lib/db"
+import { query, withTransaction } from "@/lib/db"
+import { ensureEventSchema } from "@/lib/events/schema"
+import { publishEvent } from "@/lib/events/bus"
 import {
   currentTenantId,
   scopedWhere,
-  tenantInsert,
   tenantUpdate,
   CrossTenantAccessError,
 } from "@/lib/tenant-scope"
@@ -43,6 +44,28 @@ import type { StorageProviderId } from "./providers"
  */
 
 const TABLE = "file_objects"
+
+// Metadata persistence and upload-completion publication share one transaction.
+// Columns come only from this module's reviewed maps, never request SQL.
+async function writeFileRecord(values:Record<string,unknown>,id?:number):Promise<{insertId:number;affectedRows:number}> {
+  await ensureEventSchema()
+  const tenantId=currentTenantId()
+  return withTransaction(async c=>{
+    const columns=Object.keys(values)
+    const data=Object.values(values)
+    let result:any
+    if(id!==undefined) {
+      const [owned]=await c.query<any[]>("SELECT id FROM file_objects WHERE tenant_id=? AND id=? FOR UPDATE",[tenantId,id])
+      if(!owned.length) return {insertId:0,affectedRows:0}
+      ;[result]=await c.query("UPDATE file_objects SET "+columns.map(k=>"`"+k+"`=?").join(",")+" WHERE tenant_id=? AND id=?",[...data,tenantId,id])
+    } else {
+      ;[result]=await c.query("INSERT INTO file_objects ("+columns.map(k=>"`"+k+"`").join(",")+",tenant_id) VALUES ("+columns.map(()=>"?").join(",")+",?)",[...data,tenantId])
+    }
+    const fileId=id ?? Number(result.insertId)
+    if(values.upload_status==="completed") await publishEvent(c,{tenantId,type:"file.uploaded",entityId:fileId,key:`file:${fileId}:uploaded`,actorId:Number(values.owner_id)||null})
+    return {insertId:fileId,affectedRows:Number(result.affectedRows)}
+  })
+}
 
 export type FileUploadStatus = "pending" | "uploading" | "completed" | "failed" | "deleted"
 
@@ -268,8 +291,7 @@ export async function recordFileMetadata(input: RecordFileInput): Promise<FileOb
   // e.g. a multipart completion following a pending create).
   const existingByKey = await getByObjectKey(input.objectKey)
   if (existingByKey) {
-    await tenantUpdate(
-      TABLE,
+    await writeFileRecord(
       {
         provider: String(input.provider),
         module,
@@ -285,8 +307,7 @@ export async function recordFileMetadata(input: RecordFileInput): Promise<FileOb
         retention_expires_at: retentionExpiresAt,
         owner_id: input.ownerId ?? existingByKey.ownerId,
       },
-      "id = ?",
-      [existingByKey.id],
+      existingByKey.id,
     )
     const refreshed = await getFileById(existingByKey.id)
     return refreshed!
@@ -312,7 +333,7 @@ export async function recordFileMetadata(input: RecordFileInput): Promise<FileOb
     }
   }
 
-  const { insertId } = await tenantInsert(TABLE, {
+  const { insertId } = await writeFileRecord({
     file_ref: "PENDING",
     owner_id: input.ownerId ?? null,
     module,
@@ -431,8 +452,8 @@ export async function getVersionHistory(fileId: number): Promise<FileObject[]> {
 /** Move a file to a new upload status (e.g. mark a pending upload completed/failed). */
 export async function setUploadStatus(fileId: number, status: FileUploadStatus): Promise<boolean> {
   await ensureFileMetadataSchema()
-  const affected = await tenantUpdate(TABLE, { upload_status: status }, "id = ?", [fileId])
-  return affected > 0
+  const result = await writeFileRecord({ upload_status: status }, fileId)
+  return result.affectedRows > 0
 }
 
 /** Attach/refresh integrity + size after the bytes have landed. */

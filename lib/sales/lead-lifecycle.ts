@@ -1,5 +1,8 @@
 import type { PoolConnection } from "mysql2/promise"
 import { pool, query } from "@/lib/db"
+import { requireCurrentTenantId } from "@/lib/tenant-context"
+import { ensureEventSchema } from "@/lib/events/schema"
+import { publishEvent } from "@/lib/events/bus"
 
 /**
  * Central Sales lead lifecycle service.
@@ -766,16 +769,18 @@ export async function markLeadWon(
   actorId: Actor,
 ): Promise<LeadRecord> {
   await ensureLeadLifecycleSchema()
+  await ensureEventSchema()
+  const tenantId = requireCurrentTenantId()
   const conn = await pool.getConnection()
   try {
     await conn.beginTransaction()
+    const [rows] = await conn.query<any[]>(`SELECT * FROM sales_leads WHERE tenant_id = ? AND id = ? FOR UPDATE`, [tenantId,leadId])
+    const current = rows[0] as LeadRecord | undefined
+    if (!current) throw new LeadNotFoundError()
     if (input.eventKey && (await alreadyProcessed(conn, input.eventKey))) {
       await conn.commit()
       return (await getLead(leadId)) as LeadRecord
     }
-    const [rows] = await conn.query<any[]>(`SELECT * FROM sales_leads WHERE id = ? FOR UPDATE`, [leadId])
-    const current = rows[0] as LeadRecord | undefined
-    if (!current) throw new LeadNotFoundError()
 
     await conn.query(
       `UPDATE sales_leads SET status = 'Won', lead_status = 'Won', lead_health_score = 100,
@@ -816,6 +821,7 @@ export async function markLeadWon(
       meta: { value: input.value ?? null },
       actorId,
     })
+    if (current.lead_status !== "Won") await publishEvent(conn,{tenantId,type:"deal.won",entityId:leadId,key:`lead:${leadId}:won:${Number(current.row_version)+1}`,actorId:actorId || null})
     await conn.commit()
     return (await getLead(leadId)) as LeadRecord
   } catch (error) {

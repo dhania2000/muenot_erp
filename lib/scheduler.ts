@@ -78,6 +78,7 @@ const CATEGORY_BY_JOB: Record<string, SchedulerCategory> = {
   whatsapp_scheduler: "integrations",
   background_queue: "integrations",
   workflow_worker: "integrations",
+  business_events: "integrations",
 }
 
 export function getSchedulerCategory(jobKey: string): SchedulerCategory | null {

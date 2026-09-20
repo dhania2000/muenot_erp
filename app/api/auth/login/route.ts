@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { verifyPassword } from "@/lib/password"
 import { createSessionToken, setSessionCookie } from "@/lib/auth"
-import { getNum } from "@/lib/settings/server"
+import { getBool, getNum } from "@/lib/settings/server"
 import { recordActivity } from "@/lib/notifications"
 import { resolveTenantIdForUser } from "@/lib/tenant-service"
 import { getStoredRoles } from "@/lib/platform-roles"
@@ -11,6 +11,7 @@ import { evaluateLogin } from "@/lib/user-lifecycle-core"
 import { consumeMfaChallenge, getLoginSnapshot } from "@/lib/user-lifecycle"
 import { createSession, newSessionId } from "@/lib/session-store"
 import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/password-policy"
+import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 
 type UserRow = {
   id: number
@@ -51,6 +52,23 @@ export async function POST(request: Request) {
 
     if (!user) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
+    }
+
+    // SPEC 62 — IP allowlist: evaluated before the password check (like the
+    // lockout check below) so a blocked network never learns whether the
+    // credentials were otherwise valid.
+    const requireIpAllowlist = await getBool("security.ip_allowlist_enabled", false)
+    if (requireIpAllowlist) {
+      const tenantIdForIp = await resolveTenantIdForUser(user.id)
+      const forwardedFor = request.headers.get("x-forwarded-for")
+      const ipAddress = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
+      const ipCheck = await checkIpAllowlist(tenantIdForIp, ipAddress, user.role === "admin" ? "admin" : "all")
+      if (!ipCheck.allowed) {
+        return NextResponse.json(
+          { error: "Sign-in is not allowed from this network. Contact your administrator.", code: "IP_BLOCKED" },
+          { status: 403 },
+        )
+      }
     }
 
     // SPEC 60 — password lockout: check BEFORE verifying the password so a

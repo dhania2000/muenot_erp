@@ -8,5 +8,6 @@ export function backgroundJobView(job: BackgroundJob) {
     available_at: job.available_at, created_at: job.created_at,
     error_message: job.error_message ? "Execution failed. See job monitoring." : null,
     cancel_requested: job.cancel_requested,
+    failure_kind: ["transient", "permanent", "uncertain"].includes(String(job.result?.failureKind)) ? String(job.result?.failureKind) : "unknown",
   }
 }

@@ -3,6 +3,7 @@ import "server-only"
 import crypto from "crypto"
 import { query, withTransaction } from "@/lib/db"
 import { fingerprint } from "@/lib/job-idempotency"
+import { classifyJobFailure, retryDisposition, type FailureKind } from "@/lib/job-retry-policy"
 
 /**
  * SPEC 42 — Durable background queue.
@@ -326,7 +327,7 @@ export function ownsJobAttempt(job: BackgroundJob, latest: BackgroundJob): boole
   return latest.status === "running" && latest.worker_id === job.worker_id && latest.attempts === job.attempts
 }
 
-async function settleBackgroundJob(job: BackgroundJob, result: Record<string, unknown> | void, errorMessage: string | null, uncertain = false): Promise<BackgroundJobStatus> {
+async function settleBackgroundJob(job: BackgroundJob, result: Record<string, unknown> | void, errorMessage: string | null, failureKind: FailureKind = "uncertain"): Promise<BackgroundJobStatus> {
   return withTransaction(async connection => {
     const [rows] = await connection.query<any[]>("SELECT * FROM platform_background_jobs WHERE id=? FOR UPDATE", [job.id])
     if (!rows[0]) return "failed"
@@ -334,24 +335,24 @@ async function settleBackgroundJob(job: BackgroundJob, result: Record<string, un
     if (!ownsJobAttempt(job, latest)) return latest.status
     const status: BackgroundJobStatus = latest.cancel_requested ? "cancelled"
       : !errorMessage ? "completed"
-      : uncertain || latest.attempts >= latest.max_attempts ? "dead_letter" : "queued"
+      : retryDisposition(failureKind, latest.attempts, latest.max_attempts)
     const delay = retryDelaySeconds(latest.attempts, latest.backoff_seconds)
     await connection.query(
       `UPDATE platform_background_jobs SET status=?, result=?, error_message=?, locked_at=NULL,
        worker_id=NULL, completed_at=IF(?='queued',NULL,NOW()),
        available_at=IF(?='queued',DATE_ADD(NOW(),INTERVAL ? SECOND),available_at) WHERE id=?`,
-      [status, JSON.stringify(result ?? {}), errorMessage?.slice(0, 4000) ?? null, status, status, delay, job.id],
+      [status, JSON.stringify(errorMessage ? { failureKind } : result ?? {}), errorMessage?.slice(0, 4000) ?? null, status, status, delay, job.id],
     )
     await connection.query("INSERT INTO platform_background_job_events (job_id, event_type, detail) VALUES (?,?,?)",
-      [job.id, status === "queued" ? "retry_scheduled" : status, JSON.stringify({ attempt: job.attempts, executionId: job.worker_id, uncertain, delaySeconds: status === "queued" ? delay : null })])
+      [job.id, status === "queued" ? "retry_scheduled" : status, JSON.stringify({ attempt: job.attempts, executionId: job.worker_id, failureKind: errorMessage ? failureKind : null, delaySeconds: status === "queued" ? delay : null })])
     return status
   })
 }
 async function completeBackgroundJob(job: BackgroundJob, result: Record<string, unknown> | void) {
   return settleBackgroundJob(job, result, null)
 }
-async function failBackgroundJob(job: BackgroundJob, errorMessage: string, uncertain = false) {
-  return settleBackgroundJob(job, undefined, errorMessage, uncertain)
+async function failBackgroundJob(job: BackgroundJob, errorMessage: string, uncertain = false, error?: unknown) {
+  return settleBackgroundJob(job, undefined, errorMessage, classifyJobFailure(error, uncertain))
 }
 
 async function executeBackgroundJob(job: BackgroundJob): Promise<BackgroundJobStatus> {
@@ -360,7 +361,7 @@ async function executeBackgroundJob(job: BackgroundJob): Promise<BackgroundJobSt
   if (latest.cancel_requested) return completeBackgroundJob(job, undefined)
   const controller = new AbortController()
   const handler = JOB_HANDLERS[job.job_type]
-  const work = handler(job.payload, { signal: controller.signal, job })
+  const work = Promise.resolve().then(() => handler(job.payload, { signal: controller.signal, job }))
   // Retain a catch handler for work that completes after the race times out.
   void work.catch(() => {})
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -376,7 +377,7 @@ async function executeBackgroundJob(job: BackgroundJob): Promise<BackgroundJobSt
     ])
     return completeBackgroundJob(job, result)
   } catch (error) {
-    return failBackgroundJob(job, error instanceof Error ? error.message : "Unknown background job failure", controller.signal.aborted)
+    return failBackgroundJob(job, error instanceof Error ? error.message : "Unknown background job failure", controller.signal.aborted, error)
   } finally {
     if (timer) clearTimeout(timer)
   }

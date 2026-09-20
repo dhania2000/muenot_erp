@@ -1,4 +1,5 @@
 import "server-only"
+import { classifyJobFailure } from "@/lib/job-retry-policy"
 
 import {
   claimCronRun,
@@ -164,7 +165,9 @@ async function executeScheduledJob(job: SchedulerJob, request: SchedulerRequest)
   const startedAt = Date.now()
   let lastError: string | null = null
   const attempts = job.retry_limit + 1
+  let performed = 0
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    performed = attempt
     await updateCronRunAttempt(claim.id, attempt)
     try {
       const controller = new AbortController()
@@ -179,7 +182,7 @@ async function executeScheduledJob(job: SchedulerJob, request: SchedulerRequest)
           signal: controller.signal,
           cache: "no-store",
         })
-        if (!response.ok) throw new Error(`Job endpoint returned HTTP ${response.status}`)
+        if (!response.ok) throw Object.assign(new Error(`Job endpoint returned HTTP ${response.status}`), { status: response.status })
       } finally {
         clearTimeout(timer)
       }
@@ -187,13 +190,14 @@ async function executeScheduledJob(job: SchedulerJob, request: SchedulerRequest)
       return { key: job.key, category: job.category, status: "succeeded" }
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Unknown job error"
+      if (classifyJobFailure(error) !== "transient") break
       if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, Math.min(30_000, 1000 * 2 ** (attempt - 1))))
     }
   }
 
   await finishCronRun(claim.id, "failed", startedAt, lastError)
-  console.error(`[scheduler] ${job.key} failed after ${attempts} attempt(s): ${lastError}`)
-  await notifyFailure(job, claim.scheduledFor, attempts, lastError)
+  console.error(`[scheduler] ${job.key} failed after ${performed} attempt(s): ${lastError}`)
+  await notifyFailure(job, claim.scheduledFor, performed, lastError)
   return { key: job.key, category: job.category, status: "failed", error: lastError }
 }
 

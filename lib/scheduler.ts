@@ -79,6 +79,7 @@ const CATEGORY_BY_JOB: Record<string, SchedulerCategory> = {
   background_queue: "integrations",
   workflow_worker: "integrations",
   business_events: "integrations",
+  notification_delivery: "notifications",
 }
 
 export function getSchedulerCategory(jobKey: string): SchedulerCategory | null {

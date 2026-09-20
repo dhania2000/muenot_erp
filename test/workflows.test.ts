@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { approvalAllowed, matches, validateWorkflow, type Workflow } from "@/lib/workflows/model"
-const mock = vi.hoisted(()=>({query:vi.fn(), sql:vi.fn(), webhook:vi.fn()}))
+const mock = vi.hoisted(()=>({query:vi.fn(), sql:vi.fn(), webhook:vi.fn(),notice:vi.fn()}))
+vi.mock("@/lib/notification-engine/service",()=>({enqueueNotification:mock.notice}))
 vi.mock("@/lib/db",()=>({query:mock.query,withTransaction:async(fn:any)=>fn({query:mock.sql})}))
 vi.mock("@/lib/workflows/schema",()=>({ensureWorkflowSchema:async()=>{}}))
 vi.mock("@/lib/workflows/webhook",()=>({deliverWebhook:mock.webhook}))
@@ -91,7 +92,7 @@ describe("SPEC 46 durable execution protocol (mock DB)",()=>{
     run.snapshot=workflow([{type:"approval",userId:4,message:"Check lead"}]);await advanceWorkflow(8)
     expect(mock.sql).toHaveBeenCalledWith("UPDATE erp_workflow_runs SET status='approval' WHERE id=?",[8])
     expect(mock.sql.mock.calls.some(([sql])=>sql.includes("cursor=cursor+1"))).toBe(false)
-    expect(mock.sql.mock.calls.some(([sql])=>sql.includes("INSERT INTO notifications"))).toBe(true)
+    expect(mock.notice).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({tenantId:7,userId:4,channel:"in_app",priority:10}))
   })
   it("checks tenant and designated approver on decisions",async()=>{
     run.status="approval";run.snapshot=workflow([{type:"approval",userId:4,message:"Check"}])

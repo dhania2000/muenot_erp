@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { requireTenantAdmin } from "@/lib/platform-guard"
+import { effectiveTenantId, requireTenantAdmin } from "@/lib/platform-guard"
 import { notificationCenter } from "@/lib/automation/center"
 
 export const runtime = "nodejs"
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const sp = new URL(request.url).searchParams
   try {
     return NextResponse.json(
-      await notificationCenter({
+      await notificationCenter(effectiveTenantId(guard.ctx)!, {
         module: sp.get("module") ?? undefined,
         action: sp.get("action") ?? undefined,
         read: sp.get("read") ?? undefined,

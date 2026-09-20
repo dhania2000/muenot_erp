@@ -110,6 +110,10 @@ export const TENANT_OWNED_TABLES = [
   "erp_event_subscriptions",
   "erp_event_deliveries",
   "erp_event_delivery_log",
+  "notification_templates",
+  "notification_preferences",
+  "notification_deliveries",
+  "notification_delivery_log",
   // WhatsApp Business platform (SPEC — multi-tenant WhatsApp isolation).
   // Each tenant connects its own WhatsApp Business number(s); every row below
   // belongs to exactly one tenant and must never be visible to another.

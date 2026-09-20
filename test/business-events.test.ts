@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-const mock=vi.hoisted(()=>({sql:vi.fn(),query:vi.fn()}))
+const mock=vi.hoisted(()=>({sql:vi.fn(),query:vi.fn(),notice:vi.fn()}))
+vi.mock("@/lib/notification-engine/service",()=>({enqueueNotification:mock.notice}))
+vi.mock("@/lib/notification-engine/schema",()=>({ensureNotificationEngineSchema:async()=>{}}))
 vi.mock("@/lib/db",()=>({query:mock.query,withTransaction:async(fn:any)=>fn({query:mock.sql})}))
 vi.mock("@/lib/events/schema",()=>({ensureEventSchema:async()=>{}}))
 vi.mock("@/lib/workflows/schema",()=>({ensureWorkflowSchema:async()=>{}}))
@@ -11,6 +13,7 @@ const event={tenantId:7,type:"deal.won" as const,entityId:20,key:"lead:20:won:2"
 let delivery:any
 beforeEach(()=>{
   vi.clearAllMocks()
+  mock.notice.mockResolvedValue(99)
   delivery={id:8,tenant_id:7,event_id:10,subscriber_id:4,attempts:0,status:"queued",config:{handler:"notice",userId:5,actorId:2}}
   mock.query.mockResolvedValue([])
   mock.sql.mockImplementation(async(sql:string)=>{
@@ -69,6 +72,7 @@ describe("SPEC 48 outbox and delivery transaction protocol (mock DB)",()=>{
     await deliverEvent(8)
     expect(mock.sql).toHaveBeenCalledWith("SELECT * FROM erp_event_deliveries WHERE id=? FOR UPDATE",[8])
     expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("status='delivered'"),[1,99,8])
+    expect(mock.notice).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({tenantId:7,userId:5,key:"event-delivery:8"}))
     expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO erp_event_delivery_log"),[7,8,"delivered",1,null])
   })
   it("never redelivers completed rows",async()=>{

@@ -5,6 +5,7 @@ import { ensureWorkflowSchema } from "./schema"
 import { approvalAllowed, matches, validateWorkflow, type Workflow } from "./model"
 import { deliverWebhook } from "./webhook"
 import { fingerprint } from "@/lib/job-idempotency"
+import { enqueueNotification } from "@/lib/notification-engine/service"
 import { sendEmail } from "@/lib/email"
 import { getWhatsAppIntegrationForTenant, sendWhatsAppText } from "@/lib/whatsapp"
 
@@ -20,9 +21,9 @@ async function member(c: PoolConnection, tenant: number, id: number, admin = fal
 async function event(c: PoolConnection, run: any, kind: string, actor: number | null = null) {
   await c.query("INSERT INTO erp_workflow_events (tenant_id,run_id,step,event_type,actor_id) VALUES (?,?,?,?,?)", [run.tenant_id,run.id,run.cursor,kind,actor])
 }
-async function notice(c: PoolConnection, tenant: number, runId: number, user: number, message: string, approval = false) {
+async function notice(c: PoolConnection, tenant: number, runId: number, user: number, message: string, approval = false, step = 0) {
   await c.query("INSERT INTO erp_workflow_notices (tenant_id,run_id,user_id,message) VALUES (?,?,?,?)",[tenant,runId,user,message])
-  await c.query("INSERT INTO notifications (user_id,module_key,action,title,body,link,entity_table,entity_id) VALUES (?,'workflows','create',?,?,?,'erp_workflow_runs',?)",[user,approval ? "Workflow approval requested" : "Workflow notification",message.slice(0,500),approval ? "/admin/workflows" : "/dashboard",String(runId)])
+  await enqueueNotification(c,{tenantId:tenant,userId:user,channel:"in_app",key:`workflow:${runId}:${step}:${user}`,title:approval?"Workflow approval requested":"Workflow notification",body:message,link:approval?"/admin/workflows":"/dashboard",priority:approval?10:5,context:{moduleKey:"workflows",action:"create",entityTable:"erp_workflow_runs",entityId:String(runId)}})
 }
 export async function saveWorkflow(tenant: number, actor: number, input: unknown, id?: number) {
   const w = validateWorkflow(input)
@@ -151,7 +152,7 @@ export async function advanceWorkflow(id: number) {
       if (a.type === "approval") {
         if (!approvalAllowed(Number(run.requested_by),a.userId,a.userId)) throw new Error("self_approval")
         await c.query("UPDATE erp_workflow_runs SET status='approval' WHERE id=?",[id])
-        await notice(c,tenant,id,a.userId,a.message,true)
+        await notice(c,tenant,id,a.userId,a.message,true,Number(run.cursor))
         await event(c,run,"approval_requested"); return null
       }
       if (a.type === "webhook") {
@@ -169,7 +170,7 @@ export async function advanceWorkflow(id: number) {
       let available: Date | null = null
       if (a.type === "delay") available = new Date(Date.now()+a.seconds*1000)
       if (a.type === "schedule") available = new Date(a.at)
-      if (a.type === "notify") await notice(c,tenant,id,a.userId,a.message)
+      if (a.type === "notify") await notice(c,tenant,id,a.userId,a.message,false,Number(run.cursor))
       if (a.type === "create") await c.query("INSERT INTO erp_workflow_tasks (tenant_id,title,description,assigned_to,source_run_id) VALUES (?,?,?,?,?)",[tenant,a.title,a.description,a.userId,id])
       if (a.type === "update") await c.query(`UPDATE ${table(w)} SET ${a.field}=? ${w.module === "sales_leads" ? ",row_version=row_version+1" : ""} WHERE tenant_id=? AND id=?`,[a.value,tenant,run.record_id])
       if (a.type === "assign") {

@@ -1,6 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { ensureNotificationsSchema } from "@/lib/notifications"
+import { ensureNotificationEngineSchema } from "@/lib/notification-engine/schema"
 let ready: Promise<void> | undefined
 export const workflowDDL = [
   `CREATE TABLE IF NOT EXISTS erp_workflows (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, name VARCHAR(120) NOT NULL, definition JSON NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, created_by INT UNSIGNED NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY tenant_idx(tenant_id,id)) ENGINE=InnoDB`,
@@ -23,5 +24,6 @@ export function ensureWorkflowSchema() {
     await ensureColumn("erp_workflows", "version", "version INT UNSIGNED NOT NULL DEFAULT 1")
     await ensureColumn("erp_workflow_runs", "branch", "branch VARCHAR(8) NOT NULL DEFAULT 'then'")
     await ensureNotificationsSchema()
+    await ensureNotificationEngineSchema()
   })().catch(e => { ready = undefined; throw e })
 }

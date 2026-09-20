@@ -3,6 +3,8 @@ import type { PoolConnection } from "mysql2/promise"
 import { query, withTransaction } from "@/lib/db"
 import { fingerprint } from "@/lib/job-idempotency"
 import { ensureNotificationsSchema } from "@/lib/notifications"
+import { enqueueNotification } from "@/lib/notification-engine/service"
+import { ensureNotificationEngineSchema } from "@/lib/notification-engine/schema"
 import { ensureWorkflowSchema } from "@/lib/workflows/schema"
 import { validateWorkflow } from "@/lib/workflows/model"
 import { ensureEventSchema } from "./schema"
@@ -79,8 +81,7 @@ export async function deliverEvent(id:number) {
       let resultId:number
       if(s.handler==="notice") {
         await member(c,Number(d.tenant_id),s.userId)
-        const [r]=await c.query<any>("INSERT INTO notifications (user_id,module_key,action,title,body,link,entity_table,entity_id) VALUES (?,'events','create',?,?,'/dashboard','erp_business_events',?)",[s.userId,`Business event: ${event.event_type}`,`Record #${event.entity_id}`,String(event.id)])
-        resultId=Number(r.insertId)
+        resultId=await enqueueNotification(c,{tenantId:Number(d.tenant_id),userId:s.userId,channel:"in_app",key:`event-delivery:${id}`,title:`Business event: ${event.event_type}`,body:`Record #${event.entity_id}`,link:"/dashboard",context:{moduleKey:"events",action:"create",entityTable:"erp_business_events",entityId:String(event.id)}})
       } else if(s.handler==="workflow" && event.event_type==="deal.won") {
         const w=validateWorkflow(s.definition)
         if(w.module!=="sales_leads" || w.trigger!=="manual") throw new Error("Invalid workflow subscriber")
@@ -103,7 +104,7 @@ export async function deliverEvent(id:number) {
   })
 }
 export async function runEventWorker() {
-  await ensureEventSchema();await ensureNotificationsSchema();await ensureWorkflowSchema()
+  await ensureEventSchema();await ensureNotificationsSchema();await ensureWorkflowSchema();await ensureNotificationEngineSchema()
   const due=await query<{id:number}[]>("SELECT id FROM erp_event_deliveries WHERE status='queued' AND available_at<=UTC_TIMESTAMP() ORDER BY available_at,id LIMIT 30")
   for(const d of due) await deliverEvent(Number(d.id))
   return {processed:due.length}

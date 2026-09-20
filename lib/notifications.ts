@@ -1,4 +1,5 @@
-import { query } from "./db"
+import { query, withTransaction } from "./db"
+import { randomUUID } from "node:crypto"
 import { getCurrentActor, type Actor } from "./actor-context"
 import { PERMISSION_MODULES, type PermissionModule } from "./permission-model"
 import { ensurePermissionSchema } from "./permission-store"
@@ -82,13 +83,14 @@ type Recipient = { id: number; name: string | null }
  * `getScope` falls back to "all". The acting user is always excluded.
  */
 async function resolveRecipients(moduleKeys: string[], actorId: number | null): Promise<Recipient[]> {
-  if (moduleKeys.length === 0) return []
+  const tenantId = currentTenantIdOrNull()
+  if (moduleKeys.length === 0 || tenantId == null) return []
   await ensurePermissionSchema()
   const placeholders = moduleKeys.map(() => "?").join(", ")
   const rows = await query<Recipient[]>(
     `SELECT u.id, u.name
        FROM users u
-      WHERE u.status = 'active'
+      WHERE u.status = 'active' AND u.tenant_id = ?
         AND u.id <> ?
         AND (
           NOT EXISTS (SELECT 1 FROM user_module_permissions x WHERE x.user_id = u.id)
@@ -99,7 +101,7 @@ async function resolveRecipients(moduleKeys: string[], actorId: number | null): 
                AND p.can_view <> 'none'
           )
         )`,
-    [actorId ?? 0, ...moduleKeys],
+    [tenantId, actorId ?? 0, ...moduleKeys],
   )
   return rows
 }
@@ -120,31 +122,15 @@ async function fanOut(params: {
   if (recipients.length === 0) return
   await ensureNotificationsSchema()
 
-  const values: unknown[] = []
-  const tuples: string[] = []
-  for (const r of recipients) {
-    tuples.push("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    values.push(
-      r.id,
-      actor?.userId ?? null,
-      actor?.name ?? null,
-      moduleKey,
-      groupSlug,
-      action,
-      title.slice(0, 255),
-      body ? body.slice(0, 500) : null,
-      link,
-      entityTable,
-      entityId,
-    )
-  }
-
-  await query(
-    `INSERT INTO notifications
-       (user_id, actor_id, actor_name, module_key, group_slug, action, title, body, link, entity_table, entity_id)
-     VALUES ${tuples.join(", ")}`,
-    values,
-  )
+  const tenantId=currentTenantIdOrNull()
+  if(tenantId==null)return
+  const {ensureNotificationEngineSchema}=await import("@/lib/notification-engine/schema")
+  const {enqueueNotification}=await import("@/lib/notification-engine/service")
+  await ensureNotificationEngineSchema()
+  const key=randomUUID()
+  await withTransaction(async c=>{
+    for(const r of recipients) await enqueueNotification(c,{tenantId,userId:r.id,channel:"in_app",key:`activity:${key}:${r.id}`,title:title.slice(0,255),body:body?.slice(0,4000)??"",link,context:{actorId:actor?.userId,actorName:actor?.name,moduleKey,groupSlug,action,entityTable,entityId}})
+  })
 
   // SPEC 19 — meter notification volume per tenant. Fire-and-forget: metering
   // must never affect the notification delivery it is measuring. Only recorded
@@ -214,6 +200,8 @@ export async function recordActivity(params: {
   actor?: Actor
 }) {
   try {
+    const tenantId = currentTenantIdOrNull()
+    if (tenantId == null) return
     const actor = params.actor ?? getCurrentActor()
     let moduleKeys: string[] = []
     let groupSlug: string | null = null
@@ -238,9 +226,9 @@ export async function recordActivity(params: {
       await ensurePermissionSchema()
       recipients = await query<Recipient[]>(
         `SELECT u.id, u.name FROM users u
-          WHERE u.status = 'active' AND u.id <> ?
+          WHERE u.status = 'active' AND u.tenant_id = ? AND u.id <> ?
             AND NOT EXISTS (SELECT 1 FROM user_module_permissions x WHERE x.user_id = u.id)`,
-        [actor?.userId ?? 0],
+        [tenantId, actor?.userId ?? 0],
       )
     }
 

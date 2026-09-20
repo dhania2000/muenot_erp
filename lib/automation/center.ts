@@ -206,10 +206,10 @@ export type NotificationFilters = {
   search?: string
 }
 
-export async function notificationCenter(filters: NotificationFilters = {}) {
+export async function notificationCenter(tenant: number, filters: NotificationFilters = {}) {
   await ensureNotificationsSchema()
-  const where: string[] = []
-  const args: unknown[] = []
+  const where: string[] = ["u.tenant_id = ?"]
+  const args: unknown[] = [tenant]
   if (filters.module && filters.module !== "all") {
     where.push("n.module_key = ?")
     args.push(filters.module)
@@ -242,13 +242,13 @@ export async function notificationCenter(filters: NotificationFilters = {}) {
       args,
     ),
     query<{ total: number; unread: number }[]>(
-      "SELECT COUNT(*) AS total, SUM(is_read = 0) AS unread FROM notifications",
+      "SELECT COUNT(*) AS total, SUM(n.is_read = 0) AS unread FROM notifications n JOIN users u ON u.id=n.user_id WHERE u.tenant_id=?", [tenant],
     ),
     query<{ module_key: string | null; n: number }[]>(
-      "SELECT module_key, COUNT(*) AS n FROM notifications GROUP BY module_key ORDER BY n DESC LIMIT 20",
+      "SELECT n.module_key, COUNT(*) AS n FROM notifications n JOIN users u ON u.id=n.user_id WHERE u.tenant_id=? GROUP BY n.module_key ORDER BY n DESC LIMIT 20", [tenant],
     ),
     query<{ action: string; n: number }[]>(
-      "SELECT action, COUNT(*) AS n FROM notifications GROUP BY action ORDER BY n DESC",
+      "SELECT n.action, COUNT(*) AS n FROM notifications n JOIN users u ON u.id=n.user_id WHERE u.tenant_id=? GROUP BY n.action ORDER BY n DESC", [tenant],
     ),
   ])
 
@@ -411,7 +411,7 @@ export async function emailCenter(filters: EmailFilters = {}) {
 export async function automationOverview(tenant: number) {
   const [events, notifications, email, businessEvents] = await Promise.all([
     automationEvents(tenant),
-    notificationCenter(),
+    notificationCenter(tenant),
     emailCenter(),
     eventSummary(tenant),
   ])

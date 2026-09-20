@@ -30,7 +30,7 @@ Each delivery is row-locked; its database effect and terminal status commit toge
 
 Handlers never perform network calls inside delivery transactions:
 
-1. **In-app notification** creates one existing notification-bell record for a validated active tenant member.
+1. **In-app notification** enqueues one SPEC 49 notification delivery for a validated active tenant member. Subscriber success means queued; the notification worker subsequently creates the existing bell record after rechecking preferences and membership.
 2. **Start Sales workflow** accepts `deal.won` only, snapshots a manual Sales workflow at subscription creation, and atomically enqueues a run with its business-event history entry. The existing workflow worker executes it later. Conditions evaluate against current record state when the workflow runs, not historical event-time field values. Delivery success means “run enqueued”, not “workflow completed”.
 
 Subscriber owner authority is checked again on delivery. Revoked owners, moved recipients, missing source records and disabled/deleted workflows fail closed. Subscriptions cannot invoke arbitrary handlers, SQL, URLs or commands. HTTP clients cannot publish business events.

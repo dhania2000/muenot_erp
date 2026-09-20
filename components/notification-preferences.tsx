@@ -1,0 +1,8 @@
+"use client"
+import { useEffect, useState } from "react"
+export function NotificationPreferences(){
+  const [rows,setRows]=useState<any[]>([]),[message,setMessage]=useState(""),[busy,setBusy]=useState(false)
+  useEffect(()=>{fetch("/api/notification-preferences").then(async r=>{const b=await r.json();if(!r.ok)throw new Error(b.error);setRows(b)}).catch(e=>setMessage(e.message))},[])
+  async function save(row:any){setBusy(true);try{const r=await fetch("/api/notification-preferences",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(row)});const b=await r.json();if(!r.ok)throw new Error(b.error);setMessage("Preference saved")}catch(e){setMessage(e instanceof Error?e.message:"Unable to save")}finally{setBusy(false)}}
+  return <section className="border rounded p-4 space-y-3"><h2 className="text-xl">My notification preferences</h2><p>External channels require opt-in. Email uses your account email. SMS/WhatsApp use your own international phone number. Push needs a device token supplied by the configured provider; SMS/push providers are not bundled.</p><p role="status">{message}</p>{rows.map((row,i)=><div className="flex flex-wrap gap-3 items-center" key={row.channel}><label><input type="checkbox" checked={row.enabled} onChange={e=>setRows(rows.map((v,n)=>n===i?{...v,enabled:e.target.checked}:v))}/> {row.channel}</label>{["sms","whatsapp","push"].includes(row.channel)&&<input aria-label={row.channel+" destination"} className="border rounded bg-background px-2 py-1" value={row.destination} onChange={e=>setRows(rows.map((v,n)=>n===i?{...v,destination:e.target.value}:v))}/>}<button disabled={busy} onClick={()=>save(row)}>Save {row.channel}</button></div>)}</section>
+}

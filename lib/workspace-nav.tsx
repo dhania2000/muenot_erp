@@ -19,6 +19,7 @@ import {
   CreditCard,
   HardDrive,
   ClipboardList,
+  Workflow,
 } from "lucide-react"
 import { MANAGEMENT_ENTITIES } from "@/lib/management-entities"
 
@@ -370,6 +371,18 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   { label: "Settings", href: "/admin/settings" },
 ]
 
+// SPECS 46–50 — The Automation Center groups the existing workflow engine with
+// the event, notification and email monitoring surfaces under one admin area so
+// automation is not scattered. Every entry is an existing, real-data-backed
+// admin page; nothing here creates a second engine.
+export const AUTOMATION_CHILDREN: NavChild[] = [
+  { label: "Overview", href: "/admin/automation" },
+  { label: "Workflows", href: "/admin/workflows" },
+  { label: "Events", href: "/admin/automation/events" },
+  { label: "Notifications", href: "/admin/automation/notifications" },
+  { label: "Email", href: "/admin/automation/email" },
+]
+
 // Subscription & Billing — a dedicated admin module that sits directly below
 // Administration in the sidebar. Every entry maps to a page under
 // /modules/billing/* so the whole billing lifecycle (plans, subscriptions,
@@ -514,6 +527,16 @@ export async function buildWorkspaceNav(
       href: "/admin",
       icon: <ShieldCheck className="size-4" />,
       children: adminChildren,
+    })
+
+    // Automation Center sits directly below Administration and is likewise
+    // restricted to admins. It surfaces the existing workflow engine plus the
+    // event / notification / email monitoring pages under one expandable entry.
+    navItems.push({
+      label: "Automation",
+      href: "/admin/automation",
+      icon: <Workflow className="size-4" />,
+      children: AUTOMATION_CHILDREN,
     })
 
     // Subscription & Billing sits directly below Administration and is likewise

@@ -9,6 +9,7 @@ import { getStoredRoles } from "@/lib/platform-roles"
 import { getPublicSettings } from "@/lib/settings/server"
 import { evaluateLogin } from "@/lib/user-lifecycle-core"
 import { consumeMfaChallenge, getLoginSnapshot } from "@/lib/user-lifecycle"
+import { createSession, newSessionId } from "@/lib/session-store"
 
 type UserRow = {
   id: number
@@ -107,6 +108,7 @@ export async function POST(request: Request) {
     // Session lifetime is configurable in Settings → Security (minutes).
     const timeoutMinutes = await getNum("security.session_timeout", 480)
     const durationSeconds = Math.max(60, Math.round(timeoutMinutes * 60))
+    const sid = newSessionId()
     const token = await createSessionToken(
       {
         userId: user.id,
@@ -117,10 +119,33 @@ export async function POST(request: Request) {
         platformRole: roles?.platformRole ?? "none",
         tenantRole: roles?.tenantRole ?? (user.role === "admin" ? "tenant_admin" : "employee"),
         impersonatedTenantId: null,
+        sid,
       },
       durationSeconds,
     )
     await setSessionCookie(token, durationSeconds)
+
+    // SPEC 61 — persist a server-side session record so this login shows up
+    // in Session management, can be individually revoked, and counts against
+    // the per-user concurrent-session cap. Best-effort: a session-store
+    // failure never blocks sign-in, since the JWT cookie alone still works.
+    try {
+      const concurrentLimit = await getNum("security.concurrent_session_limit", 0)
+      const forwardedFor = request.headers.get("x-forwarded-for")
+      const ipAddress = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
+      await createSession({
+        sessionId: sid,
+        userId: user.id,
+        tenantId: tenantId ?? null,
+        ipAddress,
+        userAgent: request.headers.get("user-agent"),
+        loginMethod: "password",
+        expiresAt: new Date(Date.now() + durationSeconds * 1000),
+        concurrentLimit: concurrentLimit > 0 ? concurrentLimit : undefined,
+      })
+    } catch (err) {
+      console.error("[v0] session store write failed (login still succeeds):", err)
+    }
 
     // Notify full-access users (admins) that this account signed in.
     void recordActivity({

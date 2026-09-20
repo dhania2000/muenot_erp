@@ -449,6 +449,15 @@ export const CONFIG_REGISTRY: ConfigDescriptor[] = [
     secret: false,
     default: "480",
   },
+  {
+    key: "security.concurrent_session_limit",
+    label: "Concurrent session limit per user",
+    description: "Max simultaneously active sessions per user before the oldest is signed out. 0 = unlimited.",
+    category: "security",
+    scope: "tenant",
+    secret: false,
+    default: "0",
+  },
 ]
 
 const BY_KEY = new Map(CONFIG_REGISTRY.map((d) => [d.key, d]))

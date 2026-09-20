@@ -1,0 +1,53 @@
+import "server-only"
+/**
+ * SPEC 56-57 — short-lived, signed cookie carrying the OAuth `state` and
+ * OIDC `nonce` between the /login redirect and the /callback handler.
+ * Signed (not just opaque) so a tampered value fails verification outright;
+ * short TTL (5 min) limits the CSRF/replay window.
+ */
+import { SignJWT, jwtVerify } from "jose"
+import { cookies } from "next/headers"
+
+export const SSO_STATE_COOKIE = "ems_sso_state"
+const TTL_SECONDS = 5 * 60
+
+function getSecretKey() {
+  const secret = process.env.SESSION_SECRET
+  return new TextEncoder().encode(secret || "dev-only-insecure-secret-change-me")
+}
+
+export type SsoStatePayload = {
+  providerId: number
+  state: string
+  nonce: string
+  redirectTo: string
+}
+
+export async function issueSsoState(payload: SsoStatePayload): Promise<void> {
+  const token = await new SignJWT(payload)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(`${TTL_SECONDS}s`)
+    .sign(getSecretKey())
+  const cookieStore = await cookies()
+  cookieStore.set(SSO_STATE_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: TTL_SECONDS,
+  })
+}
+
+export async function consumeSsoState(): Promise<SsoStatePayload | null> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get(SSO_STATE_COOKIE)?.value
+  cookieStore.delete(SSO_STATE_COOKIE)
+  if (!token) return null
+  try {
+    const { payload } = await jwtVerify(token, getSecretKey())
+    return payload as unknown as SsoStatePayload
+  } catch {
+    return null
+  }
+}

@@ -2,7 +2,16 @@ import Image from "next/image"
 import Link from "next/link"
 import { LoginForm, type SocialProviders } from "@/components/login-form"
 import { getPublicSettings } from "@/lib/settings/server"
+import { listEnabledProvidersForLogin } from "@/lib/sso-store"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2 } from "lucide-react"
+
+const SSO_ERROR_MESSAGES: Record<string, string> = {
+  provider_disabled: "That single sign-on provider is not currently enabled.",
+  state_mismatch: "Your sign-in link expired or was already used. Please try again.",
+  token_exchange_failed: "We couldn't complete sign-in with your identity provider. Please try again.",
+  no_account: "No account matches that identity provider login and auto-provisioning is disabled for it.",
+  provider_error: "Your identity provider reported an error during sign-in.",
+}
 
 const modules = [
   { name: "HR", icon: Users2 },
@@ -18,8 +27,15 @@ function enabled(v: string | undefined) {
   return t === "enabled" || t === "true" || t === "1" || t === "yes"
 }
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sso_error?: string }>
+}) {
   const settings = await getPublicSettings()
+  const params = await searchParams
+  const ssoProviders = await listEnabledProvidersForLogin().catch(() => [])
+  const ssoError = params.sso_error ? SSO_ERROR_MESSAGES[params.sso_error] || "Sign-in with your identity provider failed." : null
 
   const brandName = settings["company.name"] || "Muenot"
   const logo = settings["company.login_logo"] || settings["company.logo"] || ""
@@ -95,7 +111,7 @@ export default async function LoginPage() {
             <p className="text-sm text-muted-foreground">Enter your credentials to access your workspace.</p>
           </div>
 
-          <LoginForm social={social} signupEnabled={false} />
+          <LoginForm social={social} signupEnabled={false} ssoProviders={ssoProviders} ssoError={ssoError} />
 
           <div className="mt-8 flex flex-col gap-2 border-t border-border pt-6 text-center">
             <p className="text-sm text-muted-foreground">

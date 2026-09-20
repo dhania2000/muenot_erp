@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { effectiveTenantId, requireTenantAdmin } from "@/lib/platform-guard"
-import { cancelWorkflow, decideWorkflow, saveWorkflow, startWorkflow, workflowOverview } from "@/lib/workflows/engine"
+import { cancelWorkflow, decideWorkflow, previewWorkflow, saveWorkflow, setWorkflowEnabled, startWorkflow, workflowOverview } from "@/lib/workflows/engine"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -21,6 +21,12 @@ export async function POST(request: Request) {
     if (raw.length > 32768) return NextResponse.json({error:"Workflow request too large"},{status:413})
     const body = JSON.parse(raw)
     if (body.operation === "create") return NextResponse.json({id:await saveWorkflow(tenant,actor,body.definition)},{status:201})
+    if (body.operation === "update" && Number.isSafeInteger(body.id) && body.id > 0) return NextResponse.json({id:await saveWorkflow(tenant,actor,body.definition,Number(body.id))})
+    if (body.operation === "toggle" && Number.isSafeInteger(body.id) && body.id > 0 && typeof body.enabled === "boolean") {
+      await setWorkflowEnabled(tenant,actor,Number(body.id),body.enabled)
+      return NextResponse.json({ok:true})
+    }
+    if (body.operation === "preview" && Number.isSafeInteger(body.recordId) && body.recordId > 0) return NextResponse.json(await previewWorkflow(tenant,actor,body.definition,Number(body.recordId)))
     if (body.operation === "start") return NextResponse.json({id:await startWorkflow(tenant,actor,Number(body.workflowId),Number(body.recordId),body.requestKey,body.at)})
     if (body.operation === "cancel" && Number.isSafeInteger(body.runId) && body.runId > 0) {
       await cancelWorkflow(tenant,actor,body.runId)

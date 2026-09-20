@@ -6,7 +6,7 @@ vi.mock("@/lib/workflows/schema",()=>({ensureWorkflowSchema:async()=>{}}))
 vi.mock("@/lib/workflows/webhook",()=>({deliverWebhook:mock.webhook}))
 import { advanceWorkflow, decideWorkflow, startWorkflow, workflowOverview, runWorkflowWorker } from "@/lib/workflows/engine"
 import { fingerprint } from "@/lib/job-idempotency"
-const workflow = (actions:Workflow["actions"] = [{type:"update",field:"priority",value:"High"}]):Workflow=>({name:"Lead follow-up",module:"sales_leads",trigger:"manual",conditions:[],actions})
+const workflow = (actions:Workflow["actions"] = [{type:"update",field:"priority",value:"High"}]):Workflow=>({name:"Lead follow-up",description:"",module:"sales_leads",trigger:"manual",conditions:{logic:"AND",children:[]},actions,elseActions:[]})
 let run:any
 beforeEach(()=>{
   vi.clearAllMocks()
@@ -37,10 +37,18 @@ describe("SPEC 46 workflow model",()=>{
     expect(()=>validateWorkflow({...workflow(),conditions:[{field:"password",op:"eq",value:"x"}]})).toThrow()
   })
   it("evaluates AND conditions deterministically",()=>{
-    const w={...workflow(),conditions:[{field:"priority",op:"eq" as const,value:"High"},{field:"company_name",op:"contains" as const,value:"Acme"}]}
+    const w:Workflow={...workflow(),conditions:{logic:"AND",children:[{field:"priority",op:"eq",value:"High"},{field:"company_name",op:"contains",value:"Acme"}]}}
     expect(matches(w,{priority:"High",company_name:"Acme Ltd"})).toBe(true)
     expect(matches(w,{priority:"Low",company_name:"Acme Ltd"})).toBe(false)
     expect(matches(w,{})).toBe(false)
+  })
+  it("evaluates OR conditions and nested groups, and accepts the legacy flat-array shape",()=>{
+    const w:Workflow={...workflow(),conditions:{logic:"OR",children:[{field:"priority",op:"eq",value:"High"},{logic:"AND",children:[{field:"priority",op:"eq",value:"Low"},{field:"company_name",op:"contains",value:"Acme"}]}]}}
+    expect(matches(w,{priority:"High",company_name:"Other"})).toBe(true)
+    expect(matches(w,{priority:"Low",company_name:"Acme Ltd"})).toBe(true)
+    expect(matches(w,{priority:"Low",company_name:"Other"})).toBe(false)
+    const legacy = {...workflow(),conditions:[{field:"priority",op:"eq",value:"High"}] as any}
+    expect(matches(legacy,{priority:"High"})).toBe(true)
   })
   it("forbids self approval and non-designated approvers",()=>{
     expect(approvalAllowed(2,2,2)).toBe(false)

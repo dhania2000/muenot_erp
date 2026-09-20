@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
-import { hashPassword, verifyPassword } from "@/lib/password"
-import { getNum } from "@/lib/settings/server"
+import { verifyPassword } from "@/lib/password"
+import { assertAndHashNewPassword, recordPasswordChange } from "@/lib/password-policy"
 
 export async function POST(request: Request) {
   const session = await getSession()
@@ -13,10 +13,6 @@ export async function POST(request: Request) {
   const { currentPassword, newPassword } = await request.json()
   if (!currentPassword || !newPassword) {
     return NextResponse.json({ error: "Current and new password are required" }, { status: 400 })
-  }
-  const minLength = await getNum("security.password_min_length", 8)
-  if (String(newPassword).length < minLength) {
-    return NextResponse.json({ error: `New password must be at least ${minLength} characters` }, { status: 400 })
   }
 
   const rows = await query<{ id: number; password_hash: string }[]>(
@@ -33,11 +29,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Current password is incorrect" }, { status: 401 })
   }
 
-  const newHash = await hashPassword(newPassword)
+  // SPEC 60 — full policy enforcement: strength rules + reuse history.
+  let newHash: string
+  try {
+    newHash = await assertAndHashNewPassword(session.userId, newPassword)
+  } catch (error) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 })
+  }
+
   await query("UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?", [
     newHash,
     session.userId,
   ])
+  await recordPasswordChange(session.userId, newHash, session.tenantId ?? null)
 
   return NextResponse.json({ ok: true })
 }

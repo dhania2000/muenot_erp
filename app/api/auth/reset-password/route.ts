@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
-import { hashPassword } from "@/lib/password"
 import { consumeResetToken, verifyResetToken } from "@/lib/password-reset"
-import { getNum } from "@/lib/settings/server"
+import { assertAndHashNewPassword, recordPasswordChange } from "@/lib/password-policy"
+import { resolveTenantIdForUser } from "@/lib/tenant-service"
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -18,21 +18,26 @@ export async function POST(request: Request) {
     if (!token || !newPassword) {
       return NextResponse.json({ error: "Token and new password are required" }, { status: 400 })
     }
-    const minLength = await getNum("security.password_min_length", 8)
-    if (String(newPassword).length < minLength) {
-      return NextResponse.json({ error: `New password must be at least ${minLength} characters` }, { status: 400 })
-    }
 
     const result = await verifyResetToken(token)
     if (!result) {
       return NextResponse.json({ error: "This reset link is invalid or has expired" }, { status: 400 })
     }
 
-    const newHash = await hashPassword(newPassword)
+    // SPEC 60 — full policy enforcement: strength rules + reuse history.
+    let newHash: string
+    try {
+      newHash = await assertAndHashNewPassword(result.userId, newPassword)
+    } catch (error) {
+      return NextResponse.json({ error: (error as Error).message }, { status: 400 })
+    }
+
     await query("UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?", [
       newHash,
       result.userId,
     ])
+    const tenantId = await resolveTenantIdForUser(result.userId)
+    await recordPasswordChange(result.userId, newHash, tenantId ?? null)
     await consumeResetToken(result.tokenId)
 
     return NextResponse.json({ ok: true })

@@ -10,6 +10,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { evaluateLogin } from "@/lib/user-lifecycle-core"
 import { consumeMfaChallenge, getLoginSnapshot } from "@/lib/user-lifecycle"
 import { createSession, newSessionId } from "@/lib/session-store"
+import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/password-policy"
 
 type UserRow = {
   id: number
@@ -52,10 +53,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
 
+    // SPEC 60 — password lockout: check BEFORE verifying the password so a
+    // locked account never leaks whether the submitted password was correct.
+    const lockout = await checkLockout(user.id)
+    if (lockout.locked) {
+      return NextResponse.json(
+        {
+          error: `Too many failed attempts. Try again in ${Math.ceil(lockout.retryAfterSeconds / 60)} minute(s).`,
+          code: "ACCOUNT_LOCKED",
+        },
+        { status: 423, headers: { "Retry-After": String(lockout.retryAfterSeconds) } },
+      )
+    }
+
     const valid = await verifyPassword(password, user.password_hash)
     if (!valid) {
+      await recordFailedLogin(user.id)
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
+    await recordSuccessfulLogin(user.id)
 
     // SPEC 14 — evaluate the full lifecycle gate (invited / suspended /
     // deactivated / expired temporary access / email verification) AFTER the

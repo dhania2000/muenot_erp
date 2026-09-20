@@ -11,6 +11,7 @@ const TABS: { label: string; href: string }[] = [
   { label: "MFA", href: "/admin/security/mfa" },
   { label: "Passwords", href: "/admin/security/password" },
   { label: "Sessions", href: "/admin/security/sessions" },
+  { label: "API & webhooks", href: "/admin/security/api-webhooks" },
   { label: "IP allowlist", href: "/admin/security/ip-allowlist" },
   { label: "Access policies", href: "/admin/security/access-policies" },
   { label: "Temporary access", href: "/admin/security/temporary-access" },

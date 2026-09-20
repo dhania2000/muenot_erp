@@ -96,7 +96,7 @@ export type SignupReadiness = {
   missing: string[]
 }
 
-/** Read-only configuration probe used to disable an unusable Meta button. */
+/** Read-only configuration probe for SDK preparation and visible setup diagnostics. */
 export function getSignupReadiness(): SignupReadiness {
   const appId = getAppId()
   const configId = getSignupConfigId()

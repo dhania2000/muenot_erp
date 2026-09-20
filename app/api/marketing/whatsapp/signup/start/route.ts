@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { createWhatsAppSignupSessionForSystemAdmin, getSignupReadiness } from "@/lib/whatsapp-signup"
 
-/** Read-only probe used by the client to disable the button when Meta config is missing. */
+/** Read-only probe for preloading the SDK and displaying actionable setup errors. */
 export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

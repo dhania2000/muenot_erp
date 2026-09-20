@@ -4,16 +4,9 @@ import * as React from "react"
 import { toast } from "sonner"
 import { MessageCircle, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { launchFacebookSignup, requireSignupConfig, signupDetails, type FacebookLoginResponse as FbLoginResponse, type SignupConfig as StartResult } from "@/lib/whatsapp-signup-client"
 
 /** Meta Embedded Signup launcher shared by tenant and platform workspaces. */
-type StartResult = {
-  state?: string
-  appId: string | null
-  configId: string | null
-  graphVersion: string
-  ready: boolean
-  missing?: string[]
-}
 
 declare global {
   interface Window {
@@ -25,10 +18,6 @@ declare global {
   }
 }
 
-type FbLoginResponse = {
-  authResponse?: { code?: string } | null
-  status?: string
-}
 
 const SDK_ID = "facebook-jssdk"
 const SDK_TIMEOUT_MS = 15000
@@ -36,7 +25,7 @@ let sdkPromise: Promise<NonNullable<Window["FB"]>> | null = null
 
 function loadFacebookSdk(appId: string, graphVersion: string): Promise<NonNullable<Window["FB"]>> {
   const init = () => {
-    window.FB!.init({ appId, autoLogAppEvents: true, xfbml: false, version: graphVersion })
+    window.FB!.init({ appId, autoLogAppEvents: false, xfbml: false, version: graphVersion })
     return window.FB!
   }
   if (window.FB) return Promise.resolve(init())
@@ -44,6 +33,9 @@ function loadFacebookSdk(appId: string, graphVersion: string): Promise<NonNullab
   if (!sdkPromise) {
     sdkPromise = new Promise((resolve, reject) => {
       const fail = (message: string) => {
+        clearTimeout(timer)
+        document.getElementById(SDK_ID)?.remove()
+        window.fbAsyncInit = undefined
         sdkPromise = null
         reject(new Error(message))
       }
@@ -53,7 +45,7 @@ function loadFacebookSdk(appId: string, graphVersion: string): Promise<NonNullab
       )
       window.fbAsyncInit = () => {
         clearTimeout(timer)
-        resolve(init())
+        try { resolve(init()) } catch { fail("Meta SDK initialization failed. Check the App ID and retry.") }
       }
 
       const existing = document.getElementById(SDK_ID) as HTMLScriptElement | null
@@ -100,79 +92,89 @@ export function EmbeddedSignupConnect({
   startBody?: Record<string, unknown>
 }) {
   const [busy, setBusy] = React.useState(false)
-  const [missing, setMissing] = React.useState<string[] | null>(null)
+  const [hint, setHint] = React.useState("Preparing Facebook login…")
+  const prepared = React.useRef<{ config: StartResult; sdk: NonNullable<Window["FB"]>; url: string } | null>(null)
+  const preparing = React.useRef<Promise<void> | null>(null)
+  const active = React.useRef(false)
   const sessionInfo = React.useRef<{ wabaId?: string; phoneNumberId?: string; businessId?: string }>({})
 
-  React.useEffect(() => {
-    let cancelled = false
-    fetch(readinessUrl, { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled) return
-        setMissing(data?.ready ? [] : (data?.missing ?? []))
-        if (data?.ready && data.appId) {
-          loadFacebookSdk(data.appId, data.graphVersion ?? "v26.0").catch(() => undefined)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setMissing([])
-      })
-    return () => {
-      cancelled = true
-    }
+  const prepare = React.useCallback(() => {
+    if (preparing.current) return preparing.current
+    setHint("Preparing Facebook login…")
+    prepared.current = null
+    const task = (async () => {
+      const res = await fetch(readinessUrl, { cache: "no-store", signal: AbortSignal.timeout(15000) })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Could not check Meta settings. Retry.")
+      requireSignupConfig(data)
+      const config = { ...data, graphVersion: data.graphVersion ?? "v26.0" } as StartResult
+      const sdk = await loadFacebookSdk(config.appId!, config.graphVersion)
+      prepared.current = { config, sdk, url: readinessUrl }
+      setHint("")
+    })()
+    preparing.current = task
+    void task.catch(error => setHint(error instanceof Error ? error.message : "Could not prepare Meta login. Retry.")).finally(() => { preparing.current = null })
+    return task
   }, [readinessUrl])
+
+  React.useEffect(() => { void prepare().catch(() => undefined) }, [prepare])
 
   React.useEffect(() => {
     function onMessage(event: MessageEvent) {
-      if (event.origin !== "https://www.facebook.com" && event.origin !== "https://web.facebook.com") return
-      try {
-        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data
-        if (data?.type !== "WA_EMBEDDED_SIGNUP") return
-        if (data.event === "FINISH" && data.data) {
-          sessionInfo.current = {
-            wabaId: data.data.waba_id,
-            phoneNumberId: data.data.phone_number_id,
-            businessId: data.data.business_id,
-          }
-        }
-      } catch {
-        /* Ignore unrelated non-JSON messages from Meta widgets. */
-      }
+      if (!active.current) return
+      const details = signupDetails(event)
+      if (details) sessionInfo.current = details
     }
     window.addEventListener("message", onMessage)
     return () => window.removeEventListener("message", onMessage)
   }, [])
 
   async function connect() {
+    if (active.current) return
+    const ready = prepared.current
+    if (!ready || ready.url !== readinessUrl) {
+      setBusy(true)
+      try {
+        await prepare()
+        setHint("Ready. Click Connect with Meta to open Facebook login.")
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Meta login could not be prepared.")
+      } finally { setBusy(false) }
+      return
+    }
+    active.current = true
     setBusy(true)
+    setHint("")
     sessionInfo.current = {}
     try {
-      const startRes = await fetch(startUrl, {
+      // Invoke synchronously in this click, before ANY network await. The
+      // signed tenant-bound session is still required before callback exchange.
+      const login = launchFacebookSignup(ready.sdk, ready.config)
+      const starting = fetch(startUrl, {
         method: "POST",
         headers: startBody ? { "Content-Type": "application/json" } : undefined,
         body: startBody ? JSON.stringify(startBody) : undefined,
+        signal: AbortSignal.timeout(20000),
+      }).then(async startRes => {
+        const start = (await startRes.json().catch(() => ({}))) as StartResult & { error?: string }
+        if (!startRes.ok) throw new Error(start.error || "Could not start WhatsApp signup.")
+        requireSignupConfig(start)
+        if (!start.state) throw new Error("Missing secure signup session. Please retry.")
+        if (start.appId !== ready.config.appId || start.configId !== ready.config.configId) {
+          prepared.current = null
+          throw new Error("Meta settings changed. Close the Facebook window and retry.")
+        }
+        return start
       })
-      const start = (await startRes.json().catch(() => ({}))) as StartResult & { error?: string }
-      if (!startRes.ok) throw new Error(start.error || "Could not start WhatsApp signup.")
-      if (!start.ready || !start.appId || !start.configId || !start.state) {
-        throw new Error(
-          `Embedded Signup is not configured on the server yet. Set ${start.missing?.join(" and ") || "WHATSAPP_APP_ID and WHATSAPP_CONFIG_ID"}, or connect with credentials instead.`,
-        )
-      }
-
-      const FB = await loadFacebookSdk(start.appId, start.graphVersion)
-      const authResponse = await new Promise<FbLoginResponse>((resolve) => {
-        FB.login((res) => resolve(res), {
-          config_id: start.configId,
-          response_type: "code",
-          override_default_response_type: true,
-          extras: { setup: {}, featureType: "", sessionInfoVersion: "3" },
-        })
-      })
+      const [start, authResponse] = await Promise.all([starting, login])
 
       const code = authResponse?.authResponse?.code
-      if (!code) return
+      if (!code) { setHint("Facebook login was cancelled or not authorized. You can retry."); return }
 
+      // Meta's FINISH message and login callback can arrive in either order.
+      for (let i = 0; i < 50 && (!sessionInfo.current.wabaId || !sessionInfo.current.phoneNumberId); i++) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
       const { wabaId, phoneNumberId, businessId } = sessionInfo.current
       if (!wabaId || !phoneNumberId) {
         throw new Error("Meta did not return your WhatsApp number details. Please try the connection again.")
@@ -182,6 +184,7 @@ export function EmbeddedSignupConnect({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: start.state, code, wabaId, phoneNumberId, businessId }),
+        signal: AbortSignal.timeout(60000),
       })
       const cb = (await cbRes.json().catch(() => ({}))) as {
         error?: string
@@ -195,27 +198,27 @@ export function EmbeddedSignupConnect({
       toast.success(parts.join(" · "))
       onConnected()
     } catch (err) {
+      setHint((err as Error).message)
       toast.error((err as Error).message)
     } finally {
+      active.current = false
       setBusy(false)
     }
   }
 
-  const unconfigured = (missing?.length ?? 0) > 0
   return (
+    <span className="inline-flex max-w-xl flex-col items-start gap-2">
     <Button
       variant={variant}
       className={className}
       onClick={connect}
-      disabled={busy || unconfigured}
-      title={
-        unconfigured
-          ? `Embedded Signup is not configured on the server. Set ${missing?.join(" and ")}, then restart. You can connect with credentials instead.`
-          : undefined
-      }
+      disabled={busy}
+      type="button"
     >
       {busy ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
       Connect with Meta
     </Button>
+    {hint && <span role="status" className="text-sm text-muted-foreground">{hint}</span>}
+    </span>
   )
 }

@@ -1,0 +1,14 @@
+import "server-only"
+import { query } from "@/lib/db"
+import { ensureNotificationsSchema } from "@/lib/notifications"
+let ready: Promise<void> | undefined
+export const workflowDDL = [
+  `CREATE TABLE IF NOT EXISTS erp_workflows (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, name VARCHAR(120) NOT NULL, definition JSON NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, created_by INT UNSIGNED NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY tenant_idx(tenant_id,id)) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS erp_workflow_runs (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, workflow_id BIGINT UNSIGNED NOT NULL, snapshot JSON NOT NULL, record_id BIGINT UNSIGNED NOT NULL, request_key VARCHAR(64) NOT NULL, request_hash CHAR(64) NOT NULL, requested_by INT UNSIGNED NOT NULL, status VARCHAR(24) NOT NULL DEFAULT 'queued', cursor INT NOT NULL DEFAULT 0, available_at DATETIME NOT NULL, error_code VARCHAR(80) NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY request_idx(tenant_id,workflow_id,request_key), KEY due_idx(status,available_at), KEY tenant_idx(tenant_id,id)) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS erp_workflow_events (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, run_id BIGINT UNSIGNED NOT NULL, step INT NOT NULL, event_type VARCHAR(40) NOT NULL, actor_id INT UNSIGNED NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY run_idx(tenant_id,run_id,id)) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS erp_workflow_notices (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, run_id BIGINT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, message VARCHAR(1000) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY inbox_idx(tenant_id,user_id,id)) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS erp_workflow_tasks (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, title VARCHAR(255) NOT NULL, description TEXT NOT NULL, priority VARCHAR(16) NOT NULL DEFAULT 'Medium', status VARCHAR(24) NOT NULL DEFAULT 'Open', assigned_to INT UNSIGNED NOT NULL, source_run_id BIGINT UNSIGNED NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY tenant_idx(tenant_id,id)) ENGINE=InnoDB`,
+]
+export function ensureWorkflowSchema() {
+  return ready ??= (async () => { for (const ddl of workflowDDL) await query(ddl); await ensureNotificationsSchema() })().catch(e => { ready = undefined; throw e })
+}

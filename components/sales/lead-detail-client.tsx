@@ -155,6 +155,7 @@ export function LeadDetailClient({ id, canManage }: { id: number; canManage: boo
           </div>
           {canManage && (
             <div className="flex flex-wrap items-center gap-2">
+              <Link href={`/admin/workflows?recordId=${lead.id}`} className="text-sm text-primary hover:underline">Run workflow (tenant admin)</Link>
               <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                 Edit
               </Button>

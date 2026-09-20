@@ -80,6 +80,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["marketing_library", "Marketing library", "/api/cron/marketing-library", "0 7 * * *"],
   ["storage_retention", "Storage retention", "/api/cron/storage-retention", "0 3 * * *"],
   ["background_queue", "Background queue worker", "/api/cron/background-queue", "* * * * *"],
+  ["workflow_worker", "ERP workflow worker", "/api/cron/workflows", "* * * * *"],
 ].map(([key, name, endpoint, expression]) => ({
   key,
   name,

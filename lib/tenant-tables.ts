@@ -100,6 +100,12 @@ export const TENANT_OWNED_TABLES = [
   // keeping the legacy table available as an inherited platform baseline.
   "tenant_settings",
   "tenant_settings_audit",
+  // Reusable workflow definitions, execution history and owned task records (SPEC 46).
+  "erp_workflows",
+  "erp_workflow_runs",
+  "erp_workflow_events",
+  "erp_workflow_notices",
+  "erp_workflow_tasks",
   // WhatsApp Business platform (SPEC — multi-tenant WhatsApp isolation).
   // Each tenant connects its own WhatsApp Business number(s); every row below
   // belongs to exactly one tenant and must never be visible to another.

@@ -383,6 +383,25 @@ export const AUTOMATION_CHILDREN: NavChild[] = [
   { label: "Email", href: "/admin/automation/email" },
 ]
 
+// SPECS 56–66 — Security & Access groups tenant SSO, MFA, password policy,
+// sessions, IP allowlist, access policies, temporary/emergency access and
+// access reviews under one admin area. Each entry maps to a page under
+// /admin/security/*. Screens surface the real backend where one exists (MFA
+// enrollment, password change) and show honest "not yet available" states
+// where the platform cannot enforce the capability — no settings are faked.
+export const SECURITY_CHILDREN: NavChild[] = [
+  { label: "Overview", href: "/admin/security" },
+  { label: "Single sign-on (SSO)", href: "/admin/security/sso" },
+  { label: "Multi-factor auth", href: "/admin/security/mfa" },
+  { label: "Password policy", href: "/admin/security/password" },
+  { label: "Sessions", href: "/admin/security/sessions" },
+  { label: "IP allowlist", href: "/admin/security/ip-allowlist" },
+  { label: "Access policies", href: "/admin/security/access-policies" },
+  { label: "Temporary access", href: "/admin/security/temporary-access" },
+  { label: "Emergency access", href: "/admin/security/emergency-access" },
+  { label: "Access reviews", href: "/admin/security/access-reviews" },
+]
+
 // Subscription & Billing — a dedicated admin module that sits directly below
 // Administration in the sidebar. Every entry maps to a page under
 // /modules/billing/* so the whole billing lifecycle (plans, subscriptions,
@@ -537,6 +556,17 @@ export async function buildWorkspaceNav(
       href: "/admin/automation",
       icon: <Workflow className="size-4" />,
       children: AUTOMATION_CHILDREN,
+    })
+
+    // Security & Access sits directly below Automation and is likewise
+    // restricted to admins. It groups tenant SSO, MFA, password policy,
+    // sessions, IP allowlist, access/temporary/emergency access and access
+    // reviews under one expandable entry.
+    navItems.push({
+      label: "Security & Access",
+      href: "/admin/security",
+      icon: <ShieldCheck className="size-4" />,
+      children: SECURITY_CHILDREN,
     })
 
     // Subscription & Billing sits directly below Administration and is likewise

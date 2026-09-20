@@ -11,17 +11,11 @@ import { Bell, ChevronDown, Clock3, FileText, Loader2, LogOut, MapPin, MessageSq
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
 import { NotesPanel } from "@/components/notes-panel"
+import { CommandPalette } from "@/components/shared/command-palette"
 import { ScreenMonitorProvider, useScreenMonitor } from "@/components/hr/screen-monitor-provider"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Input } from "@/components/ui/input"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -525,7 +519,6 @@ export function AppShell({
   const [profileOpen, setProfileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)
-  const [query, setQuery] = useState("")
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" })
@@ -547,15 +540,35 @@ export function AppShell({
       ? flattenChildren(item.label, item.children)
       : [{ label: item.label, href: item.href }],
   )
-  const searchResults = query.trim()
-    ? flatNav.filter((entry) => entry.label.toLowerCase().includes(query.trim().toLowerCase()))
-    : flatNav
 
-  function goTo(href: string) {
-    setSearchOpen(false)
-    setQuery("")
-    router.push(href)
-  }
+  // SPEC 82 — permission-aware quick actions. Every href here is a page the
+  // sidebar already grants; admin-only destinations are gated on role so the
+  // palette never advertises a screen the viewer cannot open.
+  const isAdmin = user.role === "admin"
+  const quickCommands = [
+    ...(isAdmin
+      ? [
+          { label: "Manage users", href: "/admin/users", hint: "Administration" },
+          { label: "Roles & permissions", href: "/admin/roles", hint: "Administration" },
+          { label: "Workspace settings", href: "/admin/settings", hint: "Administration" },
+          { label: "Platform console", href: "/platform", hint: "Platform" },
+        ]
+      : []),
+    { label: "My profile", href: "/profile", hint: "Account" },
+    { label: "Messages", href: "/modules/messages", hint: "Communication" },
+  ]
+
+  // SPEC 82 — global ⌘K / Ctrl+K shortcut to open the command palette.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        setSearchOpen((v) => !v)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
 
   return (
     <ScreenMonitorProvider>
@@ -666,7 +679,7 @@ export function AppShell({
           <HeaderClockButton />
           <div className="flex items-center gap-1">
             <LiveClock />
-            <Button variant="ghost" size="icon-sm" aria-label="Search" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Search (Ctrl or Cmd + K)" title="Search  ⌘K" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setSearchOpen(true)}><Search className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>
 <NotificationsBell />
@@ -679,27 +692,12 @@ export function AppShell({
 
       <NotesPanel open={notesOpen} onOpenChange={setNotesOpen} />
 
-      <Dialog open={searchOpen} onOpenChange={(open) => { setSearchOpen(open); if (!open) setQuery("") }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Search</DialogTitle>
-          </DialogHeader>
-          <Input autoFocus placeholder="Search modules and pages..." value={query} onChange={(e) => setQuery(e.target.value)} />
-          <div className="flex max-h-72 flex-col gap-1 overflow-y-auto pt-2">
-            {searchResults.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No results found</p>}
-            {searchResults.map((entry) => (
-              <button
-                key={entry.href}
-                type="button"
-                onClick={() => goTo(entry.href)}
-                className="rounded-md px-2 py-2 text-left text-sm hover:bg-muted"
-              >
-                {entry.label}
-              </button>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <CommandPalette
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        navItems={flatNav}
+        quickCommands={quickCommands}
+      />
     </div>
     </ScreenMonitorProvider>
   )

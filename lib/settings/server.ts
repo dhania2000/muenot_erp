@@ -112,6 +112,25 @@ export async function isModuleEnabled(name: string): Promise<boolean> {
   return key in s ? truthy(s[key]) : true
 }
 
+/**
+ * Persists a single global (non-tenant-scoped) key/value into
+ * company_settings and invalidates the in-process cache so the next read
+ * picks it up immediately. Used for simple admin toggles that aren't part of
+ * the tenant-settings override system (e.g. security.ip_allowlist_enabled).
+ */
+export async function setGlobalSetting(key: string, value: string): Promise<void> {
+  await query(`INSERT INTO company_settings (skey, svalue) VALUES (?, ?) ON DUPLICATE KEY UPDATE svalue = ?`, [
+    key,
+    value,
+    value,
+  ])
+  invalidateSettingsCache()
+}
+
+export async function setBool(key: string, value: boolean): Promise<void> {
+  await setGlobalSetting(key, value ? "true" : "false")
+}
+
 /** Non-secret, display-relevant subset for client hydration. */
 export async function getPublicSettings(): Promise<SettingsMap> {
   const all = await getSettings()

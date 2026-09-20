@@ -402,6 +402,20 @@ export const SECURITY_CHILDREN: NavChild[] = [
   { label: "Access reviews", href: "/admin/security/access-reviews" },
 ]
 
+// SPECS 67–74 — Data governance groups the central tenant audit log,
+// classification, field security, retention, legal holds, and the
+// import/export centers under one admin area. Each entry maps to a page
+// under /admin/governance/*.
+export const GOVERNANCE_CHILDREN: NavChild[] = [
+  { label: "Audit log", href: "/admin/governance" },
+  { label: "Classification", href: "/admin/governance/classification" },
+  { label: "Field security", href: "/admin/governance/field-security" },
+  { label: "Retention", href: "/admin/governance/retention" },
+  { label: "Legal holds", href: "/admin/governance/legal-holds" },
+  { label: "Import center", href: "/admin/governance/import-center" },
+  { label: "Export center", href: "/admin/governance/export-center" },
+]
+
 // Subscription & Billing — a dedicated admin module that sits directly below
 // Administration in the sidebar. Every entry maps to a page under
 // /modules/billing/* so the whole billing lifecycle (plans, subscriptions,
@@ -567,6 +581,16 @@ export async function buildWorkspaceNav(
       href: "/admin/security",
       icon: <ShieldCheck className="size-4" />,
       children: SECURITY_CHILDREN,
+    })
+
+    // Data governance sits directly below Security & Access and is likewise
+    // restricted to admins. It groups the central audit log, classification,
+    // field security, retention, legal holds and import/export centers.
+    navItems.push({
+      label: "Data Governance",
+      href: "/admin/governance",
+      icon: <ShieldCheck className="size-4" />,
+      children: GOVERNANCE_CHILDREN,
     })
 
     // Subscription & Billing sits directly below Administration and is likewise

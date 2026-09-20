@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth"
 import { query } from "@/lib/db"
 import { hashPassword, generateTempPassword } from "@/lib/password"
 import { ensurePermissionSchema } from "@/lib/permission-store"
+import { recordPasswordChange } from "@/lib/password-policy"
 
 async function requireAdmin() {
   const session = await getSession()
@@ -56,6 +57,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       [emp.employee_name, email, passwordHash, emp.designation || null],
     )
     userId = result.insertId
+    await recordPasswordChange(userId, passwordHash, null)
   }
 
   await query("UPDATE hr_employees SET user_id = ? WHERE id = ?", [userId, emp.id])

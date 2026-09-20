@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
-import { hashPassword, generateTempPassword } from "@/lib/password"
+import { generateTempPassword, hashPassword } from "@/lib/password"
+import { assertAndHashNewPassword, recordPasswordChange, validatePasswordAgainstPolicy, getPasswordPolicy } from "@/lib/password-policy"
 
 async function requireAdmin() {
   const session = await getSession()
@@ -45,21 +46,30 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const body = await request.json().catch(() => ({}))
   const custom = typeof body?.password === "string" ? body.password.trim() : ""
 
+  let passwordHash: string
   if (custom) {
-    if (custom.length < 8) {
-      return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 })
+    const policy = await getPasswordPolicy()
+    const errors = validatePasswordAgainstPolicy(custom, policy)
+    if (errors.length) {
+      return NextResponse.json({ error: errors[0] }, { status: 400 })
+    }
+    try {
+      passwordHash = await assertAndHashNewPassword(emp.user_id, custom)
+    } catch (error) {
+      return NextResponse.json({ error: (error as Error).message }, { status: 400 })
     }
     newPassword = custom
   } else {
     newPassword = generateTempPassword()
+    passwordHash = await hashPassword(newPassword)
     generated = true
   }
 
-  const passwordHash = await hashPassword(newPassword)
   await query("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?", [
     passwordHash,
     emp.user_id,
   ])
+  await recordPasswordChange(emp.user_id, passwordHash, null)
 
   return NextResponse.json({
     ok: true,

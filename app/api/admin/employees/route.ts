@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { hashPassword, generateTempPassword } from "@/lib/password"
+import { recordPasswordChange } from "@/lib/password-policy"
 
 async function requireAdmin() {
   const session = await getSession()
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
      VALUES (?, ?, ?, 'employee', ?, 'active', 1)`,
     [name, normalizedEmail, passwordHash, designation || null],
   )
+  await recordPasswordChange(result.insertId, passwordHash, null)
 
   return NextResponse.json({
     employee: { id: result.insertId, name, email: normalizedEmail, designation },

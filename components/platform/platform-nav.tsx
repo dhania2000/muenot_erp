@@ -18,6 +18,10 @@ import {
   SlidersHorizontal,
   KeyRound,
   MessageCircle,
+  Archive,
+  LifeBuoy,
+  Database,
+  Zap,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -33,6 +37,12 @@ const NAV: NavItem[] = [
   { href: "/platform/usage", label: "Usage & storage", icon: Gauge, group: "Operate" },
   { href: "/platform/health", label: "Health & jobs", icon: Activity, group: "Observe" },
   { href: "/platform/security", label: "Security & audit", icon: ShieldAlert, group: "Observe" },
+  { href: "/platform/operations/backups", label: "Backups", icon: Archive, group: "Observe" },
+  { href: "/platform/operations/disaster-recovery", label: "Disaster recovery", icon: LifeBuoy, group: "Observe" },
+  { href: "/platform/operations/availability", label: "Availability", icon: Activity, group: "Observe" },
+  { href: "/platform/operations/capacity", label: "Capacity planning", icon: Gauge, group: "Observe" },
+  { href: "/platform/operations/database", label: "Database monitoring", icon: Database, group: "Observe" },
+  { href: "/platform/operations/cache", label: "Cache monitoring", icon: Zap, group: "Observe" },
   { href: "/platform/secrets", label: "Secrets", icon: KeyRound, group: "Configure" },
   { href: "/platform/feature-flags", label: "Feature flags", icon: Flag, group: "Configure" },
   { href: "/platform/integrations", label: "Integrations", icon: Plug, group: "Configure" },

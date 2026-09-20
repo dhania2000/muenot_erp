@@ -24,6 +24,15 @@ export type TenantContext = {
 const storage = new AsyncLocalStorage<{ tenant: TenantContext }>()
 
 /**
+ * Allocate a fresh container BEFORE getSession's first await. The caller's
+ * continuation then inherits this same container and sees its verified value.
+ * Reusing/mutating an inherited container here would mix concurrent requests.
+ */
+export function initializeSessionTenantContext() {
+  storage.enterWith({ tenant: null })
+}
+
+/**
  * Record the acting tenant for the remainder of the current async execution.
  * Uses `enterWith` so callers don't need to wrap their handler in `.run()` —
  * calling this early (from `getSession`) makes the tenant visible to every

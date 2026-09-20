@@ -24,3 +24,11 @@ The actual Facebook login/onboarding screen is hosted by Meta, not recreated by 
 ## Verification
 
 Regression tests cover synchronous SDK launch, Business Login options, missing configuration, cancellation, timeout, initial clickable markup and trusted-origin messages. Production build is also checked. A real Facebook login and completed WABA onboarding still require deployment credentials and user interaction; automated tests do not connect a real account.
+
+## Signup succeeds but status returns integration: null
+
+The session tenant container must be allocated synchronously before getSession awaits cookies or JWT verification. Creating it only after those awaits does not propagate it back into the calling route's continuation. The status route can consequently have a valid session but no tenant context, while signup's explicit tenant scope successfully saves a connection.
+
+getSession now initializes a fresh, empty tenant container before its first await, then populates that container only after session validation and tenant resolution. Fresh containers isolate concurrent requests; missing/revoked sessions do not retain inherited tenant state. Existing tenant selection and impersonation rules remain unchanged.
+
+The regression suite exercises the real session/context code with mocked cookies, token verification and persistence boundaries, including the WhatsApp status route. It does not alter production tenant ownership or migrate previously saved integrations. After deploying, refresh the workspace before attempting another signup. If the row is still absent, compare the saved integration's tenant with the user's authorized workspace; do not expose another tenant's integration as a fallback.

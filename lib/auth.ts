@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from "jose"
 import { cookies } from "next/headers"
 import { setCurrentActor } from "./actor-context"
-import { setCurrentTenant } from "./tenant-context"
+import { initializeSessionTenantContext, setCurrentTenant } from "./tenant-context"
 import { isSessionActive, touchSession } from "./session-store"
 
 export const SESSION_COOKIE = "ems_session"
@@ -76,6 +76,9 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
 
 /** Server Component / Route Handler helper — reads the session from cookies(). */
 export async function getSession(): Promise<SessionPayload | null> {
+  // Must execute synchronously: initializing only after cookies/JWT awaits
+  // leaves the calling route outside the tenant context (e.g. WhatsApp status).
+  initializeSessionTenantContext()
   const cookieStore = await cookies()
   const token = cookieStore.get(SESSION_COOKIE)?.value
   if (!token) return null

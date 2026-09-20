@@ -1,19 +1,30 @@
-import { KeyRound, Plus, ShieldCheck, FileKey } from "lucide-react"
-import { SecurityHeading, EmptyState, FieldSpec, FieldSpecGrid } from "@/components/security/security-ui"
+import { redirect } from "next/navigation"
+import { headers } from "next/headers"
+import { SecurityHeading } from "@/components/security/security-ui"
 import { BackendStatus } from "@/components/security/backend-status"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { SsoProvidersClient } from "@/components/security/sso-providers-client"
+import { getSession } from "@/lib/auth"
+import { getCurrentTenant } from "@/lib/tenant-context"
+import { listProviders } from "@/lib/sso-store"
 
-const PROVIDERS = [
-  "Google Workspace",
-  "Microsoft Entra ID",
-  "Okta",
-  "Generic OIDC",
-  "SAML 2.0",
-]
+export const dynamic = "force-dynamic"
 
-export default function SsoPage() {
+// SPECS 56–58 — Single sign-on, backed by lib/sso-store.ts, lib/sso-oidc.ts
+// and app/api/auth/sso/*. OIDC is a live authorization-code flow verified
+// against the IdP's real JWKS; SAML metadata is captured and validated but
+// the assertion-consumer handshake is not implemented yet.
+export default async function SsoPage() {
+  const session = await getSession()
+  if (!session || session.role !== "admin") redirect("/dashboard")
+
+  const tenant = getCurrentTenant()
+  const providers = await listProviders(tenant?.tenantId ?? null)
+
+  const hdrs = await headers()
+  const proto = hdrs.get("x-forwarded-proto") || "https"
+  const host = hdrs.get("x-forwarded-host") || hdrs.get("host") || ""
+  const origin = `${proto}://${host}`
+
   return (
     <div className="space-y-6">
       <SecurityHeading title="Single sign-on (SSO)" spec="Specs 56–58">
@@ -21,120 +32,15 @@ export default function SsoPage() {
         local password. Client secrets are never displayed after creation.
       </SecurityHeading>
 
-      <BackendStatus level="planned">
-        SSO is not yet wired to an identity backend, so no provider can be enabled and no sign-in is delegated. This
-        screen shows the exact provider list, fields and actions the tenant will manage once the OIDC/SAML backend is
-        connected. Adding a provider is disabled until then.
+      <BackendStatus level="partial">
+        OIDC providers (Google Workspace, Microsoft Entra ID, Okta, or any generic OIDC issuer) are a real
+        authorization-code login: the callback exchanges the code and verifies the ID token against the IdP&apos;s
+        live JWKS before a session is issued. SAML metadata is captured, encrypted, and validated by &quot;Test
+        connection&quot;, but the AuthnRequest / signed-assertion handshake itself is not wired up yet — SAML
+        providers can be configured but not used to sign in.
       </BackendStatus>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5">
-          {PROVIDERS.map((p) => (
-            <span key={p} className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
-              {p}
-            </span>
-          ))}
-        </div>
-        <Button disabled className="gap-1.5">
-          <Plus className="size-4" /> Add provider
-        </Button>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Configured providers</CardTitle>
-          <CardDescription>provider · type · status · domains · created · last login · test status</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Provider</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Domains</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Last login</TableHead>
-                  <TableHead>Test</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell colSpan={7} className="p-0">
-                    <EmptyState icon={<KeyRound className="size-5" />} title="No identity providers configured">
-                      Once the SSO backend is connected you can add Google Workspace, Microsoft Entra ID, Okta, a
-                      generic OIDC provider or SAML 2.0, then configure, test, enable, disable or delete each one.
-                    </EmptyState>
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="size-4 text-muted-foreground" />
-              <CardTitle className="text-base">OIDC configuration</CardTitle>
-            </div>
-            <CardDescription>Spec 57 — fields captured for a generic OIDC provider. Secrets are masked.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <FieldSpecGrid className="lg:grid-cols-2">
-              <FieldSpec label="Provider name" />
-              <FieldSpec label="Issuer URL" />
-              <FieldSpec label="Discovery URL" hint=".well-known/openid-configuration" />
-              <FieldSpec label="Client ID" />
-              <FieldSpec label="Client secret" masked />
-              <FieldSpec label="Scopes" hint="openid email profile" />
-              <FieldSpec label="Callback URL" hint="Generated by the platform" />
-              <FieldSpec label="Logout URL" />
-              <FieldSpec label="Tenant / domain mapping" />
-              <FieldSpec label="Auto provisioning" />
-              <FieldSpec label="Default role" />
-            </FieldSpecGrid>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled>Test connection</Button>
-              <Button variant="outline" size="sm" disabled>Save</Button>
-              <Button size="sm" disabled>Enable</Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <FileKey className="size-4 text-muted-foreground" />
-              <CardTitle className="text-base">SAML 2.0 configuration</CardTitle>
-            </div>
-            <CardDescription>Spec 58 — fields captured for a SAML identity provider.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <FieldSpecGrid className="lg:grid-cols-2">
-              <FieldSpec label="Provider name" />
-              <FieldSpec label="Metadata URL / upload" />
-              <FieldSpec label="Entity ID" />
-              <FieldSpec label="SSO URL" />
-              <FieldSpec label="ACS URL" hint="Generated by the platform" />
-              <FieldSpec label="X.509 certificate" />
-              <FieldSpec label="Email attribute" />
-              <FieldSpec label="First name attribute" />
-              <FieldSpec label="Last name attribute" />
-              <FieldSpec label="Employee ID attribute" />
-              <FieldSpec label="Tenant mapping" />
-              <FieldSpec label="Default role" />
-            </FieldSpecGrid>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled>Download SP metadata</Button>
-              <Button size="sm" disabled>Enable</Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <SsoProvidersClient initialProviders={providers} callbackOrigin={origin} />
     </div>
   )
 }

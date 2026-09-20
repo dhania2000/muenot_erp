@@ -133,6 +133,14 @@ export const TENANT_OWNED_TABLES = [
   "marketing_whatsapp_campaign_events",
   "marketing_whatsapp_automations",
   "marketing_whatsapp_diagnostics",
+  // Server-side session store + SSO identity providers (SPEC 61, 56-58).
+  "user_sessions",
+  "sso_providers",
+  "sso_login_events",
+  // API key platform + webhook delivery engine (SPEC 67-70).
+  "api_keys",
+  "webhook_endpoints",
+  "webhook_deliveries",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

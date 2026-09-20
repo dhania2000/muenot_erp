@@ -15,6 +15,12 @@ export type SocialProviders = {
   facebook?: boolean
 }
 
+export type SsoLoginProvider = {
+  id: number
+  name: string
+  type: "oidc" | "saml"
+}
+
 const PROVIDER_LABELS: Record<keyof SocialProviders, string> = {
   google: "Google",
   linkedin: "LinkedIn",
@@ -24,14 +30,18 @@ const PROVIDER_LABELS: Record<keyof SocialProviders, string> = {
 export function LoginForm({
   social,
   signupEnabled = false,
+  ssoProviders = [],
+  ssoError,
 }: {
   social?: SocialProviders
   signupEnabled?: boolean
+  ssoProviders?: SsoLoginProvider[]
+  ssoError?: string | null
 }) {
   const router = useRouter()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(ssoError ?? null)
   const [loading, setLoading] = useState(false)
 
   const enabledProviders = (Object.keys(PROVIDER_LABELS) as (keyof SocialProviders)[]).filter(
@@ -114,7 +124,7 @@ export function LoginForm({
         Sign in
       </Button>
 
-      {enabledProviders.length > 0 && (
+      {(enabledProviders.length > 0 || ssoProviders.length > 0) && (
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-muted-foreground">
             <span className="h-px flex-1 bg-border" />
@@ -122,6 +132,11 @@ export function LoginForm({
             <span className="h-px flex-1 bg-border" />
           </div>
           <div className="flex flex-col gap-2">
+            {ssoProviders.map((p) => (
+              <Button key={p.id} type="button" variant="outline" size="lg" className="w-full" asChild>
+                <a href={`/api/auth/sso/${p.id}/login`}>Continue with {p.name}</a>
+              </Button>
+            ))}
             {enabledProviders.map((p) => (
               <Button
                 key={p}

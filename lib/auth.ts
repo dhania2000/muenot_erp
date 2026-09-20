@@ -2,6 +2,7 @@ import { SignJWT, jwtVerify } from "jose"
 import { cookies } from "next/headers"
 import { setCurrentActor } from "./actor-context"
 import { setCurrentTenant } from "./tenant-context"
+import { isSessionActive, touchSession } from "./session-store"
 
 export const SESSION_COOKIE = "ems_session"
 const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7 // 7 days
@@ -43,6 +44,14 @@ export type SessionPayload = {
    * this tenant instead of the operator's home tenant.
    */
   impersonatedTenantId?: number | null
+  /**
+   * SPEC 61 — opaque session id (jti) that keys the server-side session
+   * record in lib/session-store.ts. Optional so tokens issued before the
+   * session store existed still verify — `getSession()` treats a missing
+   * `sid` as always-active (nothing to revoke it against) rather than
+   * failing every pre-existing login.
+   */
+  sid?: string
 }
 
 export async function createSessionToken(
@@ -72,6 +81,16 @@ export async function getSession(): Promise<SessionPayload | null> {
   if (!token) return null
   const session = await verifySessionToken(token)
   if (session) {
+    // SPEC 61 — a cryptographically valid token can still have been revoked
+    // (admin-forced sign-out, "sign out all devices", concurrent-session cap).
+    // The session store is the live-ness source of truth; a token whose `sid`
+    // is missing or revoked there is treated as signed out. Fails open on a
+    // store outage so a DB blip never locks everyone out.
+    if (session.sid && !(await isSessionActive(session.sid))) {
+      return null
+    }
+    if (session.sid) void touchSession(session.sid)
+
     // Populate the per-request actor context so DB-layer notification capture
     // can attribute writes to this user without threading it through routes.
     setCurrentActor({

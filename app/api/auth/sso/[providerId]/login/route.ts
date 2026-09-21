@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { NextResponse } from "next/server"
 import { getProviderById, resolveClientSecret } from "@/lib/sso-store"
-import { buildAuthorizationUrl, resolveEndpoints } from "@/lib/sso-oidc"
+import { buildAuthorizationUrl, generatePkcePair, resolveEndpoints } from "@/lib/sso-oidc"
 import { issueSsoState } from "@/lib/sso-state"
 
 function requestOrigin(request: Request): string {
@@ -25,9 +25,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ prov
     const endpoints = await resolveEndpoints(provider)
     const state = randomUUID()
     const nonce = randomUUID()
+    const pkce = generatePkcePair()
     const redirectUri = `${requestOrigin(request)}/api/auth/sso/${provider.id}/callback`
 
-    await issueSsoState({ providerId: provider.id, state, nonce, redirectTo: "/dashboard" })
+    await issueSsoState({ providerId: provider.id, state, nonce, codeVerifier: pkce.verifier, redirectTo: "/dashboard" })
 
     const authUrl = buildAuthorizationUrl({
       endpoint: endpoints.authorization_endpoint,
@@ -36,6 +37,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ prov
       scopes: provider.scopes || "openid email profile",
       state,
       nonce,
+      codeChallenge: pkce.challenge,
     })
     return NextResponse.redirect(authUrl)
   } catch (err) {

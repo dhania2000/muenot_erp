@@ -61,6 +61,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ prov
       redirectUri,
       code,
       nonce: savedState.nonce,
+      codeVerifier: savedState.codeVerifier,
     })
 
     const email = claims.email?.toLowerCase().trim()

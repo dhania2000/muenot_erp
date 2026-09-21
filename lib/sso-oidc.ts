@@ -10,6 +10,7 @@ import "server-only"
  * against the provider's live JWKS (jose's createRemoteJWKSet), never a
  * pinned key, so key rotation on the IdP side never breaks login.
  */
+import { createHash, randomBytes } from "node:crypto"
 import { createRemoteJWKSet, jwtVerify } from "jose"
 import type { SsoProviderRow } from "@/lib/sso-store"
 
@@ -59,6 +60,7 @@ export function buildAuthorizationUrl(opts: {
   scopes: string
   state: string
   nonce: string
+  codeChallenge: string
 }): string {
   const url = new URL(opts.endpoint)
   url.searchParams.set("response_type", "code")
@@ -67,7 +69,16 @@ export function buildAuthorizationUrl(opts: {
   url.searchParams.set("scope", opts.scopes || "openid email profile")
   url.searchParams.set("state", opts.state)
   url.searchParams.set("nonce", opts.nonce)
+  url.searchParams.set("code_challenge", opts.codeChallenge)
+  url.searchParams.set("code_challenge_method", "S256")
   return url.toString()
+}
+
+/** RFC 7636 PKCE. The verifier is retained only in the signed, short-lived state cookie. */
+export function generatePkcePair() {
+  const verifier = randomBytes(48).toString("base64url")
+  const challenge = createHash("sha256").update(verifier).digest("base64url")
+  return { verifier, challenge }
 }
 
 export type OidcClaims = {
@@ -89,6 +100,7 @@ export async function exchangeCodeForClaims(opts: {
   redirectUri: string
   code: string
   nonce: string
+  codeVerifier: string
 }): Promise<OidcClaims> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -96,6 +108,7 @@ export async function exchangeCodeForClaims(opts: {
     redirect_uri: opts.redirectUri,
     client_id: opts.clientId,
     client_secret: opts.clientSecret,
+    code_verifier: opts.codeVerifier,
   })
   const res = await fetch(opts.tokenEndpoint, {
     method: "POST",
@@ -114,7 +127,7 @@ export async function exchangeCodeForClaims(opts: {
     ...(opts.issuer ? { issuer: opts.issuer } : {}),
   })
 
-  if (payload.nonce && payload.nonce !== opts.nonce) {
+  if (payload.nonce !== opts.nonce) {
     throw new Error("Nonce mismatch — possible replay")
   }
   if (!payload.sub) throw new Error("ID token missing subject")

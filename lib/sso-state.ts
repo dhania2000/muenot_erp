@@ -20,6 +20,7 @@ export type SsoStatePayload = {
   providerId: number
   state: string
   nonce: string
+  codeVerifier: string
   redirectTo: string
 }
 
@@ -46,7 +47,9 @@ export async function consumeSsoState(): Promise<SsoStatePayload | null> {
   if (!token) return null
   try {
     const { payload } = await jwtVerify(token, getSecretKey())
-    return payload as unknown as SsoStatePayload
+    const state = payload as unknown as SsoStatePayload
+    if (!Number.isSafeInteger(state.providerId) || !state.state || !state.nonce || !/^[A-Za-z0-9_-]{43,128}$/.test(state.codeVerifier || "")) return null
+    return state
   } catch {
     return null
   }

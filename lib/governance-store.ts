@@ -317,3 +317,137 @@ export function releaseLegalHold(id: string, releasedBy: string, reason: string)
     ),
   )
 }
+
+// ---------------------------------------------------------------------------
+// Export jobs (Spec 73)
+// ---------------------------------------------------------------------------
+
+export type ExportJobStatus = "Queued" | "Running" | "Completed" | "Expired"
+
+export type ExportJob = {
+  id: string
+  module: string
+  format: string
+  requestedBy: string
+  status: ExportJobStatus
+  progress: number
+  created: string
+  expires: string
+  file: string | null
+  recurring: boolean
+}
+
+const EXPORT_JOBS_KEY = "muenot.governance.export-jobs.v1"
+const EXPORT_JOBS_SEED: ExportJob[] = [
+  { id: "exp_5521", module: "Employees (HR)", format: "Excel", requestedBy: "priya.sharma@acme.com", status: "Completed", progress: 100, created: "2026-09-19 08:02", expires: "2026-09-26", file: "employees_2026-09-19.xlsx", recurring: false },
+  { id: "exp_5520", module: "Full tenant export", format: "JSON", requestedBy: "rahul.verma@acme.com", status: "Running", progress: 64, created: "2026-09-19 07:40", expires: "—", file: null, recurring: false },
+  { id: "exp_5519", module: "Invoices (Finance)", format: "CSV", requestedBy: "anita.rao@acme.com", status: "Expired", progress: 100, created: "2026-08-30 11:15", expires: "2026-09-06", file: null, recurring: false },
+]
+
+export function listExportJobs(): ExportJob[] {
+  const records = read(EXPORT_JOBS_KEY, EXPORT_JOBS_SEED)
+  if (typeof window !== "undefined" && !window.localStorage.getItem(EXPORT_JOBS_KEY)) {
+    write(EXPORT_JOBS_KEY, records)
+  }
+  return records
+}
+
+export function startExportJob(input: { module: string; format: string; recurring: boolean }) {
+  const now = new Date()
+  const created = now.toISOString().slice(0, 16).replace("T", " ")
+  const record: ExportJob = {
+    id: `exp_${Date.now().toString(36)}`,
+    module: input.module,
+    format: input.format,
+    requestedBy: "current.user@acme.com",
+    status: "Running",
+    progress: 0,
+    created,
+    expires: "—",
+    file: null,
+    recurring: input.recurring,
+  }
+  write(EXPORT_JOBS_KEY, [record, ...listExportJobs()])
+
+  // Simulate background job progress purely for UI demonstration purposes.
+  if (typeof window !== "undefined") {
+    let progress = 0
+    const tick = () => {
+      progress = Math.min(100, progress + 20 + Math.floor(Math.random() * 20))
+      const jobs = listExportJobs()
+      if (progress >= 100) {
+        const expiresDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+        write(
+          EXPORT_JOBS_KEY,
+          jobs.map((j) =>
+            j.id === record.id
+              ? {
+                  ...j,
+                  status: "Completed" as ExportJobStatus,
+                  progress: 100,
+                  expires: expiresDate,
+                  file: `${input.module.split(" ")[0].toLowerCase()}_${created.slice(0, 10)}.${input.format.toLowerCase() === "excel" ? "xlsx" : input.format.toLowerCase()}`,
+                }
+              : j,
+          ),
+        )
+      } else {
+        write(EXPORT_JOBS_KEY, jobs.map((j) => (j.id === record.id ? { ...j, progress } : j)))
+        window.setTimeout(tick, 900)
+      }
+    }
+    window.setTimeout(tick, 900)
+  }
+
+  return record
+}
+
+// ---------------------------------------------------------------------------
+// Import jobs (Spec 74)
+// ---------------------------------------------------------------------------
+
+export type ImportJobStatus = "Completed" | "Completed with errors" | "Failed — invalid headers"
+
+export type ImportJob = {
+  id: string
+  module: string
+  file: string
+  success: number
+  failed: number
+  skipped: number
+  status: ImportJobStatus
+  when: string
+}
+
+const IMPORT_JOBS_KEY = "muenot.governance.import-jobs.v1"
+const IMPORT_JOBS_SEED: ImportJob[] = [
+  { id: "imp_1042", module: "Employees (HR)", file: "hr_employees_sep.csv", success: 118, failed: 3, skipped: 2, status: "Completed with errors", when: "2026-09-18 09:12" },
+  { id: "imp_1041", module: "Chart of accounts (Finance)", file: "coa_v3.xlsx", success: 86, failed: 0, skipped: 0, status: "Completed", when: "2026-09-16 14:40" },
+  { id: "imp_1040", module: "Leads (Sales)", file: "leads_q3.csv", success: 0, failed: 0, skipped: 0, status: "Failed — invalid headers", when: "2026-09-14 11:03" },
+]
+
+export function listImportJobs(): ImportJob[] {
+  const records = read(IMPORT_JOBS_KEY, IMPORT_JOBS_SEED)
+  if (typeof window !== "undefined" && !window.localStorage.getItem(IMPORT_JOBS_KEY)) {
+    write(IMPORT_JOBS_KEY, records)
+  }
+  return records
+}
+
+export function completeImportJob(input: { module: string; file: string; rowCount: number }) {
+  const failed = Math.floor(input.rowCount * 0.02)
+  const skipped = Math.floor(input.rowCount * 0.01)
+  const success = Math.max(0, input.rowCount - failed - skipped)
+  const record: ImportJob = {
+    id: `imp_${Date.now().toString(36)}`,
+    module: input.module,
+    file: input.file,
+    success,
+    failed,
+    skipped,
+    status: failed > 0 ? "Completed with errors" : "Completed",
+    when: new Date().toISOString().slice(0, 16).replace("T", " "),
+  }
+  write(IMPORT_JOBS_KEY, [record, ...listImportJobs()])
+  return record
+}

@@ -215,7 +215,7 @@ async function processWebhook(body: MetaWebhookBody) {
         ? await getWhatsAppIntegrationByPhoneNumberId(phoneNumberId)
         : null
 
-      if (!integration || integration.tenant_id == null || integration.id === 0) {
+      if (!integration || integration.tenant_id == null || integration.id === 0 || (wabaId && integration.waba_id !== wabaId)) {
         // Unknown / unmapped / env-only number: do not attribute it to any
         // tenant. Log it without tenant context and skip. We still answer 200
         // upstream so Meta stops retrying a structurally valid but unowned event.

@@ -10,6 +10,8 @@ import {
 } from "@/lib/whatsapp"
 import { decryptToken } from "@/lib/token-crypto"
 import { getWebhookUrl } from "@/lib/whatsapp-config"
+import { currentTenantId } from "@/lib/tenant-scope"
+import { readMetaRegistration, type RegistrationResult } from "@/lib/whatsapp-registration"
 
 /**
  * Real connection health for the WhatsApp number — NEVER a hardcoded
@@ -25,6 +27,8 @@ export type HealthCheck = {
 }
 
 export type ConnectionHealth = {
+  registration?: RegistrationResult
+  messagingReady?: boolean
   connected: boolean
   overall: "healthy" | "degraded" | "down" | "disconnected"
   integration: ReturnType<typeof toPublicIntegration> | null
@@ -56,7 +60,8 @@ async function webhookStats(): Promise<ConnectionHealth["webhook"]> {
          MAX(CASE WHEN processing_status = 'error' THEN received_at END) AS last_error_at,
          SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN processing_status = 'error' THEN error END ORDER BY received_at DESC SEPARATOR '||'), '||', 1) AS last_error,
          SUM(received_at >= (NOW() - INTERVAL 24 HOUR)) AS events_24h
-       FROM \`marketing_whatsapp_webhook_events\``,
+       FROM \`marketing_whatsapp_webhook_events\` WHERE tenant_id = ?`,
+      [currentTenantId()],
     )
     const r = rows[0]
     return {
@@ -143,24 +148,7 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
       detail: profile.qualityRating ? `Meta reports "${profile.qualityRating}".` : "Not reported by Meta.",
     })
 
-    // Cloud API messaging registration — the real antidote to a silent
-    // (#133010) "Account not registered" at send time. Meta only reports
-    // `status: "CONNECTED"` once the number is actually registered/usable on
-    // the Cloud API. Anything else (or an unreported status) means messaging
-    // is not confirmed and the number likely needs to be registered on the
-    // Cloud API in the Meta app dashboard.
-    const status = (profile.status || "").toUpperCase()
-    checks.push({
-      id: "registration",
-      label: "Cloud API messaging",
-      status: status === "CONNECTED" ? "ok" : status ? "error" : "warn",
-      detail:
-        status === "CONNECTED"
-          ? "Number is registered on the Cloud API and can send/receive messages."
-          : status
-            ? `Meta reports status "${status}" — Cloud API messaging is not registered. Register the number on the Cloud API in your Meta app dashboard, then update the credentials.`
-            : "Meta did not report a registration status. If sending fails with (#133010), register the number on the Cloud API in your Meta app dashboard, then update the credentials.",
-    })
+
   } catch (err) {
     checks.push({
       id: "api",
@@ -169,6 +157,14 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
       detail: (err as Error).message,
     })
   }
+
+  const registration = await readMetaRegistration(integration, true)
+  checks.push({
+    id: "registration", label: "Cloud API messaging",
+    status: registration.cloudApiRegistered ? "ok" : registration.status === "failed" || registration.status === "not_registered" ? "error" : "warn",
+    detail: registration.cloudApiRegistered ? "Cloud API registered / Messaging ready"
+      : registration.errorMessage || (registration.status === "business_verification_pending" ? "Business verification pending in Meta." : "Cloud API registration " + registration.status + ". Use Retry registration in Settings."),
+  })
 
   // 3) Webhook subscription (are we actually going to receive messages?).
   const sub = await getWabaSubscriptionStatus(integration)
@@ -226,6 +222,8 @@ export async function getConnectionHealth(): Promise<ConnectionHealth> {
 
   return {
     connected: phoneOk && tokenReadable,
+    messagingReady: phoneOk && tokenReadable && registration.cloudApiRegistered,
+    registration,
     overall,
     integration: toPublicIntegration(integration as WhatsAppIntegrationRow),
     webhookUrl: getWebhookUrl(),

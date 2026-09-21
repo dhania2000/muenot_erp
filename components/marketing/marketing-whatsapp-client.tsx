@@ -70,7 +70,9 @@ export function MarketingWhatsAppClient() {
   const health = data?.health ?? null
   const caps = data?.caps ?? null
   const role = data?.role ?? "employee"
-  const connected = health?.connected ?? false
+  // A saved connection with registration/health problems must retain access
+  // to diagnostics and Retry registration, not restart Embedded Signup.
+  const connected = Boolean(health?.integration)
 
   return (
     <main className="flex flex-col gap-6 p-6">

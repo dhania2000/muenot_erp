@@ -48,7 +48,7 @@ export function parseGraphError(
   let message = base
 
   if (code === 133010) {
-    message = `${base}. This number is not registered on the WhatsApp Cloud API yet — connect it with "Connect WhatsApp" (Embedded Signup) so Meta registers it for the Cloud API, then try again.`
+    message = `${base}. Cloud API registration is incomplete. Open WhatsApp Settings and use Retry registration with the existing connection.`
   } else if (code === 190) {
     message = `${base}. The access token is invalid or expired — an administrator needs to generate a new permanent System User token.`
   } else if (code === 10 || code === 200 || code === 3) {
@@ -435,10 +435,10 @@ export async function getWhatsAppIntegrationByPhoneNumberId(
 ): Promise<WhatsAppIntegrationRow | null> {
   await ensureWhatsAppTable()
   const rows = await query<WhatsAppIntegrationRow[]>(
-    "SELECT * FROM `marketing_whatsapp_integration` WHERE phone_number_id = ? ORDER BY connected_at DESC LIMIT 1",
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE phone_number_id = ? ORDER BY connected_at DESC LIMIT 2",
     [phoneNumberId],
   )
-  if (rows[0]) return rows[0]
+  if (rows.length === 1) return rows[0]
   return null
 }
 
@@ -478,13 +478,16 @@ async function requestPhoneProfile(
     res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: "no-store",
+      signal: AbortSignal.timeout(15000),
     })
   } catch (err) {
     throw new Error(`Could not reach the WhatsApp API: ${(err as Error).message}`)
   }
   const data = (await res.json().catch(() => ({}))) as RawPhoneProfile
   if (!res.ok || data.error) {
-    throw new Error(data.error?.message || `Graph API returned ${res.status}`)
+    throw Object.assign(new Error(data.error?.message || `Graph API returned ${res.status}`), {
+      unsupportedField: data.error?.code === 100 && /nonexisting field|unknown field/i.test(data.error?.message || ""),
+    })
   }
   return data
 }
@@ -508,7 +511,8 @@ export async function verifyWhatsAppCredentials(input: {
       input.accessToken,
       "display_phone_number,verified_name,quality_rating,platform_type,status",
     )
-  } catch {
+  } catch (error) {
+    if (!(error && typeof error === "object" && "unsupportedField" in error && error.unsupportedField)) throw error
     // Retry with the base fields (covers numbers/versions without the extra
     // platform_type/status fields and re-surfaces a genuine auth error from the
     // second attempt).
@@ -542,6 +546,19 @@ export type ConnectWhatsApp = {
 }
 
 export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
+  const { withWhatsAppLock } = await import("@/lib/whatsapp-registration")
+  return withWhatsAppLock("phone:" + data.phoneNumberId, async () => {
+    await ensureWhatsAppTable()
+    const foreign = await query<{ tenant_id: number }[]>(
+      "SELECT tenant_id FROM marketing_whatsapp_integration WHERE phone_number_id=? AND tenant_id<>? LIMIT 1",
+      [data.phoneNumberId, currentTenantId()],
+    )
+    if (foreign.length) throw new Error("This phone number is already assigned to another workspace.")
+    return saveWhatsAppIntegration(data)
+  })
+}
+
+async function saveWhatsAppIntegration(data: ConnectWhatsApp) {
   await ensureWhatsAppTable()
   // Tenant is derived from the verified session context, never from the caller,
   // and stamped so the row belongs to exactly one tenant. The tenant-scoped
@@ -611,8 +628,8 @@ export function getAppId(): string | null {
 /**
  * Exchanges the short-lived authorization `code` returned by Meta's Embedded
  * Signup popup for a business access token, using the app id + app secret. The
- * WABA and phone number are created/selected and registered on the Cloud API
- * inside Meta's popup during standard onboarding. The returned token is what we
+ * WABA and phone number are created/selected inside Meta's popup. Server-side
+ * finalization must separately register and verify the phone. The returned token is what we
  * store (encrypted) and use for all subsequent Graph API calls.
  */
 export async function exchangeEmbeddedSignupCode(

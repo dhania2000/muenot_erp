@@ -52,9 +52,9 @@ export async function POST(request: Request) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 422 })
     }
-    return NextResponse.json({ connected: true, integration: result.integration, autoConfig: result.autoConfig })
+    return NextResponse.json({ connected: true, integration: result.integration, autoConfig: result.autoConfig, registration: result.registration })
   } catch (err) {
-    console.error("[v0] whatsapp signup callback error:", err)
+    console.error("[whatsapp.signup] Finalization failed; retry using the saved connection if available.")
     return NextResponse.json({ error: "Could not complete WhatsApp connection. Please try again." }, { status: 500 })
   }
 }

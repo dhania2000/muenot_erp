@@ -8,6 +8,8 @@ export type HealthCheck = {
 }
 
 export type ConnectionHealth = {
+  messagingReady?: boolean
+  registration?: { cloudApiRegistered: boolean; status: string; errorCode: string | null; errorMessage: string | null; checkedAt: string }
   connected: boolean
   overall: "healthy" | "degraded" | "down" | "disconnected"
   integration: {

@@ -1,0 +1,4 @@
+-- Additive only: preserves all existing WhatsApp connections and credentials.
+CREATE TABLE IF NOT EXISTS marketing_whatsapp_registration (tenant_id INT UNSIGNED NOT NULL, connection_id INT UNSIGNED NOT NULL, pin_encrypted TEXT NULL, cloud_api_registered BOOLEAN NOT NULL DEFAULT FALSE, registration_status VARCHAR(40) NOT NULL DEFAULT 'pending', registration_error_code VARCHAR(40) NULL, registration_error_message VARCHAR(500) NULL, registration_checked_at DATETIME NULL, PRIMARY KEY (tenant_id,connection_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS marketing_whatsapp_signup_progress (tenant_id INT UNSIGNED NOT NULL, signup_id INT UNSIGNED NOT NULL, exchange_status VARCHAR(32) NOT NULL, token_encrypted TEXT NULL, connection_id INT UNSIGNED NULL, PRIMARY KEY (tenant_id,signup_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

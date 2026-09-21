@@ -187,15 +187,17 @@ export function EmbeddedSignupConnect({
         signal: AbortSignal.timeout(60000),
       })
       const cb = (await cbRes.json().catch(() => ({}))) as {
+        registration?: { cloudApiRegistered: boolean; errorMessage?: string | null }
         error?: string
         autoConfig?: { webhookSubscribed: boolean; templatesSynced: number }
       }
       if (!cbRes.ok) throw new Error(cb.error || "Could not complete the WhatsApp connection.")
 
-      const parts = ["WhatsApp Business connected"]
+      const parts = [cb.registration?.cloudApiRegistered ? "Cloud API registered / Messaging ready" : "Connected to Meta · registration needs verification"]
       if (cb.autoConfig?.webhookSubscribed) parts.push("webhook subscribed")
       if (cb.autoConfig?.templatesSynced) parts.push(`${cb.autoConfig.templatesSynced} templates synced`)
       toast.success(parts.join(" · "))
+      if (cb.registration?.errorMessage) toast.warning(cb.registration.errorMessage)
       onConnected()
     } catch (err) {
       setHint((err as Error).message)

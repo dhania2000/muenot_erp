@@ -14,7 +14,9 @@ const MAP = {
 
 /** Real-time connection pill derived from the live health probe. */
 export function WhatsAppConnectionBadge({ health }: { health: ConnectionHealth }) {
-  const state = MAP[health.overall] ?? MAP.disconnected
+  const state = health.integration && !health.messagingReady
+    ? { ...MAP.degraded, label: health.registration?.status === "failed" ? "Registration failed" : health.registration?.status === "business_verification_pending" ? "Business verification pending" : "Connected to Meta · setup pending" }
+    : MAP[health.overall] ?? MAP.disconnected
   const Icon = state.icon
   return (
     <Badge className={cn("gap-1.5 px-3 py-1 text-xs", state.className)}>

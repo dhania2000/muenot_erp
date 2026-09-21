@@ -63,7 +63,8 @@ function connectionBadge(health: ConnectionHealth | null) {
   const registration = health?.checks.find((c) => c.id === "registration")
 
   if (registration?.status === "ok") {
-    return { label: "Cloud API connected", icon: ShieldCheck, className: "border-transparent bg-[#25D366] text-white" }
+    if (!health?.messagingReady) return { label: "Cloud API registered · API unavailable", icon: ShieldAlert, className: "border-transparent bg-amber-500 text-white" }
+    return { label: "Cloud API registered / Messaging ready", icon: ShieldCheck, className: "border-transparent bg-[#25D366] text-white" }
   }
   if (registration?.status === "error") {
     return { label: "Cloud API not registered", icon: ShieldAlert, className: "border-transparent bg-amber-500 text-white" }
@@ -81,6 +82,24 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
     fetcher,
   )
   const [disconnecting, setDisconnecting] = React.useState(false)
+  const [registering, setRegistering] = React.useState(false)
+  const [registrationPin, setRegistrationPin] = React.useState("")
+
+  async function retryRegistration() {
+    if (!data?.integration) return
+    setRegistering(true)
+    try {
+      const response = await fetch("/api/marketing/whatsapp/registration", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionId: data.integration.id, ...(registrationPin ? { pin: registrationPin } : {}) }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      if (result.registration.cloudApiRegistered) toast.success("Cloud API registered / Messaging ready")
+      else toast.error(result.registration.errorMessage || "Registration is still pending. Check the refreshed status.")
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Registration could not be completed.") }
+    finally { setRegistrationPin(""); setRegistering(false); refreshAll() }
+  }
 
   const isAdmin = role === "admin"
   const integration = data?.integration ?? null
@@ -115,7 +134,7 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
   const BadgeIcon = badge.icon
   const registration = health?.checks.find((c) => c.id === "registration")
   const subscription = health?.checks.find((c) => c.id === "subscription")
-  const needsOnboarding = badge.label !== "Cloud API connected"
+  const needsOnboarding = !health?.registration?.cloudApiRegistered
 
   return (
     <div className="flex flex-col gap-6">
@@ -168,9 +187,16 @@ export function SettingsTab({ role, onChanged }: { role: "admin" | "employee"; o
                   : "Cloud API messaging is not confirmed yet."}
               </p>
               <p className="mt-1 text-xs text-muted-foreground text-pretty">
-                Make sure the number is registered on the WhatsApp Cloud API in your Meta app dashboard, then update
-                the credentials below so the ERP can send and receive messages.
+                {health?.registration?.errorMessage || "Connected to Meta. Finalize Cloud API registration using the saved connection; another signup is not required."}
               </p>
+              {isAdmin && <div className="mt-3 space-y-2">
+                <Label htmlFor="wa-registration-pin">Existing two-step verification PIN (only if already set)</Label>
+                <Input id="wa-registration-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={6} value={registrationPin} onChange={event => setRegistrationPin(event.target.value.replace(/\D/g, ""))} />
+                <p className="text-xs text-muted-foreground">Leave blank for a new number. A unique PIN is generated and encrypted on the server; it is never returned here.</p>
+                <Button disabled={registering || (registrationPin.length > 0 && registrationPin.length !== 6)} onClick={retryRegistration}>
+                  {registering ? "Registering…" : "Retry registration"}
+                </Button>
+              </div>}
             </div>
           ) : null}
 

@@ -15,6 +15,9 @@ import {
   type WhatsAppIntegrationPublic,
 } from "@/lib/whatsapp"
 import { syncTemplatesFromMeta } from "@/lib/whatsapp-templates"
+import { decryptToken, encryptToken } from "@/lib/token-crypto"
+import { ensureRegistrationSchema, finalizeWhatsAppRegistration, readMetaRegistration, withWhatsAppLock, type RegistrationResult } from "@/lib/whatsapp-registration"
+import { getWabaSubscriptionStatus } from "@/lib/whatsapp"
 
 /**
  * Secure WhatsApp Business "Embedded Signup" onboarding.
@@ -213,7 +216,7 @@ export async function createWhatsAppSignupSessionForSystemAdmin(userId: number):
  */
 export async function resolveTenantFromSignupState(
   state: string,
-): Promise<{ id: number; tenantId: number; userId: number | null } | null> {
+): Promise<{ id: number; tenantId: number; userId: number | null; status: string; wabaId: string | null; phoneNumberId: string | null } | null> {
   const clean = state?.trim()
   if (!clean) return null
   await ensureSignupTable()
@@ -224,12 +227,12 @@ export async function resolveTenantFromSignupState(
   )
   const row = rows[0]
   if (!row) return null
-  if (row.status !== "pending") return null
-  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+  if (row.status !== "pending" && row.status !== "completed") return null
+  if (row.status !== "completed" && row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
     await query("UPDATE `marketing_whatsapp_signup_sessions` SET `status` = 'expired' WHERE `id` = ?", [row.id])
     return null
   }
-  return { id: row.id, tenantId: row.tenant_id, userId: row.user_id }
+  return { id: row.id, tenantId: row.tenant_id, userId: row.user_id, status: row.status, wabaId: row.waba_id, phoneNumberId: row.phone_number_id }
 }
 
 async function markSignupSession(
@@ -248,6 +251,7 @@ async function markSignupSession(
 
 export type ConnectResult = {
   ok: boolean
+  registration?: RegistrationResult
   error?: string
   integration?: WhatsAppIntegrationPublic
   autoConfig?: {
@@ -308,7 +312,10 @@ export async function connectWhatsAppBusinessAccount(input: {
     connectedByUserId: input.userId,
   })
 
-  const row = await getWhatsAppIntegration()
+  const [row] = await query<import("@/lib/whatsapp").WhatsAppIntegrationRow[]>(
+    "SELECT * FROM marketing_whatsapp_integration WHERE tenant_id=? AND phone_number_id=? LIMIT 1",
+    [currentTenantId(), phoneNumberId],
+  )
   if (!row) {
     return { ok: false, error: "The integration was saved but could not be read back." }
   }
@@ -317,25 +324,28 @@ export async function connectWhatsAppBusinessAccount(input: {
   let webhookSubscribed = false
   let webhookError: string | undefined
   try {
-    const sub = await subscribeWabaWebhook(row)
+    const existing = await getWabaSubscriptionStatus(row)
+    const sub = existing.ok && existing.subscribed ? { ok: true } : await subscribeWabaWebhook(row)
     webhookSubscribed = sub.ok
-    if (!sub.ok) webhookError = sub.error
+    if (!sub.ok) webhookError = "Webhook subscription could not be completed."
   } catch (err) {
-    webhookError = (err as Error).message
+    webhookError = "Webhook subscription could not be completed."
   }
 
+  const registration = await finalizeWhatsAppRegistration(currentTenantId(), Number(row.id))
   let templatesSynced = 0
   let templatesError: string | undefined
   try {
     const synced = await syncTemplatesFromMeta(row)
     if (synced.ok) templatesSynced = synced.total
-    else templatesError = synced.error
+    else templatesError = "Template sync could not be completed."
   } catch (err) {
-    templatesError = (err as Error).message
+    templatesError = "Template sync could not be completed."
   }
 
   return {
     ok: true,
+    registration,
     integration: toPublicIntegration(row),
     autoConfig: { webhookSubscribed, webhookError, templatesSynced, templatesError },
   }
@@ -349,7 +359,7 @@ export async function connectWhatsAppBusinessAccount(input: {
  * present) is cross-checked so a signed-in user of tenant A can never redeem a
  * state started by tenant B.
  */
-export async function handleWhatsAppSignupCallback(input: {
+type SignupCallbackInput = {
   state: string
   code: string
   wabaId: string
@@ -357,7 +367,13 @@ export async function handleWhatsAppSignupCallback(input: {
   businessId?: string | null
   expectedTenantId?: number | null
   expectedUserId?: number | null
-}): Promise<ConnectResult> {
+}
+export async function handleWhatsAppSignupCallback(input: SignupCallbackInput): Promise<ConnectResult> {
+  await ensureRegistrationSchema()
+  return withWhatsAppLock("signup:" + input.state, () => finalizeSignupCallback(input))
+}
+
+async function finalizeSignupCallback(input: SignupCallbackInput): Promise<ConnectResult> {
   const resolved = await resolveTenantFromSignupState(input.state)
   if (!resolved) {
     return { ok: false, error: "This WhatsApp signup link has expired or is invalid. Please start again." }
@@ -370,24 +386,43 @@ export async function handleWhatsAppSignupCallback(input: {
     return { ok: false, error: "This WhatsApp signup was started by another administrator." }
   }
 
+  if (resolved.status === "completed") {
+    if (resolved.wabaId !== input.wabaId || resolved.phoneNumberId !== input.phoneNumberId) {
+      return { ok: false, error: "Signup details do not match the completed connection." }
+    }
+    const [row] = await query<import("@/lib/whatsapp").WhatsAppIntegrationRow[]>(
+      "SELECT * FROM marketing_whatsapp_integration WHERE tenant_id=? AND phone_number_id=? AND waba_id=? LIMIT 1",
+      [resolved.tenantId, resolved.phoneNumberId, resolved.wabaId],
+    )
+    if (!row) return { ok: false, error: "Connection no longer exists. Start a new signup only if you want to reconnect it." }
+    return { ok: true, integration: toPublicIntegration(row), registration: await readMetaRegistration(row) }
+  }
+
   const code = input.code?.trim()
   if (!code) {
     await markSignupSession(resolved.id, "failed", { error: "Missing authorization code." })
     return { ok: false, error: "Meta did not return an authorization code. Please try connecting again." }
   }
 
-  const exchange = await exchangeEmbeddedSignupCode(code)
-  if (!exchange.ok || !exchange.accessToken) {
-    const error = exchange.error || "Could not exchange the authorization code for an access token."
-    await markSignupSession(resolved.id, "failed", { error })
-    return { ok: false, error }
+  const [progress] = await query<any[]>("SELECT * FROM marketing_whatsapp_signup_progress WHERE tenant_id=? AND signup_id=?", [resolved.tenantId, resolved.id])
+  let accessToken = decryptToken(progress?.token_encrypted)
+  if (!accessToken) {
+    if (progress) return { ok: false, error: "The previous authorization exchange could not be confirmed. Check the saved connection; reauthorization may be required." }
+    if (!process.env.SETTINGS_ENCRYPTION_KEY) return { ok: false, error: "Configure secure credential storage before finalizing signup." }
+    await query("INSERT INTO marketing_whatsapp_signup_progress (tenant_id,signup_id,exchange_status) VALUES (?,?,'exchanging')", [resolved.tenantId, resolved.id])
+    const exchange = await exchangeEmbeddedSignupCode(code)
+    if (!exchange.ok || !exchange.accessToken) {
+      return { ok: false, error: "Meta authorization exchange failed. Check the app configuration and retry authorization if necessary." }
+    }
+    accessToken = exchange.accessToken
+    await query("UPDATE marketing_whatsapp_signup_progress SET exchange_status='exchanged',token_encrypted=? WHERE tenant_id=? AND signup_id=?", [encryptToken(accessToken), resolved.tenantId, resolved.id])
   }
 
   // Enter the resolved tenant's context so upsert/subscribe/sync are all scoped.
   const result = await runForTenant({ tenantId: resolved.tenantId }, () =>
     connectWhatsAppBusinessAccount({
       userId: resolved.userId,
-      accessToken: exchange.accessToken as string,
+      accessToken: accessToken as string,
       wabaId: input.wabaId,
       phoneNumberId: input.phoneNumberId,
       businessId: input.businessId ?? null,
@@ -400,6 +435,7 @@ export async function handleWhatsAppSignupCallback(input: {
     businessId: input.businessId ?? null,
     error: result.ok ? null : result.error ?? "Connection failed.",
   })
+  if (result.ok) await query("UPDATE marketing_whatsapp_signup_progress SET exchange_status='completed',token_encrypted=NULL,connection_id=? WHERE tenant_id=? AND signup_id=?", [result.integration?.id, resolved.tenantId, resolved.id])
 
   return result
 }

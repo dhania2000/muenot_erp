@@ -118,6 +118,8 @@ export const TENANT_OWNED_TABLES = [
   // Each tenant connects its own WhatsApp Business number(s); every row below
   // belongs to exactly one tenant and must never be visible to another.
   "marketing_whatsapp_integration",
+  "marketing_whatsapp_registration",
+  "marketing_whatsapp_signup_progress",
   "marketing_whatsapp_contacts",
   "marketing_whatsapp_conversations",
   "marketing_whatsapp_messages",

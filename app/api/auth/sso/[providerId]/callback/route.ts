@@ -42,7 +42,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ prov
 
   if (errorParam) return fail(request, "denied")
   if (!provider || provider.type !== "oidc" || provider.status !== "enabled") return fail(request, "unavailable")
-  if (!code || !state || !savedState || savedState.state !== state || savedState.providerId !== provider.id) {
+  if (!code || !state || !savedState || savedState.protocol === "saml" || savedState.state !== state || savedState.providerId !== provider.id || !savedState.codeVerifier) {
     return fail(request, "state_mismatch")
   }
 

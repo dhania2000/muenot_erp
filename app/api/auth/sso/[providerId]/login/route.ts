@@ -14,6 +14,7 @@ function requestOrigin(request: Request): string {
 export async function GET(request: Request, { params }: { params: Promise<{ providerId: string }> }) {
   const { providerId } = await params
   const provider = await getProviderById(Number(providerId))
+  if (provider?.type === "saml") return NextResponse.redirect(new URL(`/api/auth/sso/${provider.id}/saml/login`, requestOrigin(request)))
   if (!provider || provider.type !== "oidc" || provider.status !== "enabled") {
     return NextResponse.redirect(new URL("/login?sso_error=unavailable", requestOrigin(request)))
   }

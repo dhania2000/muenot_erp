@@ -82,3 +82,8 @@ CREATE TABLE IF NOT EXISTS `sso_identities` (
   PRIMARY KEY (`id`), UNIQUE KEY `uniq_sso_identity_subject` (`provider_id`,`subject`),
   UNIQUE KEY `uniq_sso_identity_user` (`provider_id`,`user_id`), KEY `idx_sso_identity_tenant` (`tenant_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `sso_saml_requests` (
+  `request_id` VARCHAR(255) NOT NULL, `provider_id` INT UNSIGNED NOT NULL, `request_xml` MEDIUMTEXT NOT NULL, `expires_at` DATETIME NOT NULL,
+  PRIMARY KEY (`request_id`), KEY `idx_sso_saml_request_expiry` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

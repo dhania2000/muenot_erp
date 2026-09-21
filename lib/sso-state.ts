@@ -18,9 +18,10 @@ function getSecretKey() {
 
 export type SsoStatePayload = {
   providerId: number
+  protocol?: "oidc" | "saml"
   state: string
   nonce: string
-  codeVerifier: string
+  codeVerifier?: string
   redirectTo: string
 }
 
@@ -48,7 +49,8 @@ export async function consumeSsoState(): Promise<SsoStatePayload | null> {
   try {
     const { payload } = await jwtVerify(token, getSecretKey())
     const state = payload as unknown as SsoStatePayload
-    if (!Number.isSafeInteger(state.providerId) || !state.state || !state.nonce || !/^[A-Za-z0-9_-]{43,128}$/.test(state.codeVerifier || "")) return null
+    if (!Number.isSafeInteger(state.providerId) || !state.state || !state.nonce) return null
+    if ((state.protocol ?? "oidc") === "oidc" && !/^[A-Za-z0-9_-]{43,128}$/.test(state.codeVerifier || "")) return null
     return state
   } catch {
     return null

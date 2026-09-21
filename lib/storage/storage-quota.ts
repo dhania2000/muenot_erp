@@ -4,6 +4,9 @@ import { currentTenantId, scopedWhere, tenantInsert, tenantUpdate } from "@/lib/
 import { getTenantEntitlements } from "@/lib/platform/entitlement-guard"
 import { isUnlimited, type Quota } from "@/lib/platform/entitlements"
 import { getStorageUsage } from "./file-metadata"
+import { BYTES_PER_GB, bytesToGb, formatBytes, gbToBytes } from "./format"
+
+export { BYTES_PER_GB, bytesToGb, formatBytes, gbToBytes } from "./format"
 
 /**
  * SPEC 35 — Tenant storage quotas.
@@ -32,9 +35,6 @@ import { getStorageUsage } from "./file-metadata"
  */
 
 const TABLE = "storage_quota_settings"
-
-/** Bytes in one gibibyte — the unit plan quotas are expressed in. */
-export const BYTES_PER_GB = 1024 * 1024 * 1024
 
 /** Default percent-of-quota at which a tenant is warned. */
 export const DEFAULT_WARN_THRESHOLD = 80
@@ -67,14 +67,6 @@ export const DEFAULT_QUOTA_SETTINGS: QuotaSettings = {
 }
 
 export type QuotaStatus = "ok" | "warning" | "over" | "unlimited"
-
-/** GB ⇄ bytes helpers (quotas are authored in GB, stored/compared in bytes). */
-export function gbToBytes(gb: number): number {
-  return Math.max(0, Math.floor(gb * BYTES_PER_GB))
-}
-export function bytesToGb(bytes: number): number {
-  return bytes / BYTES_PER_GB
-}
 
 /** Clamp an arbitrary warning threshold into a sane 1–100 percent. */
 export function normalizeWarnThreshold(value: unknown): number {
@@ -193,16 +185,6 @@ export function decideUpload(
           ? "Upload allowed; storage is nearing its quota."
           : "Within quota",
   }
-}
-
-/** Compact human-readable byte size for messages/dashboards. */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B"
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"]
-  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
-  const value = bytes / Math.pow(1024, i)
-  const rounded = value >= 100 || i === 0 ? Math.round(value) : Number(value.toFixed(1))
-  return `${rounded} ${units[i]}`
 }
 
 // ---------------------------------------------------------------------------

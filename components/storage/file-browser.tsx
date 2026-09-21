@@ -16,7 +16,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { EmptyState } from "@/components/security/security-ui"
 import { FileDetailDrawer, type BrowserFile } from "@/components/storage/file-detail-drawer"
-import { formatBytes } from "@/lib/storage"
+import { formatBytes } from "@/lib/storage/format"
 
 async function fetcher<T>(url: string): Promise<T> {
   const res = await fetch(url)

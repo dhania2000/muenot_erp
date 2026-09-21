@@ -13,9 +13,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Loader2, RotateCcw, ShieldCheck } from "lucide-react"
-import { formatBytes, type FileObject } from "@/lib/storage"
+import { formatBytes } from "@/lib/storage/format"
+import type { StorageFile } from "@/lib/storage/client-types"
 
-export type BrowserFile = FileObject & {
+export type BrowserFile = StorageFile & {
   ownerName: string | null
   scanStatus: string
   safety: string
@@ -64,7 +65,7 @@ export function FileDetailDrawer({
   }, [file?.id])
 
   const { data: versions, isLoading: versionsLoading } = useSWR<{
-    versions: (FileObject & { uploadedByName: string | null })[]
+    versions: (StorageFile & { uploadedByName: string | null })[]
     audit: { id: number; version: number; action: string; detail: string | null; userName: string | null; createdAt: string | null }[]
   }>(file ? `/api/storage/versions/${file.id}` : null, fetcher, { revalidateOnFocus: false })
 

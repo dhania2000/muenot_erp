@@ -19,7 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { formatBytes, bytesToGb } from "@/lib/storage"
+import { formatBytes, bytesToGb } from "@/lib/storage/format"
 
 async function fetcher<T>(url: string): Promise<T> {
   const res = await fetch(url)

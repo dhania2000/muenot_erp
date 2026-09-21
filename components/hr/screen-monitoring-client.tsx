@@ -1070,7 +1070,7 @@ function SessionDetailDialog({
               <img
                 src={`/api/hr/screen-monitoring/screenshot/file?id=${encodeURIComponent(preview.screenshot_id)}`}
                 alt={`Capture ${preview.capture_sequence}`}
-                className="w-full rounded-md border bg-muted"
+                className="max-h-[75vh] w-full rounded-md border bg-muted object-contain"
               />
               <DialogFooter className="gap-2 sm:justify-between">
                 {isAdmin ? (

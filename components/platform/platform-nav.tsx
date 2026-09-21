@@ -22,6 +22,10 @@ import {
   LifeBuoy,
   Database,
   Zap,
+  Clock3,
+  Cpu,
+  ListChecks,
+  BellRing,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -36,6 +40,10 @@ const NAV: NavItem[] = [
   { href: "/platform/subscriptions", label: "Subscriptions & billing", icon: CreditCard, group: "Operate" },
   { href: "/platform/usage", label: "Usage & storage", icon: Gauge, group: "Operate" },
   { href: "/platform/health", label: "Health & jobs", icon: Activity, group: "Observe" },
+  { href: "/platform/cron-jobs", label: "Scheduled jobs", icon: Clock3, group: "Observe" },
+  { href: "/platform/scheduler", label: "Central scheduler", icon: Cpu, group: "Observe" },
+  { href: "/platform/background-jobs", label: "Background jobs & retries", icon: ListChecks, group: "Observe" },
+  { href: "/platform/job-monitoring", label: "Job monitoring & alerts", icon: BellRing, group: "Observe" },
   { href: "/platform/security", label: "Security & audit", icon: ShieldAlert, group: "Observe" },
   { href: "/platform/operations/backups", label: "Backups", icon: Archive, group: "Observe" },
   { href: "/platform/operations/disaster-recovery", label: "Disaster recovery", icon: LifeBuoy, group: "Observe" },

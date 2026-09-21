@@ -13,9 +13,15 @@ export default async function Page() {
       <StorageConnections />
       <StorageHealthPanel />
       <StorageMigrationPanel />
-      <StorageRetentionPanel />
-      <LargeUploadsPanel />
-      <FileVersionsPanel />
+      <section id="retention" className="scroll-mt-6">
+        <StorageRetentionPanel />
+      </section>
+      <section id="large-uploads" className="scroll-mt-6">
+        <LargeUploadsPanel />
+      </section>
+      <section id="file-versions" className="scroll-mt-6">
+        <FileVersionsPanel />
+      </section>
     </div>
   )
 }

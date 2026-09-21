@@ -368,10 +368,11 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   // SPEC 7 — Multi-entity: the legal-entity registry (separate tax/bank/books).
   { label: "Legal entities", href: "/modules/finance/legal-entities" },
   { label: "Employee Links", href: "/admin/employee-links" },
+  { label: "Job monitoring", href: "/admin/job-monitoring" },
   { label: "Settings", href: "/admin/settings" },
 ]
 
-// SPECS 46–50 — The Automation Center groups the existing workflow engine with
+// SPECS 46–49 — The Automation Center groups the existing workflow engine with
 // the event, notification and email monitoring surfaces under one admin area so
 // automation is not scattered. Every entry is an existing, real-data-backed
 // admin page; nothing here creates a second engine.
@@ -400,6 +401,7 @@ export const SECURITY_CHILDREN: NavChild[] = [
   { label: "Temporary access", href: "/admin/security/temporary-access" },
   { label: "Emergency access", href: "/admin/security/emergency-access" },
   { label: "Access reviews", href: "/admin/security/access-reviews" },
+  { label: "API & webhooks", href: "/admin/security/api-webhooks" },
 ]
 
 // SPECS 67–74 — Data governance groups the central tenant audit log,

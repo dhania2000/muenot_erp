@@ -1,6 +1,7 @@
 import { Lock, ShieldCheck } from "lucide-react"
-import { SecurityHeading, FieldSpec, FieldSpecGrid } from "@/components/security/security-ui"
+import { SecurityHeading } from "@/components/security/security-ui"
 import { BackendStatus } from "@/components/security/backend-status"
+import { AccessPolicyBuilder } from "@/components/security/access-policy-builder"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 
@@ -86,22 +87,7 @@ export default function AccessPoliciesPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Custom policy builder</CardTitle>
-          <CardDescription>Spec 63 — not yet available. Access beyond the fixed roles above is not configurable.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FieldSpecGrid>
-            <FieldSpec label="Policy name" />
-            <FieldSpec label="Applies to role(s)" />
-            <FieldSpec label="Resource / module" />
-            <FieldSpec label="Condition" hint="e.g. record.department = user.department" />
-            <FieldSpec label="Effect" hint="Allow or deny" />
-            <FieldSpec label="Time window" hint="e.g. business hours only" />
-          </FieldSpecGrid>
-        </CardContent>
-      </Card>
+      <AccessPolicyBuilder />
     </div>
   )
 }

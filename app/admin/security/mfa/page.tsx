@@ -1,8 +1,9 @@
-import { ShieldCheck, Users } from "lucide-react"
+import { Users } from "lucide-react"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { listLifecycleUsers } from "@/lib/user-lifecycle"
-import { SecurityHeading, FieldSpec, FieldSpecGrid } from "@/components/security/security-ui"
+import { SecurityHeading } from "@/components/security/security-ui"
 import { BackendStatus } from "@/components/security/backend-status"
+import { MfaPolicyEditor } from "@/components/security/mfa-policy-editor"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -98,25 +99,7 @@ export default async function MfaPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="size-4 text-muted-foreground" />
-            <CardTitle className="text-base">Tenant MFA policy</CardTitle>
-          </div>
-          <CardDescription>Spec 59 — not yet enforced at login. Shown for the policy layer to come.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FieldSpecGrid>
-            <FieldSpec label="Require MFA for all users" />
-            <FieldSpec label="Require MFA for admins only" />
-            <FieldSpec label="Grace period before enforcement" hint="e.g. 14 days" />
-            <FieldSpec label="Exempted users" />
-            <FieldSpec label="Allowed methods" hint="TOTP, backup codes" />
-            <FieldSpec label="Backup codes remaining per user" />
-          </FieldSpecGrid>
-        </CardContent>
-      </Card>
+      <MfaPolicyEditor />
     </div>
   )
 }

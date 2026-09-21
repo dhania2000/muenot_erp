@@ -1,8 +1,8 @@
-import { KeyRound } from "lucide-react"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { listLifecycleUsers } from "@/lib/user-lifecycle"
-import { SecurityHeading, FieldSpec, FieldSpecGrid } from "@/components/security/security-ui"
+import { SecurityHeading } from "@/components/security/security-ui"
 import { BackendStatus } from "@/components/security/backend-status"
+import { PasswordPolicyEditor } from "@/components/security/password-policy-editor"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 
 export const dynamic = "force-dynamic"
@@ -49,28 +49,7 @@ export default async function PasswordPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <KeyRound className="size-4 text-muted-foreground" />
-            <CardTitle className="text-base">Password policy</CardTitle>
-          </div>
-          <CardDescription>Spec 60 — not yet enforced at sign-in or sign-up.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FieldSpecGrid>
-            <FieldSpec label="Minimum length" />
-            <FieldSpec label="Require upper &amp; lower case" />
-            <FieldSpec label="Require a number" />
-            <FieldSpec label="Require a symbol" />
-            <FieldSpec label="Expiry period" hint="e.g. 90 days" />
-            <FieldSpec label="Reuse history" hint="e.g. last 5 passwords" />
-            <FieldSpec label="Failed attempt lockout threshold" />
-            <FieldSpec label="Lockout duration" />
-            <FieldSpec label="Temporary password expiry" hint="Currently: none — set at reset time" />
-          </FieldSpecGrid>
-        </CardContent>
-      </Card>
+      <PasswordPolicyEditor />
     </div>
   )
 }

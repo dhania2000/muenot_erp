@@ -1,9 +1,9 @@
-import { ClipboardCheck, Users } from "lucide-react"
+import { Users } from "lucide-react"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { listLifecycleUsers } from "@/lib/user-lifecycle"
-import { SecurityHeading, EmptyState, FieldSpec, FieldSpecGrid } from "@/components/security/security-ui"
+import { SecurityHeading, EmptyState } from "@/components/security/security-ui"
 import { BackendStatus } from "@/components/security/backend-status"
-import { Button } from "@/components/ui/button"
+import { AccessReviewCampaigns } from "@/components/security/access-review-campaigns"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
@@ -87,11 +87,7 @@ export default async function AccessReviewsPage() {
                           {u.tenantRole}
                         </Badge>
                       </TableCell>
-                      <TableCell>
-                        <Button variant="outline" size="sm" disabled>
-                          Certify / revoke
-                        </Button>
-                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">Add to a campaign below</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -101,25 +97,9 @@ export default async function AccessReviewsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <ClipboardCheck className="size-4 text-muted-foreground" />
-            <CardTitle className="text-base">Review campaign</CardTitle>
-          </div>
-          <CardDescription>Spec 66 — not yet available.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FieldSpecGrid>
-            <FieldSpec label="Campaign name" />
-            <FieldSpec label="Reviewer" />
-            <FieldSpec label="Due date" />
-            <FieldSpec label="Recurrence" hint="e.g. quarterly" />
-            <FieldSpec label="Scope" hint="All users, elevated only, or by department" />
-            <FieldSpec label="Overdue escalation" />
-          </FieldSpecGrid>
-        </CardContent>
-      </Card>
+      <AccessReviewCampaigns
+        candidates={elevated.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.tenantRole }))}
+      />
     </div>
   )
 }

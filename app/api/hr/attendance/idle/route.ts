@@ -4,17 +4,23 @@ import { getSession } from "@/lib/auth"
 import { ensureAttendanceSchema, getTimeZone } from "@/lib/hr-attendance"
 
 // ---------------------------------------------------------------------------
-// Idle-time reporting for the currently clocked-in employee.
+// Non-work time reporting for the currently clocked-in employee.
 //
-// The clock widget reports a continuous away-from-screen period (screen off,
-// window minimised, or another app in focus) once it exceeds the grace window.
-// We accumulate that into `idle_minutes` on today's OPEN attendance row. At
-// clock-out the clock route subtracts it from worked hours and adds it to the
-// break total, so long idle stretches never count as attendance.
+// Two client sources feed this endpoint, both reporting minutes that must be
+// treated as break rather than attendance:
+//   1. Inactivity — every minute past the 15-minute no-activity grace window
+//      (the idle tracker already subtracts the grace before reporting).
+//   2. Screen not shared — while the employee has not shared their entire
+//      screen (permission denied or sharing stopped) the whole elapsed time is
+//      reported (no grace), because unmonitored time never counts as work.
+//
+// We accumulate the reported minutes into `idle_minutes` on today's OPEN
+// attendance row. At clock-out the clock route subtracts it from worked hours
+// and adds it to the break total, so this time never counts as attendance.
 // ---------------------------------------------------------------------------
 
-/** Only away periods longer than this (minutes) are reported and reclassified. */
-const IDLE_GRACE_MINUTES = 10
+/** Reports below this (minutes) are noise and ignored — the client pre-graces. */
+const MIN_REPORT_MINUTES = 1
 /** Defensive cap so a single report can never poison the row. */
 const MAX_SINGLE_REPORT_MINUTES = 16 * 60
 
@@ -43,7 +49,7 @@ export async function POST(request: Request) {
       // ignore — validated below
     }
     const minutes = Number(body.minutes)
-    if (!Number.isFinite(minutes) || minutes < IDLE_GRACE_MINUTES) {
+    if (!Number.isFinite(minutes) || minutes < MIN_REPORT_MINUTES) {
       return NextResponse.json({ ok: true, skipped: true })
     }
     const capped = Math.min(Math.round(minutes), MAX_SINGLE_REPORT_MINUTES)

@@ -10,6 +10,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 
 // SPEC 75 — Platform Backup Operations (UI). Honest NOT CONFIGURED state
 // until an infrastructure backup provider is wired up — no fabricated
@@ -80,10 +89,39 @@ export default function BackupsPage() {
           <p className="text-sm text-muted-foreground">
             Connect a backup provider to start tracking real backup history for this platform.
           </p>
-          <Button size="sm" variant="outline" className="gap-1.5 shrink-0">
-            <Settings2 className="size-3.5" />
-            Configure provider
-          </Button>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button size="sm" variant="outline" className="gap-1.5 shrink-0">
+                <Settings2 className="size-3.5" />
+                Configure provider
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Connect a backup provider</DialogTitle>
+                <DialogDescription>
+                  Backup history shown here reflects a real infrastructure provider once connected — this screen
+                  will never fabricate success records.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-3 text-sm text-muted-foreground">
+                <p>
+                  Database, file storage, and configuration backups are provisioned at the infrastructure level
+                  (e.g. your hosting provider or database provider&apos;s native backup/point-in-time-restore
+                  feature), not inside this application.
+                </p>
+                <p>
+                  To enable this page, connect the provider in your project&apos;s integration settings so its
+                  backup status, retention, and restore-test history can be reported here.
+                </p>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" size="sm" asChild>
+                  <a href="/platform">Back to platform settings</a>
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
     </div>

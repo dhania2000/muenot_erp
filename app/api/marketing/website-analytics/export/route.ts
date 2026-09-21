@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { requireFeature } from "@/lib/api-auth"
+import { recordAudit } from "@/lib/sales/lead-lifecycle"
 import {
   ensureWebsiteAnalyticsSchema,
   getPropertyById,
@@ -7,21 +8,18 @@ import {
   getAnalytics,
   resolveRange,
 } from "@/lib/marketing/website-analytics-db"
+import {
+  analyticsToCsv,
+  analyticsToXlsx,
+  analyticsToPdf,
+  datasetLabel,
+  EXPORT_DATASETS,
+  type ExportDataset,
+  type ExportFormat,
+} from "@/lib/marketing/website-analytics-export"
 
+export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-
-function csvCell(v: unknown): string {
-  const s = v == null ? "" : String(v)
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-}
-
-function toCsv(rows: Record<string, unknown>[]): string {
-  if (!rows.length) return ""
-  const headers = Object.keys(rows[0])
-  const lines = [headers.join(",")]
-  for (const row of rows) lines.push(headers.map((h) => csvCell(row[h])).join(","))
-  return lines.join("\n")
-}
 
 export async function GET(request: Request) {
   await ensureWebsiteAnalyticsSchema()
@@ -35,30 +33,66 @@ export async function GET(request: Request) {
   const property = (requestedId && (await getPropertyById(requestedId))) || properties[0]
 
   const range = resolveRange(url.searchParams.get("range") || "30d", url.searchParams.get("from"), url.searchParams.get("to"))
-  const dataset = url.searchParams.get("dataset") || "topPages"
+  const format = ((url.searchParams.get("format") || "csv").toLowerCase() as ExportFormat)
+  const datasetParam = url.searchParams.get("dataset") || "topPages"
+  const dataset: ExportDataset = (EXPORT_DATASETS as readonly string[]).includes(datasetParam)
+    ? (datasetParam as ExportDataset)
+    : "topPages"
+
   const analytics = await getAnalytics(property.id, range)
+  const stem = `${property.property_code}-${format === "pdf" ? "report" : dataset}-${range.label}`
 
-  const map: Record<string, any[]> = {
-    topPages: analytics.topPages,
-    channels: analytics.channels,
-    referrers: analytics.referrers,
-    utm: analytics.utmPerformance,
-    devices: analytics.devices,
-    browsers: analytics.browsers,
-    countries: analytics.countries,
-    campaigns: analytics.campaigns,
-    landingPages: analytics.landingPages,
-    goals: analytics.goals,
-    events: analytics.events,
+  if (format === "pdf") {
+    const pdf = await analyticsToPdf(analytics, {
+      propertyName: property.name,
+      domain: property.domain,
+      rangeLabel: range.label,
+      generatedBy: (session as any)?.name ?? null,
+    })
+    await recordAudit(null, {
+      entityType: "wa_property",
+      entityId: property.property_code,
+      action: "report_generated",
+      summary: `Website analytics PDF report generated (${range.label})`,
+      actorId: session.userId,
+    })
+    return new NextResponse(new Uint8Array(pdf), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${stem}.pdf"`,
+      },
+    })
   }
-  const rows = map[dataset] ?? analytics.topPages
 
-  const csv = toCsv(rows)
-  const filename = `${property.property_code}-${dataset}-${range.label}.csv`
+  if (format === "xlsx") {
+    const xlsx = await analyticsToXlsx(analytics, dataset, { propertyName: property.name, rangeLabel: range.label })
+    await recordAudit(null, {
+      entityType: "wa_property",
+      entityId: property.property_code,
+      action: "analytics_exported",
+      summary: `Website analytics exported to Excel — ${datasetLabel(dataset)} (${range.label})`,
+      actorId: session.userId,
+    })
+    return new NextResponse(new Uint8Array(xlsx), {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="${stem}.xlsx"`,
+      },
+    })
+  }
+
+  const csv = analyticsToCsv(analytics, dataset)
+  await recordAudit(null, {
+    entityType: "wa_property",
+    entityId: property.property_code,
+    action: "analytics_exported",
+    summary: `Website analytics exported to CSV — ${datasetLabel(dataset)} (${range.label})`,
+    actorId: session.userId,
+  })
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": `attachment; filename="${stem}.csv"`,
     },
   })
 }

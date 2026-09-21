@@ -10,6 +10,7 @@ import { getPublicSettings } from "@/lib/settings/server"
 import { evaluateLogin } from "@/lib/user-lifecycle-core"
 import { consumeMfaChallenge, getLoginSnapshot } from "@/lib/user-lifecycle"
 import { createSession, newSessionId } from "@/lib/session-store"
+import { requiresMfaByPolicy } from "@/lib/mfa-policy"
 import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/password-policy"
 import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 
@@ -113,6 +114,10 @@ export async function POST(request: Request) {
       // SPEC 14 — MFA challenge. When enabled, the password step alone is not
       // enough: without a code we ask the client to collect one (no session is
       // issued); with a code we verify a live TOTP or a one-time backup code.
+      const policyRequiresMfa = requiresMfaByPolicy({ role: user.role, mfaEnabled: snapshot.mfaEnabled, settings })
+      if (policyRequiresMfa && !snapshot.mfaEnabled) {
+        return NextResponse.json({ error: "Your organization requires MFA enrollment before access is granted", code: "MFA_ENROLLMENT_REQUIRED" }, { status: 403 })
+      }
       if (decision.requiresMfa) {
         if (!mfaCode) {
           return NextResponse.json({ mfaRequired: true }, { status: 200 })

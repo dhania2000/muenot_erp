@@ -7,6 +7,7 @@ import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/pa
 import { getLoginSnapshot } from "@/lib/user-lifecycle"
 import { evaluateLogin } from "@/lib/user-lifecycle-core"
 import { getPublicSettings } from "@/lib/settings/server"
+import { requiresMfaByPolicy } from "@/lib/mfa-policy"
 import { getStoredRoles } from "@/lib/platform-roles"
 import { getTenantById, type Tenant } from "@/lib/tenant-service"
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit"
@@ -88,6 +89,7 @@ export async function mobileLogin(request: Request, input: { email?: unknown; pa
   if (!decision.allowed) return { ok: false as const, status: 403, error: decision.reason }
   // Native MFA challenge is intentionally not bypassed. A mobile-specific TOTP
   // exchange can be added without weakening the password lifecycle.
+  if (requiresMfaByPolicy({ role: user.role, mfaEnabled: snapshot.mfaEnabled, settings }) && !snapshot.mfaEnabled) return { ok: false as const, status: 403, error: "Your organization requires MFA enrollment before access is granted.", code: "MFA_ENROLLMENT_REQUIRED" }
   if (decision.requiresMfa) return { ok: false as const, status: 409, error: "MFA is required. Complete the configured MFA challenge before mobile sign-in.", code: "MFA_REQUIRED" }
   const tenant = user.tenant_id ? await getTenantById(Number(user.tenant_id)) : null
   if (!tenant || tenant.status !== "active") return { ok: false as const, status: 403, error: "This tenant is unavailable." }

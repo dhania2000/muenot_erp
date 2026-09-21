@@ -26,6 +26,14 @@ type EmailPayload = {
   from?: string
   department?: "sales" | "hr" | "finance" | "operations" | "recruit"
   headers?: Record<string, string>
+  /** Correlates a queued send with the SPEC 50 tenant email ledger. */
+  engineMessageId?: number
+  messageId?: string
+  inReplyTo?: string
+  references?: string
+  providerThreadId?: string
+  /** Stored attachment paths are resolved by the worker; binary data never enters JSON jobs. */
+  attachmentPaths?: string[]
 }
 
 export type BackgroundJobPayload = EmailPayload
@@ -115,6 +123,12 @@ function validateEmailPayload(payload: unknown): EmailPayload {
   if (headers != null && (typeof headers !== "object" || Array.isArray(headers) || Object.values(headers).some((item) => typeof item !== "string"))) {
     throw new Error("Email headers must be string values")
   }
+  const engineMessageId = value.engineMessageId
+  if (engineMessageId != null && (!Number.isSafeInteger(engineMessageId) || Number(engineMessageId) <= 0)) throw new Error("Invalid engine email message id")
+  const attachmentPaths = value.attachmentPaths
+  if (attachmentPaths != null && (!Array.isArray(attachmentPaths) || attachmentPaths.length > 10 || attachmentPaths.some((item) => typeof item !== "string" || !/^\/api\/email-attachments\/[A-Za-z0-9_-]+$/.test(item)))) {
+    throw new Error("Invalid email attachment paths")
+  }
   return {
     to, subject, html,
     ...(typeof value.cc === "string" || Array.isArray(value.cc) ? { cc: value.cc as string | string[] } : {}),
@@ -122,6 +136,12 @@ function validateEmailPayload(payload: unknown): EmailPayload {
     ...(typeof value.from === "string" ? { from: value.from } : {}),
     ...(department ? { department: department as EmailPayload["department"] } : {}),
     ...(headers ? { headers: headers as Record<string, string> } : {}),
+    ...(engineMessageId != null ? { engineMessageId: Number(engineMessageId) } : {}),
+    ...(typeof value.messageId === "string" ? { messageId: value.messageId } : {}),
+    ...(typeof value.inReplyTo === "string" ? { inReplyTo: value.inReplyTo } : {}),
+    ...(typeof value.references === "string" ? { references: value.references } : {}),
+    ...(typeof value.providerThreadId === "string" ? { providerThreadId: value.providerThreadId } : {}),
+    ...(attachmentPaths ? { attachmentPaths: attachmentPaths as string[] } : {}),
   }
 }
 
@@ -315,9 +335,14 @@ type JobHandler = (payload: BackgroundJobPayload, context: JobHandlerContext) =>
 const JOB_HANDLERS: Record<BackgroundJobType, JobHandler> = {
   async "email.send"(payload) {
     const email = payload as EmailPayload
-    const { hydrateDepartmentSMTP, sendEmail } = await import("@/lib/email")
+    const { hydrateDepartmentSMTP, loadAttachment, sendEmail } = await import("@/lib/email")
     if (email.department) await hydrateDepartmentSMTP(email.department)
-    const result = await sendEmail(email)
+    const attachments = (await Promise.all((email.attachmentPaths ?? []).map(loadAttachment))).filter((attachment): attachment is NonNullable<typeof attachment> => Boolean(attachment))
+    const result = await sendEmail({ ...email, attachments })
+    if (email.engineMessageId) {
+      const { markTenantEmailAccepted } = await import("@/lib/email-engine/service")
+      await markTenantEmailAccepted(email.engineMessageId, result)
+    }
     return { messageId: result.messageId ?? null, providerThreadId: result.providerThreadId ?? null }
   },
 }
@@ -377,7 +402,16 @@ async function executeBackgroundJob(job: BackgroundJob): Promise<BackgroundJobSt
     ])
     return completeBackgroundJob(job, result)
   } catch (error) {
-    return failBackgroundJob(job, error instanceof Error ? error.message : "Unknown background job failure", controller.signal.aborted, error)
+    const status = await failBackgroundJob(job, error instanceof Error ? error.message : "Unknown background job failure", controller.signal.aborted, error)
+    // Keep the central email record queued while the durable queue is retrying.
+    // A terminal failure is recorded only after retryDisposition has decided it
+    // will not be replayed, avoiding a misleading failed state between attempts.
+    const email = job.job_type === "email.send" ? job.payload as EmailPayload : null
+    if (email?.engineMessageId && status !== "queued") {
+      const { markTenantEmailFailed } = await import("@/lib/email-engine/service")
+      await markTenantEmailFailed(email.engineMessageId, error).catch(() => {})
+    }
+    return status
   } finally {
     if (timer) clearTimeout(timer)
   }

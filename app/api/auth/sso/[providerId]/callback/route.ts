@@ -4,12 +4,15 @@ import { createSessionToken, setSessionCookie } from "@/lib/auth"
 import { newSessionId, createSession } from "@/lib/session-store"
 import {
   getProviderById,
+  getIdentity,
+  linkIdentity,
   recordLogin,
   recordLoginEvent,
   resolveClientSecret,
 } from "@/lib/sso-store"
 import { exchangeCodeForClaims, resolveEndpoints } from "@/lib/sso-oidc"
 import { consumeSsoState } from "@/lib/sso-state"
+import { sameTenant } from "@/lib/sso-provider-catalog"
 
 function requestOrigin(request: Request): string {
   const proto = request.headers.get("x-forwarded-proto") || "https"
@@ -75,12 +78,19 @@ export async function GET(request: Request, { params }: { params: Promise<{ prov
       }
     }
 
-    const existing = await query<{ id: number; name: string; email: string; role: "admin" | "employee"; status: string; tenant_id: number | null }[]>(
-      "SELECT id, name, email, role, status, tenant_id FROM users WHERE email = ? LIMIT 1",
-      [email],
-    )
-
-    let user = existing[0]
+    const identity = await getIdentity(provider.id, claims.sub)
+    let user: { id: number; name: string; email: string; role: "admin" | "employee"; status: string; tenant_id: number | null } | undefined
+    if (identity?.deprovisioned_at) return fail(request, "account_inactive")
+    if (identity) {
+      const linked = await query<typeof user[]>("SELECT id,name,email,role,status,tenant_id FROM users WHERE id=? LIMIT 1", [identity.user_id])
+      user = linked[0]
+      if (!user || !sameTenant(provider.tenant_id, user.tenant_id)) return fail(request, "account_inactive")
+    } else {
+      // Email linking is permitted only inside this provider's tenant. This
+      // prevents a shared address in another tenant being silently adopted.
+      const existing = await query<typeof user[]>("SELECT id,name,email,role,status,tenant_id FROM users WHERE email=? AND tenant_id <=> ? LIMIT 1", [email, provider.tenant_id])
+      user = existing[0]
+    }
     if (!user) {
       if (!provider.auto_provision) {
         await recordLoginEvent({ providerId: provider.id, tenantId: provider.tenant_id, email, status: "error", message: "No account and auto-provisioning disabled" })
@@ -106,6 +116,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ prov
       await recordLoginEvent({ providerId: provider.id, tenantId: provider.tenant_id, userId: user.id, email, status: "error", message: "Account not active" })
       return fail(request, "account_inactive")
     }
+
+    await linkIdentity({ providerId: provider.id, tenantId: provider.tenant_id, userId: user.id, subject: claims.sub, email })
 
     const sid = newSessionId()
     const token = await createSessionToken({

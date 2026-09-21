@@ -60,6 +60,10 @@ export type PublicSsoProvider = Omit<SsoProviderRow, "client_secret_encrypted" |
   autoProvision: boolean
   tenantId: number | null
 }
+export type SsoIdentityRow = {
+  id: number; provider_id: number; tenant_id: number | null; user_id: number; subject: string
+  email_at_link: string | null; deprovisioned_at: string | null; created_at: string; updated_at: string
+}
 
 let ensured: Promise<void> | null = null
 
@@ -115,6 +119,14 @@ async function runEnsure(): Promise<void> {
       KEY \`idx_sso_login_events_provider\` (\`provider_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+  await query(`CREATE TABLE IF NOT EXISTS \`sso_identities\` (
+    \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT, \`provider_id\` INT UNSIGNED NOT NULL,
+    \`tenant_id\` INT UNSIGNED DEFAULT NULL, \`user_id\` INT UNSIGNED NOT NULL, \`subject\` VARCHAR(255) NOT NULL,
+    \`email_at_link\` VARCHAR(190) DEFAULT NULL, \`deprovisioned_at\` DATETIME DEFAULT NULL,
+    \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (\`id\`), UNIQUE KEY \`uniq_sso_identity_subject\` (\`provider_id\`, \`subject\`),
+    UNIQUE KEY \`uniq_sso_identity_user\` (\`provider_id\`, \`user_id\`), KEY \`idx_sso_identity_tenant\` (\`tenant_id\`, \`user_id\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 }
 
 export async function ensureSsoSchema(): Promise<void> {
@@ -323,4 +335,30 @@ export async function recordLoginEvent(input: {
   } catch (err) {
     console.error("[v0] sso login event write failed", err)
   }
+}
+
+export async function getIdentity(providerId: number, subject: string): Promise<SsoIdentityRow | null> {
+  await ensureSsoSchema()
+  const rows = await query<SsoIdentityRow[]>("SELECT * FROM `sso_identities` WHERE `provider_id`=? AND `subject`=? LIMIT 1", [providerId, subject])
+  return rows[0] ?? null
+}
+
+/** Link only after the caller has tenant-scoped the user and verified the IdP subject. */
+export async function linkIdentity(input: { providerId: number; tenantId: number | null; userId: number; subject: string; email: string }) {
+  await ensureSsoSchema()
+  await query(`INSERT INTO \`sso_identities\` (\`provider_id\`,\`tenant_id\`,\`user_id\`,\`subject\`,\`email_at_link\`)
+    VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE \`user_id\`=VALUES(\`user_id\`),\`tenant_id\`=VALUES(\`tenant_id\`),\`email_at_link\`=VALUES(\`email_at_link\`),\`deprovisioned_at\`=NULL`, [input.providerId,input.tenantId,input.userId,input.subject,input.email])
+}
+
+/** Deprovision a tenant identity and immediately revoke all local sessions. */
+export async function deprovisionIdentity(input: { providerId: number; identityId: number; tenantId: number | null }) {
+  await ensureSsoSchema()
+  const rows = await query<SsoIdentityRow[]>("SELECT * FROM `sso_identities` WHERE `id`=? AND `provider_id`=? AND `tenant_id` <=> ? LIMIT 1", [input.identityId,input.providerId,input.tenantId])
+  const identity = rows[0]
+  if (!identity) throw new Error("SSO identity not found")
+  await query("UPDATE `sso_identities` SET `deprovisioned_at`=CURRENT_TIMESTAMP WHERE `id`=?", [identity.id])
+  await query("UPDATE `users` SET `status`='inactive' WHERE `id`=? AND `tenant_id` <=> ?", [identity.user_id,input.tenantId])
+  const { revokeAllSessionsForUser } = await import("@/lib/session-store")
+  await revokeAllSessionsForUser(identity.user_id, { reason: "sso_deprovisioned" })
+  return identity
 }

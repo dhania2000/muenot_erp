@@ -73,3 +73,12 @@ CREATE TABLE IF NOT EXISTS `sso_login_events` (
   PRIMARY KEY (`id`),
   KEY `idx_sso_login_events_provider` (`provider_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `sso_identities` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT, `provider_id` INT UNSIGNED NOT NULL,
+  `tenant_id` INT UNSIGNED DEFAULT NULL, `user_id` INT UNSIGNED NOT NULL, `subject` VARCHAR(255) NOT NULL,
+  `email_at_link` VARCHAR(190) DEFAULT NULL, `deprovisioned_at` DATETIME DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`), UNIQUE KEY `uniq_sso_identity_subject` (`provider_id`,`subject`),
+  UNIQUE KEY `uniq_sso_identity_user` (`provider_id`,`user_id`), KEY `idx_sso_identity_tenant` (`tenant_id`,`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

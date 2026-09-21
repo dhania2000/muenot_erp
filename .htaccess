@@ -1,0 +1,25 @@
+# Phusion Passenger config for Hostinger shared hosting (LiteSpeed / CloudLinux).
+# This tells the web server to run the Next.js app instead of serving the folder
+# directly (a missing/incorrect config is what produces the LiteSpeed
+# "403 Forbidden - Access to this resource on the server is denied!" page).
+#
+# IMPORTANT: replace the placeholder paths below with the real paths from your
+# Hostinger account, then upload this file to the domain's document root.
+# You can find the exact values in hPanel under "Advanced -> Node.js" (Setup
+# Node.js App), or by running `echo $HOME` and `which node` over SSH.
+
+PassengerAppRoot "/home/REPLACE_USER/domains/erp.muenot.co.in/public_html"
+PassengerBaseURI "/"
+
+# Path to the Node.js binary for the version selected in hPanel. Example:
+#   /home/REPLACE_USER/.nvm/versions/node/v20.x.x/bin/node
+PassengerNodejs "/home/REPLACE_USER/nodevenv/domains/erp.muenot.co.in/public_html/20/bin/node"
+
+PassengerAppType node
+PassengerStartupFile server.js
+
+# Run the app in production mode.
+PassengerAppEnv production
+
+<IfModule Litespeed>
+</IfModule>

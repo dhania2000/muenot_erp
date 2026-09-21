@@ -157,6 +157,9 @@ async function doEnsureSchema() {
   await addColumn("hr_attendance", "`override_reason` VARCHAR(500) DEFAULT NULL")
   await addColumn("hr_attendance", "`created_by` INT UNSIGNED DEFAULT NULL")
   await addColumn("hr_attendance", "`updated_by` INT UNSIGNED DEFAULT NULL")
+  // Idle time (minutes) accrued while clocked in but away from the screen for
+  // longer than the grace window — reclassified from work to break at clock-out.
+  await addColumn("hr_attendance", "`idle_minutes` INT UNSIGNED NOT NULL DEFAULT 0")
 
   // Helpful composite index for employee + date range scans.
   try {

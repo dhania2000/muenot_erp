@@ -78,6 +78,7 @@ type AttendanceRow = {
   break_minutes: number
   working_hours: number
   active_since: string | null
+  idle_minutes: number
   work_date: string
 }
 
@@ -250,10 +251,43 @@ async function hasSessionColumn(): Promise<boolean> {
   return sessionColumnReady
 }
 
-async function todaysRecord(employeeId: number, withSession: boolean, timeZone: string): Promise<AttendanceRow | null> {
-  const columns = withSession
+/**
+ * Whether the `idle_minutes` column is usable. It accumulates away-from-screen
+ * time reported by the client while a session is open, so we can reclassify it
+ * from work to break on clock-out. Created lazily; if the ALTER fails we fall
+ * back to treating idle as zero so clocking still works.
+ */
+let idleColumnReady: boolean | null = null
+async function hasIdleColumn(): Promise<boolean> {
+  if (idleColumnReady !== null) return idleColumnReady
+  try {
+    const rows = await query<{ Field: string }[]>("SHOW COLUMNS FROM hr_attendance LIKE 'idle_minutes'")
+    if (rows.length === 0) {
+      try {
+        await query("ALTER TABLE hr_attendance ADD COLUMN idle_minutes INT UNSIGNED NOT NULL DEFAULT 0")
+        idleColumnReady = true
+      } catch {
+        idleColumnReady = false
+      }
+    } else {
+      idleColumnReady = true
+    }
+  } catch {
+    idleColumnReady = false
+  }
+  return idleColumnReady
+}
+
+async function todaysRecord(
+  employeeId: number,
+  withSession: boolean,
+  withIdle: boolean,
+  timeZone: string,
+): Promise<AttendanceRow | null> {
+  const base = withSession
     ? "id, clock_in, clock_out, break_minutes, working_hours, active_since, work_date"
     : "id, clock_in, clock_out, break_minutes, working_hours, work_date"
+  const columns = withIdle ? `${base}, idle_minutes` : base
   const rows = await query<AttendanceRow[]>(
     `SELECT ${columns} FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1`,
     [employeeId, today(timeZone)],
@@ -261,6 +295,7 @@ async function todaysRecord(employeeId: number, withSession: boolean, timeZone: 
   const row = rows[0]
   if (!row) return null
   if (!withSession) row.active_since = null
+  if (!withIdle) row.idle_minutes = 0
   return row
 }
 
@@ -287,16 +322,18 @@ export async function GET() {
 
     await ensureTable()
     const withSession = await hasSessionColumn()
+    const withIdle = await hasIdleColumn()
     const timeZone = await getTimeZone()
     const employee = await ensureEmployee(session)
 
-    const record = await todaysRecord(employee.id, withSession, timeZone)
+    const record = await todaysRecord(employee.id, withSession, withIdle, timeZone)
     return NextResponse.json({
       linked: true,
       state: isOpen(record, withSession) ? "in" : "out",
       clockIn: record?.clock_in ?? null,
       clockOut: record?.clock_out ?? null,
       workedHours: record ? Number(record.working_hours || 0) : 0,
+      idleMinutes: record ? Number(record.idle_minutes || 0) : 0,
     })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load status" }, { status: 500 })
@@ -310,6 +347,7 @@ export async function POST(request: Request) {
 
     await ensureTable()
     const withSession = await hasSessionColumn()
+    const withIdle = await hasIdleColumn()
     const timeZone = await getTimeZone()
     const employee = await ensureEmployee(session)
 
@@ -340,7 +378,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const record = await todaysRecord(employee.id, withSession, timeZone)
+    const record = await todaysRecord(employee.id, withSession, withIdle, timeZone)
     const now = nowDateTime(timeZone)
     const withLocation = await hasLocationColumns()
 
@@ -389,7 +427,11 @@ export async function POST(request: Request) {
     if (isOpen(record, withSession)) {
       const firstIn = record.clock_in || sessionStart(record, withSession, timeZone)
       const sessionHours = hoursBetween(sessionStart(record, withSession, timeZone), now)
-      const worked = Number((Number(record.working_hours || 0) + sessionHours).toFixed(2))
+      // Away-from-screen time over the grace window (reported by the client while
+      // clocked in) is reclassified from worked hours into break.
+      const idleMinutes = withIdle ? Math.max(0, Math.round(Number(record.idle_minutes || 0))) : 0
+      const grossWorked = Number(record.working_hours || 0) + sessionHours
+      const worked = Number(Math.max(0, grossWorked - idleMinutes / 60).toFixed(2))
       const spanMinutes = hoursBetween(firstIn, now) * 60
       const breakMinutes = Math.max(0, Math.round(spanMinutes - worked * 60))
 

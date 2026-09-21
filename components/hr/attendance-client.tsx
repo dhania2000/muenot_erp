@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -18,6 +19,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import { Trash2 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ExcelExportButton } from "@/components/excel-export-button"
@@ -128,6 +141,54 @@ export function AttendanceClient() {
   const departments = employeeData?.facets?.department ?? []
 
   const hasFilters = Boolean(from || to || search || department || status || exception)
+
+  // Bulk selection
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [deleting, setDeleting] = useState(false)
+
+  const selectableIds = useMemo(() => rows.map((r) => r.id), [rows])
+  const selectedCount = selected.size
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))
+  const someSelected = selectedCount > 0 && !allSelected
+
+  function toggleRow(id: number, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  function toggleAll(checked: boolean) {
+    setSelected(checked ? new Set(selectableIds) : new Set())
+  }
+
+  function clearSelection() {
+    setSelected(new Set())
+  }
+
+  async function bulkDelete() {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
+    setDeleting(true)
+    try {
+      const res = await fetch("/api/hr/attendance", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || "Could not delete attendance records")
+      toast.success(`${body.deleted ?? ids.length} attendance record${(body.deleted ?? ids.length) === 1 ? "" : "s"} deleted`)
+      clearSelection()
+      mutate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not delete attendance records")
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <main className="space-y-6 p-6">
@@ -278,10 +339,58 @@ export function AttendanceClient() {
             )}
           </div>
 
+          {selectedCount > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3">
+              <span className="text-sm font-medium">
+                {selectedCount} record{selectedCount === 1 ? "" : "s"} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={clearSelection}>
+                  Clear selection
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="destructive" size="sm" disabled={deleting}>
+                      <Trash2 className="mr-1.5 size-4" />
+                      {deleting ? "Deleting…" : "Delete selected"}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete {selectedCount} attendance record{selectedCount === 1 ? "" : "s"}?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This permanently removes the selected attendance record{selectedCount === 1 ? "" : "s"}. This action
+                        cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={bulkDelete}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        Delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/30 text-left">
+                  <th className="p-3 font-medium">
+                    <Checkbox
+                      aria-label="Select all attendance records"
+                      checked={allSelected}
+                      indeterminate={someSelected}
+                      onCheckedChange={(v) => toggleAll(v === true)}
+                      disabled={selectableIds.length === 0}
+                    />
+                  </th>
                   <th className="p-3 font-medium">Attendance ID</th>
                   <th className="p-3 font-medium">Employee</th>
                   <th className="p-3 font-medium">Work Date</th>
@@ -298,7 +407,18 @@ export function AttendanceClient() {
                 {rows.map((row) => {
                   const flags = rowFlags(row)
                   return (
-                    <tr key={row.id} className="border-b last:border-0 align-top hover:bg-muted/20">
+                    <tr
+                      key={row.id}
+                      data-selected={selected.has(row.id) ? "" : undefined}
+                      className="border-b last:border-0 align-top hover:bg-muted/20 data-[selected]:bg-muted/40"
+                    >
+                      <td className="p-3">
+                        <Checkbox
+                          aria-label={`Select attendance ${row.attendance_id}`}
+                          checked={selected.has(row.id)}
+                          onCheckedChange={(v) => toggleRow(row.id, v === true)}
+                        />
+                      </td>
                       <td className="p-3 font-mono text-xs">{row.attendance_id}</td>
                       <td className="p-3">
                         <div className="font-medium">{row.employee_name}</div>

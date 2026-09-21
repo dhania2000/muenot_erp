@@ -232,6 +232,50 @@ export async function POST(request: NextRequest) {
   }
 }
 
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = await requireFeature("hr.manage_attendance")
+    if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+    await ensureAttendanceSchema()
+
+    const body = await request.json().catch(() => ({}))
+    const rawIds = Array.isArray(body.ids) ? body.ids : []
+    const ids = Array.from(
+      new Set(rawIds.map((v: unknown) => Number(v)).filter((n: number) => Number.isInteger(n) && n > 0)),
+    ) as number[]
+    if (ids.length === 0) {
+      return NextResponse.json({ error: "Select at least one attendance record to delete." }, { status: 400 })
+    }
+
+    const placeholders = ids.map(() => "?").join(",")
+    const existing = await query<any[]>(
+      `SELECT id, attendance_id, employee_id, employee_name, work_date FROM hr_attendance WHERE id IN (${placeholders})`,
+      ids,
+    )
+    if (existing.length === 0) {
+      return NextResponse.json({ error: "No matching attendance records found." }, { status: 404 })
+    }
+
+    await query(`DELETE FROM hr_attendance WHERE id IN (${placeholders})`, ids)
+
+    for (const row of existing) {
+      await logEmployeeEvent({
+        employeeId: Number(row.employee_id),
+        employeeRef: null,
+        employeeName: row.employee_name,
+        type: "updated",
+        summary: `Attendance ${row.attendance_id} deleted for ${String(row.work_date).slice(0, 10)}`,
+        actorId: session.userId,
+        actorName: session.name,
+      })
+    }
+
+    return NextResponse.json({ ok: true, deleted: existing.length })
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to delete attendance" }, { status: 500 })
+  }
+}
+
 export async function PATCH(request: NextRequest) {
   try {
     const session = await requireFeature("hr.manage_attendance")

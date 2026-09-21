@@ -127,9 +127,59 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     }
   }, [])
 
+  // -------------------------------------------------------------------------
+  // Unmonitored-time accrual. While clocked in but NOT sharing the entire
+  // screen (permission denied, an unsupported browser, a window/tab share, or
+  // sharing stopped mid-session), the elapsed time must not count as
+  // attendance. We report it — with no grace — to the attendance idle endpoint,
+  // which reclassifies it from worked hours into break at clock-out. Reporting
+  // runs continuously (about once a minute) so the time reaches the server
+  // before the employee clocks out.
+  // -------------------------------------------------------------------------
+  const unmonitoredSinceRef = useRef<number | null>(null)
+  const unmonitoredTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const reportUnmonitored = useCallback((useBeacon = false) => {
+    const since = unmonitoredSinceRef.current
+    if (since === null) return
+    const minutes = (Date.now() - since) / 60000
+    if (minutes < 1) return
+    const payload = JSON.stringify({ minutes })
+    if (useBeacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
+      navigator.sendBeacon("/api/hr/attendance/idle", new Blob([payload], { type: "application/json" }))
+    } else {
+      void fetch("/api/hr/attendance/idle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true,
+      }).catch(() => {})
+    }
+    unmonitoredSinceRef.current = Date.now()
+  }, [])
+
+  const startUnmonitored = useCallback(() => {
+    if (unmonitoredSinceRef.current !== null) return
+    unmonitoredSinceRef.current = Date.now()
+    unmonitoredTimerRef.current = setInterval(() => reportUnmonitored(false), 60000)
+  }, [reportUnmonitored])
+
+  const stopUnmonitored = useCallback(
+    (useBeacon = false) => {
+      if (unmonitoredTimerRef.current) {
+        clearInterval(unmonitoredTimerRef.current)
+        unmonitoredTimerRef.current = null
+      }
+      reportUnmonitored(useBeacon)
+      unmonitoredSinceRef.current = null
+    },
+    [reportUnmonitored],
+  )
+
   const stopMonitoring = useCallback(
     async (reason = "clock_out") => {
       const pk = sessionPkRef.current
+      stopUnmonitored()
       teardownStream()
       if (pk) {
         await patchSession("stop", reason)
@@ -137,7 +187,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
         sequenceRef.current = 0
       }
     },
-    [patchSession, teardownStream],
+    [patchSession, teardownStream, stopUnmonitored],
   )
 
   // Capture a single frame and upload it. Guarded so a slow upload never stacks.
@@ -318,7 +368,8 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) {
       await recordSession(false)
-      toast.error("Screen monitoring is not supported in this browser.")
+      startUnmonitored()
+      toast.error("Screen sharing is not supported in this browser, so this time will count as break, not attendance.")
       return
     }
 
@@ -341,7 +392,8 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
       } as DisplayMediaStreamOptions)
     } catch {
       await recordSession(false)
-      toast.error("Screen sharing permission was denied. Attendance is still recorded.")
+      startUnmonitored()
+      toast.error("Screen sharing was denied. This time will count as break until you share your entire screen.")
       return
     }
 
@@ -351,7 +403,10 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     if (displaySurface && displaySurface !== "monitor") {
       stream.getTracks().forEach((track) => track.stop())
       await recordSession(false)
-      toast.error("Please share your entire screen, not a single window or tab.")
+      startUnmonitored()
+      toast.error(
+        "Please share your entire screen, not a single window or tab. Until then this time will count as break, not attendance.",
+      )
       return
     }
 
@@ -364,12 +419,15 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
       // Autoplay policies — a muted, in-DOM video should still play.
     }
 
-    // If the user stops sharing from the browser UI, treat it as a revoke.
+    // If the user stops sharing from the browser UI, treat it as a revoke and
+    // begin accruing the remaining time as break — an unshared screen never
+    // counts as attendance.
     stream.getVideoTracks().forEach((track) => {
       track.addEventListener("ended", () => {
         void patchSession("revoke", "stream_ended")
         teardownStream()
-        toast.message("Screen sharing stopped. Monitoring paused.")
+        startUnmonitored()
+        toast.message("Screen sharing stopped — this time will count as break, not attendance.")
       })
     })
 
@@ -378,6 +436,8 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
       teardownStream()
       return
     }
+    // Full screen is being shared: any earlier unmonitored stretch ends here.
+    stopUnmonitored()
     beginCaptureLoop()
     toast.success("Screen monitoring started")
 
@@ -406,7 +466,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
         return false
       }
     }
-  }, [beginCaptureLoop, patchSession, teardownStream])
+  }, [beginCaptureLoop, patchSession, teardownStream, startUnmonitored, stopUnmonitored])
 
   function ensureVideo(): HTMLVideoElement {
     if (!videoRef.current) {
@@ -435,6 +495,17 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
         })
         navigator.sendBeacon("/api/hr/screen-monitoring/session", blob)
       }
+      // Bank any unshared-screen time as break before the tab goes away.
+      const since = unmonitoredSinceRef.current
+      if (since !== null && typeof navigator !== "undefined" && navigator.sendBeacon) {
+        const minutes = (Date.now() - since) / 60000
+        if (minutes >= 1) {
+          navigator.sendBeacon(
+            "/api/hr/attendance/idle",
+            new Blob([JSON.stringify({ minutes })], { type: "application/json" }),
+          )
+        }
+      }
       streamRef.current?.getTracks().forEach((t) => t.stop())
     }
     window.addEventListener("pagehide", onUnload)
@@ -442,6 +513,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
       window.removeEventListener("pagehide", onUnload)
       if (intervalRef.current) clearInterval(intervalRef.current)
       if (signalPollRef.current) clearInterval(signalPollRef.current)
+      if (unmonitoredTimerRef.current) clearInterval(unmonitoredTimerRef.current)
       peersRef.current.forEach((pc) => {
         try {
           pc.close()

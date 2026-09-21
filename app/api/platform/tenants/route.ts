@@ -34,13 +34,14 @@ export async function POST(req: NextRequest) {
       slug: String(body?.slug ?? ""),
       plan: body?.plan ? String(body.plan) : undefined,
       deployment_model: body?.deployment_model,
+      tenant_type: body?.tenant_type,
     })
     await recordPlatformAudit({
       actorUserId: guard.ctx.userId,
       actorEmail: guard.session.email,
       action: "create_tenant",
       targetTenantId: tenant.id,
-      detail: { name: tenant.name, slug: tenant.slug },
+      detail: { name: tenant.name, slug: tenant.slug, tenantType: tenant.tenant_type },
     })
     return NextResponse.json({ tenant }, { status: 201 })
   } catch (err: any) {

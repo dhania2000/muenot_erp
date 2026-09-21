@@ -1,0 +1,75 @@
+openapi: 3.0.3
+info:
+  title: Muenot Shopkeeper Mobile API
+  version: 1.0.0-phase1
+  description: Phase 1 backend contract. Android communicates only through HTTPS; tenant identity is derived from the bearer token.
+servers:
+  - url: https://erp.muenot.co.in/api/mobile/v1
+security:
+  - bearerAuth: []
+paths:
+  /auth/login:
+    post:
+      security: []
+      summary: Start a native mobile session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses: { '200': { description: Tokens and public user/tenant details }, '401': { $ref: '#/components/responses/Unauthorized' }, '429': { $ref: '#/components/responses/RateLimited' } }
+  /auth/refresh:
+    post:
+      security: []
+      summary: Rotate an opaque refresh token
+      responses: { '200': { description: New access and refresh tokens }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /auth/logout:
+    post: { summary: Revoke the current mobile device session, responses: { '200': { description: Revoked } } }
+  /auth/sessions:
+    get: { summary: List current user's active devices, responses: { '200': { description: Device sessions } } }
+    delete: { summary: Revoke one of the current user's devices, responses: { '200': { description: Revoked } } }
+  /me:
+    get: { summary: Current user, tenant and resolved entitlement map, responses: { '200': { description: Session identity } } }
+  /tenant:
+    get: { summary: Current tenant and Shopkeeper profile, responses: { '200': { description: Tenant profile } } }
+    patch: { summary: Update current tenant Shopkeeper profile (tenant owner/admin only), responses: { '200': { description: Updated profile }, '403': { $ref: '#/components/responses/Forbidden' } } }
+  /dashboard:
+    get: { summary: Existing tenant-scoped personal dashboard, responses: { '200': { description: Dashboard } } }
+  /whatsapp:
+    get: { summary: WhatsApp connection health and caller capabilities, responses: { '200': { description: Sanitized connection status } } }
+  /conversations:
+    get: { summary: Tenant-scoped WhatsApp inbox, parameters: [{ name: limit, in: query, schema: { type: integer, maximum: 200 } }], responses: { '200': { description: Conversation page } } }
+  /conversations/{id}:
+    get: { summary: Conversation plus message history, parameters: [{ name: id, in: path, required: true, schema: { type: integer } }], responses: { '200': { description: Detail }, '404': { description: Not found or not permitted } } }
+  /messages:
+    post: { summary: Send a text or approved template through the tenant's existing WhatsApp connection, responses: { '200': { description: Send accepted }, '403': { $ref: '#/components/responses/Forbidden' } } }
+  /contacts: { get: { summary: Tenant WhatsApp contacts, responses: { '200': { description: Contact page } } } }
+  /templates: { get: { summary: Local tenant template catalog, responses: { '200': { description: Templates } } } }
+  /campaigns: { get: { summary: Tenant WhatsApp campaigns, responses: { '200': { description: Campaigns } } } }
+  /automations: { get: { summary: Tenant WhatsApp automations, responses: { '200': { description: Automations } } } }
+  /team: { get: { summary: Active users in the authenticated tenant, responses: { '200': { description: Team } } } }
+  /notifications: { get: { summary: Current user's notifications, responses: { '200': { description: Notifications } } }, patch: { summary: Mark own notifications read, responses: { '200': { description: Updated } } } }
+  /subscription: { get: { summary: Current tenant subscription and entitlements, responses: { '200': { description: Subscription } } } }
+  /devices: { post: { summary: Register encrypted future-FCM device token, responses: { '200': { description: Registered } } }, delete: { summary: Disable own device token, responses: { '200': { description: Disabled } } } }
+  /products: { get: { summary: Reserved for future tenant-owned products, responses: { '501': { description: Not implemented safely in Phase 1 } } } }
+  /orders: { get: { summary: Reserved for future Shopkeeper orders, responses: { '501': { description: Not implemented in Phase 1 } } } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+        deviceName: { type: string, maxLength: 120 }
+        platform: { type: string, example: android }
+    Error:
+      type: object
+      required: [error]
+      properties: { error: { type: string }, code: { type: string } }
+  responses:
+    Unauthorized: { description: Missing, expired, revoked or invalid token, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: Permission or plan entitlement denied, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    RateLimited: { description: Too many requests; inspect Retry-After }

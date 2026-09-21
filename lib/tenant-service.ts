@@ -1,5 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { ensureShopkeeperSchema } from "@/lib/shopkeeper"
 
 /**
  * Tenant service — the single source of truth for tenant records and secure
@@ -17,12 +18,15 @@ export const DEFAULT_TENANT_SLUG = "muenot"
 
 export type DeploymentModel = "shared_database" | "separate_schema" | "dedicated_database"
 export type TenantStatus = "active" | "suspended" | "inactive"
+export const TENANT_TYPES = ["ENTERPRISE", "SME", "SHOPKEEPER"] as const
+export type TenantType = (typeof TENANT_TYPES)[number]
 
 export type Tenant = {
   id: number
   name: string
   slug: string
   status: TenantStatus
+  tenant_type: TenantType
   deployment_model: DeploymentModel
   plan: string
   db_schema: string | null
@@ -113,6 +117,12 @@ async function runEnsure(): Promise<void> {
       KEY \`idx_tenants_status\` (\`status\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+
+  // Kept as a VARCHAR rather than altering the existing status enum. Existing
+  // tenants deliberately default to ENTERPRISE, so this is additive.
+  if (!(await columnExists("tenants", "tenant_type"))) {
+    await query("ALTER TABLE `tenants` ADD COLUMN `tenant_type` VARCHAR(20) NOT NULL DEFAULT 'ENTERPRISE' AFTER `status`")
+  }
 
   // Seed the default platform-owner tenant (Muenot). Idempotent on slug.
   await query(
@@ -218,6 +228,7 @@ export type CreateTenantInput = {
   db_schema?: string | null
   db_connection_ref?: string | null
   settings?: Record<string, unknown> | null
+  tenant_type?: TenantType
 }
 
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$/
@@ -230,17 +241,20 @@ export async function createTenant(input: CreateTenantInput): Promise<Tenant> {
   if (!slug || !SLUG_RE.test(slug)) {
     throw new Error("Tenant slug must be 2-100 chars, lowercase letters, digits or hyphens")
   }
+  const tenantType = input.tenant_type ?? "ENTERPRISE"
+  if (!TENANT_TYPES.includes(tenantType)) throw new Error("Invalid tenant type")
 
   const existing = await getTenantBySlug(slug)
   if (existing) throw new Error(`A tenant with slug "${slug}" already exists`)
 
   const result = await query<{ insertId: number }>(
     `INSERT INTO \`tenants\`
-       (\`name\`, \`slug\`, \`status\`, \`deployment_model\`, \`plan\`, \`db_schema\`, \`db_connection_ref\`, \`settings\`)
-     VALUES (?, ?, 'active', ?, ?, ?, ?, ?)`,
+       (\`name\`, \`slug\`, \`status\`, \`tenant_type\`, \`deployment_model\`, \`plan\`, \`db_schema\`, \`db_connection_ref\`, \`settings\`)
+     VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
     [
       name,
       slug,
+      tenantType,
       input.deployment_model ?? "shared_database",
       input.plan ?? "standard",
       input.db_schema ?? null,
@@ -250,6 +264,12 @@ export async function createTenant(input: CreateTenantInput): Promise<Tenant> {
   )
   const created = await getTenantById(result.insertId)
   if (!created) throw new Error("Failed to load the tenant that was just created")
+  // A Shopkeeper tenant gets its own profile row immediately; this is not a
+  // second tenant model and it keeps the future mobile onboarding resumable.
+  if (created.tenant_type === "SHOPKEEPER") {
+    await ensureShopkeeperSchema()
+    await query("INSERT INTO shopkeeper_profiles (tenant_id,shop_name) VALUES (?,?) ON DUPLICATE KEY UPDATE shop_name=shop_name", [created.id, created.name])
+  }
   return created
 }
 

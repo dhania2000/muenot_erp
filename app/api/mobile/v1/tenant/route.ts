@@ -1,0 +1,5 @@
+import { getTenantById } from "@/lib/tenant-service"
+import { getShopkeeperProfile, upsertShopkeeperProfile } from "@/lib/shopkeeper"
+import { mobileJson, withMobileAuth, isMobileResponse } from "@/lib/mobile-api"
+export async function GET(request: Request) { const result = await withMobileAuth(request, async p => { const tenant=await getTenantById(p.tenantId); return mobileJson({ tenant: tenant && { id:tenant.id,name:tenant.name,slug:tenant.slug,tenantType:tenant.tenant_type,status:tenant.status,plan:tenant.plan }, profile:await getShopkeeperProfile(p.tenantId) }) }, "settings"); return isMobileResponse(result) ? result : result }
+export async function PATCH(request: Request) { const result = await withMobileAuth(request, async p => { if (!["tenant_owner","tenant_admin"].includes(p.tenantRole) && p.role !== "admin") return mobileJson({ error:"Tenant administrator permission required" },{status:403}); const body=await request.json().catch(()=>({})); const tenant=await getTenantById(p.tenantId); return mobileJson({ profile:await upsertShopkeeperProfile(p.tenantId,body,tenant?.name||"Shop") }) }, "settings"); return isMobileResponse(result) ? result : result }

@@ -264,6 +264,23 @@ export function formatQuota(q: Quota): string {
 // ---------------------------------------------------------------------------
 
 export const ENTITLEMENT_PRESETS: Record<string, PlanEntitlements> = {
+  // Mobile-first Shopkeeper plans use explicit flags. This keeps WhatsApp and
+  // commerce access configurable per plan instead of accidentally inheriting
+  // HR/recruitment ERP modules.
+  shopkeeper: {
+    modules: ["crm", "automation", "integrations", "reports"],
+    users: 5,
+    employees: 0,
+    storage_gb: 5,
+    api_calls_per_month: 25_000,
+    automations: 10,
+    jobs: 1_000,
+    ai_credits_per_month: 0,
+    integrations: 1,
+    reports: "standard",
+    support_level: "email",
+    feature_flags: ["shopkeeper.mobile_app", "shopkeeper.whatsapp", "shopkeeper.inbox", "shopkeeper.contacts", "shopkeeper.templates", "shopkeeper.campaigns", "shopkeeper.automations", "shopkeeper.products", "shopkeeper.orders", "shopkeeper.team", "shopkeeper.subscription", "shopkeeper.settings"],
+  },
   trial: {
     modules: ["crm", "hr", "finance", "reports"],
     users: 3,

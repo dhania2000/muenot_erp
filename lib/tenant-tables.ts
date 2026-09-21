@@ -147,6 +147,12 @@ export const TENANT_OWNED_TABLES = [
   "api_keys",
   "webhook_endpoints",
   "webhook_deliveries",
+  // Shopkeeper mobile clients / profile. Device registrations are only a
+  // server-side future FCM boundary; Firebase credentials never live here.
+  "shopkeeper_profiles",
+  "mobile_sessions",
+  "mobile_device_registrations",
+  "mobile_api_audit",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

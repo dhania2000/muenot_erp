@@ -357,6 +357,9 @@ const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
 // exactly the same set of links — navigating into any admin page keeps the same
 // sidebar instead of swapping to a different shell.
 export const ADMINISTRATION_CHILDREN: NavChild[] = [
+  // Tenant control center — moved here from the Administration landing page
+  // so it lives as its own "Dashboard" sub-module in the sidebar.
+  { label: "Dashboard", href: "/admin/dashboard" },
   { label: "User lifecycle", href: "/admin/users" },
   { label: "Roles & permissions", href: "/admin/roles" },
   { label: "Data permissions", href: "/admin/data-permissions" },

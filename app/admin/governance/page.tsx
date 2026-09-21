@@ -1,3 +1,6 @@
+"use client"
+
+import { useMemo, useState } from "react"
 import Link from "next/link"
 import { ShieldCheck, Search, Download, ChevronRight } from "lucide-react"
 import { GovernanceTabs } from "@/components/governance/governance-tabs"
@@ -86,6 +89,27 @@ const MODULE_OPTIONS = ["All modules", "HR", "Finance", "CRM", "Security", "Proj
 const RESULT_OPTIONS = ["All results", "success", "failure"]
 
 export default function GovernanceAuditLogPage() {
+  const [query, setQuery] = useState("")
+  const [module, setModule] = useState("All modules")
+  const [result, setResult] = useState("All results")
+  const [fromDate, setFromDate] = useState("")
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return AUDIT_EVENTS.filter((e) => {
+      if (module !== "All modules" && e.module !== module) return false
+      if (result !== "All results" && e.result !== result) return false
+      if (fromDate && e.timestamp.slice(0, 10) < fromDate) return false
+      if (!q) return true
+      return (
+        e.user.toLowerCase().includes(q) ||
+        e.record.toLowerCase().includes(q) ||
+        e.action.toLowerCase().includes(q) ||
+        e.entity.toLowerCase().includes(q)
+      )
+    })
+  }, [query, module, result, fromDate])
+
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">
@@ -107,7 +131,7 @@ export default function GovernanceAuditLogPage() {
             </CardTitle>
             <CardDescription>Search across every module&apos;s security-sensitive events.</CardDescription>
           </div>
-          <Button variant="outline" size="sm" className="gap-1.5">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => downloadCsv(filtered)}>
             <Download className="size-3.5" />
             Export
           </Button>
@@ -116,9 +140,14 @@ export default function GovernanceAuditLogPage() {
           <div className="flex flex-col gap-3 sm:flex-row">
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-              <Input placeholder="Search by user, record ID, action..." className="pl-8" />
+              <Input
+                placeholder="Search by user, record ID, action..."
+                className="pl-8"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
             </div>
-            <Select defaultValue="All modules">
+            <Select value={module} onValueChange={setModule}>
               <SelectTrigger className="w-full sm:w-44">
                 <SelectValue />
               </SelectTrigger>
@@ -130,7 +159,7 @@ export default function GovernanceAuditLogPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select defaultValue="All results">
+            <Select value={result} onValueChange={setResult}>
               <SelectTrigger className="w-full sm:w-40">
                 <SelectValue />
               </SelectTrigger>
@@ -142,7 +171,13 @@ export default function GovernanceAuditLogPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Input type="date" className="w-full sm:w-40" aria-label="From date" />
+            <Input
+              type="date"
+              className="w-full sm:w-40"
+              aria-label="From date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+            />
           </div>
 
           <div className="overflow-x-auto rounded-md border">
@@ -160,43 +195,58 @@ export default function GovernanceAuditLogPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {AUDIT_EVENTS.map((e) => (
-                  <TableRow key={e.id}>
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{e.timestamp}</TableCell>
-                    <TableCell className="text-sm">{e.user}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-[10px]">
-                        {e.module}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {e.entity} · {e.record}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{e.action}</TableCell>
-                    <TableCell>
-                      <Badge variant={e.result === "success" ? "secondary" : "destructive"} className="text-[10px]">
-                        {e.result}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{e.ip}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" className="size-7" aria-label="View detail">
-                        <ChevronRight className="size-3.5" />
-                      </Button>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                      No events match these filters.
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  filtered.map((e) => (
+                    <TableRow key={e.id}>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {e.timestamp}
+                      </TableCell>
+                      <TableCell className="text-sm">{e.user}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-[10px]">
+                          {e.module}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {e.entity} · {e.record}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{e.action}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={e.result === "success" ? "secondary" : "destructive"}
+                          className="text-[10px]"
+                        >
+                          {e.result}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{e.ip}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="icon" className="size-7" aria-label="View detail">
+                          <ChevronRight className="size-3.5" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>
 
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Showing 5 of 12,384 events</span>
+            <span>
+              Showing {filtered.length} of {AUDIT_EVENTS.length} events
+            </span>
             <div className="flex gap-1">
               <Button variant="outline" size="sm" disabled>
                 Previous
               </Button>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" disabled>
                 Next
               </Button>
             </div>
@@ -213,4 +263,17 @@ export default function GovernanceAuditLogPage() {
       </p>
     </div>
   )
+}
+
+function downloadCsv(events: typeof AUDIT_EVENTS) {
+  const header = ["timestamp", "user", "module", "entity", "record", "action", "result", "ip"]
+  const rows = events.map((e) => [e.timestamp, e.user, e.module, e.entity, e.record, e.action, e.result, e.ip])
+  const csv = [header, ...rows].map((row) => row.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\n")
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = "audit-log.csv"
+  link.click()
+  URL.revokeObjectURL(url)
 }

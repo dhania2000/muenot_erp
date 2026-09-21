@@ -48,6 +48,7 @@ type AttendanceRow = {
   clock_in: string | null
   clock_out: string | null
   break_minutes: number
+  idle_minutes?: number
   working_hours: number
   status: string
   late_minutes: number
@@ -151,8 +152,9 @@ export function AttendanceClient() {
               { header: "Work Date", value: (r: AttendanceRow) => r.work_date?.slice(0, 10) ?? "" },
               { header: "Clock In", value: (r: AttendanceRow) => formatTime(r.clock_in) },
               { header: "Clock Out", value: (r: AttendanceRow) => formatTime(r.clock_out) },
-              { header: "Break (min)", value: (r: AttendanceRow) => r.break_minutes },
-              { header: "Working Hours", value: (r: AttendanceRow) => formatHours(r.working_hours) },
+    { header: "Break (min)", value: (r: AttendanceRow) => r.break_minutes },
+    { header: "Idle (min)", value: (r: AttendanceRow) => r.idle_minutes ?? 0 },
+    { header: "Working Hours", value: (r: AttendanceRow) => formatHours(r.working_hours) },
               { header: "Status", value: (r: AttendanceRow) => r.status },
               { header: "Late (min)", value: (r: AttendanceRow) => r.late_minutes },
               { header: "Early Out (min)", value: (r: AttendanceRow) => r.early_leaving_minutes },
@@ -311,6 +313,11 @@ export function AttendanceClient() {
                         {row.break_minutes > 0 && (
                           <div className="text-xs">Break {formatMinutes(row.break_minutes)}</div>
                         )}
+                        {row.idle_minutes ? (
+                          <div className="text-xs text-amber-600 dark:text-amber-500">
+                            Idle {formatMinutes(row.idle_minutes)}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="p-3 whitespace-nowrap">{formatHours(row.working_hours)}</td>
                       <td className="p-3">

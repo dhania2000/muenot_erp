@@ -13,6 +13,7 @@ import { toast } from "sonner"
 import { NotesPanel } from "@/components/notes-panel"
 import { CommandPalette } from "@/components/shared/command-palette"
 import { ScreenMonitorProvider, useScreenMonitor } from "@/components/hr/screen-monitor-provider"
+import { AttendanceIdleTracker } from "@/components/hr/attendance-idle-tracker"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -331,19 +332,22 @@ function HeaderClockButton() {
   }
 
   return (
-    <Button
-      onClick={toggle}
-      disabled={busy}
-      variant={state === "in" ? "outline" : "default"}
-      size="sm"
-      className={
-        state === "in"
-          ? "min-w-28 font-medium"
-          : "min-w-28 font-medium bg-emerald-600 text-white hover:bg-emerald-700"
-      }
-    >
-      {busy ? <Loader2 className="size-4 animate-spin" /> : state === "in" ? "Clock Out" : "Clock In"}
-    </Button>
+    <>
+      <AttendanceIdleTracker active={state === "in"} />
+      <Button
+        onClick={toggle}
+        disabled={busy}
+        variant={state === "in" ? "outline" : "default"}
+        size="sm"
+        className={
+          state === "in"
+            ? "min-w-28 font-medium"
+            : "min-w-28 font-medium bg-emerald-600 text-white hover:bg-emerald-700"
+        }
+      >
+        {busy ? <Loader2 className="size-4 animate-spin" /> : state === "in" ? "Clock Out" : "Clock In"}
+      </Button>
+    </>
   )
 }
 

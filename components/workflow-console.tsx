@@ -4,6 +4,57 @@ import { FIELDS, OPERATORS, countRules, isRule, type Action, type Group, type Op
 
 const initial: Workflow = { name: "", description: "", module: "sales_leads", trigger: "manual", conditions: { logic: "AND", children: [] }, actions: [], elseActions: [] }
 const control = "rounded border bg-background px-3 py-2 w-full"
+
+// SPECS 46–47 — Enterprise-friendly resource/trigger catalog for the "WHEN"
+// section. Only "Leads" and "Tasks" (sales_leads / workflow_tasks) are wired
+// to the execution engine (lib/workflows/model.ts) today; the remaining
+// resources and triggers are shown so the full intended surface is
+// discoverable, but they are visually flagged and cannot be saved until
+// Codex wires the matching backend module.
+const RESOURCE_CATALOG: { value: string; label: string; module?: WorkflowModule }[] = [
+  { value: "sales_leads", label: "Leads", module: "sales_leads" },
+  { value: "workflow_tasks", label: "Tasks", module: "workflow_tasks" },
+  { value: "employees", label: "Employees" },
+  { value: "vendors", label: "Vendors" },
+  { value: "customers", label: "Customers" },
+  { value: "deals", label: "Deals" },
+  { value: "invoices", label: "Invoices" },
+  { value: "payments", label: "Payments" },
+  { value: "expenses", label: "Expenses" },
+  { value: "leave_requests", label: "Leave Requests" },
+  { value: "subscriptions", label: "Subscriptions" },
+  { value: "files", label: "Files" },
+  { value: "projects", label: "Projects" },
+]
+const RESOURCE_FIELDS: Record<string, string[]> = {
+  employees: ["department", "designation", "employment_status"],
+  vendors: ["status", "category", "risk_rating"],
+  customers: ["status", "segment", "lifecycle_stage"],
+  deals: ["stage", "value", "owner"],
+  invoices: ["status", "amount", "due_date"],
+  payments: ["status", "method", "amount"],
+  expenses: ["status", "category", "amount"],
+  leave_requests: ["status", "leave_type", "duration_days"],
+  subscriptions: ["status", "plan", "renewal_date"],
+  files: ["module", "classification", "scan_status"],
+  projects: ["status", "priority", "owner"],
+}
+const TRIGGER_CATALOG: { value: string; label: string; trigger?: Workflow["trigger"] }[] = [
+  { value: "manual", label: "Manual — run on request", trigger: "manual" },
+  { value: "scheduled", label: "Scheduled — run at a set time", trigger: "scheduled" },
+  { value: "record_created", label: "Record created" },
+  { value: "record_updated", label: "Record updated" },
+  { value: "field_changed", label: "Field changed" },
+  { value: "status_changed", label: "Status changed" },
+  { value: "employee_created", label: "Employee created" },
+  { value: "vendor_created", label: "Vendor created" },
+  { value: "invoice_created", label: "Invoice created" },
+  { value: "payment_received", label: "Payment received" },
+  { value: "leave_approved", label: "Leave approved" },
+  { value: "deal_won", label: "Deal won" },
+  { value: "subscription_renewed", label: "Subscription renewed" },
+  { value: "file_uploaded", label: "File uploaded" },
+]
 const defaults: Record<Action["type"], Action> = {
   notify: { type: "notify", userId: 0, message: "" }, approval: { type: "approval", userId: 0, message: "" },
   delay: { type: "delay", seconds: 60 }, schedule: { type: "schedule", at: "" }, webhook: { type: "webhook", target: "" },
@@ -12,12 +63,12 @@ const defaults: Record<Action["type"], Action> = {
   email: { type: "email", userId: 0, subject: "", message: "" }, whatsapp: { type: "whatsapp", phone: "", message: "" },
 }
 
-function RuleRow({ rule, module, onChange, onRemove }: { rule: Rule; module: WorkflowModule; onChange: (r: Rule) => void; onRemove: () => void }) {
+function RuleRow({ rule, fields, onChange, onRemove }: { rule: Rule; fields: string[]; onChange: (r: Rule) => void; onRemove: () => void }) {
   const op = OPERATORS.find((o) => o.value === rule.op)!
   return (
     <div className="flex flex-wrap items-center gap-2">
       <select aria-label="Condition field" className={control} value={rule.field} onChange={(e) => onChange({ ...rule, field: e.target.value })}>
-        {FIELDS[module].map((f) => <option key={f}>{f}</option>)}
+        {fields.map((f) => <option key={f}>{f}</option>)}
       </select>
       <select aria-label="Comparison" className={control} value={rule.op} onChange={(e) => { const next = e.target.value as Op; const meta = OPERATORS.find((o) => o.value === next)!; onChange({ ...rule, op: next, value: meta.needsValue ? rule.value : "" }) }}>
         {OPERATORS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -28,7 +79,7 @@ function RuleRow({ rule, module, onChange, onRemove }: { rule: Rule; module: Wor
   )
 }
 
-function GroupEditor({ group, module, depth, onChange, onRemoveSelf }: { group: Group; module: WorkflowModule; depth: number; onChange: (g: Group) => void; onRemoveSelf?: () => void }) {
+function GroupEditor({ group, fields, depth, onChange, onRemoveSelf }: { group: Group; fields: string[]; depth: number; onChange: (g: Group) => void; onRemoveSelf?: () => void }) {
   return (
     <div className="rounded border p-3 space-y-2" style={{ marginLeft: depth * 16 }}>
       <div className="flex items-center gap-2">
@@ -41,17 +92,17 @@ function GroupEditor({ group, module, depth, onChange, onRemoveSelf }: { group: 
       </div>
       {group.children.map((child, i) =>
         isRule(child) ? (
-          <RuleRow key={i} rule={child} module={module}
+          <RuleRow key={i} rule={child} fields={fields}
             onChange={(r) => onChange({ ...group, children: group.children.map((c, n) => (n === i ? r : c)) })}
             onRemove={() => onChange({ ...group, children: group.children.filter((_, n) => n !== i) })} />
         ) : (
-          <GroupEditor key={i} group={child as Group} module={module} depth={depth + 1}
+          <GroupEditor key={i} group={child as Group} fields={fields} depth={depth + 1}
             onChange={(g) => onChange({ ...group, children: group.children.map((c, n) => (n === i ? g : c)) })}
             onRemoveSelf={() => onChange({ ...group, children: group.children.filter((_, n) => n !== i) })} />
         ),
       )}
       <div className="flex gap-3">
-        <button type="button" className="text-xs underline" disabled={countRules(group) >= 20} onClick={() => onChange({ ...group, children: [...group.children, { field: FIELDS[module][0], op: "eq", value: "" }] })}>+ Condition</button>
+        <button type="button" className="text-xs underline" disabled={countRules(group) >= 20} onClick={() => onChange({ ...group, children: [...group.children, { field: fields[0], op: "eq", value: "" }] })}>+ Condition</button>
         {depth < 2 && <button type="button" className="text-xs underline" onClick={() => onChange({ ...group, children: [...group.children, { logic: "AND", children: [] }] })}>+ Nested group</button>}
       </div>
     </div>
@@ -112,6 +163,13 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
   const [workflowId, setWorkflowId] = useState(""), [recordId, setRecordId] = useState(initialRecordId), [at, setAt] = useState("")
   const [requestKey, setRequestKey] = useState("")
   const [previewRecordId, setPreviewRecordId] = useState(""), [previewResult, setPreviewResult] = useState<any>(null), [previewBusy, setPreviewBusy] = useState(false), [previewError, setPreviewError] = useState("")
+  const [resource, setResource] = useState<string>("sales_leads")
+  const [triggerChoice, setTriggerChoice] = useState<string>("manual")
+  const resourceMeta = RESOURCE_CATALOG.find((r) => r.value === resource)
+  const triggerMeta = TRIGGER_CATALOG.find((t) => t.value === triggerChoice)
+  const resourceSupported = !!resourceMeta?.module
+  const triggerSupported = !!triggerMeta?.trigger
+  const whenSupported = resourceSupported && triggerSupported
   async function load() { const r = await fetch("/api/admin/workflows"); const b = await r.json(); if (!r.ok) throw new Error(b.error); setData(b) }
   useEffect(() => { load().catch((e) => setMessage(e.message)); const t = setInterval(() => load().catch(() => {}), 15000); return () => clearInterval(t) }, [])
   async function send(body: unknown) {
@@ -123,9 +181,11 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
     const parsed: Workflow = typeof def.definition === "string" ? JSON.parse(def.definition) : def.definition
     setEditingId(def.id)
     setDraft({ ...parsed, description: parsed.description ?? "", elseActions: parsed.elseActions ?? [] })
+    setResource(parsed.module)
+    setTriggerChoice(parsed.trigger)
     setPreviewResult(null); setPreviewError("")
   }
-  function resetDraft() { setEditingId(null); setDraft(initial); setPreviewResult(null); setPreviewError("") }
+  function resetDraft() { setEditingId(null); setDraft(initial); setResource("sales_leads"); setTriggerChoice("manual"); setPreviewResult(null); setPreviewError("") }
   async function runPreview() {
     setPreviewBusy(true); setPreviewError(""); setPreviewResult(null)
     try {
@@ -147,29 +207,81 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
       <p role="status" className="text-primary">{message}</p>
 
       <section className="border rounded p-4 space-y-4">
+        <div>
+          <h2 className="text-xl">WHEN</h2>
+          <p className="text-sm text-muted-foreground">
+            Choose the resource this workflow watches and what triggers it. Leads and Tasks run on the live
+            workflow engine today; the rest of the enterprise catalog is shown for planning and is disabled until
+            Codex wires that resource&apos;s backend.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            Module / Resource
+            <select
+              className={control}
+              value={resource}
+              disabled={!!editingId}
+              onChange={(e) => {
+                const next = e.target.value
+                setResource(next)
+                const meta = RESOURCE_CATALOG.find((r) => r.value === next)
+                if (meta?.module) setDraft({ ...draft, module: meta.module, conditions: { logic: "AND", children: [] }, actions: [], elseActions: [] })
+              }}
+            >
+              {RESOURCE_CATALOG.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                  {!r.module ? " (Codex integration required)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            Trigger
+            <select
+              className={control}
+              value={triggerChoice}
+              onChange={(e) => {
+                const next = e.target.value
+                setTriggerChoice(next)
+                const meta = TRIGGER_CATALOG.find((t) => t.value === next)
+                if (meta?.trigger) setDraft({ ...draft, trigger: meta.trigger })
+              }}
+            >
+              {TRIGGER_CATALOG.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                  {!t.trigger ? " (Codex integration required)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {!whenSupported && (
+          <p className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            This resource/trigger combination is not yet wired to the workflow execution engine. You can still
+            design the conditions and actions below, but saving is disabled until the backend supports it.
+          </p>
+        )}
+      </section>
+
+      <section className="border rounded p-4 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl">{editingId ? `Edit workflow #${editingId}` : "Create workflow"}</h2>
+          <h2 className="text-xl">{editingId ? `Edit workflow #${editingId}` : "IF / THEN / ELSE builder"}</h2>
           {editingId && <button type="button" className="text-xs underline" onClick={resetDraft}>Start a new workflow instead</button>}
         </div>
         <label className="block">Name<input className={control} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
         <label className="block">Description<textarea className={control} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
-        <label className="block">
-          Record type
-          <select className={control} value={draft.module} disabled={!!editingId} onChange={(e) => setDraft({ ...draft, module: e.target.value as Workflow["module"], conditions: { logic: "AND", children: [] }, actions: [], elseActions: [] })}>
-            <option value="sales_leads">Sales lead</option>
-            <option value="workflow_tasks">Workflow task</option>
-          </select>
-        </label>
-        <label className="block">Trigger<select className={control} value={draft.trigger} onChange={(e) => setDraft({ ...draft, trigger: e.target.value as Workflow["trigger"] })}><option value="manual">Run on request</option><option value="scheduled">Run at scheduled time</option></select></label>
 
         <h3 className="font-medium">Conditions — evaluated once when the run starts</h3>
-        <GroupEditor group={draft.conditions} module={draft.module} depth={0} onChange={(g) => setDraft({ ...draft, conditions: g })} />
+        <GroupEditor group={draft.conditions} fields={resourceSupported ? FIELDS[draft.module] : (RESOURCE_FIELDS[resource] ?? FIELDS[draft.module])} depth={0} onChange={(g) => setDraft({ ...draft, conditions: g })} />
 
         <ActionsEditor label="THEN — runs when conditions match" actions={draft.actions} module={draft.module} onChange={(a) => setDraft({ ...draft, actions: a })} />
         <ActionsEditor label="ELSE — runs when conditions do not match (optional)" actions={draft.elseActions} module={draft.module} onChange={(a) => setDraft({ ...draft, elseActions: a })} />
 
         <div className="flex gap-2">
-          <button className="rounded bg-primary text-primary-foreground px-4 py-2" disabled={busy} onClick={async () => { if (await send(editingId ? { operation: "update", id: editingId, definition: draft } : { operation: "create", definition: draft })) resetDraft() }}>
+          <button className="rounded bg-primary text-primary-foreground px-4 py-2 disabled:opacity-50" disabled={busy || !whenSupported} title={!whenSupported ? "Choose a live resource and trigger (Leads/Tasks, Manual/Scheduled) to save" : undefined} onClick={async () => { if (await send(editingId ? { operation: "update", id: editingId, definition: draft } : { operation: "create", definition: draft })) resetDraft() }}>
             {editingId ? "Save changes (new version)" : "Save workflow"}
           </button>
         </div>

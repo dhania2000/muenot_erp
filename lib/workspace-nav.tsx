@@ -404,7 +404,16 @@ export const SECURITY_CHILDREN: NavChild[] = [
   { label: "Temporary access", href: "/admin/security/temporary-access" },
   { label: "Emergency access", href: "/admin/security/emergency-access" },
   { label: "Access reviews", href: "/admin/security/access-reviews" },
-  { label: "API & webhooks", href: "/admin/security/api-webhooks" },
+]
+
+// SPEC 53 — Developer center groups API key issuance, usage/rate-limit
+// dashboards, and webhook delivery under one admin area, distinct from
+// Security & Access per the navigation audit.
+export const DEVELOPER_CHILDREN: NavChild[] = [
+  { label: "API Keys", href: "/admin/security/api-webhooks" },
+  { label: "API Usage", href: "/admin/security/api-webhooks/usage" },
+  { label: "Rate Limits", href: "/admin/security/api-webhooks/rate-limits" },
+  { label: "Webhooks", href: "/admin/security/api-webhooks#webhooks" },
 ]
 
 // SPECS 67–74 — Data governance groups the central tenant audit log,
@@ -609,10 +618,20 @@ export async function buildWorkspaceNav(
 
     // Storage is its own top-level admin module (moved out of Subscription &
     // Billing). Customer-owned object storage connections are managed here.
+    // SPECS 32/34/35 — Files, Security and Usage & Quotas sub-pages sit
+    // alongside the existing Versions, Retention and Health surfaces.
     navItems.push({
       label: "Storage",
       href: "/modules/storage",
       icon: <HardDrive className="size-4" />,
+      children: [
+        { label: "Files", href: "/modules/storage" },
+        { label: "Security", href: "/modules/storage/security" },
+        { label: "Usage & Quotas", href: "/modules/storage/usage" },
+        { label: "Versions", href: "/modules/storage/versions" },
+        { label: "Retention", href: "/modules/storage/retention" },
+        { label: "Health", href: "/modules/storage/health" },
+      ],
     })
   }
 

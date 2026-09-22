@@ -8,8 +8,9 @@ import { ensureAttendanceSchema, getTimeZone } from "@/lib/hr-attendance"
 //
 // Two client sources feed this endpoint, both reporting minutes that must be
 // treated as break rather than attendance:
-//   1. Inactivity — every minute past the 15-minute no-activity grace window
-//      (the idle tracker already subtracts the grace before reporting).
+//   1. Inactivity — every minute past the configured no-activity grace window
+//      (see lib/attendance-idle-config.ts for the single source of truth; the
+//      idle tracker already subtracts the grace before reporting).
 //   2. Screen not shared — while the employee has not shared their entire
 //      screen (permission denied or sharing stopped) the whole elapsed time is
 //      reported (no grace), because unmonitored time never counts as work.

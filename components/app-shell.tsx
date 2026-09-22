@@ -14,6 +14,7 @@ import { NotesPanel } from "@/components/notes-panel"
 import { CommandPalette } from "@/components/shared/command-palette"
 import { ScreenMonitorProvider, useScreenMonitor } from "@/components/hr/screen-monitor-provider"
 import { AttendanceIdleTracker } from "@/components/hr/attendance-idle-tracker"
+import type { IdleStatus } from "@/lib/attendance-idle-config"
 import { LanguageWidget } from "@/components/providers/language-widget"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -287,6 +288,7 @@ function HeaderClockButton() {
   const { data, mutate } = useSWR<ClockStatus>("/api/hr/attendance/clock", fetcher)
   const { startMonitoring, stopMonitoring } = useScreenMonitor()
   const [busy, setBusy] = useState(false)
+  const [idleStatus, setIdleStatus] = useState<IdleStatus>("active")
 
   const state = data?.state ?? "out"
   const linked = data?.linked ?? true
@@ -316,11 +318,13 @@ function HeaderClockButton() {
         toast.error((json as { error?: string }).error || "Could not record attendance. Please try again.")
       } else if ((json as { state?: string }).state === "in") {
         toast.success("Clocked in")
+        setIdleStatus("active")
         // Screen monitoring only begins after this successful clock in and the
         // employee's explicit screen-share consent (handled by the provider).
         void startMonitoring()
       } else if ((json as { state?: string }).state === "out") {
         toast.success("Clocked out")
+        setIdleStatus("active")
         // Clocking out always stops capture immediately.
         void stopMonitoring("clock_out")
       }
@@ -334,7 +338,28 @@ function HeaderClockButton() {
 
   return (
     <>
-      <AttendanceIdleTracker active={state === "in"} />
+      <AttendanceIdleTracker active={state === "in"} onStatusChange={setIdleStatus} />
+      {state === "in" ? (
+        <span
+          className={cn(
+            "hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium sm:inline-flex",
+            idleStatus === "active" && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400",
+            idleStatus === "idle" && "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400",
+            idleStatus === "break" && "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-400",
+          )}
+          aria-label={`Activity status: ${idleStatus === "active" ? "Active" : idleStatus === "idle" ? "Idle" : "On Break"}`}
+        >
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              idleStatus === "active" && "bg-emerald-500",
+              idleStatus === "idle" && "bg-amber-500",
+              idleStatus === "break" && "bg-orange-500",
+            )}
+          />
+          {idleStatus === "active" ? "Active" : idleStatus === "idle" ? "Idle" : "On Break"}
+        </span>
+      ) : null}
       <Button
         onClick={toggle}
         disabled={busy}

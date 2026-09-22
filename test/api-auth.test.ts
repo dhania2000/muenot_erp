@@ -75,9 +75,9 @@ describe("public API-key authentication remains available", () => {
     expect(mock.touch).not.toHaveBeenCalled()
   })
   it("returns key tenant/scopes without granting browser-session access", async () => {
-    mock.key.mockResolvedValue({ id: 3, tenant_id: 8, status: "active", expires_at: null, scopes: "clients:read" })
+    mock.key.mockResolvedValue({ id: 3, tenant_id: 8, status: "active", expires_at: null, scopes: "clients:read", name: "CI key", environment: "test", ip_restrictions: "" })
     const auth = await authenticateApiKey(request())
-    expect(auth).toEqual({ keyId: 3, tenantId: 8, scopes: ["clients:read"] })
+    expect(auth).toEqual({ keyId: 3, tenantId: 8, name: "CI key", scopes: ["clients:read"], environment: "test", ipRestrictions: "" })
     expect(hasScope(auth!, "clients:read")).toBe(true)
     expect(hasScope(auth!, "clients:write")).toBe(false)
     expect(mock.touch).toHaveBeenCalledWith(3)

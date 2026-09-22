@@ -54,6 +54,8 @@ export const RESERVED_WEBHOOK_HEADERS = new Set([
   "x-webhook-signature",
   "x-webhook-timestamp",
   "x-webhook-event",
+  "x-webhook-id",
+  "x-webhook-attempt",
 ])
 
 /**

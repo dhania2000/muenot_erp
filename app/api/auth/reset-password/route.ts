@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { consumeResetToken, verifyResetToken } from "@/lib/password-reset"
 import { assertAndHashNewPassword, recordPasswordChange } from "@/lib/password-policy"
 import { resolveTenantIdForUser } from "@/lib/tenant-service"
+import { revokeAllSessionsForUser } from "@/lib/session-store"
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -39,6 +40,16 @@ export async function POST(request: Request) {
     const tenantId = await resolveTenantIdForUser(result.userId)
     await recordPasswordChange(result.userId, newHash, tenantId ?? null)
     await consumeResetToken(result.tokenId)
+
+    // SPEC 60 — session invalidation after password reset. A forgotten-password
+    // reset happens off-session (the actor holds no cookie), so every standing
+    // session for this user is revoked: if the reset was triggered by an
+    // attacker who had a live session, that session dies here.
+    try {
+      await revokeAllSessionsForUser(result.userId, { reason: "password_reset" })
+    } catch (err) {
+      console.error("[v0] reset-password: session revocation failed (reset still succeeds):", err)
+    }
 
     return NextResponse.json({ ok: true })
   } catch (error) {

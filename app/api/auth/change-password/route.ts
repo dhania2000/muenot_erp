@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { verifyPassword } from "@/lib/password"
 import { assertAndHashNewPassword, recordPasswordChange } from "@/lib/password-policy"
+import { revokeAllSessionsForUser } from "@/lib/session-store"
 
 export async function POST(request: Request) {
   const session = await getSession()
@@ -42,6 +43,19 @@ export async function POST(request: Request) {
     session.userId,
   ])
   await recordPasswordChange(session.userId, newHash, session.tenantId ?? null)
+
+  // SPEC 60 — session invalidation after password change. The user stays
+  // signed in on the device they just used (their current sid is preserved),
+  // but every OTHER standing session is revoked so a change made in response
+  // to a suspected compromise actually evicts the other devices.
+  try {
+    await revokeAllSessionsForUser(session.userId, {
+      exceptSessionId: session.sid,
+      reason: "password_change",
+    })
+  } catch (err) {
+    console.error("[v0] change-password: session revocation failed (change still succeeds):", err)
+  }
 
   return NextResponse.json({ ok: true })
 }

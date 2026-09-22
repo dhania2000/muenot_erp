@@ -31,8 +31,11 @@ paths:
   /me:
     get: { summary: Current user, tenant and resolved entitlement map, responses: { '200': { description: Session identity } } }
   /tenant:
-    get: { summary: Current tenant and Shopkeeper profile, responses: { '200': { description: Tenant profile } } }
-    patch: { summary: Update current tenant Shopkeeper profile (tenant owner/admin only), responses: { '200': { description: Updated profile }, '403': { $ref: '#/components/responses/Forbidden' } } }
+    get: { summary: Current tenant and Shopkeeper profile, responses: { '200': { description: Tenant profile, content: { application/json: { schema: { type: object, properties: { tenant: { type: object }, profile: { $ref: '#/components/schemas/ShopkeeperProfile' } } } } } } } }
+    patch: { summary: Update current tenant Shopkeeper profile (tenant owner/admin only), requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/ShopkeeperProfile' } } } }, responses: { '200': { description: Updated profile }, '403': { $ref: '#/components/responses/Forbidden' } } }
+  /settings:
+    get: { summary: Alias of /tenant — Shop Profile, Business Hours, Notification Preferences and Account, responses: { '200': { description: Tenant profile } } }
+    patch: { summary: Alias of /tenant, responses: { '200': { description: Updated profile }, '403': { $ref: '#/components/responses/Forbidden' } } }
   /dashboard:
     get: { summary: Existing tenant-scoped personal dashboard, responses: { '200': { description: Dashboard } } }
   /whatsapp:
@@ -51,8 +54,119 @@ paths:
   /notifications: { get: { summary: Current user's notifications, responses: { '200': { description: Notifications } } }, patch: { summary: Mark own notifications read, responses: { '200': { description: Updated } } } }
   /subscription: { get: { summary: Current tenant subscription and entitlements, responses: { '200': { description: Subscription } } } }
   /devices: { post: { summary: Register encrypted future-FCM device token, responses: { '200': { description: Registered } } }, delete: { summary: Disable own device token, responses: { '200': { description: Disabled } } } }
-  /products: { get: { summary: Reserved for future tenant-owned products, responses: { '501': { description: Not implemented safely in Phase 1 } } } }
-  /orders: { get: { summary: Reserved for future Shopkeeper orders, responses: { '501': { description: Not implemented in Phase 1 } } } }
+  /contacts/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }]
+    get:
+      summary: One customer in the authenticated tenant
+      responses:
+        '200': { description: Customer, content: { application/json: { schema: { type: object, properties: { contact: { $ref: '#/components/schemas/Contact' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update a customer
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/ContactInput' } } } }
+      responses:
+        '200': { description: Updated customer, content: { application/json: { schema: { type: object, properties: { contact: { $ref: '#/components/schemas/Contact' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      summary: Archive a customer
+      description: >
+        Archives rather than deletes. Orders and WhatsApp conversations reference
+        the customer, so removing the row would blank them off historical records.
+      responses:
+        '200': { description: Archived, content: { application/json: { schema: { type: object, properties: { archived: { type: boolean }, id: { type: integer } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /products:
+    get:
+      summary: Tenant-owned product catalogue
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Matches name, SKU or category }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [active, inactive] } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Product page
+          content: { application/json: { schema: { type: object, properties: { products: { type: array, items: { $ref: '#/components/schemas/Product' } }, pagination: { $ref: '#/components/schemas/Pagination' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    post:
+      summary: Create a product
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProductInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { type: object, properties: { product: { $ref: '#/components/schemas/Product' } } } } } }
+        '409': { description: SKU already used within this tenant, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /products/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }]
+    get:
+      summary: One product
+      responses:
+        '200': { description: Product, content: { application/json: { schema: { type: object, properties: { product: { $ref: '#/components/schemas/Product' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update a product
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/ProductInput' } } } }
+      responses:
+        '200': { description: Updated product, content: { application/json: { schema: { type: object, properties: { product: { $ref: '#/components/schemas/Product' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      summary: Delete a product
+      description: Order items keep their own copy of name and price, so past orders are unaffected.
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, properties: { deleted: { type: boolean }, id: { type: integer } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /orders:
+    get:
+      summary: Tenant-owned shop orders
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [new, processing, completed, cancelled] } }
+        - { name: paymentStatus, in: query, schema: { type: string, enum: [pending, paid, cod] } }
+        - { name: contactId, in: query, schema: { type: integer } }
+        - { name: search, in: query, schema: { type: string, maxLength: 100 }, description: Matches order number, customer name or phone }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Order page
+          content: { application/json: { schema: { type: object, properties: { orders: { type: array, items: { $ref: '#/components/schemas/Order' } }, pagination: { $ref: '#/components/schemas/Pagination' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create an order
+      description: >
+        Supply conversationId to raise an order straight from a WhatsApp chat;
+        the customer is resolved server-side from that conversation. The
+        conversation, contact and every product id are matched within the
+        authenticated tenant only.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OrderInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { type: object, properties: { order: { $ref: '#/components/schemas/Order' } } } } } }
+        '404': { description: Referenced conversation or customer is not in this tenant, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /orders/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }]
+    get:
+      summary: One order with its items
+      responses:
+        '200': { description: Order, content: { application/json: { schema: { type: object, properties: { order: { $ref: '#/components/schemas/Order' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update order status, payment, delivery, notes or discount
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/OrderPatch' } } } }
+      responses:
+        '200': { description: Updated order, content: { application/json: { schema: { type: object, properties: { order: { $ref: '#/components/schemas/Order' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
@@ -68,8 +182,205 @@ components:
     Error:
       type: object
       required: [error]
-      properties: { error: { type: string }, code: { type: string } }
+      properties:
+        error: { type: string }
+        code: { type: string }
+        fields:
+          type: object
+          additionalProperties: { type: string }
+          description: Present on 422; maps a field name to its message.
+
+    Pagination:
+      type: object
+      properties:
+        limit: { type: integer }
+        offset: { type: integer }
+        total: { type: integer }
+
+    Product:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        sku: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        price: { type: number, format: double }
+        offerPrice: { type: number, format: double, nullable: true }
+        currency: { type: string, example: INR }
+        imageUrl: { type: string, nullable: true }
+        stockStatus: { type: string, enum: [in_stock, out_of_stock, low_stock] }
+        stockQuantity: { type: integer, nullable: true }
+        status: { type: string, enum: [active, inactive] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ProductInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 190 }
+        sku: { type: string, maxLength: 64, description: Unique within the tenant }
+        category: { type: string, maxLength: 120 }
+        description: { type: string, maxLength: 5000 }
+        price: { type: number, minimum: 0 }
+        offerPrice: { type: number, minimum: 0, description: Must not exceed price }
+        currency: { type: string, maxLength: 8 }
+        imageUrl: { type: string, maxLength: 500 }
+        stockStatus: { type: string, enum: [in_stock, out_of_stock, low_stock] }
+        stockQuantity: { type: integer, minimum: 0 }
+        status: { type: string, enum: [active, inactive] }
+
+    OrderItem:
+      type: object
+      properties:
+        id: { type: integer }
+        productId: { type: integer, nullable: true, description: Null once the product is deleted }
+        productName: { type: string, description: Copied at order time }
+        sku: { type: string, nullable: true }
+        quantity: { type: integer, minimum: 1 }
+        unitPrice: { type: number, format: double }
+        lineTotal: { type: number, format: double }
+
+    Order:
+      type: object
+      properties:
+        id: { type: integer }
+        orderNumber: { type: string, example: ORD-00001 }
+        contactId: { type: integer, nullable: true }
+        conversationId: { type: integer, nullable: true }
+        customerName: { type: string, nullable: true }
+        customerPhone: { type: string, nullable: true }
+        subtotal: { type: number, format: double }
+        discount: { type: number, format: double }
+        total: { type: number, format: double }
+        currency: { type: string, example: INR }
+        status: { type: string, enum: [new, processing, completed, cancelled] }
+        paymentStatus: { type: string, enum: [pending, paid, cod] }
+        deliveryMethod: { type: string, enum: [shop_pickup, home_delivery] }
+        deliveryAddress: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        createdBy: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        items: { type: array, items: { $ref: '#/components/schemas/OrderItem' } }
+
+    OrderInput:
+      type: object
+      required: [items]
+      properties:
+        conversationId: { type: integer, description: WhatsApp conversation owned by this tenant; resolves the customer server-side }
+        contactId: { type: integer }
+        customerName: { type: string, maxLength: 190 }
+        customerPhone: { type: string, maxLength: 40 }
+        discount: { type: number, minimum: 0, description: Must not exceed the subtotal }
+        currency: { type: string, maxLength: 8 }
+        status: { type: string, enum: [new, processing, completed, cancelled], default: new }
+        paymentStatus: { type: string, enum: [pending, paid, cod], default: pending }
+        deliveryMethod: { type: string, enum: [shop_pickup, home_delivery], default: shop_pickup }
+        deliveryAddress: { type: string, maxLength: 500 }
+        notes: { type: string, maxLength: 2000 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            type: object
+            properties:
+              productId: { type: integer, description: Must belong to this tenant }
+              productName: { type: string, description: Required only for a free-text line }
+              sku: { type: string }
+              quantity: { type: integer, minimum: 1, default: 1 }
+              unitPrice: { type: number, minimum: 0, description: Overrides the catalogue price; required for a free-text line }
+
+    OrderPatch:
+      type: object
+      properties:
+        status: { type: string, enum: [new, processing, completed, cancelled] }
+        paymentStatus: { type: string, enum: [pending, paid, cod] }
+        deliveryMethod: { type: string, enum: [shop_pickup, home_delivery] }
+        deliveryAddress: { type: string, maxLength: 500 }
+        notes: { type: string, maxLength: 2000 }
+        customerName: { type: string, maxLength: 190 }
+        customerPhone: { type: string, maxLength: 40 }
+        discount: { type: number, minimum: 0, description: Recomputes the total }
+
+    Contact:
+      type: object
+      properties:
+        id: { type: integer }
+        phone: { type: string }
+        name: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        tags: { type: array, items: { type: string } }
+        city: { type: string, nullable: true }
+        state: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        leadId: { type: integer, nullable: true }
+        archivedAt: { type: string, format: date-time, nullable: true }
+        lastInteractionAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+
+    ContactInput:
+      type: object
+      properties:
+        phone: { type: string, maxLength: 40, description: Required on create; unique within the tenant }
+        name: { type: string, maxLength: 190 }
+        email: { type: string, format: email, maxLength: 190 }
+        notes: { type: string, maxLength: 2000 }
+        tags: { type: array, items: { type: string }, maxItems: 25 }
+        city: { type: string, maxLength: 120 }
+        state: { type: string, maxLength: 120 }
+        country: { type: string, maxLength: 120 }
+
+    ShopkeeperProfile:
+      type: object
+      properties:
+        tenantId: { type: integer }
+        shopName: { type: string }
+        ownerName: { type: string, nullable: true }
+        businessCategory: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        state: { type: string, nullable: true }
+        pinCode: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        logoUrl: { type: string, nullable: true }
+        businessHours: { type: object, nullable: true, description: Free-form per-day opening hours }
+        notificationPreferences:
+          type: object
+          nullable: true
+          description: Free-form notification toggles, e.g. { newOrder, newMessage, dailySummary }
+        timezone: { type: string, nullable: true }
+        currency: { type: string, nullable: true }
+        gstin: { type: string, nullable: true }
+        website: { type: string, nullable: true }
+
+    ShopkeeperDashboard:
+      type: object
+      description: Returned when the authenticated tenant's tenant_type is SHOPKEEPER.
+      properties:
+        type: { type: string, enum: [shopkeeper] }
+        todayMessages: { type: integer }
+        unreadConversations: { type: integer }
+        todayOrders: { type: integer }
+        pendingOrders: { type: integer }
+        todaySales: { type: number, format: double, description: Excludes cancelled orders }
+        customerCount: { type: integer }
+        recentConversations: { type: array, items: { type: object } }
+        recentOrders: { type: array, items: { type: object } }
+        whatsapp:
+          type: object
+          properties:
+            connected: { type: boolean }
+            phoneNumber: { type: string, nullable: true }
+            status: { type: string, nullable: true }
   responses:
     Unauthorized: { description: Missing, expired, revoked or invalid token, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Forbidden: { description: Permission or plan entitlement denied, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Not found, or not owned by the authenticated tenant, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    ValidationFailed: { description: Field validation failed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     RateLimited: { description: Too many requests; inspect Retry-After }

@@ -153,6 +153,11 @@ export const TENANT_OWNED_TABLES = [
   "mobile_sessions",
   "mobile_device_registrations",
   "mobile_api_audit",
+  // Shopkeeper shop domain. Deliberately separate from the global ERP
+  // `products` / `sales_invoices` tables, which carry no tenant_id.
+  "shopkeeper_products",
+  "shopkeeper_orders",
+  "shopkeeper_order_items",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

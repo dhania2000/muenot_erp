@@ -26,8 +26,21 @@ type PublicSettings = {
   retentionDays: number
 }
 
+/**
+ * Live screen-monitoring status for the header UI:
+ *   - "off"      not clocked in / not monitoring
+ *   - "active"   sharing the entire screen — working time counts (idle grace applies)
+ *   - "required" sharing never started, was denied, unsupported, or a window/tab
+ *                was chosen — working time does NOT count; time is break
+ *   - "stopped"  sharing was active then ended mid-session — working time does
+ *                NOT count until resumed; time is break
+ */
+export type MonitorStatus = "off" | "active" | "required" | "stopped"
+
 type MonitorContextValue = {
   active: boolean
+  /** Live monitoring status, drives the header badge/banner. */
+  status: MonitorStatus
   /** Called after a successful Clock In. Opens the native picker, then captures. */
   startMonitoring: () => Promise<void>
   /** Called after a successful Clock Out (or manual stop). */
@@ -67,6 +80,7 @@ function detectBrowserOs(): { browser: string; os: string } {
 
 export function ScreenMonitorProvider({ children }: { children: React.ReactNode }) {
   const [active, setActive] = useState(false)
+  const [status, setStatus] = useState<MonitorStatus>("off")
 
   const streamRef = useRef<MediaStream | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -144,7 +158,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     if (since === null) return
     const minutes = (Date.now() - since) / 60000
     if (minutes < 1) return
-    const payload = JSON.stringify({ minutes })
+    const payload = JSON.stringify({ minutes, type: "screen-missing" })
     if (useBeacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
       navigator.sendBeacon("/api/hr/attendance/idle", new Blob([payload], { type: "application/json" }))
     } else {
@@ -179,6 +193,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
   const stopMonitoring = useCallback(
     async (reason = "clock_out") => {
       const pk = sessionPkRef.current
+      setStatus("off")
       stopUnmonitored()
       teardownStream()
       if (pk) {
@@ -369,6 +384,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) {
       await recordSession(false)
       startUnmonitored()
+      setStatus("required")
       toast.error("Screen sharing is not supported in this browser, so this time will count as break, not attendance.")
       return
     }
@@ -393,6 +409,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     } catch {
       await recordSession(false)
       startUnmonitored()
+      setStatus("required")
       toast.error("Screen sharing was denied. This time will count as break until you share your entire screen.")
       return
     }
@@ -404,6 +421,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
       stream.getTracks().forEach((track) => track.stop())
       await recordSession(false)
       startUnmonitored()
+      setStatus("required")
       toast.error(
         "Please share your entire screen, not a single window or tab. Until then this time will count as break, not attendance.",
       )
@@ -438,6 +456,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
     }
     // Full screen is being shared: any earlier unmonitored stretch ends here.
     stopUnmonitored()
+    setStatus("active")
     beginCaptureLoop()
     toast.success("Screen monitoring started")
 

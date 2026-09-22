@@ -6,18 +6,20 @@ import { ensureAttendanceSchema, getTimeZone } from "@/lib/hr-attendance"
 // ---------------------------------------------------------------------------
 // Non-work time reporting for the currently clocked-in employee.
 //
-// Two client sources feed this endpoint, both reporting minutes that must be
-// treated as break rather than attendance:
-//   1. Inactivity — every minute past the configured no-activity grace window
-//      (see lib/attendance-idle-config.ts for the single source of truth; the
-//      idle tracker already subtracts the grace before reporting).
+// Two client sources feed this endpoint, both reporting TOTAL no-activity
+// minutes (the grace window is NOT subtracted here — that happens once at
+// clock-out):
+//   1. Inactivity — the full continuous no-activity stretch once it crosses the
+//      grace window (see lib/attendance-idle-config.ts for the single source of
+//      truth). The idle tracker reports the whole stretch, grace included.
 //   2. Screen not shared — while the employee has not shared their entire
 //      screen (permission denied or sharing stopped) the whole elapsed time is
-//      reported (no grace), because unmonitored time never counts as work.
+//      reported, because unmonitored time is also no-activity time.
 //
 // We accumulate the reported minutes into `idle_minutes` on today's OPEN
-// attendance row. At clock-out the clock route subtracts it from worked hours
-// and adds it to the break total, so this time never counts as attendance.
+// attendance row — this is the total Idle time. At clock-out the clock route
+// derives Break = Idle - grace and subtracts only that break from worked hours,
+// so the first `grace` minutes of idle stay paid while the rest becomes break.
 // ---------------------------------------------------------------------------
 
 /** Reports below this (minutes) are noise and ignored — the client pre-graces. */

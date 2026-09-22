@@ -4,28 +4,29 @@ import { useEffect, useRef } from "react"
 import { IDLE_GRACE_MS, type IdleStatus } from "@/lib/attendance-idle-config"
 
 // ---------------------------------------------------------------------------
-// Tracks continuous "no activity" time while an employee is clocked in.
+// Tracks "no activity" time while an employee is clocked in.
 //
 // "No activity" means the employee is not interacting with the screen at all —
 // no mouse, keyboard, touch, wheel or scroll input — which also covers the tab
 // being hidden, minimised or another app being in front (those simply produce
 // no input events).
 //
-// Every new continuous idle stretch gets its own grace period (see
-// lib/attendance-idle-config.ts for the single source of truth on its length):
-// the first IDLE_GRACE_MS of that stretch is always attendance/work time, and
-// only the time from the grace boundary onward — until activity resumes — is
-// ever reported to the idle endpoint, which reclassifies it from worked hours
-// into break at clock-out. Any tracked activity event immediately ends the
-// stretch and restarts the grace period from zero for the next one, so
-// separate short idle periods are never combined together.
+// IMPORTANT — what gets reported (see lib/attendance-idle-config.ts for the
+// single source of truth on the grace length):
+//   * IDLE is the TOTAL no-activity time. Once a continuous inactivity stretch
+//     crosses the grace window we start reporting it, and we count the FULL
+//     stretch — including the first IDLE_GRACE_MS — as idle time. Short gaps
+//     below the grace window are treated as noise and never reported.
+//   * BREAK is derived from idle, not reported separately: at clock-out the
+//     server subtracts the grace once (Break = Idle - grace). This keeps the
+//     two values distinct: e.g. 19 min of idle → Idle 19, Break 9.
 //
-// Break time is accrued continuously (roughly once a minute) so it is recorded
-// on the server well before clock-out, rather than only when the employee comes
-// back. This is a best-effort client heuristic and renders nothing.
+// Idle is accrued continuously (roughly once a minute) so it reaches the server
+// well before clock-out. This is a best-effort client heuristic and renders
+// nothing.
 // ---------------------------------------------------------------------------
 
-/** How often we check for crossing the grace window / accrue break minutes. */
+/** How often we check for crossing the grace window / accrue idle minutes. */
 const CHECK_INTERVAL_MS = 30 * 1000
 /** How often we recompute the live Active / Idle / On Break status for the UI. */
 const STATUS_INTERVAL_MS = 5 * 1000
@@ -40,15 +41,15 @@ export function AttendanceIdleTracker({
   onStatusChange?: (status: IdleStatus) => void
 }) {
   const lastActivityRef = useRef<number>(Date.now())
-  // Start of the not-yet-reported break stretch (at or after the grace mark).
-  // Doubles as the "last reported" marker once we begin accruing.
-  const breakStartRef = useRef<number | null>(null)
+  // Timestamp up to which idle time in the current inactivity stretch has been
+  // reported. null means we are not in a reportable idle stretch yet.
+  const idleReportedRef = useRef<number | null>(null)
   const statusRef = useRef<IdleStatus>("active")
 
   useEffect(() => {
     if (!active || typeof document === "undefined") {
       lastActivityRef.current = Date.now()
-      breakStartRef.current = null
+      idleReportedRef.current = null
       if (statusRef.current !== "active") {
         statusRef.current = "active"
         onStatusChange?.("active")
@@ -78,45 +79,48 @@ export function AttendanceIdleTracker({
       }).catch(() => {})
     }
 
-    // Bank any break time accrued past the grace window and reset the marker.
-    const flushBreak = (useBeacon = false) => {
-      if (breakStartRef.current !== null) {
-        report(Date.now() - breakStartRef.current, useBeacon)
-        breakStartRef.current = null
+    // Bank any idle time accrued but not yet reported for the current stretch.
+    const flushIdle = (useBeacon = false) => {
+      if (idleReportedRef.current !== null) {
+        report(Date.now() - idleReportedRef.current, useBeacon)
+        idleReportedRef.current = null
       }
     }
 
     const onActivity = () => {
-      // Returning to the screen ends the idle stretch: bank the break past the
-      // grace mark, then restart the inactivity clock from now. Any tracked
-      // activity event resets the timer, so duplicate/simultaneous events are
-      // harmless — they all collapse into the same "now".
-      flushBreak()
+      // Returning to the screen ends the idle stretch: bank the remaining idle,
+      // then restart the inactivity clock from now. Any tracked activity event
+      // resets the timer, so duplicate/simultaneous events are harmless — they
+      // all collapse into the same "now".
+      flushIdle()
       lastActivityRef.current = Date.now()
       setStatus("active")
     }
 
     // Detect crossing the grace-window inactivity threshold and, once crossed,
-    // accrue break minutes continuously so they reach the server before
-    // clock-out. The break start is pinned to the grace boundary so only time
-    // from the grace mark onward is ever counted — the timestamp-based math
-    // (not the interval cadence) is what determines the split.
+    // accrue TOTAL idle minutes continuously so they reach the server before
+    // clock-out. The first crossing reports the whole stretch so far (including
+    // the grace period) as idle — the grace is only ever removed once, later,
+    // when the server turns idle into break.
     const tick = () => {
       const now = Date.now()
-      if (breakStartRef.current === null) {
-        if (now - lastActivityRef.current < IDLE_GRACE_MS) return
-        breakStartRef.current = lastActivityRef.current + IDLE_GRACE_MS
-      }
-      const elapsed = now - breakStartRef.current
-      if (elapsed >= 60000) {
-        report(elapsed)
-        breakStartRef.current = now
+      const idleElapsed = now - lastActivityRef.current
+      if (idleElapsed < IDLE_GRACE_MS) return
+      if (idleReportedRef.current === null) {
+        report(idleElapsed)
+        idleReportedRef.current = now
+      } else {
+        const delta = now - idleReportedRef.current
+        if (delta >= 60000) {
+          report(delta)
+          idleReportedRef.current = now
+        }
       }
     }
 
     // Lightweight, more frequent pass that only updates the live status badge
-    // (Active / Idle / On Break) — independent of the break-accrual cadence
-    // above so the UI feels responsive without changing how break minutes are
+    // (Active / Idle / On Break) — independent of the idle-accrual cadence
+    // above so the UI feels responsive without changing how idle minutes are
     // calculated or reported.
     const statusTick = () => {
       const idleMs = Date.now() - lastActivityRef.current
@@ -128,7 +132,7 @@ export function AttendanceIdleTracker({
     const onVisibility = () => {
       if (!document.hidden) onActivity()
     }
-    const onPageHide = () => flushBreak(true)
+    const onPageHide = () => flushIdle(true)
 
     const activityEvents: (keyof WindowEventMap)[] = [
       "mousemove",
@@ -147,8 +151,8 @@ export function AttendanceIdleTracker({
     const statusInterval = setInterval(statusTick, STATUS_INTERVAL_MS)
 
     return () => {
-      // Flush any in-progress break when the session ends or we unmount.
-      flushBreak()
+      // Flush any in-progress idle when the session ends or we unmount.
+      flushIdle()
       activityEvents.forEach((e) => window.removeEventListener(e, onActivity))
       document.removeEventListener("visibilitychange", onVisibility)
       window.removeEventListener("focus", onActivity)

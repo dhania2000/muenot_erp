@@ -12,6 +12,7 @@ import {
   type AttendanceMetrics,
   type DayContext,
 } from "@/lib/hr-attendance"
+import { IDLE_GRACE_MINUTES } from "@/lib/attendance-idle-config"
 
 const DEFAULT_TIME_ZONE = "Asia/Kolkata"
 
@@ -427,13 +428,15 @@ export async function POST(request: Request) {
     if (isOpen(record, withSession)) {
       const firstIn = record.clock_in || sessionStart(record, withSession, timeZone)
       const sessionHours = hoursBetween(sessionStart(record, withSession, timeZone), now)
-      // Away-from-screen time over the grace window (reported by the client while
-      // clocked in) is reclassified from worked hours into break.
+      // `idle_minutes` is the TOTAL no-activity time reported by the client
+      // while clocked in. Break = Idle - grace: the first IDLE_GRACE_MINUTES of
+      // idle stays paid work and only the remainder becomes break, so Idle and
+      // Break are always distinct once idle exceeds the grace window. Only the
+      // break portion is reclassified out of worked hours.
       const idleMinutes = withIdle ? Math.max(0, Math.round(Number(record.idle_minutes || 0))) : 0
+      const breakMinutes = Math.max(0, idleMinutes - IDLE_GRACE_MINUTES)
       const grossWorked = Number(record.working_hours || 0) + sessionHours
-      const worked = Number(Math.max(0, grossWorked - idleMinutes / 60).toFixed(2))
-      const spanMinutes = hoursBetween(firstIn, now) * 60
-      const breakMinutes = Math.max(0, Math.round(spanMinutes - worked * 60))
+      const worked = Number(Math.max(0, grossWorked - breakMinutes / 60).toFixed(2))
 
       const sets = ["clock_out = ?", "working_hours = ?", "break_minutes = ?"]
       const params: unknown[] = [now, worked, breakMinutes]

@@ -507,6 +507,7 @@ function WebhooksSection({
   const [url, setUrl] = useState("")
   const [description, setDescription] = useState("")
   const [events, setEvents] = useState<string[]>([])
+  const [headerRows, setHeaderRows] = useState<{ key: string; value: string }[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<string | null>(null)
@@ -518,6 +519,27 @@ function WebhooksSection({
     setEvents((prev) => (prev.includes(value) ? prev.filter((e) => e !== value) : [...prev, value]))
   }
 
+  function updateHeaderRow(index: number, field: "key" | "value", value: string) {
+    setHeaderRows((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)))
+  }
+
+  function addHeaderRow() {
+    setHeaderRows((prev) => [...prev, { key: "", value: "" }])
+  }
+
+  function removeHeaderRow(index: number) {
+    setHeaderRows((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function collectHeaders(): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const row of headerRows) {
+      const key = row.key.trim()
+      if (key) out[key] = row.value
+    }
+    return out
+  }
+
   async function createEndpoint() {
     setSaving(true)
     setError(null)
@@ -525,7 +547,7 @@ function WebhooksSection({
       const res = await fetch("/api/admin/security/webhooks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, description, events }),
+        body: JSON.stringify({ url, description, events, headers: collectHeaders() }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to create endpoint")
@@ -534,6 +556,7 @@ function WebhooksSection({
       setUrl("")
       setDescription("")
       setEvents([])
+      setHeaderRows([])
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create endpoint")
@@ -634,6 +657,36 @@ function WebhooksSection({
                       {ev.label}
                     </label>
                   ))}
+                </div>
+                <div className="grid gap-2">
+                  <Label>Custom headers (optional)</Label>
+                  {headerRows.map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        value={row.key}
+                        onChange={(e) => updateHeaderRow(i, "key", e.target.value)}
+                        placeholder="X-Api-Key"
+                        aria-label="Header name"
+                        className="flex-1"
+                      />
+                      <Input
+                        value={row.value}
+                        onChange={(e) => updateHeaderRow(i, "value", e.target.value)}
+                        placeholder="value"
+                        aria-label="Header value"
+                        className="flex-1"
+                      />
+                      <Button variant="ghost" size="sm" onClick={() => removeHeaderRow(i)} aria-label="Remove header">
+                        <Trash2 className="size-3.5 text-destructive" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button variant="outline" size="sm" className="gap-1.5 justify-self-start" onClick={addHeaderRow}>
+                    <Plus className="size-3.5" /> Add header
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Sent with every delivery to this endpoint. Signature headers cannot be overridden.
+                  </p>
                 </div>
               </div>
             )}

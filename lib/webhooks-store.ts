@@ -28,6 +28,8 @@ export type WebhookEndpointRow = {
   description: string | null
   events: string
   secret_encrypted: string | null
+  /** JSON object of extra request headers to send with every delivery. */
+  custom_headers: string | null
   status: WebhookEndpointStatus
   created_by: number | null
   created_at: string
@@ -37,9 +39,54 @@ export type WebhookEndpointRow = {
   failure_count: number
 }
 
-export type PublicWebhookEndpoint = Omit<WebhookEndpointRow, "secret_encrypted" | "tenant_id"> & {
+export type PublicWebhookEndpoint = Omit<WebhookEndpointRow, "secret_encrypted" | "tenant_id" | "custom_headers"> & {
   hasSecret: boolean
   tenantId: number
+  customHeaders: Record<string, string>
+}
+
+/**
+ * Header names the delivery signs and sets itself — a subscriber can never
+ * override these via custom headers, or they could forge the signature chain.
+ */
+export const RESERVED_WEBHOOK_HEADERS = new Set([
+  "content-type",
+  "x-webhook-signature",
+  "x-webhook-timestamp",
+  "x-webhook-event",
+])
+
+/**
+ * Validate and normalize a caller-supplied header map: string→string only,
+ * reserved headers stripped, capped in count and size. Returns null when the
+ * input is not a flat string map at all.
+ */
+export function sanitizeCustomHeaders(input: unknown): Record<string, string> | null {
+  if (input === null || input === undefined) return {}
+  if (typeof input !== "object" || Array.isArray(input)) return null
+  const out: Record<string, string> = {}
+  let count = 0
+  for (const [rawKey, rawVal] of Object.entries(input as Record<string, unknown>)) {
+    const key = rawKey.trim()
+    if (!key) continue
+    if (typeof rawVal !== "string") return null
+    if (!/^[A-Za-z0-9-]+$/.test(key)) return null
+    if (RESERVED_WEBHOOK_HEADERS.has(key.toLowerCase())) continue
+    if (++count > 20) break
+    out[key] = rawVal.slice(0, 1000)
+  }
+  return out
+}
+
+/** Parse the stored JSON header blob into a plain object, never throwing. */
+export function resolveEndpointHeaders(row: WebhookEndpointRow): Record<string, string> {
+  if (!row.custom_headers) return {}
+  try {
+    const parsed = JSON.parse(row.custom_headers)
+    return sanitizeCustomHeaders(parsed) ?? {}
+  } catch {
+    return {}
+  }
 }
 
 export type WebhookDeliveryRow = {
@@ -59,6 +106,20 @@ export type WebhookDeliveryRow = {
 
 let ensured: Promise<void> | null = null
 
+async function columnExists(table: string, column: string): Promise<boolean> {
+  const rows = await query<any[]>(
+    `SELECT 1 FROM information_schema.columns
+     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  )
+  return rows.length > 0
+}
+
+async function addColumnIfMissing(table: string, column: string, ddl: string) {
+  if (await columnExists(table, column)) return
+  await query(`ALTER TABLE \`${table}\` ADD COLUMN ${ddl}`).catch(() => {})
+}
+
 async function runEnsure(): Promise<void> {
   await query(`
     CREATE TABLE IF NOT EXISTS \`webhook_endpoints\` (
@@ -68,6 +129,7 @@ async function runEnsure(): Promise<void> {
       \`description\` VARCHAR(255) DEFAULT NULL,
       \`events\` VARCHAR(500) NOT NULL DEFAULT '',
       \`secret_encrypted\` TEXT DEFAULT NULL,
+      \`custom_headers\` TEXT DEFAULT NULL,
       \`status\` ENUM('active','disabled') NOT NULL DEFAULT 'active',
       \`created_by\` INT UNSIGNED DEFAULT NULL,
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -99,6 +161,8 @@ async function runEnsure(): Promise<void> {
       KEY \`idx_webhook_deliveries_retry\` (\`status\`, \`next_retry_at\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+  // SPEC 54 — backfill the custom-headers column on tables created before it existed.
+  await addColumnIfMissing("webhook_endpoints", "custom_headers", "`custom_headers` TEXT DEFAULT NULL")
 }
 
 export async function ensureWebhooksSchema(): Promise<void> {
@@ -112,8 +176,13 @@ export async function ensureWebhooksSchema(): Promise<void> {
 }
 
 export function toPublicEndpoint(row: WebhookEndpointRow): PublicWebhookEndpoint {
-  const { secret_encrypted, tenant_id, ...rest } = row
-  return { ...rest, hasSecret: Boolean(secret_encrypted), tenantId: tenant_id }
+  const { secret_encrypted, tenant_id, custom_headers, ...rest } = row
+  return {
+    ...rest,
+    hasSecret: Boolean(secret_encrypted),
+    tenantId: tenant_id,
+    customHeaders: resolveEndpointHeaders(row),
+  }
 }
 
 export async function listEndpoints(tenantId: number): Promise<PublicWebhookEndpoint[]> {
@@ -155,6 +224,13 @@ export type EndpointInput = {
   url: string
   description?: string | null
   events: string[]
+  headers?: Record<string, string> | null
+}
+
+function serializeHeaders(headers: Record<string, string> | null | undefined): string | null {
+  const clean = sanitizeCustomHeaders(headers ?? {})
+  if (!clean || Object.keys(clean).length === 0) return null
+  return JSON.stringify(clean)
 }
 
 export async function createEndpoint(
@@ -166,9 +242,17 @@ export async function createEndpoint(
   const crypto = await import("crypto")
   const secret = `whsec_${crypto.randomBytes(24).toString("hex")}`
   const result = await query<{ insertId: number }>(
-    `INSERT INTO \`webhook_endpoints\` (\`tenant_id\`, \`url\`, \`description\`, \`events\`, \`secret_encrypted\`, \`status\`, \`created_by\`)
-     VALUES (?, ?, ?, ?, ?, 'active', ?)`,
-    [tenantId, input.url.trim(), input.description ?? null, input.events.join(","), encryptSecret(secret), createdBy],
+    `INSERT INTO \`webhook_endpoints\` (\`tenant_id\`, \`url\`, \`description\`, \`events\`, \`secret_encrypted\`, \`custom_headers\`, \`status\`, \`created_by\`)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
+    [
+      tenantId,
+      input.url.trim(),
+      input.description ?? null,
+      input.events.join(","),
+      encryptSecret(secret),
+      serializeHeaders(input.headers),
+      createdBy,
+    ],
   )
   const id = (result as any).insertId as number
   const rows = await query<WebhookEndpointRow[]>(`SELECT * FROM \`webhook_endpoints\` WHERE \`id\` = ?`, [id])
@@ -194,6 +278,10 @@ export async function updateEndpoint(
   if (input.events !== undefined) {
     sets.push("`events` = ?")
     params.push(input.events.join(","))
+  }
+  if (input.headers !== undefined) {
+    sets.push("`custom_headers` = ?")
+    params.push(serializeHeaders(input.headers))
   }
   if (input.status !== undefined) {
     sets.push("`status` = ?")

@@ -24,7 +24,14 @@ import crypto from "crypto"
 import { NextResponse } from "next/server"
 import { authenticateApiKeyResult, hasScope, type ApiKeyAuth } from "@/lib/api-auth"
 import { keyAllowsIp, recordApiKeyEvent, type ApiKeyEnvironment } from "@/lib/api-keys-store"
-import { checkRateLimit, getClientIp } from "@/lib/rate-limit"
+import { getClientIp } from "@/lib/rate-limit"
+import {
+  applyEndpointOverride,
+  enforceRateLimit,
+  resolveTierForPlan,
+  type RateLimitTier,
+} from "@/lib/api-platform/rate-limit-engine"
+import { getTenantById } from "@/lib/tenant-service"
 import { ApiError, isApiError } from "@/lib/api-platform/errors"
 import { API_VERSION, SUPPORTED_VERSIONS, jsonError, jsonErrorFromApiError } from "@/lib/api-platform/response"
 import { logApiRequest } from "@/lib/api-platform/audit"
@@ -44,16 +51,41 @@ export type ApiRequestContext<P = Record<string, string>> = {
 export type ApiV1Options = {
   /** Required scope(s). All listed scopes must be granted on the key. */
   scopes?: string | string[]
-  /** Per-key fixed-window rate limit. Defaults to 120 req / 60s. */
-  rateLimit?: { max: number; windowMs: number } | false
+  /**
+   * Rate limiting for this endpoint (SPEC 53). Limits are resolved from the
+   * caller's plan tier; pass a partial override here to make an expensive
+   * endpoint stricter (each provided window caps at min(plan, override)).
+   * Pass `false` to disable rate limiting for this endpoint entirely.
+   */
+  rateLimit?: Partial<RateLimitTier> | false
   /** Enable Idempotency-Key handling (only meaningful for mutating methods). */
   idempotency?: boolean
   /** Require the key to belong to a specific environment. */
   requireEnvironment?: ApiKeyEnvironment
 }
 
-const DEFAULT_RATE_LIMIT = { max: 120, windowMs: 60_000 }
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"])
+
+/**
+ * Plan-tier lookups hit the tenants table, so cache the resolved tier briefly
+ * to keep the rate-limit check off the DB on the hot path.
+ */
+const tierCache = new Map<number, { tier: RateLimitTier; expires: number }>()
+const TIER_CACHE_TTL_MS = 60_000
+
+async function tierForTenant(tenantId: number): Promise<RateLimitTier> {
+  const cached = tierCache.get(tenantId)
+  if (cached && cached.expires > Date.now()) return cached.tier
+  let plan: string | null = null
+  try {
+    plan = (await getTenantById(tenantId))?.plan ?? null
+  } catch {
+    // Fall back to the default tier if the tenant lookup fails.
+  }
+  const tier = resolveTierForPlan(plan)
+  tierCache.set(tenantId, { tier, expires: Date.now() + TIER_CACHE_TTL_MS })
+  return tier
+}
 
 function newRequestId(): string {
   return `req_${crypto.randomBytes(12).toString("hex")}`
@@ -174,20 +206,29 @@ export function withApiV1<P = Record<string, string>>(
         }
       }
 
-      // 7. Rate limiting (per key).
+      // 7. Rate limiting (per key, plan-tiered, multi-window — SPEC 53).
       let rateHeaders: Record<string, string> = {}
       if (options.rateLimit !== false) {
-        const limit = options.rateLimit ?? DEFAULT_RATE_LIMIT
-        const rl = checkRateLimit(`apiv1:key:${auth.keyId}`, limit)
-        rateHeaders = {
-          "X-RateLimit-Limit": String(limit.max),
-          "X-RateLimit-Remaining": String(rl.remaining),
-        }
-        if (!rl.allowed) {
-          return fail(new ApiError("rate_limited", "Rate limit exceeded"), {
-            ...rateHeaders,
-            "Retry-After": String(rl.retryAfter),
-          })
+        const tier = applyEndpointOverride(
+          await tierForTenant(auth.tenantId),
+          options.rateLimit ?? undefined,
+        )
+        const decision = enforceRateLimit(`apiv1:key:${auth.keyId}`, tier)
+        rateHeaders = decision.headers
+        if (!decision.allowed) {
+          if (decision.abuse) {
+            void recordApiKeyEvent({
+              tenantId: auth.tenantId,
+              keyId: auth.keyId,
+              event: "auth_failed",
+              ip: clientIp,
+              detail: "rate_abuse_block",
+            })
+          }
+          const message = decision.abuse
+            ? "Temporarily blocked due to excessive requests"
+            : `Rate limit exceeded (${decision.window} window)`
+          return fail(new ApiError("rate_limited", message), rateHeaders)
         }
       }
 

@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { requirePlatformStaff, requirePlatformSuperAdmin } from "@/lib/platform-guard"
-import { getShopkeeperDetail, updateShopkeeper, ShopkeeperProvisioningError } from "@/lib/shopkeeper-provisioning"
+import { getShopkeeperDetail, updateShopkeeper, setShopkeeperStatus, changeShopkeeperPlan, resetShopkeeperOwnerPassword, ShopkeeperProvisioningError } from "@/lib/shopkeeper-provisioning"
 
 export const dynamic = "force-dynamic"
 
@@ -39,7 +39,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   try {
-    await updateShopkeeper(tenantId, body, { userId: guard.ctx.userId, email: guard.session.email })
+    const actor = { userId: guard.ctx.userId, email: guard.session.email }
+    if (body.status) await setShopkeeperStatus(tenantId, body.status, actor)
+    if (body.planCode) await changeShopkeeperPlan(tenantId, body.planCode, actor)
+    if (body.resetPassword) {
+      const credentials = await resetShopkeeperOwnerPassword(tenantId, { generate: true }, actor)
+      return NextResponse.json({ credentials })
+    }
+    await updateShopkeeper(tenantId, body, actor)
     const detail = await getShopkeeperDetail(tenantId)
     return NextResponse.json({ detail })
   } catch (err) {

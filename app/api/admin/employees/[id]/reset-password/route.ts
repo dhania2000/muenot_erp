@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { generateTempPassword, hashPassword } from "@/lib/password"
 import { assertAndHashNewPassword, recordPasswordChange, validatePasswordAgainstPolicy, getPasswordPolicy } from "@/lib/password-policy"
+import { revokeAllSessionsForUser } from "@/lib/session-store"
 
 async function requireAdmin() {
   const session = await getSession()
@@ -58,6 +59,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   await query("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?", [passwordHash, id])
   await recordPasswordChange(target.id, passwordHash, null)
+
+  // SPEC 60 — an admin-forced reset evicts the target from every device: all
+  // of their standing sessions are revoked so the old password (and any live
+  // session an attacker may hold) can no longer be used.
+  try {
+    await revokeAllSessionsForUser(target.id, { reason: "admin_password_reset" })
+  } catch (err) {
+    console.error("[v0] admin reset-password: session revocation failed (reset still succeeds):", err)
+  }
 
   return NextResponse.json({
     ok: true,

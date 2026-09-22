@@ -7,11 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 
 export const dynamic = "force-dynamic"
 
-// SPEC 60 — Password management. Hashing and the admin-initiated "reset now,
-// force change at next login" flow are real (lib/user-lifecycle.ts adminResetPassword,
-// wired through the admin user directory). A configurable, enforced password POLICY
-// (min length, complexity, expiry, reuse history, lockout threshold) is not yet stored
-// or checked anywhere — that's the gap this screen is honest about.
+// SPEC 60 — Password management. Hashing, the admin-initiated "reset now,
+// force change at next login" flow, and the configurable policy below
+// (min length, complexity, expiry, reuse history, lockout threshold, reset
+// token expiry, session invalidation on password change) are all enforced by
+// the backend — see lib/password-policy.ts and lib/auth.ts.
 export default async function PasswordPage() {
   const guard = await requireTenantAdmin()
   if (!guard.ok) return <p className="p-6">Tenant administrator access is required.</p>
@@ -27,11 +27,10 @@ export default async function PasswordPage() {
         one-time temporary password and forces a change at next login.
       </SecurityHeading>
 
-      <BackendStatus level="partial">
-        Hashing (bcrypt) and admin-initiated resets are real and enforced today — reset from Admin → Users. A
-        configurable tenant policy (minimum length, complexity rules, expiry, reuse history, lockout after failed
-        attempts) is not yet stored or checked at sign-in. The fields below show what that policy screen will
-        manage once it exists.
+      <BackendStatus level="live">
+        Hashing (bcrypt), login throttling, account lockout, password history, reset-token expiration, and
+        session invalidation after a password change are all enforced today. Update the policy below and it
+        applies immediately to registration, sign-in, self-service change, and password reset.
       </BackendStatus>
 
       <div className="grid gap-4 sm:grid-cols-2">

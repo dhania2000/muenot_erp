@@ -20,6 +20,15 @@ function formatRelative(iso: string) {
   return `${Math.round(hrs / 24)}d ago`
 }
 
+function formatAbsolute(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
+
 export function SessionsClient({ initialSessions }: { initialSessions: PublicSession[] }) {
   const router = useRouter()
   const [sessions, setSessions] = useState(initialSessions)
@@ -97,6 +106,7 @@ export function SessionsClient({ initialSessions }: { initialSessions: PublicSes
                   <TableHead>Device</TableHead>
                   <TableHead>IP address</TableHead>
                   <TableHead>Method</TableHead>
+                  <TableHead>Login time</TableHead>
                   <TableHead>Last active</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
@@ -129,6 +139,7 @@ export function SessionsClient({ initialSessions }: { initialSessions: PublicSes
                       <TableCell>
                         <Badge variant="outline" className="capitalize">{s.loginMethod}</Badge>
                       </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{formatAbsolute(s.createdAt)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{formatRelative(s.lastActiveAt)}</TableCell>
                       <TableCell className="text-right">
                         {s.isCurrent ? (

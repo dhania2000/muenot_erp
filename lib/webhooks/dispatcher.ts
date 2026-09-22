@@ -59,6 +59,12 @@ async function sendDelivery(delivery: WebhookDeliveryRow): Promise<void> {
         "X-Webhook-Signature": signature,
         "X-Webhook-Timestamp": timestamp,
         "X-Webhook-Event": delivery.event_type,
+        // Idempotency: this id is stable for the lifetime of the delivery and
+        // is re-sent unchanged on every retry (manual or cron sweep), so a
+        // receiver can dedupe replays by storing the id and ignoring repeats.
+        // `X-Webhook-Attempt` is advisory only and increments per send.
+        "X-Webhook-Id": String(delivery.id),
+        "X-Webhook-Attempt": String(attempts),
       },
       body: delivery.payload,
       signal: controller.signal,

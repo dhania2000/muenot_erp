@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useLanguage } from '@/components/providers/language-provider'
+import { lookupTranslation } from '@/lib/i18n/dictionary'
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE'])
 const TRANSLATABLE_ATTRS = ['placeholder', 'aria-label', 'title'] as const
@@ -12,12 +13,9 @@ const HAS_LETTERS =
   /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u0590-\u05FF\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7A3]/
 
 // Original (source-language) text keyed by DOM node/element so we can restore
-// it instantly when the user switches back to English, without another
-// network round trip.
+// it instantly when the user switches back to English.
 const originalText = new WeakMap<Text, string>()
 const originalAttr = new WeakMap<Element, Partial<Record<string, string>>>()
-// `${lang}::${sourceText}` -> translated text. Shared across the whole tab.
-const translationCache = new Map<string, string>()
 
 function isTranslatable(value: string | null) {
   if (!value) return false
@@ -58,26 +56,12 @@ function collectFromRoot(root: Element, texts: Set<Text>, attrs: Set<Element>) {
   }
 }
 
-async function fetchTranslations(texts: string[], lang: string): Promise<Map<string, string>> {
-  const result = new Map<string, string>()
-  try {
-    const res = await fetch('/api/translate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texts, target: lang }),
-    })
-    if (!res.ok) return result
-    const data = await res.json()
-    const translations = Array.isArray(data.translations) ? data.translations : []
-    texts.forEach((text, i) => {
-      if (typeof translations[i] === 'string') result.set(text, translations[i])
-    })
-  } catch (error) {
-    console.error('[v0] auto-translate fetch failed', error)
-  }
-  return result
-}
-
+/**
+ * Applies a purely static, dictionary-based translation to the DOM. No AI or
+ * network calls are involved — text is swapped in-place only when it exactly
+ * matches (case-insensitively) an entry in lib/i18n/dictionary.ts. Anything
+ * without a dictionary entry is left in its original (English) form.
+ */
 export function AutoTranslate() {
   const { language } = useLanguage()
   const pendingTextRef = useRef<Set<Text>>(new Set())
@@ -87,21 +71,14 @@ export function AutoTranslate() {
   useEffect(() => {
     const isEnglish = language === 'en'
 
-    async function translateNow(texts: Text[], attrEls: Element[]) {
-      const byOriginal = new Map<string, Text[]>()
+    function translateNow(texts: Text[], attrEls: Element[]) {
       for (const node of texts) {
         const original = originalText.get(node) ?? node.nodeValue ?? ''
         if (!originalText.has(node)) originalText.set(node, original)
-        const cached = translationCache.get(`${language}::${original}`)
-        if (cached) {
-          if (node.nodeValue !== cached) node.nodeValue = cached
-          continue
-        }
-        if (!byOriginal.has(original)) byOriginal.set(original, [])
-        byOriginal.get(original)!.push(node)
+        const translated = lookupTranslation(original, language)
+        if (translated && node.nodeValue !== translated) node.nodeValue = translated
       }
 
-      const attrByOriginal = new Map<string, Array<{ el: Element; attr: string }>>()
       for (const el of attrEls) {
         for (const attr of TRANSLATABLE_ATTRS) {
           const value = el.getAttribute(attr)
@@ -109,27 +86,8 @@ export function AutoTranslate() {
           const stored = originalAttr.get(el) ?? {}
           const original = stored[attr] ?? value!
           if (!(attr in stored)) originalAttr.set(el, { ...stored, [attr]: original })
-          const cached = translationCache.get(`${language}::${original}`)
-          if (cached) {
-            if (el.getAttribute(attr) !== cached) el.setAttribute(attr, cached)
-            continue
-          }
-          if (!attrByOriginal.has(original)) attrByOriginal.set(original, [])
-          attrByOriginal.get(original)!.push({ el, attr })
-        }
-      }
-
-      const uniqueSources = [...new Set([...byOriginal.keys(), ...attrByOriginal.keys()])]
-      if (uniqueSources.length === 0) return
-
-      const CHUNK = 60
-      for (let i = 0; i < uniqueSources.length; i += CHUNK) {
-        const chunk = uniqueSources.slice(i, i + CHUNK)
-        const translated = await fetchTranslations(chunk, language)
-        for (const [original, value] of translated) {
-          translationCache.set(`${language}::${original}`, value)
-          for (const node of byOriginal.get(original) || []) node.nodeValue = value
-          for (const { el, attr } of attrByOriginal.get(original) || []) el.setAttribute(attr, value)
+          const translated = lookupTranslation(original, language)
+          if (translated && el.getAttribute(attr) !== translated) el.setAttribute(attr, translated)
         }
       }
     }
@@ -159,12 +117,12 @@ export function AutoTranslate() {
       pendingTextRef.current.clear()
       pendingAttrRef.current.clear()
       if (isEnglish) return
-      if (texts.length || attrEls.length) void translateNow(texts, attrEls)
+      if (texts.length || attrEls.length) translateNow(texts, attrEls)
     }
 
     function schedule() {
       if (timerRef.current) clearTimeout(timerRef.current)
-      timerRef.current = setTimeout(flushPending, 250)
+      timerRef.current = setTimeout(flushPending, 150)
     }
 
     if (isEnglish) {
@@ -173,7 +131,7 @@ export function AutoTranslate() {
       const texts = new Set<Text>()
       const attrs = new Set<Element>()
       collectFromRoot(document.body, texts, attrs)
-      void translateNow([...texts], [...attrs])
+      translateNow([...texts], [...attrs])
     }
 
     // Watches for new content (route changes, async data, tab switches) and
@@ -198,7 +156,7 @@ export function AutoTranslate() {
           const node = mutation.target as Text
           if (shouldSkipElement(node.parentElement)) continue
           const original = originalText.get(node)
-          const expected = original ? translationCache.get(`${language}::${original}`) : undefined
+          const expected = original ? lookupTranslation(original, language) : null
           if (expected && node.nodeValue !== expected) {
             // Something (e.g. a re-render) reset this node back to its source
             // text. Re-queue it so it gets translated again.
@@ -211,7 +169,7 @@ export function AutoTranslate() {
           if (shouldSkipElement(el)) continue
           const stored = originalAttr.get(el)
           const original = stored?.[attr]
-          const expected = original ? translationCache.get(`${language}::${original}`) : undefined
+          const expected = original ? lookupTranslation(original, language) : null
           if (expected && el.getAttribute(attr) !== expected) {
             pendingAttrRef.current.add(el)
           }

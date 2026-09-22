@@ -1,9 +1,11 @@
-import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
-import { authenticateApiKey, hasScope } from "@/lib/api-auth"
 import { nextRecordId } from "@/lib/record-ids"
 import { recordAudit } from "@/lib/sales/lead-lifecycle"
 import { emitWebhookEvent } from "@/lib/webhooks/dispatcher"
+import { withApiV1 } from "@/lib/api-platform/handler"
+import { jsonOk } from "@/lib/api-platform/response"
+import { validationError } from "@/lib/api-platform/errors"
+import { parseListQuery, buildWhere, buildOrderBy } from "@/lib/api-platform/query"
 import {
   ensureClientTables,
   isValidEmail,
@@ -17,41 +19,63 @@ import {
 } from "@/lib/clients-db"
 
 /**
- * SPEC 67 — Public API surface for third-party integrations.
+ * SPEC 67 + SPEC 51 — Public API surface for third-party integrations.
  * ---------------------------------------------------------------------------
- * Authenticated with a Bearer API key (see lib/api-auth.ts) rather than the
- * browser session cookie used by app/api/clients/route.ts. Scoped strictly
- * by the key's granted scopes (`clients:read` / `clients:write`) — an admin
- * session role is not consulted here, only what the key itself was issued.
- * Tenant isolation is derived from the key's owning tenant, never from the
- * request body.
+ * Runs through the shared `withApiV1` pipeline (lib/api-platform/handler.ts),
+ * which applies versioning, Bearer API-key auth, per-key IP restrictions,
+ * scope authorization, rate limiting, idempotency, request IDs, standardized
+ * errors, and audit logging BEFORE this handler ever runs. Tenant isolation is
+ * derived from the key's owning tenant (ctx.auth.tenantId), never from request
+ * input. This route only expresses its own business logic + validation.
  */
 
 const ALLOWED = new Set([
-  "client_name","email","mobile","company_name","website","gst_number","address","city","state",
-  "country","postal_code","category","currency","status","notes","client_type","payment_terms_days","credit_limit",
+  "client_name", "email", "mobile", "company_name", "website", "gst_number", "address", "city", "state",
+  "country", "postal_code", "category", "currency", "status", "notes", "client_type", "payment_terms_days", "credit_limit",
 ])
 
-function unauthorized() {
-  return NextResponse.json({ error: "Missing or invalid API key" }, { status: 401 })
-}
+const SORTABLE = ["created_at", "client_name", "status", "client_type"] as const
+const FILTERABLE = ["status", "client_type", "category"] as const
 
-export async function GET(request: Request) {
-  const auth = await authenticateApiKey(request)
-  if (!auth) return unauthorized()
-  if (!hasScope(auth, "clients:read")) return NextResponse.json({ error: "Key lacks clients:read scope" }, { status: 403 })
-
+export const GET = withApiV1({ scopes: "clients:read" }, async (ctx) => {
   await ensureClientTables()
-  const url = new URL(request.url)
-  const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 200)
 
-  const clients = await query(
+  const { pagination, sort, filters } = parseListQuery(ctx.url, {
+    sortable: SORTABLE,
+    filterable: FILTERABLE,
+    defaultSort: "-created_at",
+  })
+
+  const where = buildWhere(filters)
+  const whereClause = ["tenant_id = ?", "archived_at IS NULL", where.clause].filter(Boolean).join(" AND ")
+  const orderBy = buildOrderBy(sort)
+
+  const rows = await query<any[]>(
     `SELECT client_code, client_name, display_name, email, mobile, company_name, status, client_type, created_at
-       FROM clients WHERE tenant_id = ? AND archived_at IS NULL ORDER BY created_at DESC LIMIT ?`,
-    [auth.tenantId, limit],
+       FROM clients
+      WHERE ${whereClause}
+      ${orderBy}
+      LIMIT ? OFFSET ?`,
+    [ctx.auth.tenantId, ...where.params, pagination.limit, pagination.offset],
   )
-  return NextResponse.json({ clients })
-}
+
+  const [countRow] = await query<any[]>(
+    `SELECT COUNT(*) AS total FROM clients WHERE ${whereClause}`,
+    [ctx.auth.tenantId, ...where.params],
+  )
+  const total = Number(countRow?.total ?? 0)
+
+  return jsonOk(rows, {
+    requestId: ctx.requestId,
+    meta: {
+      page: pagination.page,
+      per_page: pagination.perPage,
+      total,
+      total_pages: Math.max(1, Math.ceil(total / pagination.perPage)),
+      sort: sort.raw ?? undefined,
+    },
+  })
+})
 
 function validate(body: Record<string, any>): Record<string, string> {
   const errors: Record<string, string> = {}
@@ -63,24 +87,20 @@ function validate(body: Record<string, any>): Record<string, string> {
   return errors
 }
 
-export async function POST(request: Request) {
-  const auth = await authenticateApiKey(request)
-  if (!auth) return unauthorized()
-  if (!hasScope(auth, "clients:write")) return NextResponse.json({ error: "Key lacks clients:write scope" }, { status: 403 })
-
+export const POST = withApiV1({ scopes: "clients:write", idempotency: true }, async (ctx) => {
   await ensureClientTables()
-  const body = await request.json().catch(() => null)
-  if (!body) return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
+  const body = await ctx.json<Record<string, any>>()
 
   const errors = validate(body)
-  if (Object.keys(errors).length > 0) return NextResponse.json({ error: "Validation failed", fields: errors }, { status: 400 })
+  if (Object.keys(errors).length > 0) throw validationError(errors)
 
   const gstin = normalizeGstin(body.gst_number)
   const pan = normalizePan(body.pan) || panFromGstin(gstin)
   const email = normalizeEmail(body.email)
   const companyName = String(body.company_name ?? "").trim() || null
   const clientName = String(body.client_name ?? "").trim()
-  const clientType = body.client_type === "Individual" || (!companyName && !body.client_type) ? "Individual" : "Company"
+  const clientType =
+    body.client_type === "Individual" || (!companyName && !body.client_type) ? "Individual" : "Company"
 
   const payload: Record<string, any> = {}
   for (const key of Object.keys(body)) {
@@ -100,7 +120,7 @@ export async function POST(request: Request) {
 
   await query(
     `INSERT INTO clients (${fields.join(",")},tenant_id) VALUES (${fields.map(() => "?").join(",")},?)`,
-    [...values, auth.tenantId],
+    [...values, ctx.auth.tenantId],
   )
 
   await recordAudit(null, {
@@ -108,16 +128,16 @@ export async function POST(request: Request) {
     entityId: clientCode,
     action: "created",
     summary: `Client ${payload.display_name} created via API`,
-    meta: { source: "public_api", apiKeyId: auth.keyId },
+    meta: { source: "public_api", apiKeyId: ctx.auth.keyId },
     actorId: null,
   })
 
-  void emitWebhookEvent(auth.tenantId, "client.created", {
+  void emitWebhookEvent(ctx.auth.tenantId, "client.created", {
     client_code: clientCode,
     client_name: clientName,
     email,
     company_name: companyName,
   })
 
-  return NextResponse.json({ ok: true, client_code: clientCode }, { status: 201 })
-}
+  return jsonOk({ client_code: clientCode }, { requestId: ctx.requestId, status: 201 })
+})

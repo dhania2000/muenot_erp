@@ -4,7 +4,7 @@ import { BackendStatus } from "@/components/security/backend-status"
 import { ApiWebhooksClient } from "@/components/security/api-webhooks-client"
 import { getSession } from "@/lib/auth"
 import { getCurrentTenant } from "@/lib/tenant-context"
-import { AVAILABLE_SCOPES, listApiKeys } from "@/lib/api-keys-store"
+import { AVAILABLE_SCOPES, API_KEY_ENVIRONMENTS, listApiKeys } from "@/lib/api-keys-store"
 import { WEBHOOK_EVENTS, listEndpoints } from "@/lib/webhooks-store"
 
 export const dynamic = "force-dynamic"
@@ -39,6 +39,7 @@ export default async function ApiWebhooksPage() {
       <ApiWebhooksClient
         initialKeys={keys}
         scopeOptions={AVAILABLE_SCOPES}
+        envOptions={API_KEY_ENVIRONMENTS}
         initialEndpoints={endpoints}
         eventOptions={WEBHOOK_EVENTS}
       />

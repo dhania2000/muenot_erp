@@ -11,6 +11,7 @@ export type ShopkeeperProfile = {
   state: string | null; pinCode: string | null; country: string | null; logoUrl: string | null
   businessHours: Record<string, unknown> | null; timezone: string | null; currency: string | null
   gstin: string | null; website: string | null
+  notificationPreferences: Record<string, unknown> | null
 }
 
 let ensured: Promise<void> | undefined
@@ -25,10 +26,13 @@ export function ensureShopkeeperSchema() {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`).then(() => undefined).catch(error => { ensured = undefined; throw error })
 }
 
+function json(value: unknown): Record<string, unknown> | null {
+  try { return typeof value === "string" ? JSON.parse(value) : (value as Record<string, unknown> | null) } catch { return null }
+}
+
 function map(row: any): ShopkeeperProfile {
-  let businessHours: Record<string, unknown> | null = null
-  try { businessHours = typeof row.business_hours === "string" ? JSON.parse(row.business_hours) : row.business_hours } catch { /* corrupt optional configuration is omitted */ }
-  return { tenantId: Number(row.tenant_id), shopName: row.shop_name, ownerName: row.owner_name, businessCategory: row.business_category, email: row.email, phone: row.phone, address: row.address, city: row.city, state: row.state, pinCode: row.pin_code, country: row.country, logoUrl: row.logo_url, businessHours, timezone: row.timezone, currency: row.currency, gstin: row.gstin, website: row.website }
+  // Corrupt optional configuration is omitted rather than failing the request.
+  return { tenantId: Number(row.tenant_id), shopName: row.shop_name, ownerName: row.owner_name, businessCategory: row.business_category, email: row.email, phone: row.phone, address: row.address, city: row.city, state: row.state, pinCode: row.pin_code, country: row.country, logoUrl: row.logo_url, businessHours: json(row.business_hours), timezone: row.timezone, currency: row.currency, gstin: row.gstin, website: row.website, notificationPreferences: json(row.notification_preferences) }
 }
 
 export async function getShopkeeperProfile(tenantId: number): Promise<ShopkeeperProfile | null> {
@@ -42,6 +46,7 @@ export async function upsertShopkeeperProfile(tenantId: number, patch: Record<st
   await ensureShopkeeperSchema()
   const entries = Object.entries(FIELDS).filter(([key]) => patch[key] !== undefined).map(([key, column]) => [column, typeof patch[key] === "string" ? String(patch[key]).trim().slice(0, 500) || null : null] as const)
   const hours = patch.businessHours && typeof patch.businessHours === "object" ? JSON.stringify(patch.businessHours) : null
+  const notifications = patch.notificationPreferences && typeof patch.notificationPreferences === "object" ? JSON.stringify(patch.notificationPreferences) : null
   const existing = await getShopkeeperProfile(tenantId)
   if (!existing) {
     const shopName = typeof patch.shopName === "string" && patch.shopName.trim() ? patch.shopName.trim().slice(0, 150) : fallbackName
@@ -50,6 +55,7 @@ export async function upsertShopkeeperProfile(tenantId: number, patch: Record<st
   const sets = entries.filter(([column]) => column !== "shop_name").map(([column]) => `\`${column}\` = ?`)
   const values = entries.filter(([column]) => column !== "shop_name").map(([, value]) => value)
   if (hours) { sets.push("business_hours = ?"); values.push(hours) }
+  if (notifications) { sets.push("notification_preferences = ?"); values.push(notifications) }
   if (typeof patch.shopName === "string" && patch.shopName.trim()) { sets.push("shop_name = ?"); values.push(patch.shopName.trim().slice(0, 150)) }
   if (sets.length) await query(`UPDATE shopkeeper_profiles SET ${sets.join(", ")} WHERE tenant_id = ?`, [...values, tenantId])
   return (await getShopkeeperProfile(tenantId))!

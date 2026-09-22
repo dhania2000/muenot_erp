@@ -35,9 +35,6 @@ importers:
       '@vercel/blob':
         specifier: ^2.8.0
         version: 2.8.0
-      ai:
-        specifier: ^7.0.109
-        version: 7.0.109(zod@4.1.11)
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
@@ -155,22 +152,6 @@ importers:
         version: 5.0.1(@types/node@24.10.4)(vite@8.3.0(@types/node@24.10.4)(jiti@2.7.0))
 
 packages:
-
-  '@ai-sdk/gateway@4.0.88':
-    resolution: {integrity: sha512-hpEdOAqrp3FOShSytk6n8BZVZ/xrCV7L9hqYA6Q55h7sQknvh99QfC0uQAIbQWjh+66tmo1Fo6ndQla8uCJGyA==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  '@ai-sdk/provider-utils@5.0.45':
-    resolution: {integrity: sha512-gLuaCups8OCIRz3eO6WWz5op7VLYNNtFzyH0sWUr0FE9v7cTxR0qxDpQdrKnGcql+9WWttobjnZsJVsuEbsPQQ==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  '@ai-sdk/provider@4.0.17':
-    resolution: {integrity: sha512-VYMBxIQdcHqbIf1j+YZlI9Ati6LZ4wJe0GGd4z4a5H/KxTggjeOiyaVYTnfF7LHZK5jMQ+rofmzz4QPqf++NUw==}
-    engines: {node: '>=22'}
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -1297,10 +1278,6 @@ packages:
     resolution: {integrity: sha512-g9XerViJ/paZujufXYcu5XYI2vU2rtB4sgdpjUHde5RnOkdmpu0ngH46LCFGHoPXO/C+qDPSczIHIRN+8Q2YKQ==}
     engines: {node: '>= 18'}
 
-  '@vercel/oidc@3.2.0':
-    resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
-    engines: {node: '>= 20'}
-
   '@vercel/oidc@3.8.5':
     resolution: {integrity: sha512-RwXYtnt6za+5UO4IaLywN/6B95AlLqynPRUWRJxeJ/qufwkcLUbZNUxYtzT0uMpuraWhlNcGqPNGkTnZr4BGBw==}
     engines: {node: '>= 20'}
@@ -1318,9 +1295,6 @@ packages:
 
   '@vitest/spy@5.0.1':
     resolution: {integrity: sha512-rbto/mF/SGERxEgYOek7Xm6B9b+y+mVoo+f4b2LymYO8zM1b7uB5nHuhVMTP2hxdzgxvGiZYGxGIaMvL5y180Q==}
-
-  '@workflow/serde@4.1.0':
-    resolution: {integrity: sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ==}
 
   '@xmldom/is-dom-node@1.0.1':
     resolution: {integrity: sha512-CJDxIgE5I0FH+ttq/Fxy6nRpxP70+e2O048EPe85J2use3XKdatVM7dDVvFNjQudd9B49NPoZ+8PG49zj4Er8Q==}
@@ -1345,12 +1319,6 @@ packages:
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
-
-  ai@7.0.109:
-    resolution: {integrity: sha512-hTnm8K4GIT0R6gHrnDJHr1KRnGVAtFa26mLtjqn/TGy+ufD5Y5XXerTEabLXVgmb9iunWxSFRCPOZUZ/VeXYLQ==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
@@ -2317,9 +2285,6 @@ packages:
 
   json-schema-typed@8.0.2:
     resolution: {integrity: sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==}
-
-  json-schema@0.4.0:
-    resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
 
   json5@2.2.3:
     resolution: {integrity: sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==}
@@ -3603,26 +3568,6 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/gateway@4.0.88(zod@4.1.11)':
-    dependencies:
-      '@ai-sdk/provider': 4.0.17
-      '@ai-sdk/provider-utils': 5.0.45(zod@4.1.11)
-      '@vercel/oidc': 3.2.0
-      zod: 4.1.11
-
-  '@ai-sdk/provider-utils@5.0.45(zod@4.1.11)':
-    dependencies:
-      '@ai-sdk/provider': 4.0.17
-      '@standard-schema/spec': 1.1.0
-      '@workflow/serde': 4.1.0
-      eventsource-parser: 3.1.0
-      undici: 7.29.0
-      zod: 4.1.11
-
-  '@ai-sdk/provider@4.0.17':
-    dependencies:
-      json-schema: 0.4.0
-
   '@alloc/quick-lru@5.2.0': {}
 
   '@aws-sdk/checksums@3.1001.0':
@@ -4747,8 +4692,6 @@ snapshots:
     dependencies:
       execa: 5.1.1
 
-  '@vercel/oidc@3.2.0': {}
-
   '@vercel/oidc@3.8.5':
     dependencies:
       '@vercel/cli-config': 0.2.4
@@ -4765,8 +4708,6 @@ snapshots:
       vite: 8.3.0(@types/node@24.10.4)(jiti@2.7.0)
 
   '@vitest/spy@5.0.1': {}
-
-  '@workflow/serde@4.1.0': {}
 
   '@xmldom/is-dom-node@1.0.1': {}
 
@@ -4786,13 +4727,6 @@ snapshots:
       - supports-color
 
   agent-base@7.1.4: {}
-
-  ai@7.0.109(zod@4.1.11):
-    dependencies:
-      '@ai-sdk/gateway': 4.0.88(zod@4.1.11)
-      '@ai-sdk/provider': 4.0.17
-      '@ai-sdk/provider-utils': 5.0.45(zod@4.1.11)
-      zod: 4.1.11
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
@@ -5706,8 +5640,6 @@ snapshots:
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
-
-  json-schema@0.4.0: {}
 
   json5@2.2.3: {}
 

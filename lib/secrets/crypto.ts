@@ -50,8 +50,14 @@ export function encryptSecret(value: string): string {
 export function decryptSecret(value: string | null | undefined): string | null {
   if (!value || !value.startsWith(MARKER)) return null
   try {
-    const payload = Buffer.from(value.slice(MARKER.length), "base64")
+    const encoded = value.slice(MARKER.length)
+    const payload = Buffer.from(encoded, "base64")
     if (payload.length < 28) return null
+    // Reject non-canonical base64: Node's decoder silently ignores stray
+    // padding/alignment bits, so a mutation confined to those bits would decode
+    // to identical bytes and slip past GCM's auth tag. Re-encoding and
+    // comparing makes any such tampering fail closed.
+    if (payload.toString("base64") !== encoded) return null
     const decipher = createDecipheriv("aes-256-gcm", masterKey(), payload.subarray(0, 12))
     decipher.setAuthTag(payload.subarray(12, 28))
     return Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]).toString("utf8")

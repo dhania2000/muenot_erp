@@ -1,6 +1,7 @@
 import Image from "next/image"
 import Link from "next/link"
 import { SignupForm } from "@/components/signup-form"
+import { LanguageWidget } from "@/components/providers/language-widget"
 import { getPublicSettings } from "@/lib/settings/server"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2 } from "lucide-react"
 
@@ -28,7 +29,10 @@ export default async function SignupPage() {
     )
 
   return (
-    <main className="flex min-h-svh flex-col lg:flex-row">
+    <main className="relative flex min-h-svh flex-col lg:flex-row">
+      <div className="absolute right-4 top-4 z-10">
+        <LanguageWidget className="rounded-md border bg-background/95 shadow-sm backdrop-blur" />
+      </div>
       <section
         className="relative hidden flex-1 flex-col justify-between overflow-hidden bg-sidebar p-10 text-sidebar-foreground lg:flex"
         style={

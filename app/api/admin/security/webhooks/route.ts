@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { getCurrentTenant } from "@/lib/tenant-context"
-import { WEBHOOK_EVENTS, createEndpoint, listEndpoints } from "@/lib/webhooks-store"
+import { WEBHOOK_EVENTS, createEndpoint, listEndpoints, sanitizeCustomHeaders } from "@/lib/webhooks-store"
 
 async function requireAdminTenant() {
   const session = await getSession()
@@ -22,7 +22,9 @@ export async function POST(request: Request) {
   const ctx = await requireAdminTenant()
   if (!ctx) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-  const body = (await request.json().catch(() => null)) as { url?: string; description?: string; events?: string[] } | null
+  const body = (await request.json().catch(() => null)) as
+    | { url?: string; description?: string; events?: string[]; headers?: Record<string, string> }
+    | null
   if (!body?.url?.trim()) return NextResponse.json({ error: "Endpoint URL is required" }, { status: 400 })
   try {
     const parsed = new URL(body.url.trim())
@@ -34,9 +36,12 @@ export async function POST(request: Request) {
   const events = (body.events ?? []).filter((e) => validEvents.has(e as any))
   if (events.length === 0) return NextResponse.json({ error: "Select at least one event" }, { status: 400 })
 
+  const headers = sanitizeCustomHeaders(body.headers ?? {})
+  if (headers === null) return NextResponse.json({ error: "Custom headers are invalid" }, { status: 400 })
+
   const { endpoint, secret } = await createEndpoint(
     ctx.tenantId,
-    { url: body.url.trim(), description: body.description ?? null, events },
+    { url: body.url.trim(), description: body.description ?? null, events, headers },
     ctx.session.userId,
   )
   // The signing secret is returned exactly once — verify it against payload signatures going forward.

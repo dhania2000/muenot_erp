@@ -22,6 +22,7 @@ import {
   getDeliveryEndpoint,
   listActiveEndpointsForEvent,
   recordDeliveryOutcome,
+  resolveEndpointHeaders,
   resolveEndpointSecret,
   updateDeliveryResult,
   type WebhookDeliveryRow,
@@ -48,9 +49,12 @@ async function sendDelivery(delivery: WebhookDeliveryRow): Promise<void> {
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), DELIVERY_TIMEOUT_MS)
+    // Subscriber-configured headers go on first; the signed headers below are
+    // set last so a custom header can never override the signature chain.
     const res = await fetch(endpoint.url, {
       method: "POST",
       headers: {
+        ...resolveEndpointHeaders(endpoint),
         "Content-Type": "application/json",
         "X-Webhook-Signature": signature,
         "X-Webhook-Timestamp": timestamp,

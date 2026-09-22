@@ -6,7 +6,6 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { CookieConsent } from '@/components/providers/cookie-consent'
 import { LanguageProvider } from '@/components/providers/language-provider'
 import { AutoTranslate } from '@/components/providers/auto-translate'
-import { LanguageWidget } from '@/components/providers/language-widget'
 import { DEFAULT_LANGUAGE, getLanguage, isSupportedLanguage } from '@/lib/i18n/languages'
 import './globals.css'
 
@@ -49,7 +48,6 @@ export default async function RootLayout({
           <LanguageProvider initialLanguage={initialLanguage}>
             {children}
             <AutoTranslate />
-            <LanguageWidget />
             <CookieConsent />
             <Toaster />
           </LanguageProvider>

@@ -1,6 +1,7 @@
 'use client'
 
 import { Check, Globe } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -11,19 +12,24 @@ import {
 import { useLanguage } from '@/components/providers/language-provider'
 import { LANGUAGES } from '@/lib/i18n/languages'
 
-export function LanguageWidget() {
+/**
+ * Inline language switcher meant to be placed directly in a header/top bar
+ * (not fixed/floating). Renders a compact icon button on narrow layouts and
+ * shows the current language name once there's room.
+ */
+export function LanguageWidget({ className }: { className?: string }) {
   const { language, setLanguage } = useLanguage()
   const current = LANGUAGES.find((lang) => lang.code === language) ?? LANGUAGES[0]
 
   return (
-    <div data-i18n-skip className="fixed bottom-4 right-4 z-50 print:hidden">
+    <div data-i18n-skip className={cn('print:hidden', className)}>
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
             <Button
-              variant="secondary"
+              variant="ghost"
               size="sm"
-              className="gap-2 rounded-full border bg-background/95 shadow-lg backdrop-blur"
+              className="gap-2 text-muted-foreground hover:bg-primary/10 hover:text-primary"
               aria-label="Change portal language"
             />
           }

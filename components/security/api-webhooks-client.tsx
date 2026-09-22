@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { KeyRound, Plus, Loader2, Trash2, Webhook, Send, ChevronDown, ChevronUp, Copy, Check } from "lucide-react"
+import { KeyRound, Plus, Loader2, Trash2, Webhook, Send, ChevronDown, ChevronUp, Copy, Check, History } from "lucide-react"
 import { EmptyState } from "@/components/security/security-ui"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -12,11 +12,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-import type { PublicApiKey } from "@/lib/api-keys-store"
+import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import type { PublicApiKey, ApiKeyEnvironment, ApiKeyEventRow } from "@/lib/api-keys-store"
 import type { PublicWebhookEndpoint, WebhookDeliveryRow } from "@/lib/webhooks-store"
 
 type ScopeOption = { value: string; label: string }
 type EventOption = { value: string; label: string }
+type EnvOption = { value: ApiKeyEnvironment; label: string }
 
 function CopyableSecret({ value }: { value: string }) {
   const [copied, setCopied] = useState(false)
@@ -48,42 +51,157 @@ function deliveryStatusBadge(status: string) {
 // API keys
 // ---------------------------------------------------------------------------
 
+const EVENT_LABELS: Record<string, string> = {
+  created: "Created",
+  revoked: "Revoked",
+  deleted: "Deleted",
+  authenticated: "Authenticated",
+  auth_failed: "Auth failed",
+}
+
+function eventBadge(event: string) {
+  if (event === "auth_failed") return <Badge variant="destructive">{EVENT_LABELS[event]}</Badge>
+  if (event === "revoked" || event === "deleted") return <Badge variant="secondary">{EVENT_LABELS[event] ?? event}</Badge>
+  if (event === "created") return <Badge className="border-transparent bg-emerald-600 text-white">Created</Badge>
+  return <Badge variant="outline">{EVENT_LABELS[event] ?? event}</Badge>
+}
+
+function ApiKeyAuditTrail({ refreshToken }: { refreshToken: number }) {
+  const [events, setEvents] = useState<ApiKeyEventRow[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await fetch("/api/admin/security/api-keys/audit")
+      const data = await res.json()
+      setEvents(data.events ?? [])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function toggle() {
+    const next = !open
+    setOpen(next)
+    if (next) void load()
+  }
+
+  // Reload whenever a key mutation bumps the token and the panel is open.
+  if (open && refreshToken > 0 && events === null && !loading) void load()
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle className="text-base">Key audit trail</CardTitle>
+          <CardDescription>Every issuance, revocation, and authentication attempt across this tenant&apos;s keys.</CardDescription>
+        </div>
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={toggle}>
+          <History className="size-4" /> {open ? "Hide" : "Show"} activity
+        </Button>
+      </CardHeader>
+      {open && (
+        <CardContent>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading activity…</p>
+          ) : !events || events.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No key activity recorded yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Event</TableHead>
+                    <TableHead>Key</TableHead>
+                    <TableHead>IP</TableHead>
+                    <TableHead>Detail</TableHead>
+                    <TableHead>When</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {events.map((e) => (
+                    <TableRow key={e.id}>
+                      <TableCell>{eventBadge(e.event)}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">#{e.key_id ?? "—"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{e.ip ?? "—"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{e.detail ?? "—"}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {new Date(e.created_at).toLocaleString()}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  )
+}
+
 function ApiKeysSection({
   initialKeys,
   scopeOptions,
+  envOptions,
 }: {
   initialKeys: PublicApiKey[]
   scopeOptions: readonly ScopeOption[]
+  envOptions: readonly EnvOption[]
 }) {
   const router = useRouter()
   const [keys, setKeys] = useState(initialKeys)
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [scopes, setScopes] = useState<string[]>([])
+  const [environment, setEnvironment] = useState<ApiKeyEnvironment>("live")
+  const [ipText, setIpText] = useState("")
+  const [expiresAt, setExpiresAt] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [auditToken, setAuditToken] = useState(0)
 
   function toggleScope(value: string) {
     setScopes((prev) => (prev.includes(value) ? prev.filter((s) => s !== value) : [...prev, value]))
+  }
+
+  function resetForm() {
+    setName("")
+    setScopes([])
+    setEnvironment("live")
+    setIpText("")
+    setExpiresAt("")
   }
 
   async function createKey() {
     setSaving(true)
     setError(null)
     try {
+      const ipRestrictions = ipText
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
       const res = await fetch("/api/admin/security/api-keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, scopes }),
+        body: JSON.stringify({
+          name,
+          scopes,
+          environment,
+          ipRestrictions,
+          expiresAt: expiresAt || null,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to create key")
       setKeys((prev) => [data.key, ...prev])
       setRevealed(data.plaintext)
-      setName("")
-      setScopes([])
+      resetForm()
+      setAuditToken((t) => t + 1)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create key")
@@ -102,6 +220,7 @@ function ApiKeysSection({
       })
       if (!res.ok) throw new Error("Failed to revoke")
       setKeys((prev) => prev.map((k) => (k.id === key.id ? { ...k, status: "revoked" } : k)))
+      setAuditToken((t) => t + 1)
     } finally {
       setBusyId(null)
     }
@@ -113,143 +232,204 @@ function ApiKeysSection({
       const res = await fetch(`/api/admin/security/api-keys/${key.id}`, { method: "DELETE" })
       if (!res.ok) throw new Error("Failed to delete")
       setKeys((prev) => prev.filter((k) => k.id !== key.id))
+      setAuditToken((t) => t + 1)
     } finally {
       setBusyId(null)
     }
   }
 
+  function isExpired(k: PublicApiKey): boolean {
+    return Boolean(k.expires_at && new Date(k.expires_at).getTime() < Date.now())
+  }
+
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div>
-          <CardTitle className="text-base">API keys</CardTitle>
-          <CardDescription>Bearer keys for the public /api/v1 surface, scoped to what each key may do.</CardDescription>
-        </div>
-        <Dialog
-          open={open}
-          onOpenChange={(v) => {
-            setOpen(v)
-            if (!v) setRevealed(null)
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button className="gap-1.5" size="sm">
-              <Plus className="size-4" /> New key
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>{revealed ? "Key created" : "Create API key"}</DialogTitle>
-            </DialogHeader>
-            {revealed ? (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  Copy this key now — it will not be shown again. Store it somewhere safe.
-                </p>
-                <CopyableSecret value={revealed} />
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {error && <p className="text-sm text-destructive">{error}</p>}
-                <div className="grid gap-2">
-                  <Label>Key name</Label>
-                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Zapier integration" />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Scopes</Label>
-                  {scopeOptions.map((s) => (
-                    <label key={s.value} className="flex items-center gap-2 text-sm">
-                      <Checkbox checked={scopes.includes(s.value)} onCheckedChange={() => toggleScope(s.value)} />
-                      {s.label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-            <DialogFooter>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">API keys</CardTitle>
+            <CardDescription>Bearer keys for the public /api/v1 surface, scoped to what each key may do.</CardDescription>
+          </div>
+          <Dialog
+            open={open}
+            onOpenChange={(v) => {
+              setOpen(v)
+              if (!v) {
+                setRevealed(null)
+                setError(null)
+              }
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button className="gap-1.5" size="sm">
+                <Plus className="size-4" /> New key
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>{revealed ? "Key created" : "Create API key"}</DialogTitle>
+              </DialogHeader>
               {revealed ? (
-                <Button
-                  onClick={() => {
-                    setOpen(false)
-                    setRevealed(null)
-                  }}
-                >
-                  Done
-                </Button>
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Copy this key now — it will not be shown again. Store it somewhere safe.
+                  </p>
+                  <CopyableSecret value={revealed} />
+                </div>
               ) : (
-                <>
-                  <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>
-                    Cancel
-                  </Button>
-                  <Button onClick={createKey} disabled={saving || !name.trim() || scopes.length === 0}>
-                    {saving && <Loader2 className="size-4 animate-spin" />} Create key
-                  </Button>
-                </>
+                <div className="space-y-4">
+                  {error && <p className="text-sm text-destructive">{error}</p>}
+                  <div className="grid gap-2">
+                    <Label>Key name</Label>
+                    <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Zapier integration" />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Environment</Label>
+                    <Select value={environment} onValueChange={(v) => setEnvironment(v as ApiKeyEnvironment)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {envOptions.map((e) => (
+                          <SelectItem key={e.value} value={e.value}>
+                            {e.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Scopes</Label>
+                    {scopeOptions.map((s) => (
+                      <label key={s.value} className="flex items-center gap-2 text-sm">
+                        <Checkbox checked={scopes.includes(s.value)} onCheckedChange={() => toggleScope(s.value)} />
+                        {s.label}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>IP restrictions (optional)</Label>
+                    <Textarea
+                      value={ipText}
+                      onChange={(e) => setIpText(e.target.value)}
+                      placeholder={"203.0.113.10\n198.51.100.0/24"}
+                      rows={2}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      One CIDR range or IP per line. Leave empty to allow any source IP.
+                    </p>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Expiration (optional)</Label>
+                    <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
+                  </div>
+                </div>
               )}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </CardHeader>
-      <CardContent>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Key</TableHead>
-                <TableHead>Scopes</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last used</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {keys.length === 0 ? (
+              <DialogFooter>
+                {revealed ? (
+                  <Button
+                    onClick={() => {
+                      setOpen(false)
+                      setRevealed(null)
+                    }}
+                  >
+                    Done
+                  </Button>
+                ) : (
+                  <>
+                    <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>
+                      Cancel
+                    </Button>
+                    <Button onClick={createKey} disabled={saving || !name.trim() || scopes.length === 0}>
+                      {saving && <Loader2 className="size-4 animate-spin" />} Create key
+                    </Button>
+                  </>
+                )}
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="p-0">
-                    <EmptyState icon={<KeyRound className="size-5" />} title="No API keys yet">
-                      Create a key to let integrations call the /api/v1 surface.
-                    </EmptyState>
-                  </TableCell>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Key</TableHead>
+                  <TableHead>Env</TableHead>
+                  <TableHead>Scopes</TableHead>
+                  <TableHead>IPs</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Expires</TableHead>
+                  <TableHead>Last used</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
-              ) : (
-                keys.map((k) => (
-                  <TableRow key={k.id}>
-                    <TableCell className="text-sm font-medium">{k.name}</TableCell>
-                    <TableCell>
-                      <code className="text-xs text-muted-foreground">mn_{k.key_prefix}…</code>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{k.scopes.split(",").join(", ")}</TableCell>
-                    <TableCell>
-                      {k.status === "active" ? (
-                        <Badge className="border-transparent bg-emerald-600 text-white">Active</Badge>
-                      ) : (
-                        <Badge variant="secondary">Revoked</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "Never"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        {k.status === "active" && (
-                          <Button variant="outline" size="sm" onClick={() => revoke(k)} disabled={busyId === k.id}>
-                            Revoke
-                          </Button>
-                        )}
-                        <Button variant="ghost" size="sm" onClick={() => remove(k)} disabled={busyId === k.id}>
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
+              </TableHeader>
+              <TableBody>
+                {keys.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="p-0">
+                      <EmptyState icon={<KeyRound className="size-5" />} title="No API keys yet">
+                        Create a key to let integrations call the /api/v1 surface.
+                      </EmptyState>
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </CardContent>
-    </Card>
+                ) : (
+                  keys.map((k) => {
+                    const ipCount = (k.ip_restrictions ?? "").split(",").map((s) => s.trim()).filter(Boolean).length
+                    const expired = isExpired(k)
+                    return (
+                      <TableRow key={k.id}>
+                        <TableCell className="text-sm font-medium">{k.name}</TableCell>
+                        <TableCell>
+                          <code className="text-xs text-muted-foreground">mn_{k.key_prefix}…</code>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={k.environment === "live" ? "default" : "outline"}>{k.environment}</Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{k.scopes.split(",").join(", ")}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground" title={k.ip_restrictions || "Any IP"}>
+                          {ipCount === 0 ? "Any" : `${ipCount} range${ipCount === 1 ? "" : "s"}`}
+                        </TableCell>
+                        <TableCell>
+                          {k.status !== "active" ? (
+                            <Badge variant="secondary">Revoked</Badge>
+                          ) : expired ? (
+                            <Badge variant="destructive">Expired</Badge>
+                          ) : (
+                            <Badge className="border-transparent bg-emerald-600 text-white">Active</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {k.expires_at ? new Date(k.expires_at).toLocaleDateString() : "Never"}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "Never"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1.5">
+                            {k.status === "active" && (
+                              <Button variant="outline" size="sm" onClick={() => revoke(k)} disabled={busyId === k.id}>
+                                Revoke
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="sm" onClick={() => remove(k)} disabled={busyId === k.id}>
+                              <Trash2 className="size-3.5 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <ApiKeyAuditTrail refreshToken={auditToken} />
+    </div>
   )
 }
 
@@ -571,17 +751,19 @@ function WebhooksSection({
 export function ApiWebhooksClient({
   initialKeys,
   scopeOptions,
+  envOptions,
   initialEndpoints,
   eventOptions,
 }: {
   initialKeys: PublicApiKey[]
   scopeOptions: readonly ScopeOption[]
+  envOptions: readonly EnvOption[]
   initialEndpoints: PublicWebhookEndpoint[]
   eventOptions: readonly EventOption[]
 }) {
   return (
     <div className="space-y-6">
-      <ApiKeysSection initialKeys={initialKeys} scopeOptions={scopeOptions} />
+      <ApiKeysSection initialKeys={initialKeys} scopeOptions={scopeOptions} envOptions={envOptions} />
       <WebhooksSection initialEndpoints={initialEndpoints} eventOptions={eventOptions} />
     </div>
   )

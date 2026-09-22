@@ -17,7 +17,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const { id } = await params
   const body = (await request.json().catch(() => null)) as { action?: string } | null
   if (body?.action !== "revoke") return NextResponse.json({ error: "Unsupported action" }, { status: 400 })
-  await revokeApiKey(ctx.tenantId, Number(id))
+  await revokeApiKey(ctx.tenantId, Number(id), ctx.session.userId)
   return NextResponse.json({ ok: true })
 }
 
@@ -25,6 +25,6 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const ctx = await requireAdminTenant()
   if (!ctx) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   const { id } = await params
-  await deleteApiKey(ctx.tenantId, Number(id))
+  await deleteApiKey(ctx.tenantId, Number(id), ctx.session.userId)
   return NextResponse.json({ ok: true })
 }

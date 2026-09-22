@@ -99,6 +99,32 @@ const DEFAULT_PLANS: Omit<Plan, "is_active">[] = [
     sort_order: 0,
   },
   {
+    // SPEC 7/8 — mobile-first Shopkeeper trial. Zero price; provisioned with a
+    // `trialing` subscription. Uses the shopkeeper entitlement preset so the
+    // Android app's shopkeeper.* feature gates resolve correctly.
+    code: "shopkeeper-trial",
+    name: "Shopkeeper Trial",
+    description: "14-day trial of the Muenot Shopkeeper mobile app.",
+    price_monthly: 0,
+    currency: "USD",
+    seat_limit: 5,
+    features: ["shopkeeper_app", "whatsapp", "trial"],
+    entitlements: presetForCode("shopkeeper"),
+    sort_order: 1,
+  },
+  {
+    // SPEC 7 — the standard paid Shopkeeper plan.
+    code: "shopkeeper",
+    name: "Shopkeeper",
+    description: "The Muenot Shopkeeper mobile app for a single shop.",
+    price_monthly: 15,
+    currency: "USD",
+    seat_limit: 5,
+    features: ["shopkeeper_app", "whatsapp", "email_support"],
+    entitlements: presetForCode("shopkeeper"),
+    sort_order: 2,
+  },
+  {
     code: "starter",
     name: "Starter",
     description: "For small teams getting started.",
@@ -107,7 +133,7 @@ const DEFAULT_PLANS: Omit<Plan, "is_active">[] = [
     seat_limit: 10,
     features: ["core_modules", "email_support"],
     entitlements: presetForCode("starter"),
-    sort_order: 1,
+    sort_order: 3,
   },
   {
     code: "growth",
@@ -157,6 +183,10 @@ function planCodeForTenant(t: Tenant): PlanCode {
   if (p === "internal") return "internal"
   if (p === "enterprise") return "enterprise"
   if (p === "growth" || p === "standard") return "growth"
+  // Shopkeeper tenants carry their console plan code directly in tenants.plan
+  // (e.g. "shopkeeper" / "shopkeeper-trial"). Preserve it so re-derivation
+  // keeps the mobile shopkeeper.* entitlements instead of falling back.
+  if (p === "shopkeeper" || p === "shopkeeper-trial") return p as PlanCode
   return "starter"
 }
 

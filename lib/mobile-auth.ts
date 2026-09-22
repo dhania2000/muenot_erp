@@ -134,6 +134,17 @@ export async function authenticateMobileRequest(request: Request): Promise<Mobil
 export async function revokeMobileSession(sessionId: string, userId: number, reason = "logout") {
   await ensureMobileAuthSchema(); await query("UPDATE mobile_sessions SET revoked_at=NOW(),revoked_reason=? WHERE session_id=? AND user_id=? AND revoked_at IS NULL", [reason.slice(0, 60), sessionId, userId])
 }
+/**
+ * Revoke every active mobile session for a user. Used by Super Admin password
+ * resets so a credential change immediately invalidates any signed-in device,
+ * matching the existing security policy that a password change ends sessions.
+ * Returns the number of sessions that were revoked.
+ */
+export async function revokeAllMobileSessionsForUser(userId: number, reason = "password_reset"): Promise<number> {
+  await ensureMobileAuthSchema()
+  const result = await query<{ affectedRows: number }>("UPDATE mobile_sessions SET revoked_at=NOW(),revoked_reason=? WHERE user_id=? AND revoked_at IS NULL", [reason.slice(0, 60), userId])
+  return Number(result?.affectedRows ?? 0)
+}
 export async function listMobileSessions(userId: number, tenantId: number) {
   await ensureMobileAuthSchema(); return query<any[]>("SELECT session_id,device_name,platform,created_at,last_active_at,expires_at FROM mobile_sessions WHERE user_id=? AND tenant_id=? AND revoked_at IS NULL AND expires_at>NOW() ORDER BY last_active_at DESC", [userId, tenantId])
 }

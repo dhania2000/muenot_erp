@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { requirePlatformStaff, requirePlatformSuperAdmin } from "@/lib/platform-guard"
 import { listShopkeepers, provisionShopkeeper, ShopkeeperProvisioningError } from "@/lib/shopkeeper-provisioning"
+import type { RawShopkeeperInput } from "@/lib/shopkeeper-provisioning-core"
 
 /**
  * SPEC 15 — Super Admin Shopkeeper directory + provisioning.
@@ -22,9 +23,13 @@ export async function POST(req: NextRequest) {
   const guard = await requirePlatformSuperAdmin()
   if (!guard.ok) return NextResponse.json({ error: guard.reason }, { status: guard.status })
 
-  let body: any
+  let body: RawShopkeeperInput
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return NextResponse.json({ error: "Request body must be an object" }, { status: 400 })
+    }
+    body = parsed as RawShopkeeperInput
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
   }

@@ -31,17 +31,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const tenantId = parseId(id)
   if (!tenantId) return NextResponse.json({ error: "Invalid shopkeeper id" }, { status: 400 })
 
-  let body: any
+  let body: Record<string, unknown>
   try {
-    body = await req.json()
+    const parsed: unknown = await req.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return NextResponse.json({ error: "Request body must be an object" }, { status: 400 })
+    }
+    body = parsed as Record<string, unknown>
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
   }
 
   try {
     const actor = { userId: guard.ctx.userId, email: guard.session.email }
-    if (body.status) await setShopkeeperStatus(tenantId, body.status, actor)
-    if (body.planCode) await changeShopkeeperPlan(tenantId, body.planCode, actor)
+    if (typeof body.status === "string") await setShopkeeperStatus(tenantId, body.status as Parameters<typeof setShopkeeperStatus>[1], actor)
+    if (typeof body.planCode === "string") await changeShopkeeperPlan(tenantId, body.planCode, actor)
     if (body.resetPassword) {
       const credentials = await resetShopkeeperOwnerPassword(tenantId, { generate: true }, actor)
       return NextResponse.json({ credentials })

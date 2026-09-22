@@ -221,6 +221,58 @@ export function enforceRateLimit(scope: string, tier: RateLimitTier): RateLimitD
   }
 }
 
+export type RateWindowSnapshot = {
+  window: RateWindowKey
+  count: number
+  resetAt: number
+}
+
+export type RateLimitScopeSnapshot = {
+  scope: string
+  windows: RateWindowSnapshot[]
+  blockedUntil: number | null
+}
+
+/**
+ * Read the live, in-process state of every active scope without consuming
+ * budget. Powers the SPEC 53 monitoring UI: real current usage per window and
+ * any active abuse hard-block. Expired buckets are skipped so callers only see
+ * counters that are still meaningful.
+ */
+export function snapshotRateLimits(): RateLimitScopeSnapshot[] {
+  const now = Date.now()
+  const byScope = new Map<string, RateLimitScopeSnapshot>()
+
+  const ensure = (scope: string): RateLimitScopeSnapshot => {
+    let snap = byScope.get(scope)
+    if (!snap) {
+      snap = { scope, windows: [], blockedUntil: null }
+      byScope.set(scope, snap)
+    }
+    return snap
+  }
+
+  for (const [key, b] of buckets.entries()) {
+    if (b.resetAt <= now || b.count === 0) continue
+    const idx = key.lastIndexOf(":")
+    if (idx < 0) continue
+    const scope = key.slice(0, idx)
+    const w = key.slice(idx + 1) as RateWindowKey
+    if (!WINDOW_MS[w]) continue
+    ensure(scope).windows.push({ window: w, count: b.count, resetAt: b.resetAt })
+  }
+
+  for (const [scope, s] of abuse.entries()) {
+    if (s.blockedUntil > now) ensure(scope).blockedUntil = s.blockedUntil
+  }
+
+  for (const snap of byScope.values()) {
+    snap.windows.sort((a, b) => WINDOW_ORDER.indexOf(a.window) - WINDOW_ORDER.indexOf(b.window))
+  }
+
+  return Array.from(byScope.values())
+}
+
 /** Test-only: wipe all in-process counters and abuse state. */
 export function __resetRateLimitEngine(): void {
   buckets.clear()

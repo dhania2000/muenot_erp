@@ -1,110 +1,203 @@
 "use client"
 
-import { useState } from "react"
-import { Gauge, Plus } from "lucide-react"
+import useSWR from "swr"
+import { Gauge, ShieldAlert, Activity, AlertTriangle } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
+import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/security/security-ui"
 
-type Scope = "tenant" | "api_key" | "endpoint"
+type Tier = { second: number; minute: number; hour: number; day: number }
 
-type RateLimitRule = {
-  id: string
-  scope: Scope
-  target: string
-  minuteLimit: number
-  hourLimit: number
-  dayLimit: number
-  burstLimit: number
+type LiveWindow = {
+  window: "second" | "minute" | "hour" | "day"
+  used: number
+  limit: number
+  remaining: number
+  resetAt: number | null
 }
 
-const SCOPE_LABEL: Record<Scope, string> = { tenant: "Tenant", api_key: "API Key", endpoint: "Endpoint" }
+type LiveScope = {
+  scope: string
+  keyId: number
+  keyName: string
+  environment: string | null
+  blocked: boolean
+  blockedUntil: number | null
+  windows: LiveWindow[]
+}
+
+type RateLimitData = {
+  enforced: boolean
+  plan: string
+  effectiveTier: Tier
+  defaultTier: Tier
+  plans: { plan: string; tier: Tier }[]
+  apiKeyCount: number
+  liveScopes: LiveScope[]
+  usage: {
+    totalRequests: number
+    rateLimitedRequests: number
+    requestsLast24h: number
+    requestsLastHour: number
+  }
+}
+
+const fetcher = (url: string) =>
+  fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`Request failed: ${r.status}`)
+    return r.json() as Promise<RateLimitData>
+  })
+
+const WINDOW_LABEL: Record<LiveWindow["window"], string> = {
+  second: "Burst / sec",
+  minute: "Minute",
+  hour: "Hour",
+  day: "Day",
+}
 
 /**
- * SPEC 53 — Rate limit configuration. No request-metering backend exists yet
- * (lib/rate-limit.ts only guards pre-auth login), so this is a frontend-only
- * prototype: rules are authored and previewed in local state, not persisted.
- * Current usage/remaining/status are always "Not connected" — never faked.
+ * SPEC 53 — Live rate-limit monitor. Limits are plan-derived and ENFORCED on
+ * every `/api/v1/*` request by lib/api-platform/handler.ts. This screen reads
+ * the real enforced tier, the live in-process counters for the tenant's own API
+ * keys, and the blocked-request (429) count from the request audit trail — no
+ * preview state, nothing faked.
  */
 export function RateLimitsClient() {
-  const [rules, setRules] = useState<RateLimitRule[]>([])
+  const { data, error, isLoading } = useSWR<RateLimitData>(
+    "/api/admin/security/rate-limits",
+    fetcher,
+    { refreshInterval: 5000 },
+  )
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="flex items-center gap-3 py-6 text-sm text-destructive">
+          <AlertTriangle className="size-4" />
+          Could not load rate-limit telemetry. Please retry.
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!data) return null
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-medium">Rate limit rules (preview)</h2>
-          <p className="text-sm text-muted-foreground">
-            Configured here for review only — nothing is enforced until Codex wires request metering.
-          </p>
-        </div>
-        <CreateRuleDialog onCreate={(rule) => setRules((r) => [...r, rule])} />
+      {/* Blocked-request telemetry */}
+      <div className="grid gap-4 sm:grid-cols-4">
+        <StatCard label="Requests (24h)" value={data.usage.requestsLast24h} icon={<Activity className="size-4" />} />
+        <StatCard label="Requests (1h)" value={data.usage.requestsLastHour} icon={<Activity className="size-4" />} />
+        <StatCard
+          label="Blocked (429)"
+          value={data.usage.rateLimitedRequests}
+          icon={<ShieldAlert className="size-4" />}
+          tone={data.usage.rateLimitedRequests > 0 ? "warning" : "default"}
+        />
+        <StatCard label="Total logged" value={data.usage.totalRequests} icon={<Gauge className="size-4" />} />
       </div>
 
+      {/* Enforced tier for this tenant */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Gauge className="size-4 text-muted-foreground" />
+              <CardTitle className="text-base">Enforced limits</CardTitle>
+            </div>
+            <Badge variant="secondary" className="uppercase">
+              {data.plan} plan
+            </Badge>
+          </div>
+          <CardDescription>
+            Ceilings applied to every public API request for this tenant. A request must fit under every window.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {(["second", "minute", "hour", "day"] as const).map((w) => (
+              <div key={w} className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">{WINDOW_LABEL[w]}</p>
+                <p className="text-lg font-semibold tabular-nums">{data.effectiveTier[w].toLocaleString()}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Live usage per API key */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Gauge className="size-4 text-muted-foreground" />
-            <CardTitle className="text-base">Configured limits</CardTitle>
+            <Activity className="size-4 text-muted-foreground" />
+            <CardTitle className="text-base">Live usage by API key</CardTitle>
           </div>
-          <CardDescription>Minute / hour / day / burst ceilings per scope.</CardDescription>
+          <CardDescription>Current window counters for this tenant&apos;s keys. Refreshes every 5s.</CardDescription>
         </CardHeader>
         <CardContent>
-          {rules.length === 0 ? (
-            <EmptyState icon={<Gauge className="size-5" />} title="No rate limit rules configured">
-              Add a rule to preview how tenant, API key, or endpoint limits would be presented once enforcement
-              exists.
+          {data.liveScopes.length === 0 ? (
+            <EmptyState icon={<Activity className="size-5" />} title="No active traffic">
+              {data.apiKeyCount === 0
+                ? "No API keys exist yet. Create a key to start making requests against the public API."
+                : "No requests have hit the public API within the current windows. Counters appear here as traffic arrives."}
             </EmptyState>
           ) : (
             <div className="overflow-x-auto rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Scope</TableHead>
-                    <TableHead>Minute limit</TableHead>
-                    <TableHead>Hour limit</TableHead>
-                    <TableHead>Day limit</TableHead>
-                    <TableHead>Burst limit</TableHead>
-                    <TableHead>Current usage</TableHead>
-                    <TableHead>Remaining</TableHead>
+                    <TableHead>API key</TableHead>
+                    <TableHead>Burst / sec</TableHead>
+                    <TableHead>Minute</TableHead>
+                    <TableHead>Hour</TableHead>
+                    <TableHead>Day</TableHead>
                     <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rules.map((r) => (
-                    <TableRow key={r.id}>
+                  {data.liveScopes.map((s) => (
+                    <TableRow key={s.scope}>
                       <TableCell>
-                        <Badge variant="outline">{SCOPE_LABEL[r.scope]}</Badge>{" "}
-                        <span className="text-sm text-muted-foreground">{r.target}</span>
+                        <span className="font-medium">{s.keyName}</span>{" "}
+                        {s.environment ? (
+                          <Badge variant="outline" className="ml-1 text-xs">
+                            {s.environment}
+                          </Badge>
+                        ) : null}
                       </TableCell>
-                      <TableCell>{r.minuteLimit}</TableCell>
-                      <TableCell>{r.hourLimit}</TableCell>
-                      <TableCell>{r.dayLimit}</TableCell>
-                      <TableCell>{r.burstLimit}</TableCell>
-                      <TableCell className="text-muted-foreground">Not connected</TableCell>
-                      <TableCell className="text-muted-foreground">Not connected</TableCell>
+                      {(["second", "minute", "hour", "day"] as const).map((w) => {
+                        const win = s.windows.find((x) => x.window === w)
+                        return (
+                          <TableCell key={w} className="tabular-nums">
+                            {win ? (
+                              <span className={win.remaining === 0 ? "text-destructive" : undefined}>
+                                {win.used}/{win.limit}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">0/{data.effectiveTier[w]}</span>
+                            )}
+                          </TableCell>
+                        )
+                      })}
                       <TableCell>
-                        <Badge variant="outline">Unknown</Badge>
+                        {s.blocked ? (
+                          <Badge variant="destructive">Blocked</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-emerald-600">
+                            Active
+                          </Badge>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -114,86 +207,69 @@ export function RateLimitsClient() {
           )}
         </CardContent>
       </Card>
+
+      {/* Plan reference table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Plan reference</CardTitle>
+          <CardDescription>Per-plan throughput ceilings. A tenant&apos;s enforced tier follows its plan.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Plan</TableHead>
+                  <TableHead>Burst / sec</TableHead>
+                  <TableHead>Minute</TableHead>
+                  <TableHead>Hour</TableHead>
+                  <TableHead>Day</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.plans.map((p) => (
+                  <TableRow key={p.plan} className={p.plan === data.plan ? "bg-muted/40" : undefined}>
+                    <TableCell className="font-medium capitalize">
+                      {p.plan}
+                      {p.plan === data.plan ? <Badge className="ml-2 text-xs">current</Badge> : null}
+                    </TableCell>
+                    <TableCell className="tabular-nums">{p.tier.second.toLocaleString()}</TableCell>
+                    <TableCell className="tabular-nums">{p.tier.minute.toLocaleString()}</TableCell>
+                    <TableCell className="tabular-nums">{p.tier.hour.toLocaleString()}</TableCell>
+                    <TableCell className="tabular-nums">{p.tier.day.toLocaleString()}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
 
-function CreateRuleDialog({ onCreate }: { onCreate: (rule: RateLimitRule) => void }) {
-  const [open, setOpen] = useState(false)
-  const [scope, setScope] = useState<Scope>("tenant")
-  const [target, setTarget] = useState("")
-  const [minuteLimit, setMinuteLimit] = useState(60)
-  const [hourLimit, setHourLimit] = useState(1000)
-  const [dayLimit, setDayLimit] = useState(10000)
-  const [burstLimit, setBurstLimit] = useState(20)
-
-  function submit() {
-    onCreate({
-      id: crypto.randomUUID(),
-      scope,
-      target: target || "Default",
-      minuteLimit,
-      hourLimit,
-      dayLimit,
-      burstLimit,
-    })
-    setOpen(false)
-    setTarget("")
-  }
-
+function StatCard({
+  label,
+  value,
+  icon,
+  tone = "default",
+}: {
+  label: string
+  value: number
+  icon: React.ReactNode
+  tone?: "default" | "warning"
+}) {
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm">
-          <Plus className="size-4" /> Add rule
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Configure rate limit rule</DialogTitle>
-          <DialogDescription>Preview only — this is not enforced until the backend exists.</DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-4">
-          <div className="grid gap-2">
-            <Label>Scope</Label>
-            <Select value={scope} onValueChange={(v) => setScope((v as Scope) ?? "tenant")}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="tenant">Tenant</SelectItem>
-                <SelectItem value="api_key">API Key</SelectItem>
-                <SelectItem value="endpoint">Endpoint</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="target">Target (name / key / path)</Label>
-            <Input id="target" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="e.g. /api/v1/clients" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2">
-              <Label>Minute limit</Label>
-              <Input type="number" min={1} value={minuteLimit} onChange={(e) => setMinuteLimit(Number(e.target.value))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Hour limit</Label>
-              <Input type="number" min={1} value={hourLimit} onChange={(e) => setHourLimit(Number(e.target.value))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Day limit</Label>
-              <Input type="number" min={1} value={dayLimit} onChange={(e) => setDayLimit(Number(e.target.value))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Burst limit</Label>
-              <Input type="number" min={1} value={burstLimit} onChange={(e) => setBurstLimit(Number(e.target.value))} />
-            </div>
-          </div>
+    <Card>
+      <CardContent className="flex items-center justify-between py-4">
+        <div>
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <p className={`text-xl font-semibold tabular-nums ${tone === "warning" ? "text-amber-600" : ""}`}>
+            {value.toLocaleString()}
+          </p>
         </div>
-        <DialogFooter>
-          <Button onClick={submit}>Save rule</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <span className="text-muted-foreground">{icon}</span>
+      </CardContent>
+    </Card>
   )
 }

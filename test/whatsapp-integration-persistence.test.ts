@@ -6,6 +6,7 @@ vi.mock("@/lib/tenant-scope", () => ({ currentTenantId: () => mock.tenantId, cur
 vi.mock("@/lib/whatsapp-registration", () => ({ withWhatsAppLock: async (_key: string, fn: () => Promise<unknown>) => fn() }))
 import { upsertWhatsAppIntegration } from "@/lib/whatsapp"
 import { safeWhatsAppPersistenceError } from "@/lib/whatsapp-persistence-diagnostics"
+import { decryptToken } from "@/lib/token-crypto"
 
 const connection = {
   wabaId: "100", phoneNumberId: "200", displayPhoneNumber: null, verifiedName: null,
@@ -38,16 +39,26 @@ describe("tenant-scoped WhatsApp connection persistence", () => {
 
   it("uses the same tenant-scoped upsert for reconnect/retry, not a second insert path", async () => {
     await upsertWhatsAppIntegration(connection)
-    await upsertWhatsAppIntegration(connection)
+    await upsertWhatsAppIntegration({ ...connection, accessToken: "rotated-test-token" })
     const writes = mock.query.mock.calls.filter(([sql]) => sql.includes("INSERT INTO `marketing_whatsapp_integration`"))
     expect(writes).toHaveLength(2)
     expect(writes.every(([sql]) => sql.includes("ON DUPLICATE KEY UPDATE"))).toBe(true)
+    expect(decryptToken(writes[1][1][9])).toBe("rotated-test-token")
+    expect(writes[1][1][9]).not.toBe(writes[0][1][9])
   })
 
   it("rejects a number already owned by another tenant", async () => {
     mock.foreign = true
     await expect(upsertWhatsAppIntegration(connection)).rejects.toThrow("another workspace")
     expect(mock.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO `marketing_whatsapp_integration`"))).toBe(false)
+  })
+
+  it("only checks unreleased ownership, allowing an explicitly released number to connect elsewhere", async () => {
+    await upsertWhatsAppIntegration(connection)
+    const check = mock.query.mock.calls.find(([sql]) => sql.includes("SELECT tenant_id FROM marketing_whatsapp_integration"))
+    expect(check?.[0]).toContain("released_at IS NULL")
+    expect(check?.[0]).toContain("tenant_id IS NULL OR tenant_id<>?")
+    expect(mock.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO `marketing_whatsapp_integration`"))).toBe(true)
   })
 
   it("preserves safe SQL error metadata for the actual failing upsert", async () => {

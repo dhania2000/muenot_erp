@@ -413,7 +413,7 @@ async function whatsappConnectedMap(tenantIds: number[]): Promise<Map<number, bo
     if (!cols.has("tenant_id") || !cols.has("phone_number_id")) return map
     const placeholders = tenantIds.map(() => "?").join(",")
     const rows = await query<any[]>(
-      `SELECT tenant_id, phone_number_id FROM \`marketing_whatsapp_integration\` WHERE tenant_id IN (${placeholders})`,
+      `SELECT tenant_id, phone_number_id FROM \`marketing_whatsapp_integration\` WHERE tenant_id IN (${placeholders}) ${cols.has("released_at") ? "AND released_at IS NULL" : ""}`,
       tenantIds,
     )
     for (const r of rows) map.set(Number(r.tenant_id), Boolean(r.phone_number_id))
@@ -515,7 +515,7 @@ async function whatsappDetail(tenantId: number): Promise<ShopkeeperDetail["whats
     const cols = await tableColumns("marketing_whatsapp_integration")
     if (!cols.has("tenant_id")) return empty
     const rows = await query<any[]>(
-      "SELECT id,display_phone_number,phone_number_id,waba_id,quality_rating,connected_at FROM `marketing_whatsapp_integration` WHERE tenant_id = ? ORDER BY connected_at DESC LIMIT 1",
+      `SELECT id,display_phone_number,phone_number_id,waba_id,quality_rating,connected_at FROM \`marketing_whatsapp_integration\` WHERE tenant_id = ? ${cols.has("released_at") ? "AND released_at IS NULL" : ""} ORDER BY connected_at DESC LIMIT 1`,
       [tenantId],
     )
     if (rows[0]) {

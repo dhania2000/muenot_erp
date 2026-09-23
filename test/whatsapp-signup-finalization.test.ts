@@ -21,6 +21,7 @@ vi.mock("@/lib/whatsapp-signup-discovery", () => ({
 }))
 import { handleWhatsAppSignupCallback } from "@/lib/whatsapp-signup"
 import { encryptToken } from "@/lib/token-crypto"
+import { WhatsAppPersistenceError } from "@/lib/whatsapp-persistence-diagnostics"
 let session: any, progress: any
 const input = { state: "opaque-test-state", code: "test-authorization", wabaId: "100", phoneNumberId: "200", expectedTenantId: 7, expectedUserId: 5 }
 beforeEach(() => {
@@ -101,6 +102,16 @@ describe("Embedded Signup durable finalization", () => {
       stage: "token_persistence", tenantId: 7, signupId: 2, databaseErrorCode: "ER_BAD_FIELD_ERROR", column: "business_id",
     }))
     expect(JSON.stringify(warning.mock.calls)).not.toContain("sensitive value")
+    warning.mockRestore()
+  })
+  it("returns a safe specific error for a phone assigned to a different tenant", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {})
+    mock.save.mockRejectedValue(new WhatsAppPersistenceError("phone_ownership_conflict", null))
+    const result = await handleWhatsAppSignupCallback(input)
+    expect(result).toMatchObject({ ok: false, failureCode: "WHATSAPP_PHONE_ALREADY_ASSIGNED" })
+    expect(result.error).toContain("another Muenot account")
+    expect(result.error).not.toContain("999")
+    expect(session.status).toBe("pending")
     warning.mockRestore()
   })
   it("keeps the state retryable after Meta phone verification fails", async () => {

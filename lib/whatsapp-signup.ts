@@ -321,7 +321,7 @@ export async function connectWhatsAppBusinessAccount(input: {
   })
 
   const [row] = await persistenceStep("integration_readback", () => query<import("@/lib/whatsapp").WhatsAppIntegrationRow[]>(
-    "SELECT * FROM marketing_whatsapp_integration WHERE tenant_id=? AND phone_number_id=? LIMIT 1",
+    "SELECT * FROM marketing_whatsapp_integration WHERE tenant_id=? AND phone_number_id=? AND released_at IS NULL LIMIT 1",
     [currentTenantId(), phoneNumberId],
   ))
   if (!row) {
@@ -411,7 +411,7 @@ async function finalizeSignupCallback(input: SignupCallbackInput): Promise<Conne
       return { ok: false, failureCode: "STATE_SESSION_MISMATCH", error: "Signup details do not match the completed connection." }
     }
     const [row] = await query<import("@/lib/whatsapp").WhatsAppIntegrationRow[]>(
-      "SELECT * FROM marketing_whatsapp_integration WHERE tenant_id=? AND phone_number_id=? AND waba_id=? LIMIT 1",
+      "SELECT * FROM marketing_whatsapp_integration WHERE tenant_id=? AND phone_number_id=? AND waba_id=? AND released_at IS NULL LIMIT 1",
       [resolved.tenantId, resolved.phoneNumberId, resolved.wabaId],
     )
     if (!row) return { ok: false, failureCode: "CONNECTION_MISSING", error: "Connection no longer exists. Start a new signup only if you want to reconnect it." }
@@ -466,8 +466,11 @@ async function finalizeSignupCallback(input: SignupCallbackInput): Promise<Conne
     }),
     )
   } catch (error) {
-    console.warn("[whatsapp.signup]", { stage: "token_persistence", result: "failed", code: "TOKEN_PERSISTENCE_FAILED",
+    const ownershipConflict = safeWhatsAppPersistenceError(error).operation === "phone_ownership_conflict"
+    console.warn("[whatsapp.signup]", { stage: "token_persistence", result: "failed", code: ownershipConflict ? "WHATSAPP_PHONE_ALREADY_ASSIGNED" : "TOKEN_PERSISTENCE_FAILED",
       tenantId: resolved.tenantId, signupId: resolved.id, ...safeWhatsAppPersistenceError(error) })
+    if (ownershipConflict) return { ok: false, failureCode: "WHATSAPP_PHONE_ALREADY_ASSIGNED",
+      error: "This WhatsApp number is already connected to another Muenot account. Disconnect it from the previous account or contact Muenot support." }
     return { ok: false, failureCode: "TOKEN_PERSISTENCE_FAILED", error: "Could not save the WhatsApp connection securely. Please retry." }
   }
   diagnostic("token_persistence", result.ok ? "completed" : "failed", result.ok ? undefined : result.failureCode ?? "CONNECTION_PERSISTENCE_FAILED")

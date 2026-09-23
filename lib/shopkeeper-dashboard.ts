@@ -132,7 +132,7 @@ export async function getShopkeeperDashboard(): Promise<ShopkeeperDashboard> {
     // The integration table has no status column; a row with a phone number id
     // IS the connection, so presence is the signal.
     const rows = await query<any[]>(
-      "SELECT display_phone_number, phone_number_id, quality_rating FROM `marketing_whatsapp_integration` WHERE tenant_id = ? LIMIT 1",
+      "SELECT display_phone_number, phone_number_id, quality_rating FROM `marketing_whatsapp_integration` WHERE tenant_id = ? AND released_at IS NULL LIMIT 1",
       [tenantId],
     )
     if (rows[0]) {

@@ -110,7 +110,9 @@ export async function finishMobileSignup(input: { launchToken: string; state: st
   if (!result.ok) {
     diagnostic("shared_finalization", "failed", result.failureCode ?? "CONNECTION_FAILED", row)
     await auditMobileAction({ tenantId: row.tenant_id, userId: row.user_id, action: "whatsapp_connection_failed" })
-    throw new MobileOnboardingError("WhatsApp connection could not be completed. Check its status in the app and retry if needed.", 422, result.failureCode ?? "CONNECTION_FAILED")
+    throw new MobileOnboardingError(result.failureCode === "WHATSAPP_PHONE_ALREADY_ASSIGNED"
+      ? "This WhatsApp number is already connected to another Muenot account. Disconnect it from the previous account or contact Muenot support."
+      : "WhatsApp connection could not be completed. Check its status in the app and retry if needed.", 422, result.failureCode ?? "CONNECTION_FAILED")
   }
   if (!result.integration) throw new MobileOnboardingError("Connection was not persisted. Retry status shortly.", 503, "CONNECTION_PERSISTENCE_FAILED")
   if (row.status !== "completed") {

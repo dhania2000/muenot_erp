@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
+import { requireTenantAdmin } from "@/lib/platform-guard"
+import { safeWhatsAppPersistenceError } from "@/lib/whatsapp-persistence-diagnostics"
 import {
   getWhatsAppIntegration,
   toPublicIntegration,
@@ -58,7 +60,7 @@ export async function POST(request: Request) {
     )
   }
 
-  await upsertWhatsAppIntegration({
+  try { await upsertWhatsAppIntegration({
     wabaId,
     phoneNumberId,
     displayPhoneNumber: profile.displayPhoneNumber,
@@ -68,7 +70,12 @@ export async function POST(request: Request) {
     platformType: profile.platformType,
     accessToken,
     connectedByUserId: session.userId,
-  })
+  }) } catch (error) {
+    if (safeWhatsAppPersistenceError(error).operation === "phone_ownership_conflict")
+      return NextResponse.json({ code: "WHATSAPP_PHONE_ALREADY_ASSIGNED",
+        error: "This WhatsApp number is already connected to another Muenot account. Disconnect it from the previous account or contact Muenot support." }, { status: 409 })
+    return NextResponse.json({ error: "WhatsApp connection could not be saved." }, { status: 500 })
+  }
 
   const row = await getWhatsAppIntegration()
   return NextResponse.json({
@@ -79,10 +86,10 @@ export async function POST(request: Request) {
 
 /** Disconnects the current WhatsApp integration. */
 export async function DELETE() {
-  const session = await getSession()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const guard = await requireTenantAdmin()
+  if (!guard.ok) return NextResponse.json({ error: guard.reason }, { status: guard.status })
 
   const row = await getWhatsAppIntegration()
-  if (row) await deleteWhatsAppIntegration(row.id)
+  if (row) await deleteWhatsAppIntegration(row.id, guard.ctx.userId)
   return NextResponse.json({ connected: false, integration: null })
 }

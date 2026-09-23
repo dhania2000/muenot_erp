@@ -95,6 +95,7 @@ export async function ensureWhatsAppTable() {
       \`platform_type\` VARCHAR(32) DEFAULT NULL,
       \`access_token\` TEXT NOT NULL,
       \`connected_by_user_id\` INT UNSIGNED DEFAULT NULL,
+      \`released_at\` DATETIME DEFAULT NULL,
       \`connected_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
@@ -122,6 +123,7 @@ export async function ensureWhatsAppTable() {
     "business_id",
     "`business_id` VARCHAR(191) DEFAULT NULL",
   )
+  await ensureColumn("marketing_whatsapp_integration", "released_at", "`released_at` DATETIME DEFAULT NULL")
   await ensureTenantScopedUniquePhone()
   tableEnsured = true
 }
@@ -129,24 +131,24 @@ export async function ensureWhatsAppTable() {
 /**
  * Replaces the legacy global `UNIQUE(phone_number_id)` with a tenant-scoped
  * `UNIQUE(tenant_id, phone_number_id)` so two tenants may legitimately connect
- * the same number. Idempotent and non-fatal (the app-layer scoping still
- * isolates even if the DDL cannot run on a legacy engine).
+ * the same number. The old global key must be removed before an explicitly
+ * released number can be reconnected by a different tenant.
  */
 async function ensureTenantScopedUniquePhone() {
-  try {
-    const composite = await query<{ c: number }[]>(
+  const composite = await query<{ c: number }[]>(
       `SELECT COUNT(*) AS c FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'marketing_whatsapp_integration'
           AND INDEX_NAME = 'uniq_wa_integration_tenant_phone'`,
-    )
-    if (composite[0]?.c) return
-    await query("ALTER TABLE `marketing_whatsapp_integration` DROP INDEX `uniq_phone_number`").catch(() => {})
-    await query(
+  )
+  if (!composite[0]?.c) await query(
       "ALTER TABLE `marketing_whatsapp_integration` ADD UNIQUE KEY `uniq_wa_integration_tenant_phone` (`tenant_id`, `phone_number_id`)",
-    ).catch(() => {})
-  } catch {
-    /* non-fatal: app-layer tenant scoping still isolates */
-  }
+  )
+  const legacy = await query<{ c: number }[]>(
+    `SELECT COUNT(*) AS c FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'marketing_whatsapp_integration'
+        AND INDEX_NAME = 'uniq_phone_number'`,
+  )
+  if (legacy[0]?.c) await query("ALTER TABLE `marketing_whatsapp_integration` DROP INDEX `uniq_phone_number`")
 }
 
 export type WhatsAppIntegrationRow = {
@@ -164,6 +166,7 @@ export type WhatsAppIntegrationRow = {
   connected_by_user_id: number | null
   connected_at: string
   updated_at: string
+  released_at?: string | null
 }
 
 /** Public shape returned to the client — never exposes the access token. */
@@ -291,7 +294,7 @@ export async function getWhatsAppIntegrationForTenant(
 ): Promise<WhatsAppIntegrationRow | null> {
   await ensureWhatsAppTable()
   const rows = await query<WhatsAppIntegrationRow[]>(
-    "SELECT * FROM `marketing_whatsapp_integration` WHERE tenant_id = ? ORDER BY connected_at DESC LIMIT 1",
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE tenant_id = ? AND released_at IS NULL ORDER BY connected_at DESC LIMIT 1",
     [tenantId],
   )
   return rows[0] ?? null
@@ -301,7 +304,7 @@ export async function getWhatsAppIntegrationForTenant(
 export async function listWhatsAppIntegrationsForTenant(): Promise<WhatsAppIntegrationRow[]> {
   await ensureWhatsAppTable()
   const rows = await query<WhatsAppIntegrationRow[]>(
-    "SELECT * FROM `marketing_whatsapp_integration` WHERE tenant_id = ? ORDER BY connected_at DESC",
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE tenant_id = ? AND released_at IS NULL ORDER BY connected_at DESC",
     [currentTenantId()],
   )
   return rows
@@ -348,7 +351,7 @@ export async function listWhatsAppTenantConnections(): Promise<WhatsAppTenantCon
          ON i.id = (
            SELECT i2.id
              FROM \`marketing_whatsapp_integration\` i2
-            WHERE i2.tenant_id = t.id
+            WHERE i2.tenant_id = t.id AND i2.released_at IS NULL
             ORDER BY i2.connected_at DESC, i2.id DESC
             LIMIT 1
          )
@@ -392,7 +395,7 @@ export async function getWhatsAppIntegrationByIdForTenant(
 ): Promise<WhatsAppIntegrationRow | null> {
   await ensureWhatsAppTable()
   const rows = await query<WhatsAppIntegrationRow[]>(
-    "SELECT * FROM `marketing_whatsapp_integration` WHERE id = ? AND tenant_id = ? LIMIT 1",
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE id = ? AND tenant_id = ? AND released_at IS NULL LIMIT 1",
     [id, tenantId],
   )
   return rows[0] ?? null
@@ -436,7 +439,7 @@ export async function getWhatsAppIntegrationByPhoneNumberId(
 ): Promise<WhatsAppIntegrationRow | null> {
   await ensureWhatsAppTable()
   const rows = await query<WhatsAppIntegrationRow[]>(
-    "SELECT * FROM `marketing_whatsapp_integration` WHERE phone_number_id = ? ORDER BY connected_at DESC LIMIT 2",
+    "SELECT * FROM `marketing_whatsapp_integration` WHERE phone_number_id = ? AND released_at IS NULL AND tenant_id IS NOT NULL ORDER BY connected_at DESC LIMIT 2",
     [phoneNumberId],
   )
   if (rows.length === 1) return rows[0]
@@ -552,7 +555,7 @@ export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
     return await withWhatsAppLock("phone:" + data.phoneNumberId, async () => {
       await persistenceStep("integration_schema", () => ensureWhatsAppTable())
       const foreign = await persistenceStep("phone_ownership_check", () => query<{ tenant_id: number }[]>(
-        "SELECT tenant_id FROM marketing_whatsapp_integration WHERE phone_number_id=? AND tenant_id<>? LIMIT 1",
+        "SELECT tenant_id FROM marketing_whatsapp_integration WHERE phone_number_id=? AND released_at IS NULL AND (tenant_id IS NULL OR tenant_id<>?) LIMIT 1",
         [data.phoneNumberId, currentTenantId()],
       ))
       if (foreign.length) throw new WhatsAppPersistenceError("phone_ownership_conflict", null)
@@ -585,7 +588,8 @@ async function saveWhatsAppIntegration(data: ConnectWhatsApp) {
        quality_rating = VALUES(quality_rating),
        platform_type = VALUES(platform_type),
        access_token = VALUES(access_token),
-       connected_by_user_id = VALUES(connected_by_user_id)`,
+       connected_by_user_id = VALUES(connected_by_user_id),
+       released_at = NULL`,
     [
       tenantId,
       data.wabaId,
@@ -602,14 +606,9 @@ async function saveWhatsAppIntegration(data: ConnectWhatsApp) {
   ))
 }
 
-export async function deleteWhatsAppIntegration(id: number) {
-  await ensureWhatsAppTable()
-  // Scope the delete to the acting tenant so a forged id can never disconnect
-  // another tenant's number.
-  await query("DELETE FROM `marketing_whatsapp_integration` WHERE id = ? AND tenant_id = ?", [
-    id,
-    currentTenantId(),
-  ])
+export async function deleteWhatsAppIntegration(id: number, actorUserId: number | null = null) {
+  const { disconnectTenantWhatsAppIntegration } = await import("@/lib/whatsapp-phone-ownership")
+  await disconnectTenantWhatsAppIntegration(id, currentTenantId(), actorUserId)
 }
 
 /* ------------------------------------------------------------------ */

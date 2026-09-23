@@ -103,7 +103,7 @@ export async function readMetaRegistration(row: WhatsAppIntegrationRow, preserve
 }
 
 async function verifyOwnership(row: WhatsAppIntegrationRow, token: string) {
-  const foreign = await query<any[]>("SELECT tenant_id FROM marketing_whatsapp_integration WHERE phone_number_id=? AND tenant_id<>? LIMIT 1", [row.phone_number_id, row.tenant_id])
+  const foreign = await query<any[]>("SELECT tenant_id FROM marketing_whatsapp_integration WHERE phone_number_id=? AND released_at IS NULL AND (tenant_id IS NULL OR tenant_id<>?) LIMIT 1", [row.phone_number_id, row.tenant_id])
   if (foreign.length) throw new RegistrationError("OWNERSHIP")
   let after: string | undefined
   for (let page = 0; page < 50; page++) {

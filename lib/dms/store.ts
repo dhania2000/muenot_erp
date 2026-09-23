@@ -25,6 +25,7 @@ import {
   normalizeShareAccess,
   normalizeStatus,
   normalizeSubjectType,
+  normalizeWorkflowType,
   isExpired,
   resolveEffectiveAccess,
   ancestorIdsFromMap,
@@ -32,6 +33,7 @@ import {
   type AccessLevel,
   type ApprovalStatus,
   type DocStatus,
+  type DocWorkflowType,
   type ShareAccess,
   type SubjectType,
 } from "./model"
@@ -544,6 +546,7 @@ export async function createDocument(input: {
   sourceEntityType?: string | null
   sourceEntityId?: string | null
   status?: DocStatus
+  workflowType?: DocWorkflowType | null
   expiresAt?: string | null
   createdBy?: number | null
   tags?: string[]
@@ -559,7 +562,8 @@ export async function createDocument(input: {
     source_module: input.sourceModule ?? null,
     source_entity_type: input.sourceEntityType ?? null,
     source_entity_id: input.sourceEntityId ?? null,
-    status: normalizeStatus(input.status ?? "active"),
+    status: normalizeStatus(input.status ?? "draft"),
+    workflow_type: normalizeWorkflowType(input.workflowType),
     expires_at: input.expiresAt ?? null,
     created_by: input.createdBy ?? null,
   })
@@ -640,6 +644,46 @@ export async function setApproval(
     set.approved_at = null
   }
   return (await tenantUpdate("dms_documents", set, "id = ?", [id])) > 0
+}
+
+/**
+ * Persist the workflow/approval linkage for a document. Used by the approval
+ * bridge (lib/dms/approval.ts) when routing a document through, and syncing it
+ * back from, the configurable approval engine. Only the provided fields are
+ * written, so a partial patch is safe.
+ */
+export async function setDocumentWorkflow(
+  id: number,
+  patch: {
+    workflowType?: DocWorkflowType | null
+    approvalRequestId?: number | null
+    approvalStatus?: ApprovalStatus
+    status?: DocStatus
+    approvedBy?: number | null
+    approvedAt?: Date | string | null
+  },
+): Promise<boolean> {
+  await ensureDmsSchema()
+  const set: Record<string, any> = {}
+  if (patch.workflowType !== undefined) set.workflow_type = normalizeWorkflowType(patch.workflowType)
+  if (patch.approvalRequestId !== undefined) set.approval_request_id = patch.approvalRequestId
+  if (patch.approvalStatus !== undefined) set.approval_status = normalizeApproval(patch.approvalStatus)
+  if (patch.status !== undefined) set.status = normalizeStatus(patch.status)
+  if (patch.approvedBy !== undefined) set.approved_by = patch.approvedBy
+  if (patch.approvedAt !== undefined) set.approved_at = patch.approvedAt
+  if (Object.keys(set).length === 0) return false
+  return (await tenantUpdate("dms_documents", set, "id = ? AND deleted_at IS NULL", [id])) > 0
+}
+
+/** The (single) document bound to an approval request, tenant-scoped. */
+export async function getDocumentByApprovalRequest(requestId: number): Promise<DmsDocument | null> {
+  await ensureDmsSchema()
+  const rows = await tenantSelect<any[]>("dms_documents", {
+    where: "approval_request_id = ? AND deleted_at IS NULL",
+    params: [requestId],
+    tail: "LIMIT 1",
+  })
+  return rows.length ? mapDocument(rows[0]) : null
 }
 
 export async function softDeleteDocument(id: number, userId: number | null): Promise<boolean> {

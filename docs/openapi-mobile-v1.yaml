@@ -8,6 +8,25 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /auth/register:
+    post:
+      security: []
+      summary: Submit a Shopkeeper application (does not create an active tenant)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ShopkeeperRegistration' } } } }
+      responses:
+        '201': { description: Pending application and one-time registrationToken; store securely, content: { application/json: { schema: { $ref: '#/components/schemas/RegistrationReceipt' } } } }
+        '400': { description: Invalid input or missing consent }
+        '409': { description: Email or mobile already registered }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/registration-status:
+    get:
+      security: []
+      summary: Poll approval status using the registration receipt, not a mobile access token
+      parameters: [{ name: Authorization, in: header, required: true, schema: { type: string }, description: 'Registration <registrationToken>' }]
+      responses:
+        '200': { description: PENDING_APPROVAL, APPROVED, REJECTED or SUSPENDED, content: { application/json: { schema: { $ref: '#/components/schemas/RegistrationStatus' } } } }
+        '401': { description: Invalid registration token }
+        '429': { $ref: '#/components/responses/RateLimited' }
   /auth/login:
     post:
       security: []
@@ -40,6 +59,19 @@ paths:
     get: { summary: Existing tenant-scoped personal dashboard, responses: { '200': { description: Dashboard } } }
   /whatsapp:
     get: { summary: WhatsApp connection health and caller capabilities, responses: { '200': { description: Sanitized connection status } } }
+  /whatsapp/status:
+    get: { summary: Safe tenant-scoped connection state and display phone (no Meta credentials), responses: { '200': { description: CONNECTED, CONNECTING, ACTION_REQUIRED or NOT_CONNECTED, content: { application/json: { schema: { $ref: '#/components/schemas/WhatsAppConnectionStatus' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' } } }
+  /whatsapp/onboarding-session:
+    post:
+      summary: Approved Shopkeeper owner/admin creates a ten-minute tenant-bound Meta signup link
+      description: Open the returned HTTPS url in a browser or Custom Tab. Its opaque launch token is in the URL fragment and must not be logged. Browser returns to muenot://whatsapp/connected or muenot://whatsapp/error; then call /whatsapp/status. Never pass tenantId.
+      responses: { '201': { description: url and expiresAt, content: { application/json: { schema: { $ref: '#/components/schemas/WhatsAppOnboardingSession' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /whatsapp/onboarding-config:
+    get: { security: [], summary: Public Meta SDK readiness for the Muenot-hosted browser page, responses: { '200': { description: Public App ID, config ID and Graph version; no secret } } }
+  /whatsapp/onboarding-launch:
+    post: { security: [], summary: Hosted browser page consumes opaque launchToken once and starts existing Embedded Signup, responses: { '200': { description: Meta SDK signup state and config }, '409': { description: Already used }, '410': { description: Expired } } }
+  /whatsapp/onboarding-callback:
+    post: { security: [], summary: Hosted browser page returns Meta code and WABA/phone IDs with tenant-bound state and launchToken; server exchanges code, responses: { '200': { description: Connected / messaging readiness }, '409': { description: Invalid or replayed state }, '422': { description: Meta onboarding failed } } }
   /conversations:
     get: { summary: Tenant-scoped WhatsApp inbox, parameters: [{ name: limit, in: query, schema: { type: integer, maximum: 200 } }], responses: { '200': { description: Conversation page } } }
   /conversations/{id}:
@@ -195,6 +227,53 @@ components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
+    RegistrationReceipt:
+      type: object
+      required: [applicationId, status, registrationToken]
+      properties:
+        applicationId: { type: integer }
+        status: { type: string, enum: [PENDING_APPROVAL] }
+        registrationToken: { type: string, description: Opaque receipt returned once; store in Android secure storage }
+    RegistrationStatus:
+      type: object
+      required: [status, businessName, ownerName, submittedAt]
+      properties:
+        status: { type: string, enum: [PENDING_APPROVAL, APPROVED, REJECTED, SUSPENDED] }
+        businessName: { type: string }
+        ownerName: { type: string }
+        submittedAt: { type: string, format: date-time }
+        rejectionReason: { type: string, nullable: true }
+    WhatsAppOnboardingSession:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url: { type: string, format: uri, description: Open in an external browser or Android Custom Tab; opaque token is in fragment }
+        expiresAt: { type: string, format: date-time }
+    WhatsAppConnectionStatus:
+      type: object
+      required: [connected, status]
+      properties:
+        connected: { type: boolean, description: True only when Cloud API registration and webhook subscription are ready }
+        status: { type: string, enum: [NOT_CONNECTED, CONNECTING, CONNECTED, ACTION_REQUIRED] }
+        displayName: { type: string, nullable: true }
+        phoneNumber: { type: string, nullable: true }
+        connectedAt: { type: string, format: date-time, nullable: true }
+    ShopkeeperRegistration:
+      type: object
+      required: [businessName, businessCategory, ownerName, email, mobile, country, city, password, termsAccepted, privacyAccepted]
+      properties:
+        businessName: { type: string, minLength: 2, maxLength: 150 }
+        businessCategory: { type: string, minLength: 1, maxLength: 120 }
+        ownerName: { type: string, minLength: 2, maxLength: 150 }
+        email: { type: string, format: email }
+        mobile: { type: string, description: International phone digits; punctuation is normalized }
+        country: { type: string, minLength: 2, maxLength: 2, example: IN }
+        state: { type: string, maxLength: 120 }
+        city: { type: string, minLength: 2, maxLength: 120 }
+        postalCode: { type: string, maxLength: 20 }
+        password: { type: string, format: password, minLength: 8 }
+        termsAccepted: { type: boolean, enum: [true] }
+        privacyAccepted: { type: boolean, enum: [true] }
     DeviceRegistration:
       type: object
       required: [deviceId, pushToken, platform]

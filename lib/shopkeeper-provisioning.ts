@@ -1,4 +1,5 @@
 import "server-only"
+import type { PoolConnection } from "mysql2/promise"
 /**
  * SPEC 1-19 (Shopkeeper provisioning) — the DB/orchestration layer.
  * ---------------------------------------------------------------------------
@@ -28,7 +29,9 @@ import "server-only"
  * taken from client input. Plaintext passwords are only ever hashed, returned
  * once in the provisioning response, and never stored or logged.
  */
-import { pool, query, tableColumns } from "@/lib/db"
+import { pool, query, tableColumns, withTransaction } from "@/lib/db"
+import { ensureNotificationEngineSchema } from "@/lib/notification-engine/schema"
+import { enqueueNotification, processNotification } from "@/lib/notification-engine/service"
 import { hashPassword } from "@/lib/password"
 import {
   ensureTenantSchema,
@@ -62,6 +65,7 @@ import {
   slugifyBusinessName,
   validatePasswordPolicy,
   type RawShopkeeperInput,
+  type NormalizedShopkeeperInput,
   type ShopkeeperFieldError,
 } from "@/lib/shopkeeper-provisioning-core"
 
@@ -110,7 +114,7 @@ async function ensureOwnerColumns(): Promise<void> {
 }
 
 /** Make sure every table/column this module writes exists. Cached per process. */
-async function ensureAllSchema(): Promise<void> {
+export async function ensureShopkeeperProvisioningSchema(): Promise<void> {
   await ensureTenantSchema()
   await ensureSignupSchema() // adds users.mobile + tenants.onboarding_state (+ tenant schema)
   await ensureUserLifecycleSchema() // adds lifecycle_state, email_verified_at, activated_at, …
@@ -125,6 +129,7 @@ async function ensureAllSchema(): Promise<void> {
   }
   await columnEnsured
 }
+const ensureAllSchema = ensureShopkeeperProvisioningSchema
 
 async function findUniqueSlug(businessName: string): Promise<string> {
   const base = slugifyBusinessName(businessName)
@@ -142,7 +147,7 @@ async function findUniqueSlug(businessName: string): Promise<string> {
   return candidate
 }
 
-async function requireShopkeeperPlan(planCode: string): Promise<Plan> {
+export async function requireShopkeeperPlan(planCode: string): Promise<Plan> {
   const plans = await listPlans()
   const plan = plans.find((p) => p.code === planCode)
   if (!plan) throw new ShopkeeperProvisioningError("Unknown subscription plan", 400, [{ field: "planCode", message: "Unknown subscription plan" }])
@@ -182,6 +187,55 @@ export type ProvisionResult = {
   passwordGenerated: boolean
 }
 
+/** Shared transactional write for operator creation and approved applications. */
+export async function insertShopkeeperRecords(
+  conn: PoolConnection,
+  input: NormalizedShopkeeperInput,
+  passwordHash: string,
+  plan: Plan,
+  actor: ProvisionActor,
+  options: { channel: string; businessCategory?: string | null; state?: string | null; city?: string | null; postalCode?: string | null; emailVerified?: boolean } = { channel: "platform_shopkeeper_console" },
+): Promise<{ tenantId: number; ownerUserId: number; slug: string; subscriptionStatus: TenantSubscription["status"]; trialEnd: string | null }> {
+  const slug = await findUniqueSlug(input.businessName)
+  const now = new Date()
+  const trial = isTrialPlan(plan) || input.startTrial
+  const subscriptionStatus: TenantSubscription["status"] = trial ? "trialing" : "active"
+  const trialEnd = trial ? iso(addDays(now, DEFAULT_TRIAL_DAYS)) : null
+  const settings = {
+    profile: { displayName: input.displayName, businessMobile: input.businessMobile },
+    localization: { country: input.country, timezone: input.timezone, currency: input.currency },
+    provisioning: { provisionedByUserId: actor.userId, provisionedAt: now.toISOString(), channel: options.channel },
+  }
+  const [tenantRes] = await conn.query<any>(
+    `INSERT INTO tenants (name,slug,status,onboarding_state,tenant_type,deployment_model,plan,settings,is_platform_owner)
+     VALUES (?,?,'active','active','SHOPKEEPER','shared_database',?,?,0)`,
+    [input.businessName, slug, plan.code, JSON.stringify(settings)],
+  )
+  const tenantId = Number(tenantRes.insertId)
+  await conn.query(
+    `INSERT INTO shopkeeper_profiles
+      (tenant_id,shop_name,owner_name,business_category,email,phone,country,state,city,pin_code,timezone,currency)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [tenantId, input.displayName ?? input.businessName, input.ownerName, options.businessCategory ?? null,
+      input.ownerEmail, input.businessMobile, input.country, options.state ?? null, options.city ?? null,
+      options.postalCode ?? null, input.timezone, input.currency],
+  )
+  const [userRes] = await conn.query<any>(
+    `INSERT INTO users
+      (tenant_id,name,email,mobile,password_hash,role,tenant_role,platform_role,designation,status,lifecycle_state,must_change_password,email_verified_at,activated_at)
+     VALUES (?,?,?,?,?,'admin','tenant_owner','none','Shop Owner','active','active',?,?,NOW())`,
+    [tenantId, input.ownerName, input.ownerEmail, input.ownerMobile, passwordHash, input.generatePassword ? 1 : 0, options.emailVerified === false ? null : now],
+  )
+  const ownerUserId = Number(userRes.insertId)
+  await conn.query(
+    `INSERT INTO tenant_subscriptions
+      (tenant_id,plan_code,status,seats,mrr,currency,current_period_start,current_period_end,trial_end)
+     VALUES (?,?,?,1,?,?,?,?,?)`,
+    [tenantId, plan.code, subscriptionStatus, plan.price_monthly, plan.currency, iso(now), iso(addMonths(now, 1)), trialEnd],
+  )
+  return { tenantId, ownerUserId, slug, subscriptionStatus, trialEnd }
+}
+
 export async function provisionShopkeeper(raw: RawShopkeeperInput, actor: ProvisionActor): Promise<ProvisionResult> {
   const normalized = normalizeShopkeeperInput(raw)
   if (!normalized.ok) {
@@ -189,16 +243,10 @@ export async function provisionShopkeeper(raw: RawShopkeeperInput, actor: Provis
   }
   const input = normalized.value
 
-  await ensureAllSchema()
+  await ensureShopkeeperProvisioningSchema()
 
   // Plan + trial resolution (backend authoritative — SPEC 7/8).
   const plan = await requireShopkeeperPlan(input.planCode)
-  const trial = isTrialPlan(plan) || input.startTrial
-  const now = new Date()
-  const subStatus: TenantSubscription["status"] = trial ? "trialing" : "active"
-  const trialEnd = trial ? iso(addDays(now, DEFAULT_TRIAL_DAYS)) : null
-  const periodStart = iso(now)
-  const periodEnd = iso(addMonths(now, 1))
 
   // Duplicate email — email is globally unique across the users table (SPEC 17).
   const existing = await query<{ id: number }[]>("SELECT id FROM users WHERE email = ? LIMIT 1", [input.ownerEmail])
@@ -208,81 +256,17 @@ export async function provisionShopkeeper(raw: RawShopkeeperInput, actor: Provis
     ])
   }
 
-  const slug = await findUniqueSlug(input.businessName)
   const passwordGenerated = input.generatePassword
   const plaintext = passwordGenerated ? generateSecurePassword(14) : input.password!
   const passwordHash = await hashPassword(plaintext)
 
-  const settings = {
-    profile: {
-      displayName: input.displayName,
-      businessMobile: input.businessMobile,
-    },
-    localization: {
-      country: input.country,
-      timezone: input.timezone,
-      currency: input.currency,
-    },
-    provisioning: {
-      provisionedByUserId: actor.userId,
-      provisionedAt: new Date().toISOString(),
-      channel: "platform_shopkeeper_console",
-    },
-  }
-
   // --- ONE transaction: tenant + profile + owner + subscription (SPEC 3) ---
   const conn = await pool.getConnection()
-  let tenantId: number
-  let ownerUserId: number
+  let created: Awaited<ReturnType<typeof insertShopkeeperRecords>>
   try {
     await conn.beginTransaction()
 
-    const [tenantRes] = await conn.query<any>(
-      `INSERT INTO \`tenants\`
-         (\`name\`, \`slug\`, \`status\`, \`onboarding_state\`, \`tenant_type\`, \`deployment_model\`, \`plan\`, \`settings\`, \`is_platform_owner\`)
-       VALUES (?, ?, 'active', 'active', 'SHOPKEEPER', 'shared_database', ?, ?, 0)`,
-      [input.businessName, slug, plan.code, JSON.stringify(settings)],
-    )
-    tenantId = Number(tenantRes.insertId)
-
-    await conn.query(
-      `INSERT INTO \`shopkeeper_profiles\`
-         (\`tenant_id\`, \`shop_name\`, \`owner_name\`, \`email\`, \`phone\`, \`country\`, \`timezone\`, \`currency\`)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        tenantId,
-        input.displayName ?? input.businessName,
-        input.ownerName,
-        input.ownerEmail,
-        input.businessMobile,
-        input.country,
-        input.timezone,
-        input.currency,
-      ],
-    )
-
-    // Owner user: a real ERP user (SPEC 5). role 'admin' + tenant_role
-    // 'tenant_owner' matches how the onboarding orchestrator seeds an owner, so
-    // the existing RBAC and mobile auth resolve the owner exactly the same way.
-    // email_verified_at is stamped so an optional email-verification policy can
-    // never lock the operator-provisioned owner out of the mobile app.
-    const [userRes] = await conn.query<any>(
-      `INSERT INTO \`users\`
-         (\`tenant_id\`, \`name\`, \`email\`, \`mobile\`, \`password_hash\`, \`role\`, \`tenant_role\`, \`platform_role\`,
-          \`designation\`, \`status\`, \`lifecycle_state\`, \`must_change_password\`, \`email_verified_at\`, \`activated_at\`)
-       VALUES (?, ?, ?, ?, ?, 'admin', 'tenant_owner', 'none', 'Shop Owner', 'active', 'active', ?, NOW(), NOW())`,
-      [tenantId, input.ownerName, input.ownerEmail, input.ownerMobile, passwordHash, passwordGenerated ? 1 : 0],
-    )
-    ownerUserId = Number(userRes.insertId)
-
-    // Subscription: assign the selected Shopkeeper plan. Entitlements are
-    // resolved from the plan (SPEC 9) — nothing else to write.
-    await conn.query(
-      `INSERT INTO \`tenant_subscriptions\`
-         (\`tenant_id\`, \`plan_code\`, \`status\`, \`seats\`, \`mrr\`, \`currency\`, \`current_period_start\`, \`current_period_end\`, \`trial_end\`)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)`,
-      [tenantId, plan.code, subStatus, plan.price_monthly, plan.currency, periodStart, periodEnd, trialEnd],
-    )
+    created = await insertShopkeeperRecords(conn, input, passwordHash, plan, actor)
 
     await conn.commit()
   } catch (err) {
@@ -301,30 +285,30 @@ export async function provisionShopkeeper(raw: RawShopkeeperInput, actor: Provis
     actorUserId: actor.userId,
     actorEmail: actor.email,
     action: "provision_shopkeeper",
-    targetTenantId: tenantId,
-    targetUserId: ownerUserId,
+    targetTenantId: created.tenantId,
+    targetUserId: created.ownerUserId,
     detail: {
       businessName: input.businessName,
-      slug,
+      slug: created.slug,
       ownerEmail: input.ownerEmail,
       planCode: plan.code,
-      subscriptionStatus: subStatus,
-      trial,
+      subscriptionStatus: created.subscriptionStatus,
+      trial: created.subscriptionStatus === "trialing",
       passwordGenerated,
     },
   })
 
   return {
-    tenantId,
-    tenantSlug: slug,
-    ownerUserId,
+    tenantId: created.tenantId,
+    tenantSlug: created.slug,
+    ownerUserId: created.ownerUserId,
     businessName: input.businessName,
     ownerName: input.ownerName,
     ownerEmail: input.ownerEmail,
     planCode: plan.code,
     planName: plan.name,
-    subscriptionStatus: subStatus,
-    trialEnd,
+    subscriptionStatus: created.subscriptionStatus,
+    trialEnd: created.trialEnd,
     password: plaintext,
     passwordGenerated,
   }
@@ -479,7 +463,7 @@ export type ShopkeeperDetail = {
   subscription: TenantSubscription | null
   planName: string | null
   entitlements: EntitlementSnapshot
-  whatsapp: { connected: boolean; phoneNumber: string | null; quality: string | null }
+  whatsapp: { connected: boolean; status: "NOT_CONNECTED" | "CONNECTING" | "CONNECTED" | "ACTION_REQUIRED"; phoneNumber: string | null; quality: string | null; wabaId: string | null; phoneNumberId: string | null; connectedAt: string | null }
   activity: { at: string; actor: string | null; action: string; detail: Record<string, unknown> | null }[]
   lastLoginAt: string | null
 }
@@ -526,24 +510,32 @@ export async function getShopkeeperDetail(id: number): Promise<ShopkeeperDetail>
 }
 
 async function whatsappDetail(tenantId: number): Promise<ShopkeeperDetail["whatsapp"]> {
+  const empty: ShopkeeperDetail["whatsapp"] = { connected: false, status: "NOT_CONNECTED", phoneNumber: null, quality: null, wabaId: null, phoneNumberId: null, connectedAt: null }
   try {
     const cols = await tableColumns("marketing_whatsapp_integration")
-    if (!cols.has("tenant_id")) return { connected: false, phoneNumber: null, quality: null }
+    if (!cols.has("tenant_id")) return empty
     const rows = await query<any[]>(
-      "SELECT display_phone_number, phone_number_id, quality_rating FROM `marketing_whatsapp_integration` WHERE tenant_id = ? LIMIT 1",
+      "SELECT id,display_phone_number,phone_number_id,waba_id,quality_rating,connected_at FROM `marketing_whatsapp_integration` WHERE tenant_id = ? ORDER BY connected_at DESC LIMIT 1",
       [tenantId],
     )
     if (rows[0]) {
+      const [registration] = await query<{ cloud_api_registered: number; registration_status: string }[]>(
+        "SELECT cloud_api_registered,registration_status FROM marketing_whatsapp_registration WHERE tenant_id=? AND connection_id=? LIMIT 1", [tenantId,rows[0].id],
+      ).catch(() => [] as { cloud_api_registered: number; registration_status: string }[])
+      const status = registration?.cloud_api_registered ? "CONNECTED" : registration && ["failed","not_registered","migration_required"].includes(registration.registration_status) ? "ACTION_REQUIRED" : "CONNECTING"
       return {
-        connected: Boolean(rows[0].phone_number_id),
+        connected: status === "CONNECTED", status,
         phoneNumber: rows[0].display_phone_number ?? null,
         quality: rows[0].quality_rating ?? null,
+        wabaId: rows[0].waba_id ?? null,
+        phoneNumberId: rows[0].phone_number_id ?? null,
+        connectedAt: rows[0].connected_at ?? null,
       }
     }
   } catch {
     /* not connected */
   }
-  return { connected: false, phoneNumber: null, quality: null }
+  return empty
 }
 
 /**
@@ -712,7 +704,7 @@ export async function updateShopkeeper(id: number, patch: UpdateShopkeeperPatch,
  */
 export async function setShopkeeperStatus(id: number, status: TenantStatus, actor: ProvisionActor): Promise<Tenant> {
   await ensureAllSchema()
-  await requireShopkeeperTenant(id)
+  const previous = await requireShopkeeperTenant(id)
   const tenant = await setTenantStatus(id, status)
 
   // Keep the console subscription status roughly aligned so the roster reads
@@ -730,6 +722,19 @@ export async function setShopkeeperStatus(id: number, status: TenantStatus, acto
     targetTenantId: id,
     detail: { status },
   })
+  if (status === "suspended" && previous.status !== "suspended") {
+    try {
+      const owner = await getOwnerUser(id)
+      if (owner) {
+        await ensureNotificationEngineSchema()
+        const ids = await withTransaction(async conn => [
+          await enqueueNotification(conn, { tenantId: id, userId: owner.id, channel: "in_app", key: `shopkeeper-suspended:${id}:${Date.now()}`, title: "Account suspended", body: "Your Muenot Shopkeeper account has been suspended." }),
+          await enqueueNotification(conn, { tenantId: id, userId: owner.id, channel: "push", key: `shopkeeper-suspended:${id}:${Date.now()}`, title: "Account suspended", body: "Your Muenot Shopkeeper account has been suspended." }),
+        ])
+        await Promise.all(ids.map(deliveryId => processNotification(deliveryId)))
+      }
+    } catch { /* suspension is authoritative even when a notification provider is down */ }
+  }
   return tenant
 }
 

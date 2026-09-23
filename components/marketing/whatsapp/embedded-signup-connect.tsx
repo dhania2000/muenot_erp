@@ -83,6 +83,9 @@ export function EmbeddedSignupConnect({
   startUrl = "/api/marketing/whatsapp/signup/start",
   readinessUrl = startUrl,
   startBody,
+  callbackUrl = "/api/marketing/whatsapp/signup/callback",
+  callbackBody,
+  onFailed,
 }: {
   onConnected: () => void
   variant?: React.ComponentProps<typeof Button>["variant"]
@@ -90,6 +93,9 @@ export function EmbeddedSignupConnect({
   startUrl?: string
   readinessUrl?: string
   startBody?: Record<string, unknown>
+  callbackUrl?: string
+  callbackBody?: Record<string, unknown>
+  onFailed?: () => void
 }) {
   const [busy, setBusy] = React.useState(false)
   const [hint, setHint] = React.useState("Preparing Facebook login…")
@@ -169,7 +175,7 @@ export function EmbeddedSignupConnect({
       const [start, authResponse] = await Promise.all([starting, login])
 
       const code = authResponse?.authResponse?.code
-      if (!code) { setHint("Facebook login was cancelled or not authorized. You can retry."); return }
+      if (!code) { setHint("Facebook login was cancelled or not authorized. You can retry."); onFailed?.(); return }
 
       // Meta's FINISH message and login callback can arrive in either order.
       for (let i = 0; i < 50 && (!sessionInfo.current.wabaId || !sessionInfo.current.phoneNumberId); i++) {
@@ -180,10 +186,10 @@ export function EmbeddedSignupConnect({
         throw new Error("Meta did not return your WhatsApp number details. Please try the connection again.")
       }
 
-      const cbRes = await fetch("/api/marketing/whatsapp/signup/callback", {
+      const cbRes = await fetch(callbackUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state: start.state, code, wabaId, phoneNumberId, businessId }),
+        body: JSON.stringify({ ...callbackBody, state: start.state, code, wabaId, phoneNumberId, businessId }),
         signal: AbortSignal.timeout(60000),
       })
       const cb = (await cbRes.json().catch(() => ({}))) as {
@@ -202,6 +208,7 @@ export function EmbeddedSignupConnect({
     } catch (err) {
       setHint((err as Error).message)
       toast.error((err as Error).message)
+      onFailed?.()
     } finally {
       active.current = false
       setBusy(false)

@@ -714,7 +714,7 @@ export function AppShell({
             <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>
 <NotificationsBell />
             <LanguageWidget />
-            <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/admin/settings")} aria-label="Settings"><Settings className="size-5" /></Button>
+            <Button variant="ghost" size="icon-sm" className={cn("text-muted-foreground hover:bg-primary/10 hover:text-primary", pathname.startsWith("/admin/settings") && "bg-primary/10 text-primary")} onClick={() => { if (pathname.startsWith("/admin/settings")) { router.push("/dashboard") } else { router.push("/admin/settings") } }} aria-label={pathname.startsWith("/admin/settings") ? "Close settings" : "Settings"} aria-pressed={pathname.startsWith("/admin/settings")}><Settings className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={handleLogout} aria-label="Sign out"><LogOut className="size-4" /></Button>
           </div>
         </header>

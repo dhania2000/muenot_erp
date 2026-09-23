@@ -15,7 +15,7 @@ export async function withMobileAuth<T>(request: Request, handler: (principal: M
   const principal = await authenticateMobileRequest(request)
   if (!principal) return mobileJson({ error: "Unauthorized", code: "invalid_token" }, { status: 401 })
   const requestUrl = new URL(request.url)
-  const rate = checkRateLimit(`mobile-api:${principal.userId}:${requestUrl.pathname}`, { max: 600, windowMs: 15 * 60_000 })
+  const rate = await checkRateLimit(`mobile-api:${principal.userId}:${requestUrl.pathname}`, { max: 600, windowMs: 15 * 60_000 })
   if (!rate.allowed) return mobileJson({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfter) } })
   if (feature) {
     const gate = await requireShopkeeperFeature(principal.tenantId, feature)

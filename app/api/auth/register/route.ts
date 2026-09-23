@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   try {
     // Brute-force / abuse protection: cap signups per IP per window.
     const ip = getClientIp(request)
-    const rl = checkRateLimit(`register:${ip}`, { max: 5, windowMs: 60 * 60 * 1000 })
+    const rl = await checkRateLimit(`register:${ip}`, { max: 5, windowMs: 60 * 60 * 1000 })
     if (!rl.allowed) {
       return NextResponse.json(
         { error: "Too many signup attempts. Please try again later." },

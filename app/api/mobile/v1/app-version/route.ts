@@ -5,7 +5,7 @@ import { latestPublicRelease } from "@/lib/mobile-app-releases"
 export const dynamic = "force-dynamic"
 
 export async function GET(request: Request) {
-  const rate = checkRateLimit(`mobile-app-version:${getClientIp(request)}`, { max: 120, windowMs: 60_000 })
+  const rate = await checkRateLimit(`mobile-app-version:${getClientIp(request)}`, { max: 120, windowMs: 60_000 })
   if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfter), "Cache-Control": "no-store" } })
   try {
     const release = await latestPublicRelease()

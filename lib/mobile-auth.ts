@@ -73,7 +73,7 @@ async function issue(principal: Omit<MobilePrincipal, "sessionId">, deviceName?:
 
 export async function mobileLogin(request: Request, input: { email?: unknown; password?: unknown; mfaCode?: unknown; deviceName?: unknown; platform?: unknown }) {
   const ip = getClientIp(request)
-  const rate = checkRateLimit(`mobile-login:${ip}:${String(input.email ?? "").toLowerCase().slice(0, 190)}`, { max: 10, windowMs: 15 * 60_000 })
+  const rate = await checkRateLimit(`mobile-login:${ip}:${String(input.email ?? "").toLowerCase().slice(0, 190)}`, { max: 10, windowMs: 15 * 60_000 })
   if (!rate.allowed) return { ok: false as const, status: 429, error: "Too many sign-in attempts. Try again later.", retryAfter: rate.retryAfter }
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : ""
   const password = typeof input.password === "string" ? input.password : ""

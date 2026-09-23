@@ -160,7 +160,7 @@ function ChartBody({ data }: { data: Extract<WidgetData, { kind: "chart" }> }) {
               <Cell key={i} fill={(p.fill as string) ?? `var(--chart-${(i % 5) + 1})`} />
             ))}
           </Pie>
-          <ChartLegend content={<ChartLegendContent nameKey={data.xKey} />} className="flex-wrap" />
+          <ChartLegend content={<ChartLegendContent nameKey={data.xKey} className="flex-wrap" />} />
         </PieChart>
       </ChartContainer>
     )

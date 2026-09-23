@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireFeature } from "@/lib/api-auth"
+import { requireFeature, requireModuleAction } from "@/lib/api-auth"
 import { query } from "@/lib/db"
 import { isEmailConfigured } from "@/lib/email"
 import {
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
 
   // Sensitive categories need the extra confidential permission.
   if (SENSITIVE_FINANCE_EMAIL_CATEGORIES.has(category)) {
-    const ok = await requireFeature("finance.emails", "send_confidential")
+    const ok = await requireModuleAction("finance.emails", "send_confidential")
     if (!ok) {
       return NextResponse.json(
         { error: "You do not have permission to send confidential finance emails" },

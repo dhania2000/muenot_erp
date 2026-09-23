@@ -26,6 +26,8 @@ import {
   type SubscriptionStatus,
 } from "@/lib/billing/subscription-lifecycle"
 
+export type { BillingTerm } from "@/lib/billing/subscription-lifecycle"
+
 /**
  * SPEC 16 — SaaS subscription engine (data + service layer).
  * ---------------------------------------------------------------------------
@@ -425,7 +427,7 @@ async function logEvent(input: EventInput): Promise<void> {
   }).catch((e) => console.log("[v0] saas subscription event insert failed", (e as Error).message))
 }
 
-// ── Plans ─────────────────────────────────────────────────────────────────────
+// ── Plans ───────────────────────────────────��─────────────────────────────────
 
 export async function listPlans(opts: { activeOnly?: boolean } = {}): Promise<Plan[]> {
   await ensureSubscriptionSchema()

@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
       if (!self) {
         return NextResponse.json({
           requests: [],
-          summary: emptySummary(),
+          summary: { total: 0, pending: 0, approved: 0, rejected: 0, cancelled: 0, thisMonth: 0 },
           context: { canManage, self: null, employees: [] },
         })
       }
@@ -301,7 +301,7 @@ export async function PATCH(request: NextRequest) {
 
     // Approve → apply to the real attendance record transactionally.
     const result = await approveAndApply(req, session)
-    return NextResponse.json({ ok: true, status: "Approved", ...result })
+    return NextResponse.json({ ok: true, ...result, status: "Approved" })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update request" }, { status: 500 })
   }

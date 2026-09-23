@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { ensureCronJobSchema } from "@/lib/cron-jobs"
 import { runSchedulerTick } from "@/lib/scheduler"
+import { monitorLogger } from "@/lib/system-monitoring"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -18,7 +19,8 @@ export async function GET(request: NextRequest) {
     await ensureCronJobSchema()
     return NextResponse.json({ ok: true, ...(await runSchedulerTick(request)) })
   } catch (error) {
-    console.error("[cron-dispatcher] failed", error)
+    console.error("[cron-dispatcher] failed")
+    monitorLogger.error({ service: "cron", component: "dispatcher", operation: "scheduler_tick", errorCode: "CRON_DISPATCH_FAILED", message: "Scheduled job dispatch failed", route: "/api/cron/dispatcher", method: "GET", httpStatus: 500, requestId: request.headers.get("x-request-id") || undefined })
     return NextResponse.json({ error: "Scheduler dispatch failed" }, { status: 500 })
   }
 }

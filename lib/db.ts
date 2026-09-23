@@ -1,5 +1,6 @@
 import mysql from "mysql2/promise"
 import { guardQuery } from "@/lib/tenant-guard"
+import { getCurrentTenant } from "@/lib/tenant-context"
 
 // MySQL connection pool.
 // Configure these via environment variables (.env.local locally,
@@ -82,7 +83,18 @@ export async function query<T = any>(sql: string, params: any[] = []): Promise<T
   // (no tenant in context) or DDL / information_schema lookups.
   guardQuery(sql)
   const startedAt = SLOW_QUERY_MS > 0 ? Date.now() : 0
-  const [rows] = await pool.query(sql, params)
+  let rows: any
+  try {
+    ;[rows] = await pool.query(sql, params)
+  } catch (error) {
+    // The monitoring logger writes through the pool directly, so this cannot recurse.
+    // Never forward SQL text or bound values: either may contain credentials.
+    const tenantId = getCurrentTenant()?.tenantId
+    void import("@/lib/system-monitoring").then(({ monitorLogger, safeDbError }) => {
+      monitorLogger.error({ service: "database", operation: "query", errorCode: "DATABASE_QUERY_FAILED", message: "Database query failed", tenantId, metadata: safeDbError(error) })
+    }).catch(() => {})
+    throw error
+  }
   if (SLOW_QUERY_MS > 0) {
     const elapsed = Date.now() - startedAt
     if (elapsed >= SLOW_QUERY_MS) {

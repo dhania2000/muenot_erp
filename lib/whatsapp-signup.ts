@@ -20,6 +20,7 @@ import { ensureRegistrationSchema, finalizeWhatsAppRegistration, readMetaRegistr
 import { getWabaSubscriptionStatus } from "@/lib/whatsapp"
 import { discoverSignupAssets, SignupDiscoveryError } from "@/lib/whatsapp-signup-discovery"
 import { persistenceStep, safeWhatsAppPersistenceError } from "@/lib/whatsapp-persistence-diagnostics"
+import { monitorLogger } from "@/lib/system-monitoring"
 
 /**
  * Secure WhatsApp Business "Embedded Signup" onboarding.
@@ -384,6 +385,7 @@ export async function handleWhatsAppSignupCallback(input: SignupCallbackInput): 
     return await withWhatsAppLock("signup:" + input.state, () => finalizeSignupCallback(input))
   } catch {
     console.warn("[whatsapp.signup]", { stage: "completion_database", result: "failed", code: "DATABASE_TRANSACTION_FAILED" })
+    monitorLogger.error({ service: "whatsapp", component: "embedded_signup", operation: "completion_database", errorCode: "DATABASE_TRANSACTION_FAILED", message: "WhatsApp signup finalization failed" })
     return { ok: false, failureCode: "DATABASE_TRANSACTION_FAILED", error: "WhatsApp completion could not be saved. Please retry." }
   }
 }
@@ -393,9 +395,10 @@ async function finalizeSignupCallback(input: SignupCallbackInput): Promise<Conne
   if (!resolved) {
     return { ok: false, failureCode: "SIGNUP_SESSION_MISSING_OR_EXPIRED", error: "This WhatsApp signup link has expired or is invalid. Please start again." }
   }
-  const diagnostic = (stage: string, result: string, code?: string) => console.info("[whatsapp.signup]", {
-    stage, result, ...(code ? { code } : {}), tenantId: resolved.tenantId, signupId: resolved.id,
-  })
+  const diagnostic = (stage: string, result: string, code?: string) => {
+    console.info("[whatsapp.signup]", { stage, result, ...(code ? { code } : {}), tenantId: resolved.tenantId, signupId: resolved.id })
+    if (result === "failed" || result === "pending_or_failed") monitorLogger.error({ service: "whatsapp", component: "embedded_signup", operation: stage, errorCode: code || "WHATSAPP_SIGNUP_FAILED", message: `WhatsApp signup ${stage} ${result}`, tenantId: resolved.tenantId, userId: resolved.userId ?? undefined, metadata: { signupId: resolved.id } })
+  }
   if (input.expectedTenantId != null && input.expectedTenantId !== resolved.tenantId) {
     // Never let one tenant consume another tenant's signup state.
     diagnostic("tenant_mapping", "failed", "TENANT_MISMATCH")
@@ -469,6 +472,7 @@ async function finalizeSignupCallback(input: SignupCallbackInput): Promise<Conne
     const ownershipConflict = safeWhatsAppPersistenceError(error).operation === "phone_ownership_conflict"
     console.warn("[whatsapp.signup]", { stage: "token_persistence", result: "failed", code: ownershipConflict ? "WHATSAPP_PHONE_ALREADY_ASSIGNED" : "TOKEN_PERSISTENCE_FAILED",
       tenantId: resolved.tenantId, signupId: resolved.id, ...safeWhatsAppPersistenceError(error) })
+    monitorLogger.error({ service: "whatsapp", component: "embedded_signup", operation: "token_persistence", errorCode: ownershipConflict ? "WHATSAPP_PHONE_ALREADY_ASSIGNED" : "TOKEN_PERSISTENCE_FAILED", message: "WhatsApp connection persistence failed", tenantId: resolved.tenantId, userId: resolved.userId ?? undefined, metadata: { signupId: resolved.id, ...safeWhatsAppPersistenceError(error) } })
     if (ownershipConflict) return { ok: false, failureCode: "WHATSAPP_PHONE_ALREADY_ASSIGNED",
       error: "This WhatsApp number is already connected to another Muenot account. Disconnect it from the previous account or contact Muenot support." }
     return { ok: false, failureCode: "TOKEN_PERSISTENCE_FAILED", error: "Could not save the WhatsApp connection securely. Please retry." }

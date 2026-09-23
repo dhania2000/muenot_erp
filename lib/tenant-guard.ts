@@ -124,18 +124,25 @@ export function guardQuery(sql: string): void {
     console.error(
       `[tenant-guard] BLOCKED (tenant ${violation.tenantId}) tables=[${violation.tables.join(
         ", ",
-      )}] :: ${trimSql(violation.sql)}`,
+      )}]`,
     )
+    recordViolation(violation, true)
     throw new TenantIsolationError(violation.tables)
   }
   console.warn(
     `[tenant-guard] REPORT (tenant ${violation.tenantId}) unscoped access to [${violation.tables.join(
       ", ",
-    )}] :: ${trimSql(violation.sql)}`,
+    )}]`,
   )
+  recordViolation(violation, false)
 }
 
-function trimSql(sql: string): string {
-  const one = sql.replace(/\s+/g, " ").trim()
-  return one.length > 240 ? `${one.slice(0, 240)}…` : one
+function recordViolation(violation: Violation, blocked: boolean) {
+  // Never forward SQL text/parameters. The shared logger rate-limits report
+  // mode while enforced violations remain incident-worthy.
+  void import("@/lib/system-monitoring").then(({ monitorLogger }) => {
+    const event = { service: "security", component: "tenant_guard", operation: blocked ? "blocked" : "report", errorCode: blocked ? "TENANT_ISOLATION_BLOCKED" : "TENANT_ISOLATION_REPORT", message: `Tenant-scoping violation for ${violation.tables.join(", ")}`, tenantId: violation.tenantId, metadata: { tables: violation.tables } }
+    if (blocked) monitorLogger.error(event)
+    else monitorLogger.warning(event)
+  }).catch(() => {})
 }

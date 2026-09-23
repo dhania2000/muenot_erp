@@ -16,6 +16,7 @@ import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 import { recordSecurityEvent } from "@/lib/security-audit-store"
 import { evaluateAccessPolicies } from "@/lib/access-policy-store"
 import { recordAuditLog, AUDIT_ACTIONS, type AuditContext } from "@/lib/audit-log-store"
+import { monitorLogger, safeDbError } from "@/lib/system-monitoring"
 
 type UserRow = {
   id: number
@@ -335,7 +336,9 @@ export async function POST(request: Request) {
     })
   } catch (error) {
     const code = (error as { code?: string })?.code
-    console.error("[v0] login error:", { code, error })
+    const diagnostic = safeDbError(error)
+    console.error("[v0] login error:", diagnostic)
+    monitorLogger.error({ service: "authentication", component: "login", operation: "sign_in", errorCode: "LOGIN_SERVER_ERROR", message: "Login request failed", route: "/api/auth/login", method: "POST", httpStatus: 500, requestId: request.headers.get("x-request-id") || undefined, metadata: diagnostic })
 
     // Surface actionable diagnostics for the most common infrastructure
     // failures instead of a blanket "Something went wrong."

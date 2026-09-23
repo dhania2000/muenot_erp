@@ -4,6 +4,7 @@ import mysql from "mysql2/promise"
 import { query } from "@/lib/db"
 import { decryptToken, encryptToken } from "@/lib/token-crypto"
 import { GRAPH_VERSION, getWhatsAppIntegrationByIdForTenant, type WhatsAppIntegrationRow } from "@/lib/whatsapp"
+import { monitorLogger } from "@/lib/system-monitoring"
 
 export const registrationDDL = [
   "CREATE TABLE IF NOT EXISTS marketing_whatsapp_registration (tenant_id INT UNSIGNED NOT NULL, connection_id INT UNSIGNED NOT NULL, pin_encrypted TEXT NULL, cloud_api_registered BOOLEAN NOT NULL DEFAULT FALSE, registration_status VARCHAR(40) NOT NULL DEFAULT 'pending', registration_error_code VARCHAR(40) NULL, registration_error_message VARCHAR(500) NULL, registration_checked_at DATETIME NULL, PRIMARY KEY (tenant_id,connection_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
@@ -69,6 +70,7 @@ async function graph(row: WhatsAppIntegrationRow, token: string, path: string, o
   } catch (error) {
     const safe = error instanceof RegistrationError ? error : new RegistrationError("TIMEOUT")
     console.warn("[whatsapp.registration]", { ...metadata, phase: "failure", http_status: safe.httpStatus, meta_error_code: safe.code, meta_error_subcode: safe.subcode, message: safe.message, timestamp: new Date().toISOString() })
+    monitorLogger.error({ service: "whatsapp", component: "registration", operation, errorCode: "PHONE_REGISTRATION_FAILED", message: safe.message, tenantId: row.tenant_id, httpStatus: safe.httpStatus || undefined, metadata: { connectionId: row.id, metaErrorCode: safe.code, metaErrorSubcode: safe.subcode } })
     throw safe
   }
 }

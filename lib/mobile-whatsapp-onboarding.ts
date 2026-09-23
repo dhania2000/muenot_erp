@@ -6,6 +6,7 @@ import { getTenantById } from "@/lib/tenant-service"
 import { runForTenant } from "@/lib/tenant-scope"
 import { createWhatsAppSignupSession, handleWhatsAppSignupCallback } from "@/lib/whatsapp-signup"
 import { auditMobileAction, type MobilePrincipal } from "@/lib/mobile-auth"
+import { monitorLogger } from "@/lib/system-monitoring"
 
 const hash = (token: string) => createHash("sha256").update(token).digest("hex")
 const TTL_MS = 20 * 60_000
@@ -17,6 +18,7 @@ export class MobileOnboardingError extends Error {
 function diagnostic(stage: string, result: string, code?: string, row?: Partial<Launch>) {
   console.info("[mobile.whatsapp.onboarding]", { stage, result, ...(code ? { code } : {}),
     ...(row ? { onboardingId: row.id, tenantId: row.tenant_id, userId: row.user_id } : {}) })
+  if (result === "failed") monitorLogger.error({ service: "mobile_api", component: "whatsapp_onboarding", operation: stage, errorCode: code || "ONBOARDING_FAILED", message: `Mobile WhatsApp onboarding ${stage} failed`, tenantId: row?.tenant_id, userId: row?.user_id, metadata: { onboardingId: row?.id } })
 }
 let ensured: Promise<void> | undefined
 export function ensureMobileOnboardingSchema() {

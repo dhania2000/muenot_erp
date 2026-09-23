@@ -80,6 +80,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["marketing_library", "Marketing library", "/api/cron/marketing-library", "0 7 * * *"],
   ["storage_retention", "Storage retention", "/api/cron/storage-retention", "0 3 * * *"],
   ["audit_retention", "Audit log retention", "/api/cron/audit-retention", "0 3 * * *"],
+  ["monitor_retention", "System log retention", "/api/cron/system-monitor-retention", "15 3 * * *"],
   ["data_retention", "Data retention lifecycle", "/api/cron/data-retention", "0 3 * * *"],
   ["data_export", "Scheduled data exports", "/api/cron/data-export", "30 3 * * *"],
   ["backups", "Tenant backup engine", "/api/cron/backups", "0 2 * * *"],

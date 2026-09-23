@@ -20,6 +20,7 @@ import { routeConversation } from "@/lib/whatsapp-routing"
 import { enqueueWhatsAppMessageNotifications } from "@/lib/whatsapp-push-notifications"
 import { runInboundAutomations } from "@/lib/whatsapp-automations"
 import { applyCampaignStatusByWamid, markCampaignReplied } from "@/lib/whatsapp-campaigns"
+import { monitorLogger } from "@/lib/system-monitoring"
 
 /**
  * WhatsApp Cloud API webhook.
@@ -170,6 +171,7 @@ export async function POST(request: Request) {
   const signature = request.headers.get("x-hub-signature-256")
 
   if (!verifyWebhookSignature(rawBody, signature)) {
+    monitorLogger.warning({ service: "webhook", component: "whatsapp", operation: "signature_verification", errorCode: "INVALID_WEBHOOK_SIGNATURE", message: "WhatsApp webhook signature rejected", route: "/api/marketing/whatsapp/webhook", method: "POST", httpStatus: 403, requestId: request.headers.get("x-request-id") || undefined })
     return new NextResponse("Invalid signature", { status: 403 })
   }
 
@@ -189,7 +191,8 @@ export async function POST(request: Request) {
   try {
     await processWebhook(body)
   } catch (err) {
-    console.error("[v0] WhatsApp webhook processing error:", (err as Error).message)
+    console.error("[v0] WhatsApp webhook processing error")
+    monitorLogger.error({ service: "webhook", component: "whatsapp", operation: "processing", errorCode: "WHATSAPP_WEBHOOK_PROCESSING_FAILED", message: "WhatsApp webhook processing failed", route: "/api/marketing/whatsapp/webhook", method: "POST", requestId: request.headers.get("x-request-id") || undefined })
     // Still 200 — we have the raw event and Meta retries add no value here.
   }
 

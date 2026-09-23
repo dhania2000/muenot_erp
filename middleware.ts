@@ -21,16 +21,23 @@ async function getSessionFromRequest(request: NextRequest) {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const requestId = `req_${crypto.randomUUID()}`
+  const responseHeaders = { "x-request-id": requestId }
 
-  if (PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next") || pathname.startsWith("/api/auth")) {
-    return NextResponse.next()
+  const protectedPath = pathname.startsWith("/dashboard") || pathname.startsWith("/admin") || pathname.startsWith("/modules") || pathname.startsWith("/api/admin") || pathname.startsWith("/api/modules")
+  if (!protectedPath || PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next") || pathname.startsWith("/api/auth")) {
+    const headers = new Headers(request.headers)
+    headers.set("x-request-id", requestId)
+    const response = NextResponse.next({ request: { headers } })
+    response.headers.set("x-request-id", requestId)
+    return response
   }
 
   const session = await getSessionFromRequest(request)
 
   if (!session) {
     if (pathname.startsWith("/api")) {
-      return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+      return NextResponse.json({ error: "Not authenticated", requestId }, { status: 401, headers: responseHeaders })
     }
     const loginUrl = new URL("/login", request.url)
     loginUrl.searchParams.set("redirect", pathname)
@@ -47,10 +54,14 @@ export async function middleware(request: NextRequest) {
   // the incoming request first so a client cannot spoof it.
   const requestHeaders = new Headers(request.headers)
   requestHeaders.delete("x-tenant-hint")
+  requestHeaders.set("x-request-id", requestId)
+  requestHeaders.set("x-correlation-id", requestId)
   const subdomain = extractSubdomain(request.nextUrl.hostname)
   if (subdomain) requestHeaders.set("x-tenant-hint", subdomain)
 
-  return NextResponse.next({ request: { headers: requestHeaders } })
+  const response = NextResponse.next({ request: { headers: requestHeaders } })
+  response.headers.set("x-request-id", requestId)
+  return response
 }
 
 /**
@@ -71,5 +82,5 @@ function extractSubdomain(hostname: string): string | null {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/admin/:path*", "/modules/:path*", "/api/admin/:path*", "/api/modules/:path*"],
+  matcher: ["/dashboard/:path*", "/admin/:path*", "/modules/:path*", "/api/:path*"],
 }

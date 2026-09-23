@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { toast } from "sonner"
 import {
   Building2,
@@ -204,6 +205,7 @@ export function TenantManager({
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {canManage && <Link className="text-xs text-primary hover:underline" href={`/platform/system-monitoring?tenantId=${tenant.id}`}>View diagnostics</Link>}
                       {isHome ? (
                         <span className="text-xs text-muted-foreground">Home tenant</span>
                       ) : isActive ? (

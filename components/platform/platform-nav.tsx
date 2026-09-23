@@ -19,6 +19,7 @@ const NAV: NavItem[] = [
   { href: "/platform/subscriptions", label: "Subscriptions & billing", icon: CreditCard, group: "Operate" },
   { href: "/platform/usage", label: "Usage & storage", icon: Gauge, group: "Operate" },
   { href: "/platform/health", label: "Health & jobs", icon: Activity, group: "Observe" },
+  { href: "/platform/system-monitoring", label: "System Monitoring", icon: ShieldAlert, group: "Observe" },
   { href: "/platform/cron-jobs", label: "Scheduled jobs", icon: Clock3, group: "Observe" },
   { href: "/platform/scheduler", label: "Central scheduler", icon: Cpu, group: "Observe" },
   { href: "/platform/background-jobs", label: "Background jobs & retries", icon: ListChecks, group: "Observe" },

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { forEachActiveTenant } from "@/lib/tenant-scope"
 import { reconcileCurrentTenant } from "@/lib/billing/subscription-engine"
+import { monitorLogger } from "@/lib/system-monitoring"
 
 export const runtime = "nodejs"
 
@@ -38,6 +39,7 @@ async function handle(request: Request) {
     scanned += result.scanned
     changed += result.changed
   })
+  if (fanout.failed) monitorLogger.error({ service: "subscriptions", component: "lifecycle", operation: "daily_reconciliation", errorCode: "SUBSCRIPTION_RECONCILIATION_FAILED", message: "Subscription reconciliation failed for one or more tenants", metadata: { tenantCountFailed: fanout.failed, tenantCountProcessed: fanout.processed }, route: "/api/cron/subscription-lifecycle", method: request.method, requestId: request.headers.get("x-request-id") || undefined })
 
   return NextResponse.json({
     success: true,

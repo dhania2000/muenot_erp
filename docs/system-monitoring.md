@@ -7,7 +7,7 @@ This is application telemetry, not a Hostinger infrastructure log reader. The ex
 1. Apply `database/migrations/2026-12-09-system-monitoring.sql` to the same MySQL database as the ERP before deploying the code. The migration only creates new tables and can be replayed safely.
 2. Deploy the application. The scheduled `monitor_retention` job joins the existing central dispatcher. It requires the existing `CRON_SECRET`; no new credentials are needed.
 3. Open `/platform/system-monitoring` as a platform Super Admin. The dashboard reflects only events generated after deployment; prior Hostinger logs are not imported.
-4. Confirm health and one safe test event in a staging environment. Ensure the application's database timezone is UTC. Set `APP_ENV=production` on production and `APP_ENV=staging` on staging to keep incidents separate.
+4. Confirm health and one safe test event in a staging environment. Monitoring writes use explicit UTC timestamps; the console renders them in the browser's timezone. Set `APP_ENV=production` on production and `APP_ENV=staging` on staging to keep incidents separate.
 5. Do not enable DEBUG/INFO persistence in production until retention and volume have been reviewed. The default threshold is WARNING.
 
 No optional Hostinger adapter is enabled. A future provider adapter should expose `isAvailable()` and `fetchLogs()` against an officially supported machine-readable API, then pass normalized results through the same redaction layer. Do not scrape hosting HTML or store panel credentials.
@@ -16,7 +16,7 @@ No optional Hostinger adapter is enabled. A future provider adapter should expos
 
 `monitorLogger` in `lib/system-monitoring.ts` accepts structured events. It first checks the configured minimum severity, redacts messages and nested metadata, rate-limits repeated low-severity events, then persists to `system_logs`. ERROR/CRITICAL events upsert a fingerprinted incident in `system_incidents`. Tenant counts use a unique link table. A monitoring storage failure falls back to a sanitized console notice; it never recursively invokes the logger or blocks the main business operation. Existing security/audit logs remain independent and are not weakened by this best-effort logger.
 
-The logger uses the shared MySQL pool directly, bypassing the `lib/db.ts` wrapper to prevent recursive failure capture and activity notifications. Database errors captured by that wrapper include only driver error code and SQL state, never SQL text or parameters. Existing WhatsApp signup, mobile onboarding, registration, auth login server failures, cron dispatcher, and WhatsApp webhook failures emit centralized events. Expected user-input 4xx responses are not incidents. Routine successful heartbeats are not persisted.
+The logger uses the shared MySQL pool directly, bypassing the `lib/db.ts` wrapper to prevent recursive failure capture and activity notifications. Database errors captured by that wrapper include only driver error code and SQL state, never SQL text or parameters. Existing WhatsApp signup, mobile onboarding, registration, auth login server failures, cron dispatcher, WhatsApp webhook failures, email sends, FCM delivery failures, and subscription reconciliation failures emit centralized events. Expected user-input 4xx responses are not incidents. Routine successful heartbeats are not persisted.
 
 The tenant isolation guard retains its report/enforce behavior but no longer prints SQL statements into console logs. Report-mode events are rate-limited WARNING records; enforced blocks create ERROR incidents. This does not relax tenant isolation.
 
@@ -53,6 +53,6 @@ The health view combines the existing real database/auth/runtime checks with con
 
 ## Retention and troubleshooting
 
-Default retention: DEBUG 7d, INFO/NOTICE 30d, WARNING 90d, ERROR 180d, CRITICAL 365d. The scheduler deletes at most 1,000 rows per run. Incident summaries are retained separately. Super Admins can change retention and minimum severity in Settings. If logs are absent, check the migration, database connectivity, minimum severity, the current `APP_ENV`, and the sanitized `[system.monitoring] persistence unavailable` line in server logs. Do not paste raw Hostinger logs into monitoring records if they contain credentials.
+Default retention: DEBUG 7d, INFO/NOTICE 30d, WARNING 90d, ERROR 180d, CRITICAL 365d. The hourly scheduler deletes at most 1,000 rows per run. Incident summaries are retained separately. Super Admins can change retention and minimum severity in Settings. If logs are absent, check the migration, database connectivity, minimum severity, the current `APP_ENV`, and the sanitized `[system.monitoring] persistence unavailable` line in server logs. Do not paste raw Hostinger logs into monitoring records if they contain credentials.
 
 Application-generated failures outside the integrated paths will require incremental instrumentation. Next.js process crashes, container restarts, web-server access logs, MySQL server internals, network infrastructure, and Hostinger panel logs are **not** available through this module without a supported external provider feed.

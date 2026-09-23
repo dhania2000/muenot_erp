@@ -67,7 +67,7 @@ export async function updateIncident(id: number, actorId: number, action: string
     }
     if (action === "priority") await conn.query("UPDATE system_incidents SET priority = ? WHERE id = ?", [String(value), id])
     const eventNote = note || (["assign", "priority"].includes(action) ? String(value) : null)
-    await conn.query("INSERT INTO system_incident_events (incident_id, actor_user_id, action, note) VALUES (?, ?, ?, ?)", [id, actorId, action, eventNote ? redactString(eventNote).slice(0, 1000) : null])
+    await conn.query("INSERT INTO system_incident_events (incident_id, actor_user_id, action, note, created_at) VALUES (?, ?, ?, ?, UTC_TIMESTAMP(3))", [id, actorId, action, eventNote ? redactString(eventNote).slice(0, 1000) : null])
     await conn.commit()
     return true
   } catch (error) { await conn.rollback(); throw error } finally { conn.release() }
@@ -101,7 +101,7 @@ export async function health() {
     ["Cron", Boolean(process.env.CRON_SECRET)],
   ] as const
   const checks = [...existing.checks.map((c) => ({ name: c.name, status: c.status === "ok" ? "HEALTHY" : c.status === "warn" ? "DEGRADED" : "DOWN", reason: c.status === "down" ? "Check failed; see sanitized database diagnostics" : c.detail })), ...config.map(([name, configured]) => ({ name, status: configured ? "HEALTHY" : "UNKNOWN", reason: configured ? "Configured" : "Not configured in this runtime" }))]
-  await Promise.allSettled(checks.map((check) => pool.query("INSERT INTO system_health_checks (name, status, safe_reason) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status = VALUES(status), safe_reason = VALUES(safe_reason), last_checked_at = UTC_TIMESTAMP(3)", [check.name, check.status, redactString(check.reason)])))
+  await Promise.allSettled(checks.map((check) => pool.query("INSERT INTO system_health_checks (name, status, safe_reason, last_checked_at) VALUES (?, ?, ?, UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE status = VALUES(status), safe_reason = VALUES(safe_reason), last_checked_at = UTC_TIMESTAMP(3)", [check.name, check.status, redactString(check.reason)])))
   return { overall: existing.overall, checks, runtime: existing.runtime }
 }
 
@@ -117,7 +117,7 @@ export async function updateSettings(input: Record<string, unknown>) {
   for (const [key, value] of changes) {
     if (key === "min_severity" ? !SEVERITIES.includes(value as any) : !Number.isInteger(value) || Number(value) < 1 || Number(value) > (key === "slow_request_ms" ? 60000 : 3650)) throw new Error(`Invalid ${key}`)
   }
-  await pool.query(`UPDATE system_monitor_settings SET ${changes.map(([key]) => `\`${key}\` = ?`).join(", ")} WHERE id = 1`, changes.map(([, value]) => value))
+  await pool.query(`UPDATE system_monitor_settings SET ${changes.map(([key]) => `\`${key}\` = ?`).join(", ")}, updated_at = UTC_TIMESTAMP(3) WHERE id = 1`, changes.map(([, value]) => value))
 }
 
 export async function listAlerts() {
@@ -131,7 +131,7 @@ export async function addAlert(input: Record<string, unknown>) {
   const severity = String(input.severity || "ERROR")
   const count = Number(input.thresholdCount || 1), window = Number(input.windowMinutes || 5), cooldown = Number(input.cooldownMinutes || 60)
   if (!name || !["ERROR", "CRITICAL"].includes(severity) || ![count, window, cooldown].every((x) => Number.isInteger(x) && x >= 1 && x <= 10080)) throw new Error("Invalid alert rule")
-  await pool.query("INSERT INTO system_alert_rules (name, severity, service, threshold_count, window_minutes, cooldown_minutes) VALUES (?, ?, ?, ?, ?, ?)", [name, severity, typeof input.service === "string" && input.service.length <= 80 ? input.service : null, count, window, cooldown])
+  await pool.query("INSERT INTO system_alert_rules (name, severity, service, threshold_count, window_minutes, cooldown_minutes, created_at) VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))", [name, severity, typeof input.service === "string" && input.service.length <= 80 ? input.service : null, count, window, cooldown])
 }
 
 export async function setAlertEnabled(id: number, enabled: boolean) {
@@ -152,5 +152,5 @@ export async function cleanupBatch(limit = 1000): Promise<number> {
 }
 
 export async function auditMonitor(actorId: number, action: string, targetType: string, targetId?: string) {
-  await pool.query("INSERT INTO system_monitor_audit (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)", [actorId, action, targetType, targetId || null])
+  await pool.query("INSERT INTO system_monitor_audit (actor_user_id, action, target_type, target_id, created_at) VALUES (?, ?, ?, ?, UTC_TIMESTAMP(3))", [actorId, action, targetType, targetId || null])
 }

@@ -23,6 +23,7 @@ describe("structured logger persistence", () => {
     const serialized = JSON.stringify(mock.query.mock.calls)
     for (const secret of ["hidden-token", "meta-token", "my-password", "secret-value"]) expect(serialized).not.toContain(secret)
     expect(serialized).toContain("TOKEN_PERSISTENCE_FAILED")
+    expect(mock.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO system_logs"))?.[0]).toContain("UTC_TIMESTAMP(3)")
   })
 
   it("falls back safely when monitoring tables are unavailable and never recurses", async () => {

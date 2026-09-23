@@ -58,10 +58,10 @@ export async function persistMonitorEvent(input: MonitorEvent): Promise<void> {
     let incidentId: number | null = null
     if (severity === "ERROR" || severity === "CRITICAL") {
       const [upsert] = await pool.query<any>(
-        `INSERT INTO system_incidents (environment, fingerprint, title, service, component, operation, error_code, severity, affected_tenant_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+        `INSERT INTO system_incidents (environment, fingerprint, title, service, component, operation, error_code, severity, affected_tenant_count, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))
          ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), occurrence_count = occurrence_count + 1,
-           last_seen_at = CURRENT_TIMESTAMP(3), severity = VALUES(severity),
+           last_seen_at = UTC_TIMESTAMP(3), severity = VALUES(severity),
            status = IF(status = 'RESOLVED', 'OPEN', status)`,
         [environment, fingerprint, message.slice(0, 255), service, component, operation, errorCode, severity],
       )
@@ -72,8 +72,8 @@ export async function persistMonitorEvent(input: MonitorEvent): Promise<void> {
       }
     }
     const [insert] = await pool.query<any>(
-      `INSERT INTO system_logs (environment, severity, service, component, operation, event_type, error_code, message, tenant_id, user_id, route, method, http_status, request_id, correlation_id, trace_id, job_id, webhook_id, integration, duration_ms, source, release_id, metadata_json, stack_text, fingerprint, incident_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO system_logs (created_at, environment, severity, service, component, operation, event_type, error_code, message, tenant_id, user_id, route, method, http_status, request_id, correlation_id, trace_id, job_id, webhook_id, integration, duration_ms, source, release_id, metadata_json, stack_text, fingerprint, incident_id)
+       VALUES (UTC_TIMESTAMP(3), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [environment, severity, service, component, operation, input.eventType ? redactString(input.eventType).slice(0, 80) : null, errorCode, message,
         input.tenantId ?? null, input.userId ?? null, input.route ? redactString(input.route.split("?")[0]).slice(0, 255) : null,
         input.method || null, input.httpStatus ?? null, input.requestId ? requestReference(input.requestId) : null,
@@ -107,7 +107,7 @@ async function evaluateAlertRules(incidentId: number, severity: MonitorSeverity,
       if (Number(counts[0]?.n) < Number(rule.threshold_count)) continue
       const bucket = Math.floor(Date.now() / (Number(rule.cooldown_minutes) * 60_000))
       const [insert] = await pool.query<any>(
-        "INSERT IGNORE INTO system_alert_deliveries (rule_id, incident_id, channel, status, cooldown_bucket) VALUES (?, ?, 'in_app', 'delivered', ?)",
+        "INSERT IGNORE INTO system_alert_deliveries (rule_id, incident_id, channel, status, cooldown_bucket, created_at) VALUES (?, ?, 'in_app', 'delivered', ?, UTC_TIMESTAMP(3))",
         [rule.id, incidentId, bucket],
       )
       if (insert.affectedRows) await pool.query("UPDATE system_alert_rules SET last_fired_at = UTC_TIMESTAMP(3) WHERE id = ?", [rule.id])

@@ -3,6 +3,7 @@ import { google } from "googleapis"
 import { query } from "@/lib/db"
 import { decryptToken } from "@/lib/token-crypto"
 import type { NotificationProvider } from "@/lib/notification-engine/providers"
+import { monitorLogger } from "@/lib/system-monitoring"
 
 const permanent = (code: string, status = 400) => Object.assign(new Error("Push provider rejected a device delivery"), { code, status })
 
@@ -64,6 +65,7 @@ export const sendFcmNotification: NotificationProvider = async (input) => {
       continue
     }
     console.warn("[mobile-push] fcm_delivery_failed", { tenantId: input.tenantId,userId: input.userId,deviceId: Number(device.id),httpStatus: response.status,providerCode: fcmCode || "unknown" })
+    monitorLogger.error({ service: "notifications", component: "fcm", operation: "delivery", errorCode: "FCM_DELIVERY_FAILED", message: "Mobile push provider rejected a delivery", tenantId: input.tenantId, userId: input.userId, httpStatus: response.status, metadata: { providerCode: fcmCode || "unknown", deviceId: Number(device.id) } })
     if (response.status === 429 || response.status >= 500) {
       if (accepted === 0) throw Object.assign(new Error("FCM temporarily unavailable"), { code: "ECONNREFUSED", status: response.status })
       break // Partial acceptance: don't retry the whole fan-out and duplicate pushes.

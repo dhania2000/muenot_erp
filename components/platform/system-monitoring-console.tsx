@@ -6,7 +6,13 @@ const BASE = "/api/platform/system-monitoring"
 const VIEWS = ["dashboard", "logs", "incidents", "health", "alerts", "settings"] as const
 type View = typeof VIEWS[number]
 type Json = Record<string, any>
-const stamp = (value: unknown) => value ? new Date(String(value)).toLocaleString() : "—"
+const stamp = (value: unknown) => {
+  if (!value) return "—"
+  const raw = String(value)
+  const utc = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/.test(raw) ? `${raw.replace(" ", "T")}Z` : raw
+  const date = new Date(utc)
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString()
+}
 
 export function SystemMonitoringConsole() {
   const [view, setView] = useState<View>("dashboard")

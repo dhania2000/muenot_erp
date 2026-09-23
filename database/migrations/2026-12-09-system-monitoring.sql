@@ -91,8 +91,8 @@ CREATE TABLE IF NOT EXISTS system_alert_rules (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY uq_monitor_alert_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-INSERT IGNORE INTO system_alert_rules (name, severity, threshold_count, window_minutes, cooldown_minutes, channel)
-VALUES ('Critical application incident', 'CRITICAL', 1, 5, 60, 'in_app');
+INSERT IGNORE INTO system_alert_rules (name, severity, threshold_count, window_minutes, cooldown_minutes, channel, created_at)
+VALUES ('Critical application incident', 'CRITICAL', 1, 5, 60, 'in_app', UTC_TIMESTAMP(3));
 
 CREATE TABLE IF NOT EXISTS system_alert_deliveries (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS system_monitor_settings (
   slow_request_ms INT UNSIGNED NOT NULL DEFAULT 2000,
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-INSERT IGNORE INTO system_monitor_settings (id) VALUES (1);
+INSERT IGNORE INTO system_monitor_settings (id, updated_at) VALUES (1, UTC_TIMESTAMP(3));
 
 CREATE TABLE IF NOT EXISTS system_monitor_audit (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

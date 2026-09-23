@@ -5,6 +5,8 @@ import crypto from "crypto"
 import { query } from "@/lib/db"
 import { getGoogleAccount } from "@/lib/google-accounts"
 import { makeUserGmailClient, scopeGrantsGmailSend } from "@/lib/google-calendar"
+import { monitorLogger } from "@/lib/system-monitoring"
+import { getCurrentTenant } from "@/lib/tenant-context"
 
 let tablesEnsured = false
 
@@ -940,6 +942,7 @@ export async function sendEmail(opts: {
    */
   senderUserId?: number | null
 }): Promise<{ messageId?: string; providerThreadId?: string | null }> {
+  try {
   const config = smtpConfig(opts.department)
   const userSender = await getUserMailSender(opts.senderUserId)
   const configuredFrom = opts.from || userSender?.email || config.from || config.user
@@ -1056,4 +1059,8 @@ export async function sendEmail(opts: {
 
   const info = await getTransporter(opts.department).sendMail(mailOptions)
   return { ...info, providerThreadId: null }
+  } catch (error) {
+    monitorLogger.error({ service: "email", component: "delivery", operation: "send", errorCode: "EMAIL_SEND_FAILED", message: "Email delivery failed", tenantId: getCurrentTenant()?.tenantId, metadata: { department: opts.department || "sales", transport: isGmailApiConfigured(opts.department) ? "gmail_api" : "smtp" } })
+    throw error
+  }
 }

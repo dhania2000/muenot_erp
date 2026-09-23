@@ -1,129 +1,32 @@
-import { Archive, Settings2 } from "lucide-react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
+import { Archive } from "lucide-react"
+import { requirePlatformStaff } from "@/lib/platform-guard"
+import { BackupsConsole } from "@/components/platform/backups-console"
 
-// SPEC 75 — Platform Backup Operations (UI). Honest NOT CONFIGURED state
-// until an infrastructure backup provider is wired up — no fabricated
-// success history is shown.
-const TARGETS = [
-  { name: "Database backup", configured: false },
-  { name: "File / object storage backup", configured: false },
-  { name: "Configuration backup", configured: false },
-]
+// SPEC 75 — Platform Backup Operations. A real, tenant-aware backup engine:
+// per-tenant + baseline policies, encrypted logical snapshots (database / file
+// manifest / configuration), integrity verification, retention and
+// non-destructive restore testing. History is never fabricated — a scope shows
+// no runs until a policy is enabled or a backup is triggered.
+export const dynamic = "force-dynamic"
 
-export default function BackupsPage() {
+export default async function BackupsPage() {
+  const guard = await requirePlatformStaff()
+  if (!guard.ok) return null
+  const canManage = guard.ctx.platformRole === "platform_super_admin"
+
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Backups</h1>
-        <p className="text-sm text-muted-foreground">
-          Infrastructure-provider backup status for database, file storage, and configuration. Nothing here is
-          fabricated — a target shows NOT CONFIGURED until a real provider is connected.
-        </p>
-      </header>
-
-      <Card>
-        <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-2">
-            <Archive className="size-4 text-muted-foreground" />
-            Backup targets
-          </CardTitle>
-          <CardDescription>Authorized platform staff can configure a provider for each target.</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Target</TableHead>
-                <TableHead>Last backup</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Encryption</TableHead>
-                <TableHead>Verification</TableHead>
-                <TableHead>Retention</TableHead>
-                <TableHead>Last restore test</TableHead>
-                <TableHead className="text-right">Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {TARGETS.map((t) => (
-                <TableRow key={t.name}>
-                  <TableCell className="text-sm font-medium">{t.name}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">—</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">—</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">—</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">—</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">—</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">—</TableCell>
-                  <TableCell className="text-right">
-                    <Badge variant="destructive" className="text-[10px]">
-                      NOT CONFIGURED
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="flex items-center justify-between gap-4 py-4">
+      <header className="flex items-center gap-3">
+        <Archive className="size-6 text-primary" />
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Backups</h1>
           <p className="text-sm text-muted-foreground">
-            Connect a backup provider to start tracking real backup history for this platform.
+            Tenant-aware database, file-manifest and configuration backups with encryption, verification, retention and
+            restore testing.
           </p>
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button size="sm" variant="outline" className="gap-1.5 shrink-0">
-                <Settings2 className="size-3.5" />
-                Configure provider
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Connect a backup provider</DialogTitle>
-                <DialogDescription>
-                  Backup history shown here reflects a real infrastructure provider once connected — this screen
-                  will never fabricate success records.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 text-sm text-muted-foreground">
-                <p>
-                  Database, file storage, and configuration backups are provisioned at the infrastructure level
-                  (e.g. your hosting provider or database provider&apos;s native backup/point-in-time-restore
-                  feature), not inside this application.
-                </p>
-                <p>
-                  To enable this page, connect the provider in your project&apos;s integration settings so its
-                  backup status, retention, and restore-test history can be reported here.
-                </p>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" size="sm" asChild>
-                  <a href="/platform">Back to platform settings</a>
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </CardContent>
-      </Card>
+        </div>
+      </header>
+      <BackupsConsole canManage={canManage} />
     </div>
   )
 }

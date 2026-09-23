@@ -73,7 +73,7 @@ export function LoginForm({
         return
       }
 
-      router.push(data.user.role === "admin" ? "/admin" : "/dashboard")
+      router.push("/dashboard")
       router.refresh()
     } catch {
       setError("Something went wrong. Please try again.")

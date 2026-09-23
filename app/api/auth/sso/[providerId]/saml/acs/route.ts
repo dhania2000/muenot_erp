@@ -6,14 +6,15 @@ import { getIdentity, getProviderById, linkIdentity, recordLogin, recordLoginEve
 import { createSaml, mappedSamlClaims } from "@/lib/sso-saml"
 import { consumeSsoState } from "@/lib/sso-state"
 import { sameTenant } from "@/lib/sso-provider-catalog"
+import { ssoOrigin } from "@/lib/sso-origin"
 
-function origin(r: Request) { return `${r.headers.get("x-forwarded-proto") || "https"}://${r.headers.get("x-forwarded-host") || r.headers.get("host") || ""}` }
+const origin = ssoOrigin
 function fail(r: Request, code: string) { return NextResponse.redirect(new URL(`/login?sso_error=${encodeURIComponent(code)}`, origin(r))) }
 
 /** Signed SAML POST ACS. node-saml enforces signature, issuer, audience, time and InResponseTo. */
 export async function POST(request: Request, { params }: { params: Promise<{ providerId: string }> }) {
   const provider = await getProviderById(Number((await params).providerId)); const state = await consumeSsoState()
-  if (!provider || provider.type !== "saml" || provider.status !== "enabled" || !state || state.protocol !== "saml") return fail(request,"unavailable")
+  if (!provider || provider.type !== "saml" || provider.status !== "enabled" || !state || state.protocol !== "saml" || state.providerId !== provider.id) return fail(request,"unavailable")
   try {
     const form = Object.fromEntries((await request.formData()).entries()) as Record<string, string>
     if (form.RelayState !== state.state || typeof form.SAMLResponse !== "string") return fail(request,"state_mismatch")

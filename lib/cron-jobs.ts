@@ -80,6 +80,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["marketing_library", "Marketing library", "/api/cron/marketing-library", "0 7 * * *"],
   ["storage_retention", "Storage retention", "/api/cron/storage-retention", "0 3 * * *"],
   ["background_queue", "Background queue worker", "/api/cron/background-queue", "* * * * *"],
+  ["api_rate_limit_cleanup", "API rate-limit counter cleanup", "/api/cron/api-rate-limit-cleanup", "0 4 * * *"],
   ["workflow_worker", "ERP workflow worker", "/api/cron/workflows", "* * * * *"],
   ["business_events", "Business event deliveries", "/api/cron/business-events", "* * * * *"],
   ["notification_delivery", "Notification delivery worker", "/api/cron/notification-delivery", "* * * * *"],

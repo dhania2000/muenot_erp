@@ -13,12 +13,9 @@ import {
 import { exchangeCodeForClaims, resolveEndpoints } from "@/lib/sso-oidc"
 import { consumeSsoState } from "@/lib/sso-state"
 import { sameTenant } from "@/lib/sso-provider-catalog"
+import { ssoOrigin } from "@/lib/sso-origin"
 
-function requestOrigin(request: Request): string {
-  const proto = request.headers.get("x-forwarded-proto") || "https"
-  const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || ""
-  return `${proto}://${host}`
-}
+const requestOrigin = ssoOrigin
 
 function fail(request: Request, reason: string) {
   return NextResponse.redirect(new URL(`/login?sso_error=${encodeURIComponent(reason)}`, requestOrigin(request)))

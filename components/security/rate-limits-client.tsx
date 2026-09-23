@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import useSWR from "swr"
 import { Gauge, ShieldAlert, Activity, AlertTriangle } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,6 +10,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState } from "@/components/security/security-ui"
 
 type Tier = { second: number; minute: number; hour: number; day: number }
+type Policy = { id: number; name: string; targetType: "tenant" | "api_key" | "endpoint"; targetValue: string; tier: Tier; enabled: boolean }
+type PolicyForm = { name: string; targetType: Policy["targetType"]; targetValue: string; second: string; minute: string; hour: string; day: string; enabled: boolean }
+const emptyForm: PolicyForm = { name: "", targetType: "tenant", targetValue: "", second: "5", minute: "60", hour: "1000", day: "10000", enabled: true }
 
 type LiveWindow = {
   window: "second" | "minute" | "hour" | "day"
@@ -35,6 +39,8 @@ type RateLimitData = {
   defaultTier: Tier
   plans: { plan: string; tier: Tier }[]
   apiKeyCount: number
+  apiKeys: { id: number; name: string }[]
+  policies: Policy[]
   liveScopes: LiveScope[]
   usage: {
     totalRequests: number
@@ -60,16 +66,46 @@ const WINDOW_LABEL: Record<LiveWindow["window"], string> = {
 /**
  * SPEC 53 — Live rate-limit monitor. Limits are plan-derived and ENFORCED on
  * every `/api/v1/*` request by lib/api-platform/handler.ts. This screen reads
- * the real enforced tier, the live in-process counters for the tenant's own API
+ * the real enforced tier, the shared counters for the tenant's own API
  * keys, and the blocked-request (429) count from the request audit trail — no
  * preview state, nothing faked.
  */
 export function RateLimitsClient() {
-  const { data, error, isLoading } = useSWR<RateLimitData>(
+  const { data, error, isLoading, mutate } = useSWR<RateLimitData>(
     "/api/admin/security/rate-limits",
     fetcher,
     { refreshInterval: 5000 },
   )
+  const [form, setForm] = useState<PolicyForm | null>(null)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [actionError, setActionError] = useState("")
+  function edit(policy: Policy, clone = false) {
+    setEditingId(clone ? null : policy.id)
+    setForm({ name: clone ? `${policy.name} copy` : policy.name, targetType: policy.targetType, targetValue: policy.targetValue, second: String(policy.tier.second), minute: String(policy.tier.minute), hour: String(policy.tier.hour), day: String(policy.tier.day), enabled: policy.enabled })
+    setActionError("")
+  }
+  async function save() {
+    if (!form) return
+    setBusy(true); setActionError("")
+    try {
+      const payload = { name: form.name, targetType: form.targetType, targetValue: form.targetType === "tenant" ? "" : form.targetValue, enabled: form.enabled, tier: { second: Number(form.second), minute: Number(form.minute), hour: Number(form.hour), day: Number(form.day) } }
+      const response = await fetch(editingId ? `/api/admin/security/rate-limits/${editingId}` : "/api/admin/security/rate-limits", { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || "Could not save policy")
+      setForm(null); setEditingId(null); await mutate()
+    } catch (cause) { setActionError(cause instanceof Error ? cause.message : "Could not save policy") } finally { setBusy(false) }
+  }
+  async function change(policy: Policy, remove = false) {
+    if (remove && !window.confirm(`Delete rate-limit policy “${policy.name}”?`)) return
+    setBusy(true); setActionError("")
+    try {
+      const response = await fetch(`/api/admin/security/rate-limits/${policy.id}`, remove ? { method: "DELETE" } : { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...policy, enabled: !policy.enabled }) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || "Could not change policy")
+      await mutate()
+    } catch (cause) { setActionError(cause instanceof Error ? cause.message : "Could not change policy") } finally { setBusy(false) }
+  }
 
   if (isLoading) {
     return (
@@ -95,6 +131,11 @@ export function RateLimitsClient() {
 
   return (
     <div className="flex flex-col gap-4">
+      <Card><CardHeader><div className="flex items-center justify-between"><div><CardTitle className="text-base">Custom rate-limit policies</CardTitle><CardDescription>These rules are enforced on the server across all workers. They can tighten, not loosen, plan limits.</CardDescription></div><button className="rounded-md border px-3 py-2 text-sm" onClick={() => { setEditingId(null); setForm(emptyForm); setActionError("") }}>Create policy</button></div></CardHeader><CardContent className="space-y-4">
+        {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
+        {form && <div className="space-y-3 rounded-md border p-4"><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Name<input className="mt-1 w-full rounded-md border bg-background p-2" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} /></label><label className="text-sm">Target<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.targetType} onChange={event => setForm({ ...form, targetType: event.target.value as Policy["targetType"], targetValue: "" })}><option value="tenant">Whole tenant</option><option value="api_key">One API key</option><option value="endpoint">Exact endpoint</option></select></label></div>{form.targetType === "api_key" && <label className="block text-sm">API key<select className="mt-1 w-full rounded-md border bg-background p-2" value={form.targetValue} onChange={event => setForm({ ...form, targetValue: event.target.value })}><option value="">Choose key</option>{data.apiKeys.map(key => <option key={key.id} value={String(key.id)}>{key.name}</option>)}</select></label>}{form.targetType === "endpoint" && <label className="block text-sm">Exact path<input className="mt-1 w-full rounded-md border bg-background p-2" placeholder="/api/v1/clients" value={form.targetValue} onChange={event => setForm({ ...form, targetValue: event.target.value })} /></label>}<div className="grid gap-3 sm:grid-cols-4">{(["second", "minute", "hour", "day"] as const).map(key => <label key={key} className="text-sm capitalize">{key}<input type="number" min="1" className="mt-1 w-full rounded-md border bg-background p-2" value={form[key]} onChange={event => setForm({ ...form, [key]: event.target.value })} /></label>)}</div><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.enabled} onChange={event => setForm({ ...form, enabled: event.target.checked })} />Enabled</label><div className="flex gap-2"><button disabled={busy} className="rounded-md border px-3 py-2 text-sm disabled:opacity-50" onClick={save}>Save policy</button><button className="rounded-md border px-3 py-2 text-sm" onClick={() => setForm(null)}>Cancel</button></div></div>}
+        {data.policies.length ? <div className="overflow-x-auto rounded-md border"><Table><TableHeader><TableRow><TableHead>Policy</TableHead><TableHead>Target</TableHead><TableHead>Second</TableHead><TableHead>Minute</TableHead><TableHead>Hour</TableHead><TableHead>Day</TableHead><TableHead>Status</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader><TableBody>{data.policies.map(policy => <TableRow key={policy.id}><TableCell>{policy.name}</TableCell><TableCell>{policy.targetType}{policy.targetValue ? `: ${policy.targetValue}` : ""}</TableCell><TableCell>{policy.tier.second}</TableCell><TableCell>{policy.tier.minute}</TableCell><TableCell>{policy.tier.hour}</TableCell><TableCell>{policy.tier.day}</TableCell><TableCell>{policy.enabled ? "Enabled" : "Disabled"}</TableCell><TableCell><div className="flex gap-2"><button disabled={busy} className="text-primary disabled:opacity-50" onClick={() => edit(policy)}>Edit</button><button disabled={busy} className="text-primary disabled:opacity-50" onClick={() => edit(policy, true)}>Clone</button><button disabled={busy} className="text-primary disabled:opacity-50" onClick={() => change(policy)}>{policy.enabled ? "Disable" : "Enable"}</button><button disabled={busy} className="text-destructive disabled:opacity-50" onClick={() => change(policy, true)}>Delete</button></div></TableCell></TableRow>)}</TableBody></Table></div> : <p className="text-sm text-muted-foreground">No custom policy. Plan limits still apply.</p>}
+      </CardContent></Card>
       {/* Blocked-request telemetry */}
       <div className="grid gap-4 sm:grid-cols-4">
         <StatCard label="Requests (24h)" value={data.usage.requestsLast24h} icon={<Activity className="size-4" />} />
@@ -192,7 +233,7 @@ export function RateLimitsClient() {
                       })}
                       <TableCell>
                         {s.blocked ? (
-                          <Badge variant="destructive">Blocked</Badge>
+            <Badge variant="destructive">At limit</Badge>
                         ) : (
                           <Badge variant="outline" className="text-emerald-600">
                             Active

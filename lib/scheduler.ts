@@ -63,6 +63,7 @@ const CATEGORY_BY_JOB: Record<string, SchedulerCategory> = {
   subscription_lifecycle: "billing",
   calendar_sync: "data_sync",
   storage_retention: "storage_cleanup",
+  api_rate_limit_cleanup: "storage_cleanup",
   marketing_library: "storage_cleanup",
   gst_daily: "gst_tds",
   gst_monthly: "gst_tds",

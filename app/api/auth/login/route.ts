@@ -90,7 +90,6 @@ export async function POST(request: Request) {
       await recordFailedLogin(user.id)
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
-    await recordSuccessfulLogin(user.id)
 
     // SPEC 14 — evaluate the full lifecycle gate (invited / suspended /
     // deactivated / expired temporary access / email verification) AFTER the
@@ -124,6 +123,7 @@ export async function POST(request: Request) {
         }
         const passed = await consumeMfaChallenge(user.id, String(mfaCode))
         if (!passed) {
+          await recordFailedLogin(user.id)
           return NextResponse.json({ error: "Invalid authentication code", mfaRequired: true }, { status: 401 })
         }
       }
@@ -131,6 +131,10 @@ export async function POST(request: Request) {
       // Defensive fallback if the lifecycle snapshot is unavailable.
       return NextResponse.json({ error: "This account has been deactivated" }, { status: 403 })
     }
+
+    // Only a fully authenticated login clears the lockout counter. Otherwise
+    // an attacker who knows the password could brute-force MFA indefinitely.
+    await recordSuccessfulLogin(user.id)
 
     // Resolve the tenant this user belongs to (source of truth: users.tenant_id).
     // Baked into the session token so every subsequent request derives its

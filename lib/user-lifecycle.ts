@@ -29,9 +29,10 @@ import {
   generateBackupCodes,
   generateTotpSecret,
   hashBackupCode,
+  matchedTotpStep,
   normalizeBackupCode,
-  verifyTotp,
 } from "@/lib/mfa"
+import { decryptSecret, encryptSecret, isEncryptionConfigured } from "@/lib/secrets/crypto"
 import crypto from "crypto"
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -84,8 +85,27 @@ async function runEnsure(): Promise<void> {
   await addColumn("users", "access_expires_at", "DATETIME DEFAULT NULL")
   // MFA (TOTP).
   await addColumn("users", "mfa_enabled", "TINYINT(1) NOT NULL DEFAULT 0")
-  await addColumn("users", "mfa_secret", "VARCHAR(64) DEFAULT NULL")
+  await addColumn("users", "mfa_secret", "VARCHAR(255) DEFAULT NULL")
+  const secretColumn = await query<Array<{ max_length: number }>>(
+    `SELECT CHARACTER_MAXIMUM_LENGTH AS max_length FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'mfa_secret' LIMIT 1`,
+  )
+  if (Number(secretColumn[0]?.max_length) < 255) {
+    await query("ALTER TABLE `users` MODIFY COLUMN `mfa_secret` VARCHAR(255) DEFAULT NULL")
+  }
   await addColumn("users", "mfa_enrolled_at", "DATETIME DEFAULT NULL")
+  await addColumn("users", "mfa_last_used_step", "BIGINT UNSIGNED DEFAULT NULL")
+  // Upgrade legacy plaintext secrets in place when the existing master key is
+  // configured. The compare-and-swap predicate avoids overwriting a concurrent
+  // enrollment. Rows still using legacy storage remain readable until upgraded.
+  if (isEncryptionConfigured()) {
+    const legacy = await query<Array<{ id: number; mfa_secret: string }>>(
+      "SELECT id,mfa_secret FROM `users` WHERE mfa_secret IS NOT NULL AND mfa_secret NOT LIKE 'sec:v1:%'",
+    )
+    for (const row of legacy) {
+      await query("UPDATE `users` SET mfa_secret=? WHERE id=? AND mfa_secret=?", [encryptSecret(row.mfa_secret), row.id, row.mfa_secret])
+    }
+  }
 
   // Backfill lifecycle_state for rows created before this column existed:
   // an inactive legacy account is treated as deactivated, everything else
@@ -286,11 +306,10 @@ export async function getLoginSnapshot(userId: number): Promise<{
   accessExpiresAt: string | null
   emailVerifiedAt: string | null
   mfaEnabled: boolean
-  mfaSecret: string | null
 } | null> {
   await ensureUserLifecycleSchema()
   const rows = await query<any[]>(
-    `SELECT lifecycle_state, access_expires_at, email_verified_at, mfa_enabled, mfa_secret
+    `SELECT lifecycle_state, access_expires_at, email_verified_at, mfa_enabled
        FROM \`users\` WHERE id = ? LIMIT 1`,
     [userId],
   )
@@ -301,7 +320,6 @@ export async function getLoginSnapshot(userId: number): Promise<{
     accessExpiresAt: r.access_expires_at ?? null,
     emailVerifiedAt: r.email_verified_at ?? null,
     mfaEnabled: Boolean(r.mfa_enabled),
-    mfaSecret: r.mfa_secret ?? null,
   }
 }
 
@@ -401,7 +419,7 @@ async function setState(
   to: LifecycleState,
   extraSet: Record<string, any> = {},
 ): Promise<void> {
-  const set = { lifecycle_state: to, status: statusForLifecycle(to), ...extraSet }
+  const set: Record<string, unknown> = { lifecycle_state: to, status: statusForLifecycle(to), ...extraSet }
   const cols = Object.keys(set)
   await query(
     `UPDATE \`users\` SET ${cols.map((c) => `\`${c}\` = ?`).join(", ")} WHERE id = ? AND tenant_id = ?`,
@@ -818,6 +836,12 @@ export async function adminResetPassword(
 
 export type MfaEnrollment = { secret: string; otpauthUrl: string }
 
+function readMfaSecret(stored: string): string | null {
+  // Legacy plaintext is accepted until the backfill above can run. Newly
+  // enrolled users are always encrypted and require the configured key.
+  return stored.startsWith("sec:v1:") ? decryptSecret(stored) : stored
+}
+
 /**
  * Begin TOTP enrollment: mint a secret and stage it on the user WITHOUT
  * enabling MFA yet. Enrollment is only completed (and enforced at login) once
@@ -831,8 +855,8 @@ export async function beginMfaEnrollment(
   const user = await requireUser(tenantId, userId)
   if (user.mfaEnabled) throw new LifecycleError("MFA is already enabled for this account", 409)
   const secret = generateTotpSecret()
-  await query(`UPDATE users SET mfa_secret = ?, mfa_enabled = 0 WHERE id = ? AND tenant_id = ?`, [
-    secret,
+  await query(`UPDATE users SET mfa_secret = ?, mfa_enabled = 0, mfa_last_used_step = NULL WHERE id = ? AND tenant_id = ?`, [
+    encryptSecret(secret),
     userId,
     tenantId,
   ])
@@ -854,13 +878,16 @@ export async function confirmMfaEnrollment(
   const r = rows[0]
   if (!r || !r.mfa_secret) throw new LifecycleError("Start MFA enrollment before confirming", 409)
   if (r.mfa_enabled) throw new LifecycleError("MFA is already enabled", 409)
-  if (!verifyTotp(r.mfa_secret, code)) throw new LifecycleError("That code is not valid. Try again.", 400)
+  const secret = readMfaSecret(r.mfa_secret)
+  if (!secret) throw new LifecycleError("MFA secret is unavailable; contact an administrator", 503)
+  const enrollmentStep = matchedTotpStep(secret, code)
+  if (enrollmentStep === null) throw new LifecycleError("That code is not valid. Try again.", 400)
 
   const codes = generateBackupCodes()
   const conn = await pool.getConnection()
   try {
     await conn.beginTransaction()
-    await conn.query(`UPDATE users SET mfa_enabled = 1, mfa_enrolled_at = NOW() WHERE id = ?`, [userId])
+    await conn.query(`UPDATE users SET mfa_enabled = 1, mfa_enrolled_at = NOW(), mfa_last_used_step = ? WHERE id = ? AND tenant_id = ?`, [enrollmentStep, userId, tenantId])
     await conn.query(`DELETE FROM user_mfa_backup_codes WHERE user_id = ?`, [userId])
     for (const code of codes) {
       await conn.query(`INSERT INTO user_mfa_backup_codes (user_id, code_hash) VALUES (?, ?)`, [
@@ -883,7 +910,7 @@ export async function confirmMfaEnrollment(
 export async function disableMfa(tenantId: number, userId: number, actor: Actor): Promise<void> {
   await requireUser(tenantId, userId)
   await query(
-    `UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_enrolled_at = NULL WHERE id = ? AND tenant_id = ?`,
+    `UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_enrolled_at = NULL, mfa_last_used_step = NULL WHERE id = ? AND tenant_id = ?`,
     [userId, tenantId],
   )
   await query(`DELETE FROM user_mfa_backup_codes WHERE user_id = ?`, [userId])
@@ -901,9 +928,15 @@ export async function disableMfa(tenantId: number, userId: number, actor: Actor)
  */
 export async function consumeMfaChallenge(userId: number, code: string): Promise<boolean> {
   await ensureUserLifecycleSchema()
-  const rows = await query<any[]>(`SELECT mfa_secret FROM users WHERE id = ? LIMIT 1`, [userId])
-  const secret = rows[0]?.mfa_secret
-  if (secret && verifyTotp(secret, code)) return true
+  const rows = await query<any[]>(`SELECT mfa_secret FROM users WHERE id = ? AND mfa_enabled = 1 LIMIT 1`, [userId])
+  const secret = rows[0]?.mfa_secret ? readMfaSecret(rows[0].mfa_secret) : null
+  const step = secret ? matchedTotpStep(secret, code) : null
+  if (step !== null) {
+    // Atomic compare-and-swap enforces one-time use across concurrent workers.
+    const result = await query<{ affectedRows: number }>(`UPDATE users SET mfa_last_used_step = ?
+      WHERE id = ? AND mfa_enabled = 1 AND (mfa_last_used_step IS NULL OR mfa_last_used_step < ?)`, [step, userId, step])
+    return Number(result.affectedRows ?? 0) > 0
+  }
 
   // Fall back to a single-use backup code.
   const hash = hashBackupCode(code)

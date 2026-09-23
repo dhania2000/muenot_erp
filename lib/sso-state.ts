@@ -13,6 +13,7 @@ const TTL_SECONDS = 5 * 60
 
 function getSecretKey() {
   const secret = process.env.SESSION_SECRET
+  if (process.env.NODE_ENV === "production" && (!secret || secret.length < 32)) throw new Error("SESSION_SECRET must be configured for SSO")
   return new TextEncoder().encode(secret || "dev-only-insecure-secret-change-me")
 }
 
@@ -34,8 +35,10 @@ export async function issueSsoState(payload: SsoStatePayload): Promise<void> {
   const cookieStore = await cookies()
   cookieStore.set(SSO_STATE_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    // SAML ACS is a cross-site POST from the IdP: Lax cookies are not sent.
+    // None requires Secure; OIDC's top-level GET callback keeps Lax.
+    secure: payload.protocol === "saml" || process.env.NODE_ENV === "production",
+    sameSite: payload.protocol === "saml" ? "none" : "lax",
     path: "/",
     maxAge: TTL_SECONDS,
   })

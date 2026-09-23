@@ -3,12 +3,9 @@ import { NextResponse } from "next/server"
 import { getProviderById, resolveClientSecret } from "@/lib/sso-store"
 import { buildAuthorizationUrl, generatePkcePair, resolveEndpoints } from "@/lib/sso-oidc"
 import { issueSsoState } from "@/lib/sso-state"
+import { ssoOrigin } from "@/lib/sso-origin"
 
-function requestOrigin(request: Request): string {
-  const proto = request.headers.get("x-forwarded-proto") || "https"
-  const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || ""
-  return `${proto}://${host}`
-}
+const requestOrigin = ssoOrigin
 
 /** SPEC 56-57 — redirects the browser to the IdP's authorization endpoint. */
 export async function GET(request: Request, { params }: { params: Promise<{ providerId: string }> }) {

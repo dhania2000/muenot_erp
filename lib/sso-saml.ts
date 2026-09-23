@@ -1,6 +1,6 @@
 import "server-only"
 import { SAML, ValidateInResponseTo, type Profile } from "@node-saml/node-saml"
-import { query } from "@/lib/db"
+import { pool, query } from "@/lib/db"
 import type { SsoProviderRow } from "@/lib/sso-store"
 
 function cleanCertificate(value: string) { return value.trim().replace(/\r\n/g, "\n") }
@@ -22,9 +22,14 @@ function cache(providerId: number) {
     },
     removeAsync: async (key: string | null) => {
       if (!key) return null
-      const rows = await query<any[]>("SELECT request_xml FROM sso_saml_requests WHERE request_id=? AND provider_id=? LIMIT 1", [key,providerId])
-      await query("DELETE FROM sso_saml_requests WHERE request_id=? AND provider_id=?", [key,providerId])
-      return rows[0]?.request_xml ?? null
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        const [rows] = await conn.query<any[]>("SELECT request_xml FROM sso_saml_requests WHERE request_id=? AND provider_id=? FOR UPDATE", [key,providerId])
+        if (rows[0]) await conn.query("DELETE FROM sso_saml_requests WHERE request_id=? AND provider_id=?", [key,providerId])
+        await conn.commit()
+        return rows[0]?.request_xml ?? null
+      } catch (error) { await conn.rollback().catch(() => {}); throw error } finally { conn.release() }
     },
   }
 }

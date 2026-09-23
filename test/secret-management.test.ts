@@ -195,7 +195,10 @@ describe("encryption at rest (AES-256-GCM envelope)", () => {
 
   it("is tamper-evident — a mutated envelope fails to decrypt", () => {
     const envelope = encryptSecret("top-secret")
-    const flipped = envelope.slice(0, -2) + (envelope.endsWith("A") ? "B" : "A") + "="
+    // Flip an actual payload character. Changing padding-adjacent characters
+    // can accidentally leave the decoded bytes unchanged for some values.
+    const index = "sec:v1:".length
+    const flipped = envelope.slice(0, index) + (envelope[index] === "A" ? "B" : "A") + envelope.slice(index + 1)
     expect(decryptSecret(flipped)).toBeNull()
   })
 

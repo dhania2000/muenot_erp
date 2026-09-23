@@ -90,15 +90,24 @@ export function verifyTotp(
   token: string,
   opts: { atMs?: number; stepSeconds?: number; digits?: number; window?: number } = {},
 ): boolean {
+  return matchedTotpStep(secret, token, opts) !== null
+}
+
+/** Return the exact accepted time-step so callers can reject replayed codes. */
+export function matchedTotpStep(
+  secret: string,
+  token: string,
+  opts: { atMs?: number; stepSeconds?: number; digits?: number; window?: number } = {},
+): number | null {
   const { atMs = Date.now(), stepSeconds = 30, digits = 6, window = 1 } = opts
   const cleaned = (token || "").replace(/\s+/g, "")
-  if (!/^\d+$/.test(cleaned) || cleaned.length !== digits) return false
+  if (!/^\d+$/.test(cleaned) || cleaned.length !== digits) return null
   const counter = Math.floor(atMs / 1000 / stepSeconds)
   for (let error = -window; error <= window; error++) {
     const candidate = hotp(secret, counter + error, digits)
-    if (timingSafeEqualStr(candidate, cleaned)) return true
+    if (timingSafeEqualStr(candidate, cleaned)) return counter + error
   }
-  return false
+  return null
 }
 
 function timingSafeEqualStr(a: string, b: string): boolean {

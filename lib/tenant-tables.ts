@@ -145,6 +145,9 @@ export const TENANT_OWNED_TABLES = [
   "sso_login_events",
   // API key platform + webhook delivery engine (SPEC 67-70).
   "api_keys",
+  "api_rate_limit_policies",
+  "api_rate_limit_counters",
+  "api_rate_limit_abuse",
   "webhook_endpoints",
   "webhook_deliveries",
   // Shopkeeper mobile clients / profile. Device registrations are only a

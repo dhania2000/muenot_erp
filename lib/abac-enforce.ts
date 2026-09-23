@@ -15,8 +15,8 @@ import type { SessionPayload } from "./auth"
  *   - With no enabled policies for the tenant, `abacDenies` always returns
  *     false, so RBAC-only behaviour is unchanged for every existing tenant.
  *   - A missing tenant (system / pre-auth path) short-circuits to "not denied".
- *   - Resolution failures never throw into the caller; they resolve to "not
- *     denied" so an attribute-lookup problem can never lock everyone out.
+ *   - Resolution failures on tenant-scoped requests fail closed. An attribute
+ *     lookup outage must not silently bypass a tenant's deny policy.
  */
 
 /**
@@ -130,7 +130,7 @@ export async function evaluateAbac(
     return { denied, result }
   } catch (err) {
     console.error("[v0] ABAC evaluation failed:", err)
-    return { denied: false, result: null }
+    return { denied: Boolean(getCurrentTenant()), result: null }
   }
 }
 

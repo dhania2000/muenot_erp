@@ -27,10 +27,11 @@ import { keyAllowsIp, recordApiKeyEvent, type ApiKeyEnvironment } from "@/lib/ap
 import { getClientIp } from "@/lib/rate-limit"
 import {
   applyEndpointOverride,
-  enforceRateLimit,
   resolveTierForPlan,
   type RateLimitTier,
 } from "@/lib/api-platform/rate-limit-engine"
+import { enforceSharedRateLimits, type RateBudget } from "@/lib/api-platform/rate-limit-store"
+import { applicableRateBudgets } from "@/lib/api-platform/rate-limit-policies"
 import { getTenantById } from "@/lib/tenant-service"
 import { ApiError, isApiError } from "@/lib/api-platform/errors"
 import { API_VERSION, SUPPORTED_VERSIONS, jsonError, jsonErrorFromApiError } from "@/lib/api-platform/response"
@@ -209,11 +210,19 @@ export function withApiV1<P = Record<string, string>>(
       // 7. Rate limiting (per key, plan-tiered, multi-window — SPEC 53).
       let rateHeaders: Record<string, string> = {}
       if (options.rateLimit !== false) {
-        const tier = applyEndpointOverride(
-          await tierForTenant(auth.tenantId),
-          options.rateLimit ?? undefined,
-        )
-        const decision = enforceRateLimit(`apiv1:key:${auth.keyId}`, tier)
+        const planTier = await tierForTenant(auth.tenantId)
+        // MySQL counters are shared across workers and consumed transactionally.
+        // Never fall back to in-process counters on DB failure: that would bypass
+        // a production limit whenever a node loses its database connection.
+        let decision
+        try {
+          const budgets: RateBudget[] = [{ scope: `apiv1:key:${auth.keyId}`, tier: planTier }]
+          if (options.rateLimit) budgets.push({ scope: `apiv1:key:${auth.keyId}:endpoint:${path}`, tier: applyEndpointOverride(planTier, options.rateLimit) })
+          budgets.push(...await applicableRateBudgets(auth.tenantId, auth.keyId, path, planTier))
+          decision = await enforceSharedRateLimits(auth.tenantId, budgets)
+        } catch {
+          return fail(new ApiError("rate_limit_unavailable", "Rate limiting is temporarily unavailable"))
+        }
         rateHeaders = decision.headers
         if (!decision.allowed) {
           if (decision.abuse) {

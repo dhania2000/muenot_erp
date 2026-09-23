@@ -5,13 +5,13 @@ import { EmergencyAccessPanel } from "@/components/security/emergency-access-pan
 
 export const dynamic = "force-dynamic"
 
-// SPEC 65 — Emergency ("break-glass") access. There is no server-enforced,
-// elevated, time-boxed access path that bypasses normal role checks — every
-// request still goes through the standard tenant-admin guard in
-// lib/platform-guard.ts. The workflow below (request, auto-approve for demo,
-// active countdown, revoke, history) is fully interactive but frontend-only
-// state (see lib/emergency-access-store.ts). Codex will replace it with a
-// real, server-enforced elevated session and approval step.
+// SPEC 65 — Emergency ("break-glass") access. Server-enforced and audited: a
+// request creates a pending grant (lib/temporary-access-store.ts) that a
+// DIFFERENT administrator must explicitly approve. On approval the requester's
+// role is elevated for a time-boxed window (honored by every request guard),
+// a persistent app-wide banner is shown ("no silent usage"), and the grant is
+// revoked automatically at expiry by /api/cron/temporary-access. Every state
+// change is written to the security audit trail and notifies admins.
 export default async function EmergencyAccessPage() {
   const guard = await requireTenantAdmin()
   if (!guard.ok) return <p className="p-6">Tenant administrator access is required.</p>
@@ -19,17 +19,17 @@ export default async function EmergencyAccessPage() {
   return (
     <div className="space-y-6">
       <SecurityHeading title="Emergency access" spec="Spec 65">
-        Break-glass access for incidents: request temporary elevated permissions with mandatory justification,
-        automatic time-boxed expiry, and a full audit trail.
+        Break-glass access for incidents: request temporary elevated permissions with mandatory justification, a
+        second administrator&apos;s approval, automatic time-boxed expiry, and a full audit trail.
       </SecurityHeading>
 
-      <BackendStatus level="planned">
-        There is no break-glass path enforced by the backend today — every request still goes through the
-        standard role guard, with no bypass or auto-revoke timer. The workflow below is fully interactive so the
-        experience can be reviewed end-to-end, but it only affects local browser state until that backend exists.
+      <BackendStatus level="live">
+        Break-glass access is enforced end-to-end: a request must be approved by a second administrator, the
+        approved elevation changes the user&apos;s role for a time-boxed window, a persistent banner is shown while
+        active, and access is revoked automatically at expiry. Every step is audited.
       </BackendStatus>
 
-      <EmergencyAccessPanel currentUser={guard.ctx.user?.name ?? guard.ctx.user?.email ?? "Signed-in admin"} />
+      <EmergencyAccessPanel />
     </div>
   )
 }

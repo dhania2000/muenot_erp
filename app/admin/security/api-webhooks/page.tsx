@@ -28,7 +28,7 @@ export default async function ApiWebhooksPage() {
         automatically retried event notifications.
       </SecurityHeading>
 
-      <BackendStatus level="full">
+      <BackendStatus level="live">
         API keys authenticate real requests to <code className="rounded bg-muted px-1">/api/v1/clients</code> — only
         a SHA-256 hash of each key is stored, and access is enforced per-scope on every request. Webhook deliveries
         are signed with an HMAC-SHA256 <code className="rounded bg-muted px-1">X-Webhook-Signature</code>, sent live

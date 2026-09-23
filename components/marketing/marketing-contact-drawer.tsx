@@ -62,8 +62,8 @@ export function ContactDrawer({
   onOpenChange: (open: boolean) => void
   onEdit: (contact: any) => void
 }) {
-  const { data } = useSWR(open && contactId ? `/api/marketing/contacts/${contactId}` : null, fetcher)
-  const { data: activityData } = useSWR(
+  const { data } = useSWR<any>(open && contactId ? `/api/marketing/contacts/${contactId}` : null, fetcher)
+  const { data: activityData } = useSWR<any>(
     open && contactId ? `/api/marketing/contacts/${contactId}/activity` : null,
     fetcher,
   )

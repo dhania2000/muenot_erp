@@ -13,7 +13,7 @@ export default async function DashboardPage() {
       modules={modules.map((m) => ({
         slug: m.slug,
         name: m.name,
-        description: m.description,
+        description: m.description ?? "",
         features: m.features,
       }))}
     />

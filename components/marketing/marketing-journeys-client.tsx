@@ -66,7 +66,7 @@ export function MarketingJourneysClient({ canManage = false }: { canManage?: boo
   params.set("pageSize", String(PAGE_SIZE))
 
   const listKey = `/api/marketing/journeys?${params.toString()}`
-  const { data, isLoading, mutate } = useSWR(listKey, fetcher)
+  const { data, isLoading, mutate } = useSWR<any>(listKey, fetcher)
   const { data: lookups } = useSWR<Lookups>("/api/marketing/journeys/lookups", fetcher)
 
   const journeys: any[] = data?.items || []
@@ -413,7 +413,7 @@ export function MarketingJourneysClient({ canManage = false }: { canManage?: boo
 
 /** Compact preview of a journey's step sequence, loaded lazily per card. */
 function StepChips({ journeyId, stepCount }: { journeyId: number; stepCount: number }) {
-  const { data } = useSWR(stepCount > 0 ? `/api/marketing/journeys/${journeyId}` : null, fetcher)
+  const { data } = useSWR<any>(stepCount > 0 ? `/api/marketing/journeys/${journeyId}` : null, fetcher)
   const steps: any[] = data?.steps || []
 
   if (stepCount === 0) {

@@ -72,7 +72,7 @@ export function JourneyDetail({
   onChanged: () => void
 }) {
   const key = journeyId != null && open ? `/api/marketing/journeys/${journeyId}` : null
-  const { data, mutate } = useSWR(key, fetcher)
+  const { data, mutate } = useSWR<any>(key, fetcher)
   const journey = data?.journey
   const steps: any[] = data?.steps || []
   const [enrollOpen, setEnrollOpen] = useState(false)
@@ -323,7 +323,7 @@ function EnrollmentsTab({ journeyId, canManage }: { journeyId: number; canManage
   if (search) params.set("search", search)
   params.set("page", String(page))
   params.set("pageSize", String(pageSize))
-  const { data, mutate } = useSWR(`/api/marketing/journeys/${journeyId}/enrollments?${params}`, fetcher)
+  const { data, mutate } = useSWR<any>(`/api/marketing/journeys/${journeyId}/enrollments?${params}`, fetcher)
   const items: any[] = data?.items || []
   const total: number = data?.total || 0
 
@@ -462,7 +462,7 @@ function EnrollmentsTab({ journeyId, canManage }: { journeyId: number; canManage
 }
 
 function AnalyticsTab({ journeyId }: { journeyId: number }) {
-  const { data } = useSWR(`/api/marketing/journeys/${journeyId}/analytics`, fetcher)
+  const { data } = useSWR<any>(`/api/marketing/journeys/${journeyId}/analytics`, fetcher)
   const a = data?.analytics
   if (!a) return <p className="py-8 text-center text-sm text-muted-foreground">Loading analytics…</p>
 

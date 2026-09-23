@@ -1,3 +1,4 @@
+import * as React from 'react'
 import { Button as ButtonPrimitive } from '@base-ui/react/button'
 import { cva, type VariantProps } from 'class-variance-authority'
 
@@ -45,9 +46,15 @@ function Button({
   variant = 'default',
   size = 'default',
   render,
+  asChild,
+  children,
   nativeButton,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants> & { asChild?: boolean }) {
+  // Radix→Base UI shim: `asChild` + a single child is equivalent to Base UI's
+  // `render` prop, which merges the button's behavior onto that child element.
+  const resolvedRender =
+    render ?? (asChild && React.isValidElement(children) ? (children as React.ReactElement) : undefined)
   // Base UI's Button assumes it renders a native <button> and throws when the
   // `render` prop swaps in a non-button element (e.g. a Next.js <Link>, which
   // outputs an <a>). Whenever a caller provides `render` we default
@@ -56,10 +63,12 @@ function Button({
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
-      render={render}
-      nativeButton={nativeButton ?? (render ? false : undefined)}
+      render={resolvedRender}
+      nativeButton={nativeButton ?? (resolvedRender ? false : undefined)}
       {...props}
-    />
+    >
+      {resolvedRender ? undefined : children}
+    </ButtonPrimitive>
   )
 }
 

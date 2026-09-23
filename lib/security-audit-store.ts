@@ -14,9 +14,27 @@ import "server-only"
  */
 import { query } from "@/lib/db"
 
-export type SecurityEventCategory = "ip_allowlist" | "access_policy" | "emergency_bypass"
+export type SecurityEventCategory =
+  | "ip_allowlist"
+  | "access_policy"
+  | "emergency_bypass"
+  | "temporary_access"
+  | "break_glass"
 
-export type SecurityEventOutcome = "allowed" | "blocked" | "created" | "updated" | "deleted" | "bypassed" | "info"
+export type SecurityEventOutcome =
+  | "allowed"
+  | "blocked"
+  | "created"
+  | "updated"
+  | "deleted"
+  | "bypassed"
+  | "info"
+  | "granted"
+  | "approved"
+  | "rejected"
+  | "revoked"
+  | "expired"
+  | "activated"
 
 export type SecurityAuditEvent = {
   id: number

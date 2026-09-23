@@ -6,12 +6,13 @@ import { TemporaryAccessClient } from "./temporary-access-client"
 
 export const dynamic = "force-dynamic"
 
-// SPEC 64 — Temporary access. Granting and revoking a time-boxed access
-// expiry per user IS real and enforced: lib/user-lifecycle.ts stores
-// accessExpiresAt and /api/admin/users/[id] exposes grant_temp_access /
-// revoke_temp_access. What's not yet built is automatic enforcement at
-// sign-in when the expiry passes, and a reason/approval trail — see the
-// banner below.
+// SPEC 64 — Temporary access. Fully backed and enforced: grants are stored in
+// `temporary_access_grants` (lib/temporary-access-store.ts) with user, optional
+// role elevation, scope, start/expiry, reason and approver. Role elevations
+// change `users.tenant_role` (re-resolved by every request guard) and the
+// access window is written to `users.access_expires_at` (blocked at login by
+// evaluateLogin). Scheduled starts and automatic revocation at expiry are
+// driven by the allow-listed cron job /api/cron/temporary-access.
 export default async function TemporaryAccessPage() {
   const guard = await requireTenantAdmin()
   if (!guard.ok) return <p className="p-6">Tenant administrator access is required.</p>
@@ -19,18 +20,19 @@ export default async function TemporaryAccessPage() {
   const users = tenantId != null ? await listLifecycleUsers(tenantId) : []
   const active = users
     .filter((u) => u.lifecycleState === "active")
-    .map((u) => ({ id: u.id, name: u.name, email: u.email, tenantRole: u.tenantRole, accessExpiresAt: u.accessExpiresAt }))
+    .map((u) => ({ id: u.id, name: u.name, email: u.email, tenantRole: u.tenantRole }))
 
   return (
     <div className="space-y-6">
       <SecurityHeading title="Temporary access" spec="Spec 64">
-        Grant a user access that automatically expires on a chosen date, or revoke an existing grant early.
+        Grant a user a time-boxed access window and/or role elevation with a required reason and approver. Access
+        starts immediately or on a schedule and is revoked automatically at expiry.
       </SecurityHeading>
 
-      <BackendStatus level="partial">
-        Granting and revoking a time-boxed expiry is real and stored per user. Not yet built: automatic sign-in
-        enforcement once the expiry passes (a user with an expired grant is not yet blocked at login), and a
-        required reason/approval trail for the grant.
+      <BackendStatus level="live">
+        Grants are stored and enforced: a temporary role elevation changes the user&apos;s role (honored by every
+        request), and the access window blocks sign-in once it passes. Scheduled activation and automatic revocation
+        at expiry run on a background scheduler; grants can also be revoked early here.
       </BackendStatus>
 
       <TemporaryAccessClient initialUsers={active} />

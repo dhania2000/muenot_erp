@@ -1,50 +1,74 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState, useTransition } from "react"
+import useSWR from "swr"
+import { toast } from "sonner"
 import { ShieldAlert } from "lucide-react"
+import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
-import {
-  expireStaleRequests,
-  getActiveEmergencyRequest,
-  revokeEmergencyRequest,
-  subscribeEmergencyAccess,
-  type EmergencyRequest,
-} from "@/lib/emergency-access-store"
 
-function formatRemaining(expiresAt: number) {
-  const ms = Math.max(0, expiresAt - Date.now())
+type ActiveGrant = {
+  id: number
+  scope: string
+  expiresAt: string
+}
+
+function toMs(value: string): number {
+  const d = new Date(value.includes("T") ? value : value.replace(" ", "T") + "Z")
+  return d.getTime()
+}
+
+function formatRemaining(expiresMs: number) {
+  const ms = Math.max(0, expiresMs - Date.now())
   const mins = Math.floor(ms / 60_000)
   const secs = Math.floor((ms % 60_000) / 1000)
   return `${mins}m ${secs.toString().padStart(2, "0")}s`
 }
 
-// SPEC 65 — persistent, reusable banner shown wherever emergency (break-glass)
-// access is currently active for the signed-in user's browser session. Mount
-// this once near the top of the admin/tenant layout so it appears on every
-// page while active. Purely frontend state (see lib/emergency-access-store) —
-// Codex will replace this with a real, server-enforced elevated session.
+/**
+ * SPEC 65 — persistent, app-wide banner shown whenever the signed-in user has
+ * an active, server-enforced break-glass grant. Mounted once in the workspace
+ * layout so it appears on every page while elevated ("no silent usage"). Reads
+ * live state from /api/security/emergency-access/active and lets the user end
+ * their own access, which reverts the elevation server-side.
+ */
 export function EmergencyAccessBanner() {
-  const [active, setActive] = useState<EmergencyRequest | null>(null)
-  const [tick, setTick] = useState(0)
+  const { data, mutate } = useSWR<{ active: ActiveGrant[] }>(
+    "/api/security/emergency-access/active",
+    fetcher,
+    { refreshInterval: 5000 },
+  )
+  const [isPending, startTransition] = useTransition()
+  // Re-render every second for the live countdown.
+  const [, setTick] = useState(0)
+  useSWR("emergency-banner-tick", () => null, {
+    refreshInterval: 1000,
+    onSuccess: () => setTick((t) => t + 1),
+  })
 
-  useEffect(() => {
-    function refresh() {
-      expireStaleRequests()
-      setActive(getActiveEmergencyRequest())
-    }
-    refresh()
-    const unsubscribe = subscribeEmergencyAccess(refresh)
-    const interval = setInterval(() => {
-      refresh()
-      setTick((t) => t + 1)
-    }, 1000)
-    return () => {
-      unsubscribe()
-      clearInterval(interval)
-    }
-  }, [])
+  const active = data?.active?.[0]
+  if (!active) return null
+  const expiresMs = toMs(active.expiresAt)
 
-  if (!active || active.expiresAt === null) return null
+  function endAccess(id: number) {
+    startTransition(async () => {
+      try {
+        const res = await fetch(`/api/admin/security/emergency-access/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "revoke", reason: "Ended by user from banner" }),
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body?.error ?? "Request failed")
+        }
+        await mutate()
+        toast.success("Emergency access ended")
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to end access")
+      }
+    })
+  }
 
   return (
     <div
@@ -55,14 +79,15 @@ export function EmergencyAccessBanner() {
         <ShieldAlert className="size-4 shrink-0" aria-hidden />
         <span className="font-semibold">EMERGENCY ACCESS ACTIVE</span>
         <span className="text-destructive/80">
-          Scope: {active.scope} · Expires in {formatRemaining(active.expiresAt)}
+          Scope: {active.scope} · Expires in {formatRemaining(expiresMs)}
         </span>
       </div>
       <Button
         size="sm"
         variant="outline"
+        disabled={isPending}
         className="border-destructive/40 text-destructive hover:bg-destructive/10"
-        onClick={() => revokeEmergencyRequest(active.id, "Ended by user")}
+        onClick={() => endAccess(active.id)}
       >
         Exit / end access
       </Button>

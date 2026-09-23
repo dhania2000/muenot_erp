@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 const TABS = [
   { label: "Overview", href: "/admin/automation" },
-  { label: "Workflows", href: "/admin/workflows" },
+  { label: "Workflows", href: "/admin/automation/workflows" },
   { label: "Events", href: "/admin/automation/events" },
   { label: "Notifications", href: "/admin/automation/notifications" },
   { label: "Email", href: "/admin/automation/email" },

@@ -26,8 +26,8 @@ const SECTIONS: {
     icon: <KeyRound className="size-5" />,
     title: "Single sign-on (SSO)",
     href: "/admin/security/sso",
-    spec: "Specs 56–58",
-    level: "planned",
+    spec: "",
+    level: "live",
     desc: "Google, Entra ID, Okta, generic OIDC and SAML 2.0 provider management.",
   },
   {
@@ -35,47 +35,47 @@ const SECTIONS: {
     title: "Multi-factor auth",
     href: "/admin/security/mfa",
     spec: "",
-    level: "partial",
-    desc: "TOTP enrollment and recovery codes are live; org-wide policy is presented.",
+    level: "live",
+    desc: "TOTP enrollment, recovery codes and the org-wide require-MFA policy are enforced.",
   },
   {
     icon: <Lock className="size-5" />,
     title: "Password policy",
     href: "/admin/security/password",
     spec: "",
-    level: "partial",
-    desc: "Password hashing and reset are enforced; complexity rules are shown by capability.",
+    level: "live",
+    desc: "Password hashing, reset, complexity, expiry, history and lockout are enforced.",
   },
   {
     icon: <MonitorSmartphone className="size-5" />,
     title: "Sessions",
     href: "/admin/security/sessions",
     spec: "",
-    level: "planned",
-    desc: "Device/session listing and revocation. Sessions are stateless JWTs today.",
+    level: "live",
+    desc: "Device and session listing with revocation across a member's active sessions.",
   },
   {
     icon: <Network className="size-5" />,
     title: "IP allowlist",
     href: "/admin/security/ip-allowlist",
     spec: "",
-    level: "planned",
-    desc: "IPv4/IPv6/CIDR allow rules with lockout protection.",
+    level: "live",
+    desc: "IPv4/IPv6/CIDR allow rules enforced at sign-in, with lockout protection.",
   },
   {
     icon: <SlidersHorizontal className="size-5" />,
     title: "Access policies",
     href: "/admin/security/access-policies",
     spec: "",
-    level: "planned",
-    desc: "Device, IP, country and re-authentication policy configuration.",
+    level: "live",
+    desc: "Device, IP, country and re-authentication policies enforced at sign-in.",
   },
   {
     icon: <Timer className="size-5" />,
     title: "Temporary access",
     href: "/admin/security/temporary-access",
     spec: "",
-    level: "planned",
+    level: "live",
     desc: "Time-boxed role grants with approval and automatic expiry.",
   },
   {
@@ -83,7 +83,7 @@ const SECTIONS: {
     title: "Emergency access",
     href: "/admin/security/emergency-access",
     spec: "",
-    level: "planned",
+    level: "live",
     desc: "Controlled break-glass access with mandatory reason and audit.",
   },
   {
@@ -91,7 +91,7 @@ const SECTIONS: {
     title: "Access reviews",
     href: "/admin/security/access-reviews",
     spec: "",
-    level: "planned",
+    level: "live",
     desc: "Periodic certification campaigns across users, roles and permissions.",
   },
 ]
@@ -111,10 +111,10 @@ export default function SecurityOverviewPage() {
         settings are stored or applied unless the capability is marked as enforced.
       </SecurityHeading>
 
-      <BackendStatus level="partial">
-        Multi-factor authentication (TOTP enrollment, recovery codes) and password hashing/reset are enforced by the
-        backend now. SSO, session revocation, IP allowlisting, access policies, temporary/emergency access and access
-        reviews are presented as structured screens but are not yet enforced — nothing on those screens is faked.
+      <BackendStatus level="live">
+        Every area below is enforced by the backend. Multi-factor authentication, password policy, single sign-on,
+        sessions, IP allowlisting, access policies, temporary and emergency access, and access reviews all apply their
+        settings at runtime — nothing on these screens is presentation-only.
       </BackendStatus>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

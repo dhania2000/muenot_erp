@@ -22,6 +22,8 @@ The tenant isolation guard retains its report/enforce behavior but no longer pri
 
 Requests matched by middleware receive a newly generated `x-request-id` header. Incoming client-supplied IDs are overwritten. Existing audit and integrated error paths can use that ID for correlation. The header is not an authentication credential.
 
+The root Next.js `instrumentation.ts` uses the documented `onRequestError` hook to capture unhandled Node.js route/render errors. It intentionally stores a generic safe message and route metadata, not raw exception text, request headers, or request bodies. Expected handled validation responses remain outside this hook.
+
 ## Severity and usage
 
 DEBUG: local troubleshooting; INFO: routine operational event; NOTICE: noteworthy change; WARNING: degraded/retryable condition; ERROR: failed operation; CRITICAL: broad production outage or security-critical failure. Only WARNING and above persist by default.

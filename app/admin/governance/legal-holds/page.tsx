@@ -7,7 +7,7 @@ import { LegalHoldEditor } from "@/components/governance/legal-hold-editor"
 
 export default function LegalHoldsPage() {
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 pl-4 sm:pl-6 lg:pl-8">
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Data governance</h1>
         <p className="text-sm text-muted-foreground">

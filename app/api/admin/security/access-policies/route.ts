@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth"
 import { getCurrentTenant } from "@/lib/tenant-context"
 import { createAccessPolicy, listAccessPolicies, type AccessPolicyInput } from "@/lib/access-policy-store"
 import { recordSecurityEvent } from "@/lib/security-audit-store"
+import { recordAuditLogFromRequest, AUDIT_ACTIONS } from "@/lib/audit-log-store"
 
 async function requireAdminTenant() {
   const session = await getSession()
@@ -32,6 +33,15 @@ export async function POST(request: Request) {
       actorUserId: ctx.session.userId,
       actorName: ctx.session.name,
       detail: { id: policy.id, name: policy.name, effect: policy.effect, enabled: policy.enabled },
+    })
+    await recordAuditLogFromRequest(request, {
+      action: AUDIT_ACTIONS.accessPolicyCreate,
+      result: "success",
+      entityType: "access_policy",
+      entityId: policy.id,
+      entityLabel: policy.name,
+      after: { name: policy.name, effect: policy.effect, enabled: policy.enabled },
+      context: { tenantId: ctx.tenantId, actorUserId: ctx.session.userId, actorName: ctx.session.name, actorEmail: ctx.session.email },
     })
     return NextResponse.json({ policy }, { status: 201 })
   } catch (err) {

@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
@@ -549,6 +549,14 @@ export function AppShell({
   const [profileOpen, setProfileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)
+
+  // Remember the last non-settings page so closing settings returns there
+  // (rather than always jumping to the dashboard).
+  const onSettings = pathname.startsWith("/admin/settings")
+  const preSettingsPathRef = useRef("/dashboard")
+  useEffect(() => {
+    if (!onSettings) preSettingsPathRef.current = pathname
+  }, [pathname, onSettings])
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" })

@@ -676,9 +676,102 @@ function MergeDialog({
   )
 }
 
+const CLIENT_COLUMNS: ViewColumnDef[] = [
+  { key: "client", label: "Client", sortable: true },
+  { key: "company", label: "Company", sortable: true, groupable: true },
+  { key: "tax", label: "Tax" },
+  { key: "location", label: "Location", sortable: true, groupable: true },
+  { key: "login", label: "Login", sortable: true, groupable: true },
+  { key: "status", label: "Status", sortable: true, groupable: true },
+  { key: "created_at", label: "Added", sortable: true, defaultHidden: true },
+]
+
+const CELL_CLASS: Record<string, string> = {
+  company: "text-muted-foreground",
+  tax: "text-muted-foreground",
+  location: "text-muted-foreground",
+  created_at: "text-muted-foreground",
+}
+
+/** Sort/group value accessor for a client column. */
+function clientValue(c: ClientRow, key: string): unknown {
+  switch (key) {
+    case "client":
+      return c.client_name
+    case "company":
+      return c.company_name ?? ""
+    case "tax":
+      return c.gst_number ?? c.pan ?? ""
+    case "location":
+      return c.city ?? c.country ?? ""
+    case "login":
+      return c.login_allowed
+    case "status":
+      return c.status
+    case "created_at":
+      return c.created_at
+    default:
+      return ""
+  }
+}
+
+function groupLabel(c: ClientRow, key: string): string {
+  const v = clientValue(c, key)
+  return v == null || v === "" ? "—" : String(v)
+}
+
+function renderClientCell(key: string, client: ClientRow, onView: (c: ClientRow) => void): React.ReactNode {
+  switch (key) {
+    case "client":
+      return (
+        <button type="button" className="flex flex-col text-left" onClick={() => onView(client)}>
+          <span className="font-medium hover:underline">
+            {client.salutation ? `${client.salutation} ` : ""}
+            {client.client_name}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {client.client_code} · {client.email}
+          </span>
+        </button>
+      )
+    case "company":
+      return (
+        <div className="flex flex-col">
+          <span>{client.company_name || "—"}</span>
+          {client.company_id ? <span className="text-xs text-primary">Linked account</span> : null}
+        </div>
+      )
+    case "tax":
+      return client.gst_number ? (
+        <span className="font-mono text-xs">{client.gst_number}</span>
+      ) : client.pan ? (
+        <span className="font-mono text-xs">{client.pan}</span>
+      ) : (
+        "—"
+      )
+    case "location":
+      return [client.city, client.country].filter(Boolean).join(", ") || "—"
+    case "login":
+      return (
+        <Badge variant={client.login_allowed === "Yes" ? "default" : "outline"}>
+          {client.login_allowed === "Yes" ? "Allowed" : "Disabled"}
+        </Badge>
+      )
+    case "status":
+      return <Badge variant={client.status === "Active" ? "default" : "destructive"}>{client.status}</Badge>
+    case "created_at":
+      return <span className="text-xs">{client.created_at ? String(client.created_at).slice(0, 10) : "—"}</span>
+    default:
+      return null
+  }
+}
+
 export function ClientsClient({ canManage }: { canManage: boolean }) {
   const { data, isLoading, mutate } = useSWR<{ clients: ClientRow[] }>("/api/clients", fetcher)
-  const [search, setSearch] = useState("")
+  const sv = useSavedViews({ tableKey: "clients", columns: CLIENT_COLUMNS, initial: { pageSize: 25 } })
+  const search = sv.state.search
+  const setSearch = sv.setSearch
+  const [page, setPage] = useState(0)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<ClientRow | null>(null)
   const [viewing, setViewing] = useState<ClientRow | null>(null)

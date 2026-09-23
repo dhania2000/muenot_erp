@@ -9,6 +9,7 @@ import {
   type PermissionScope,
 } from "./permission-model"
 import { getCurrentTenant } from "./tenant-context"
+import { cachedForTenant, invalidateTargetForAllTenants } from "./tenant-cache"
 
 let schemaEnsured = false
 
@@ -132,17 +133,35 @@ export async function getUserMatrix(userId: number): Promise<PermissionMatrix | 
  * matrix alone — role composition simply doesn't apply there.
  */
 export async function getEffectiveUserMatrix(userId: number): Promise<PermissionMatrix | null> {
-  const personal = await getUserMatrix(userId)
   const tenant = getCurrentTenant()
-  if (!tenant) return personal
+  if (!tenant) {
+    // No tenant in context: role composition (which IS tenant-scoped) does not
+    // apply, and there is no safe tenant key to cache under, so read straight
+    // through to the personal matrix.
+    return getUserMatrix(userId)
+  }
 
-  // Lazy import avoids a static import cycle (role-store → permission-model,
-  // permission-store → role-store) and keeps role-store out of code paths that
-  // never touch roles.
-  const { getUserRolesMatrix } = await import("./role-store")
-  const rolesMatrix = await getUserRolesMatrix(tenant.tenantId, userId).catch(() => null)
-  if (!rolesMatrix) return personal
-  return mergeMatrices([rolesMatrix, personal])
+  // SPEC 80 — the effective matrix is read on every permission check (sidebar
+  // build, record scoping, API authorization). Cache it keyed by the OWNING
+  // tenant so tenant A can never be served a matrix resolved for tenant B; the
+  // userId is part of the subkey so users never collide either. Permission
+  // writes evict the whole target (see setUserMatrix / role-store), and the
+  // short TTL is the backstop for anything not explicitly invalidated.
+  return cachedForTenant<PermissionMatrix | null>(
+    "permissions",
+    tenant.tenantId,
+    `matrix:u:${userId}`,
+    async () => {
+      const personal = await getUserMatrix(userId)
+      // Lazy import avoids a static import cycle (role-store → permission-model,
+      // permission-store → role-store) and keeps role-store out of code paths
+      // that never touch roles.
+      const { getUserRolesMatrix } = await import("./role-store")
+      const rolesMatrix = await getUserRolesMatrix(tenant.tenantId, userId).catch(() => null)
+      if (!rolesMatrix) return personal
+      return mergeMatrices([rolesMatrix, personal])
+    },
+  )
 }
 
 /** Replace a user's entire permission matrix. */
@@ -187,6 +206,11 @@ export async function setUserMatrix(userId: number, matrix: PermissionMatrix, gr
       actionRows.flat(),
     )
   }
+
+  // SPEC 80 — a personal matrix feeds the effective matrix in every tenant the
+  // user belongs to, and this path has no single tenant id to scope by, so drop
+  // the whole permissions cache. Permission writes are rare; correctness wins.
+  invalidateTargetForAllTenants("permissions")
 }
 
 /**

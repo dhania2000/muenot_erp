@@ -21,6 +21,7 @@ import "server-only"
  */
 import { query, tableColumns } from "@/lib/db"
 import { getSubscriptionForTenant } from "@/lib/platform-console"
+import { cachedForTenant } from "@/lib/tenant-cache"
 import {
   type PlanEntitlements,
   type QuotaKey,
@@ -48,15 +49,20 @@ import {
  * status-based lockout is a separate concern (subscription lifecycle).
  */
 export async function getTenantEntitlements(tenantId: number): Promise<PlanEntitlements> {
-  const sub = await getSubscriptionForTenant(tenantId)
-  const code = sub?.plan_code ?? "starter"
-  const rows = await query<{ entitlements: string | null; code: string }[]>(
-    "SELECT `code`, `entitlements` FROM `platform_plans` WHERE `code` = ? LIMIT 1",
-    [code],
-  )
-  const row = rows[0]
-  if (!row) return presetForCode(code)
-  return row.entitlements != null ? parseEntitlements(row.entitlements) : presetForCode(row.code)
+  // SPEC 80 — this resolves on every feature/quota gate, so cache it per OWNING
+  // tenant. Subscription and plan writes (lib/platform-console.ts) evict it;
+  // the short TTL bounds staleness for anything not explicitly invalidated.
+  return cachedForTenant("entitlements", tenantId, "plan", async () => {
+    const sub = await getSubscriptionForTenant(tenantId)
+    const code = sub?.plan_code ?? "starter"
+    const rows = await query<{ entitlements: string | null; code: string }[]>(
+      "SELECT `code`, `entitlements` FROM `platform_plans` WHERE `code` = ? LIMIT 1",
+      [code],
+    )
+    const row = rows[0]
+    if (!row) return presetForCode(code)
+    return row.entitlements != null ? parseEntitlements(row.entitlements) : presetForCode(row.code)
+  })
 }
 
 // ---------------------------------------------------------------------------

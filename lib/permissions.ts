@@ -1,6 +1,7 @@
 import { query } from "./db"
 import { getEffectiveUserMatrix } from "./permission-store"
 import { PERMISSION_MODULES, resolveFeatureSlug, type PermissionMatrix } from "./permission-model"
+import { invalidateTargetForAllTenants } from "./tenant-cache"
 
 export type ModuleRow = {
   id: number
@@ -142,6 +143,9 @@ export async function getUserAccessibleModules(userId: number, role: "admin" | "
 /** Legacy setter kept for backward compatibility with the old permissions dialog. */
 export async function setUserPermissions(userId: number, featureIds: number[], grantedBy: number) {
   await query("DELETE FROM user_permissions WHERE user_id = ?", [userId])
+  // SPEC 80 — legacy grants feed the same feature checks the permissions cache
+  // backs; evict it so a changed grant is honored immediately.
+  invalidateTargetForAllTenants("permissions")
   if (featureIds.length === 0) return
   const values = featureIds.map((fid) => [userId, fid, grantedBy])
   await query(

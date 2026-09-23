@@ -24,6 +24,7 @@ import { companySettingsSections, getSectionDefaults, type FieldType } from "@/l
 import { CONFIG_REGISTRY, getDescriptor } from "@/lib/config/registry"
 import { decryptSecret, encryptSecret, isEncryptionConfigured } from "@/lib/secrets/crypto"
 import { decryptToken } from "@/lib/token-crypto"
+import { cachedForTenant, invalidateTenantTarget } from "@/lib/tenant-cache"
 
 export const MASKED_SECRET = "••••••••"
 
@@ -204,9 +205,14 @@ function decode(row: TenantSettingRow): string | null {
 
 export async function getTenantSettingRows(tenantId = requireCurrentTenantId()): Promise<TenantSettingRow[]> {
   await ensureTenantSettingsSchema()
-  return query<TenantSettingRow[]>(
-    "SELECT skey, svalue, value_type, is_secret, updated_at FROM `tenant_settings` WHERE tenant_id = ? ORDER BY skey",
-    [tenantId],
+  // SPEC 80 — this read is on the hot path (config resolution runs on nearly
+  // every authenticated request). Cache it per OWNING tenant so one tenant can
+  // never be served another's settings; setTenantSettings() evicts on write.
+  return cachedForTenant("config", tenantId, "setting-rows", () =>
+    query<TenantSettingRow[]>(
+      "SELECT skey, svalue, value_type, is_secret, updated_at FROM `tenant_settings` WHERE tenant_id = ? ORDER BY skey",
+      [tenantId],
+    ),
   )
 }
 
@@ -279,7 +285,7 @@ export async function setTenantSettings(
     }
   }
 
-  return withTransaction(async (connection) => {
+  const result = await withTransaction(async (connection) => {
     const existing = keys.length
       ? await transactionQuery<TenantSettingRow[]>(
           connection,
@@ -333,6 +339,10 @@ export async function setTenantSettings(
     }
     return { saved, cleared, audit }
   })
+  // SPEC 80 — the tenant just changed its settings; drop the cached rows so the
+  // very next read reflects the write instead of a stale (up to TTL) snapshot.
+  invalidateTenantTarget("config", tenantId)
+  return result
 }
 
 /** Legacy global values are an inherited baseline during the migration period. */

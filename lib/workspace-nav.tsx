@@ -77,6 +77,15 @@ const HR_CHILDREN: FeatureChild[] = [
   { label: "Screen Activity Monitoring", href: "/modules/hr/screen-monitoring", feature: "hr.view_screen_monitoring" },
   { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
   { label: "Offboarding", href: "/modules/hr/offboarding", feature: "hr.view_offboarding" },
+  { label: "Employee 360", href: "/modules/hr/employee-360" },
+  { label: "Employee Self-Service", href: "/modules/hr/self-service" },
+  { label: "Employee Lifecycle", href: "/modules/hr/lifecycle" },
+  { label: "Payroll", href: "/modules/hr/payroll" },
+  { label: "Expense Claims", href: "/modules/hr/expense-claims" },
+  { label: "Training & Development", href: "/modules/hr/training" },
+  { label: "HR Policies", href: "/modules/hr/policies" },
+  { label: "Performance Reviews", href: "/modules/hr/performance" },
+  { label: "Goals & KPIs", href: "/modules/hr/goals-kpi" },
   {
     label: "Leaves",
     children: [
@@ -130,6 +139,29 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Financial Reports", href: "/modules/finance/financial-reports", feature: "finance.financial_reports" },
   { label: "Emails", href: "/modules/finance/emails", feature: "finance.send_emails" },
   { label: "Email Templates", href: "/modules/finance/email-templates", feature: "finance.view_email_templates" },
+  { label: "Vendor 360", href: "/modules/finance/vendor-360", feature: "" },
+  { label: "Vendor Portal", href: "/modules/finance/vendor-portal", feature: "" },
+  { label: "Procurement", href: "/modules/finance/procurement", feature: "" },
+  { label: "Purchase Requisition", href: "/modules/finance/purchase-requisition", feature: "" },
+  { label: "RFQ Management", href: "/modules/finance/rfq", feature: "" },
+  { label: "Purchase Orders", href: "/modules/finance/purchase-orders", feature: "" },
+  { label: "Goods Receipt", href: "/modules/finance/goods-receipt", feature: "" },
+  { label: "Three-Way Match", href: "/modules/finance/three-way-match", feature: "" },
+  { label: "Procurement Approvals", href: "/modules/finance/procurement-approvals", feature: "" },
+  { label: "Budget Management", href: "/modules/finance/budgets", feature: "" },
+  { label: "Cost Centers", href: "/modules/finance/cost-centers", feature: "" },
+  { label: "Profit Centers", href: "/modules/finance/profit-centers", feature: "" },
+  { label: "Multi-Currency", href: "/modules/finance/multi-currency", feature: "" },
+  { label: "Fiscal Year", href: "/modules/finance/fiscal-year", feature: "" },
+  { label: "Period Lock", href: "/modules/finance/period-lock", feature: "" },
+  { label: "Core Integration", href: "/modules/finance/core-integration", feature: "" },
+  { label: "Automatic Journals", href: "/modules/finance/auto-journal", feature: "" },
+  { label: "Journal Reversal", href: "/modules/finance/journal-reversal", feature: "" },
+  { label: "Bank Reconciliation", href: "/modules/finance/bank-reconciliation", feature: "" },
+  { label: "Payment Reconciliation", href: "/modules/finance/payment-reconciliation", feature: "" },
+  { label: "Tax Engine", href: "/modules/finance/tax-engine", feature: "" },
+  { label: "GST Automation", href: "/modules/finance/gst-automation", feature: "" },
+  { label: "TDS Automation", href: "/modules/finance/tds-automation", feature: "" },
 ]
 
 // Recruitment sidebar organised as a hierarchical ERP structure. Parent groups
@@ -241,6 +273,16 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
       { label: "Task Board", href: "/modules/operations/task-board", feature: "operations.view_tasks" },
       { label: "Work Orders", href: "/modules/operations/work-orders", feature: "operations.view_work_orders" },
       { label: "Meetings", href: "/modules/operations/meetings", feature: "operations.view_meetings" },
+      { label: "Calendar", href: "/modules/operations/calendar" },
+    ],
+  },
+  {
+    label: "Documents",
+    children: [
+      { label: "Document Management", href: "/modules/operations/documents" },
+      { label: "Document Approval", href: "/modules/operations/document-approval" },
+      { label: "Document Expiry", href: "/modules/operations/document-expiry" },
+      { label: "Document Sharing", href: "/modules/operations/document-sharing" },
     ],
   },
   {
@@ -321,6 +363,8 @@ const CLIENTS_CHILDREN = [
 
 const TICKETS_CHILDREN = [
   { label: "All Tickets", href: "/modules/tickets/all", feature: "tickets.view_tickets" },
+  { label: "SLA Management", href: "/modules/tickets/sla" },
+  { label: "Knowledge Base", href: "/modules/tickets/knowledge-base" },
 ]
 
 const PRODUCTS_CHILDREN = [
@@ -336,6 +380,7 @@ const LEGAL_CHILDREN = [
 const ASSETS_CHILDREN = [
   { label: "Employee Assets", href: "/modules/assets/employee-assets" },
   { label: "Company Subscriptions", href: "/modules/assets/company-subscriptions" },
+  { label: "Software Licenses", href: "/modules/assets/software-licenses" },
 ]
 
 const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [

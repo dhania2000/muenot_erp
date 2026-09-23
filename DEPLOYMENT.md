@@ -102,3 +102,52 @@ secrets — and are safe to expose to infrastructure.
   bounded connection pool per node.
 - Expired pre-auth rate-limit counters are pruned by the existing
   `api_rate_limit_cleanup` scheduled job.
+
+## 7. Scaling & performance tuning (SPEC 78)
+
+The app scales from a single SME node up to an MNC-sized, multi-node fleet by
+adjusting a few knobs — the code paths are the same at every size.
+
+### Connection pool
+
+The per-node MySQL pool is tunable via environment variables (see
+`ENV_VARIABLES.txt`). The key relationship to respect:
+
+> **(number of app + worker nodes) × `DB_POOL_SIZE` ≤ MySQL `max_connections`**
+
+- **Small SME (1 node):** defaults are fine (`DB_POOL_SIZE=10`).
+- **Mid-market (2–4 nodes):** raise `DB_POOL_SIZE` (e.g. 20–30) and confirm the
+  total stays within `max_connections`.
+- **Large / MNC (many nodes):** keep per-node pools moderate, put a database
+  proxy/replica tier in front, and set `DB_QUEUE_LIMIT` so a node sheds load
+  (fails fast) instead of building an unbounded backlog during a spike.
+
+TCP keep-alive is on by default so idle pooled connections behind a load
+balancer don't turn into "server has gone away" errors; idle connections above
+`DB_MAX_IDLE` are reaped after `DB_IDLE_TIMEOUT_MS`.
+
+### Caching
+
+Hot, rarely-changing reads (e.g. plan-tier resolution on the API hot path) go
+through the shared in-process cache (`lib/cache.ts`): a bounded, TTL + LRU cache
+with single-flight loading so a cold key under load causes exactly one database
+read instead of a stampede. It is a **per-node** cache by design — anything that
+must be consistent across nodes (rate-limit counters, job claims, sessions)
+stays in shared MySQL. Metrics for every cache are available via
+`cacheRegistrySnapshot()` for the capacity dashboard.
+
+### Database optimization
+
+Set `DB_SLOW_QUERY_MS` (default 500) to log any statement slower than the
+threshold — statement text is truncated and parameters are never logged, so no
+tenant data leaks. Use the resulting log lines to drive index additions. List
+endpoints already enforce pagination bounds (`per_page` capped at 200, SPEC 51),
+so no endpoint can be made to return an unbounded result set.
+
+### Benchmarking
+
+`node scripts/benchmark-scalability.mjs` measures cache throughput/hit-rate and
+single-flight coalescing; run it with
+`node --env-file-if-exists=.env.local scripts/benchmark-scalability.mjs` to also
+probe live connection-pool throughput. It mutates nothing and is safe to run in
+any environment.

@@ -17,7 +17,22 @@ declare global {
   var __mysqlPool: mysql.Pool | undefined
 }
 
+/**
+ * SPEC 78 — Scalability: read a bounded integer tuning knob from the
+ * environment, clamped so a bad value can never destabilize the pool.
+ * Every knob keeps its prior default, so existing deployments are unchanged
+ * until they opt in.
+ */
+function envInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = Number(process.env[name])
+  if (!Number.isFinite(raw)) return fallback
+  return Math.min(max, Math.max(min, Math.trunc(raw)))
+}
+
 function createPool() {
+  // Per-node pool size. Horizontal scaling adds nodes; each node's pool must be
+  // sized so (nodes x DB_POOL_SIZE) stays within the database's max_connections.
+  const connectionLimit = envInt("DB_POOL_SIZE", 10, 1, 500)
   return mysql.createPool({
     host: process.env.DB_HOST,
     port: Number(process.env.DB_PORT || 3306),
@@ -25,8 +40,19 @@ function createPool() {
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
+    connectionLimit,
+    // 0 = unlimited queue (prior behavior). Set a ceiling to fail fast and shed
+    // load instead of building an unbounded backlog under a traffic spike.
+    queueLimit: envInt("DB_QUEUE_LIMIT", 0, 0, 100_000),
+    // Reap idle connections so a node that scaled up for a burst releases them
+    // afterwards instead of pinning a large share of the database's connections.
+    maxIdle: envInt("DB_MAX_IDLE", connectionLimit, 1, 500),
+    idleTimeout: envInt("DB_IDLE_TIMEOUT_MS", 60_000, 1_000, 3_600_000),
+    // Keep-alive detects half-open sockets (common behind load balancers / NAT),
+    // avoiding "server has gone away" errors on long-lived pooled connections.
+    enableKeepAlive: process.env.DB_DISABLE_KEEPALIVE !== "true",
+    keepAliveInitialDelay: 0,
+    connectTimeout: envInt("DB_CONNECT_TIMEOUT_MS", 10_000, 1_000, 60_000),
     dateStrings: true,
   })
 }
@@ -37,6 +63,17 @@ if (process.env.NODE_ENV !== "production") {
   globalThis.__mysqlPool = pool
 }
 
+// SPEC 78 — Scalability: log statements slower than this threshold (ms) so the
+// slowest queries surface for indexing / optimization. 0 disables the timer
+// entirely (zero overhead). Statement text is truncated and parameters are
+// never logged, so no tenant data leaks into logs.
+const SLOW_QUERY_MS = envInt("DB_SLOW_QUERY_MS", 500, 0, 60_000)
+
+function summarizeSql(sql: string): string {
+  const compact = sql.replace(/\s+/g, " ").trim()
+  return compact.length > 200 ? `${compact.slice(0, 200)}…` : compact
+}
+
 export async function query<T = any>(sql: string, params: any[] = []): Promise<T> {
   // Tenant isolation gate (SPEC 2). Inspects the statement and, in "enforce"
   // mode, throws before execution when it touches a tenant-scoped table without
@@ -44,11 +81,58 @@ export async function query<T = any>(sql: string, params: any[] = []): Promise<T
   // cheap — see lib/tenant-guard.ts. Never blocks system/pre-auth queries
   // (no tenant in context) or DDL / information_schema lookups.
   guardQuery(sql)
+  const startedAt = SLOW_QUERY_MS > 0 ? Date.now() : 0
   const [rows] = await pool.query(sql, params)
+  if (SLOW_QUERY_MS > 0) {
+    const elapsed = Date.now() - startedAt
+    if (elapsed >= SLOW_QUERY_MS) {
+      console.warn(`[v0] slow query ${elapsed}ms: ${summarizeSql(sql)}`)
+    }
+  }
   // Auto-capture writes as activity notifications (fire-and-forget; never
   // affects the caller's result or latency). See lib/notifications.ts.
   maybeCaptureWrite(sql, rows)
   return rows as T
+}
+
+/**
+ * SPEC 78 — Best-effort snapshot of this node's connection-pool utilization for
+ * the capacity/observability surface. Reaches into mysql2 internals defensively
+ * (they are not a stable public API), returning null fields if unavailable.
+ */
+export function getPoolStats(): {
+  connectionLimit: number | null
+  open: number | null
+  free: number | null
+  queued: number | null
+} {
+  try {
+    const raw = (pool as any)?.pool ?? pool
+    return {
+      connectionLimit: raw?.config?.connectionLimit ?? null,
+      open: raw?._allConnections?.length ?? null,
+      free: raw?._freeConnections?.length ?? null,
+      queued: raw?._connectionQueue?.length ?? null,
+    }
+  } catch {
+    return { connectionLimit: null, open: null, free: null, queued: null }
+  }
+}
+
+/**
+ * SPEC 79 — Database performance: run EXPLAIN on a statement and return the
+ * planner rows, so a query flagged by the slow-query log (SPEC 78) can be
+ * checked for a full-table scan / filesort / missing index without leaving the
+ * app. Diagnostics only — never call this on the hot path. Bypasses the tenant
+ * guard because EXPLAIN neither reads nor writes tenant rows; callers must pass
+ * a fully-parameterized statement (values are never interpolated).
+ */
+export async function explainQuery(
+  sql: string,
+  params: any[] = [],
+): Promise<Array<Record<string, unknown>>> {
+  const [rows] = await pool.query(`EXPLAIN ${sql}`, params)
+  return rows as Array<Record<string, unknown>>
 }
 
 /** Execute a group of statements atomically. Callers still include their normal tenant predicates. */

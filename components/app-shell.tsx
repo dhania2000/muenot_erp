@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useLayoutEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
@@ -557,6 +557,34 @@ export function AppShell({
   const [searchOpen, setSearchOpen] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)
 
+  // Keep the sidebar's own scroll position stable across route changes. When a
+  // sub-module link is clicked, the Next.js route transition otherwise resets
+  // this scroll container to the top, jerking the sidebar away from the item
+  // the user just clicked. We continuously remember the offset and restore it
+  // before paint so the clicked sub-module stays in view until the user scrolls
+  // the sidebar themselves.
+  const navRef = useRef<HTMLElement | null>(null)
+  const navScrollRef = useRef(0)
+
+  useEffect(() => {
+    const el = navRef.current
+    if (!el) return
+    const onScroll = () => {
+      navScrollRef.current = el.scrollTop
+    }
+    el.addEventListener("scroll", onScroll, { passive: true })
+    return () => el.removeEventListener("scroll", onScroll)
+  }, [])
+
+  // useLayoutEffect on the client restores the offset before the browser
+  // paints, avoiding a visible jump to the top on navigation. Fall back to
+  // useEffect during SSR to avoid the server-only warning.
+  const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect
+  useIsoLayoutEffect(() => {
+    const el = navRef.current
+    if (el) el.scrollTop = navScrollRef.current
+  }, [pathname])
+
   // Remember the last non-settings page so closing settings returns there
   // (rather than always jumping to the dashboard).
   const onSettings = pathname.startsWith("/admin/settings")
@@ -637,7 +665,7 @@ export function AppShell({
 
         <div className="mx-3 mb-3 border-t border-sidebar-border" />
 
-        <nav className="min-h-0 flex-1 flex flex-col gap-1 overflow-y-auto px-3">
+        <nav ref={navRef} className="min-h-0 flex-1 flex flex-col gap-1 overflow-y-auto px-3">
           {navItems.map((item) => {
             if (item.children && item.children.length > 0) {
               return (

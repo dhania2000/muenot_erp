@@ -33,6 +33,7 @@ import {
 import { enforceSharedRateLimits, type RateBudget } from "@/lib/api-platform/rate-limit-store"
 import { applicableRateBudgets } from "@/lib/api-platform/rate-limit-policies"
 import { getTenantById } from "@/lib/tenant-service"
+import { createCache } from "@/lib/cache"
 import { ApiError, isApiError } from "@/lib/api-platform/errors"
 import { API_VERSION, SUPPORTED_VERSIONS, jsonError, jsonErrorFromApiError } from "@/lib/api-platform/response"
 import { logApiRequest } from "@/lib/api-platform/audit"
@@ -69,23 +70,26 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"])
 
 /**
  * Plan-tier lookups hit the tenants table, so cache the resolved tier briefly
- * to keep the rate-limit check off the DB on the hot path.
+ * to keep the rate-limit check off the DB on the hot path. The shared TTL cache
+ * (SPEC 78) bounds memory under many tenants and single-flights concurrent
+ * misses so a cold cache under load does not stampede the tenants table.
  */
-const tierCache = new Map<number, { tier: RateLimitTier; expires: number }>()
 const TIER_CACHE_TTL_MS = 60_000
+const tierCache = createCache<RateLimitTier>("apiv1:tenant-tier", {
+  maxEntries: 5_000,
+  defaultTtlMs: TIER_CACHE_TTL_MS,
+})
 
 async function tierForTenant(tenantId: number): Promise<RateLimitTier> {
-  const cached = tierCache.get(tenantId)
-  if (cached && cached.expires > Date.now()) return cached.tier
-  let plan: string | null = null
-  try {
-    plan = (await getTenantById(tenantId))?.plan ?? null
-  } catch {
-    // Fall back to the default tier if the tenant lookup fails.
-  }
-  const tier = resolveTierForPlan(plan)
-  tierCache.set(tenantId, { tier, expires: Date.now() + TIER_CACHE_TTL_MS })
-  return tier
+  return tierCache.getOrLoad(String(tenantId), async () => {
+    let plan: string | null = null
+    try {
+      plan = (await getTenantById(tenantId))?.plan ?? null
+    } catch {
+      // Fall back to the default tier if the tenant lookup fails.
+    }
+    return resolveTierForPlan(plan)
+  })
 }
 
 function newRequestId(): string {

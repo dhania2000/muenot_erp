@@ -103,6 +103,8 @@ function mapDocument(r: any): DmsDocument {
     sourceEntityId: r.source_entity_id ?? null,
     status: normalizeStatus(r.status),
     approvalStatus: normalizeApproval(r.approval_status),
+    workflowType: normalizeWorkflowType(r.workflow_type),
+    approvalRequestId: r.approval_request_id == null ? null : Number(r.approval_request_id),
     approvedBy: r.approved_by == null ? null : Number(r.approved_by),
     approvedAt: r.approved_at ?? null,
     expiresAt: r.expires_at ?? null,

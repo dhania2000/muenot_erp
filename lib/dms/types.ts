@@ -2,7 +2,7 @@
  * SPEC 86 — Document Management System shared types.
  * Client-safe projections returned by the store + API layers.
  */
-import type { AccessLevel, ApprovalStatus, DocStatus, ShareAccess, SubjectType } from "./model"
+import type { AccessLevel, ApprovalStatus, DocStatus, DocWorkflowType, ShareAccess, SubjectType } from "./model"
 
 export type DmsFolder = {
   id: number
@@ -44,6 +44,10 @@ export type DmsDocument = {
   sourceEntityId: string | null
   status: DocStatus
   approvalStatus: ApprovalStatus
+  /** SPEC 87 — the configurable approval workflow governing this document. */
+  workflowType: DocWorkflowType | null
+  /** SPEC 87 — id of the approval-authority request currently tracking it. */
+  approvalRequestId: number | null
   approvedBy: number | null
   approvedAt: string | null
   expiresAt: string | null

@@ -12,11 +12,108 @@ import { randomBytes } from "node:crypto"
 // Vocabularies
 // ---------------------------------------------------------------------------
 
-export const DOC_STATUSES = ["draft", "active", "archived"] as const
+/**
+ * SPEC 87 — Document lifecycle. A document moves through this vocabulary as it
+ * is drafted, submitted into a configurable approval workflow, decided and
+ * finally published or archived. The legacy `active` status maps to
+ * `published` (see normalizeStatus) so pre-SPEC-87 rows keep working.
+ */
+export const DOC_STATUSES = [
+  "draft",
+  "submitted",
+  "review",
+  "approved",
+  "rejected",
+  "published",
+  "archived",
+] as const
 export type DocStatus = (typeof DOC_STATUSES)[number]
+
+/** Legacy → current status names kept tolerant so old rows normalize cleanly. */
+const STATUS_ALIASES: Record<string, DocStatus> = { active: "published" }
 
 export const APPROVAL_STATUSES = ["none", "pending", "approved", "rejected"] as const
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
+
+/**
+ * SPEC 87 — the configurable approval workflows a document can be routed
+ * through. Each maps to an approval-authority `moduleKey` so tenant admins
+ * configure the rule/level/delegation chain per document type using the
+ * existing Approval Authority engine (no bespoke workflow config needed).
+ */
+export const DOC_WORKFLOW_TYPES = [
+  { key: "sop", label: "SOP", moduleKey: "dms.sop" },
+  { key: "policy", label: "Policy", moduleKey: "dms.policy" },
+  { key: "contract", label: "Contract", moduleKey: "dms.contract" },
+  { key: "invoice_attachment", label: "Invoice Attachment", moduleKey: "dms.invoice_attachment" },
+  { key: "hr_document", label: "HR Document", moduleKey: "dms.hr_document" },
+  { key: "training_material", label: "Training Material", moduleKey: "dms.training_material" },
+] as const
+export type DocWorkflowType = (typeof DOC_WORKFLOW_TYPES)[number]["key"]
+
+export function normalizeWorkflowType(value: unknown): DocWorkflowType | null {
+  const v = String(value ?? "").toLowerCase()
+  return DOC_WORKFLOW_TYPES.some((t) => t.key === v) ? (v as DocWorkflowType) : null
+}
+
+export function workflowModuleKey(type: DocWorkflowType): string {
+  return DOC_WORKFLOW_TYPES.find((t) => t.key === type)?.moduleKey ?? "dms.document"
+}
+
+export function workflowLabel(type: DocWorkflowType | null | undefined): string {
+  if (!type) return "Document"
+  return DOC_WORKFLOW_TYPES.find((t) => t.key === type)?.label ?? "Document"
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle state machine (SPEC 87)
+// ---------------------------------------------------------------------------
+
+/** Legal next statuses from each state. Deterministic + dependency-free. */
+export const DOC_TRANSITIONS: Record<DocStatus, DocStatus[]> = {
+  draft: ["submitted", "archived"],
+  submitted: ["review", "approved", "rejected", "draft", "archived"],
+  review: ["approved", "rejected", "draft", "archived"],
+  approved: ["published", "archived", "draft"],
+  rejected: ["draft", "submitted", "archived"],
+  published: ["archived", "draft"],
+  archived: ["draft"],
+}
+
+/** True when `to` is a permitted transition from `from`. */
+export function canTransition(from: DocStatus, to: DocStatus): boolean {
+  if (from === to) return true
+  return DOC_TRANSITIONS[from]?.includes(to) ?? false
+}
+
+/** The statuses reachable in one step from `from`. */
+export function allowedTransitions(from: DocStatus): DocStatus[] {
+  return DOC_TRANSITIONS[from] ?? []
+}
+
+export type EngineStatus = "pending" | "approved" | "rejected" | "cancelled"
+
+/**
+ * Map an approval-authority request status onto the document lifecycle.
+ * A pending request with no recorded decision yet is `submitted`; once any
+ * approver has acted (multi-level chains in progress) it is `review`.
+ */
+export function mapApprovalToDocStatus(
+  engineStatus: EngineStatus,
+  opts: { anyStepActed?: boolean } = {},
+): DocStatus {
+  switch (engineStatus) {
+    case "approved":
+      return "approved"
+    case "rejected":
+      return "rejected"
+    case "cancelled":
+      return "draft"
+    case "pending":
+    default:
+      return opts.anyStepActed ? "review" : "submitted"
+  }
+}
 
 /** Permission levels a subject can hold on a document or folder, low → high. */
 export const ACCESS_LEVELS = ["view", "download", "edit", "manage"] as const

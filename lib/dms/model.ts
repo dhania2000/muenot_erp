@@ -1,0 +1,197 @@
+/**
+ * SPEC 86 — Document Management System (pure model layer).
+ * ---------------------------------------------------------------------------
+ * Framework-free constants + logic for the DMS: status/approval vocabularies,
+ * access-level ranking and effective-permission resolution, expiry checks and
+ * share-token helpers. Everything here is deterministic and dependency-light so
+ * it can be unit-tested without a database or a request context.
+ */
+import { randomBytes } from "node:crypto"
+
+// ---------------------------------------------------------------------------
+// Vocabularies
+// ---------------------------------------------------------------------------
+
+export const DOC_STATUSES = ["draft", "active", "archived"] as const
+export type DocStatus = (typeof DOC_STATUSES)[number]
+
+export const APPROVAL_STATUSES = ["none", "pending", "approved", "rejected"] as const
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
+
+/** Permission levels a subject can hold on a document or folder, low → high. */
+export const ACCESS_LEVELS = ["view", "download", "edit", "manage"] as const
+export type AccessLevel = (typeof ACCESS_LEVELS)[number]
+
+export const SUBJECT_TYPES = ["user", "role"] as const
+export type SubjectType = (typeof SUBJECT_TYPES)[number]
+
+/** What a public share link permits. */
+export const SHARE_ACCESS = ["view", "download"] as const
+export type ShareAccess = (typeof SHARE_ACCESS)[number]
+
+const ACCESS_RANK: Record<AccessLevel, number> = { view: 1, download: 2, edit: 3, manage: 4 }
+
+// ---------------------------------------------------------------------------
+// Normalizers (defensive — never trust client input)
+// ---------------------------------------------------------------------------
+
+export function normalizeStatus(value: unknown): DocStatus {
+  const v = String(value ?? "").toLowerCase()
+  return (DOC_STATUSES as readonly string[]).includes(v) ? (v as DocStatus) : "draft"
+}
+
+export function normalizeApproval(value: unknown): ApprovalStatus {
+  const v = String(value ?? "").toLowerCase()
+  return (APPROVAL_STATUSES as readonly string[]).includes(v) ? (v as ApprovalStatus) : "none"
+}
+
+export function normalizeAccessLevel(value: unknown): AccessLevel {
+  const v = String(value ?? "").toLowerCase()
+  return (ACCESS_LEVELS as readonly string[]).includes(v) ? (v as AccessLevel) : "view"
+}
+
+export function normalizeSubjectType(value: unknown): SubjectType {
+  const v = String(value ?? "").toLowerCase()
+  return v === "role" ? "role" : "user"
+}
+
+export function normalizeShareAccess(value: unknown): ShareAccess {
+  const v = String(value ?? "").toLowerCase()
+  return v === "download" ? "download" : "view"
+}
+
+// ---------------------------------------------------------------------------
+// References
+// ---------------------------------------------------------------------------
+
+/** Stable, human-readable document reference (DOC-000042). */
+export function formatDocRef(id: number): string {
+  return `DOC-${String(id).padStart(6, "0")}`
+}
+
+// ---------------------------------------------------------------------------
+// Access resolution
+// ---------------------------------------------------------------------------
+
+export type AccessGrant = {
+  subjectType: SubjectType
+  subjectId: string
+  accessLevel: AccessLevel
+}
+
+export type AccessContext = {
+  userId: number
+  role: string
+  /** Platform/tenant admins get full control regardless of explicit grants. */
+  isAdmin: boolean
+  /** True when the acting user owns (or created) the document. */
+  isOwner: boolean
+  /** Explicit grants attached to the document (and inherited from its folder). */
+  grants: AccessGrant[]
+}
+
+/**
+ * Resolve the highest access level the acting user effectively holds.
+ *
+ * - Owners and admins always get `manage`.
+ * - Otherwise take the strongest of every grant whose subject matches the user
+ *   (`user:<id>`) or one of their roles (`role:<role>`).
+ * - No matching grant → `null` (no access).
+ */
+export function resolveEffectiveAccess(ctx: AccessContext): AccessLevel | null {
+  if (ctx.isAdmin || ctx.isOwner) return "manage"
+  let best: AccessLevel | null = null
+  for (const grant of ctx.grants) {
+    const matches =
+      (grant.subjectType === "user" && String(grant.subjectId) === String(ctx.userId)) ||
+      (grant.subjectType === "role" && String(grant.subjectId).toLowerCase() === String(ctx.role).toLowerCase())
+    if (!matches) continue
+    if (best == null || ACCESS_RANK[grant.accessLevel] > ACCESS_RANK[best]) {
+      best = grant.accessLevel
+    }
+  }
+  return best
+}
+
+/**
+ * Folder id + all ancestor ids, resolved from an in-memory parent map. Used to
+ * batch-inherit folder permissions without a query per ancestor level.
+ */
+export function ancestorIdsFromMap(
+  folderId: number | null,
+  parents: Map<number, number | null>,
+): number[] {
+  if (folderId == null) return []
+  const ids: number[] = []
+  const seen = new Set<number>()
+  let current: number | null = folderId
+  while (current != null && !seen.has(current)) {
+    seen.add(current)
+    ids.push(current)
+    current = parents.get(current) ?? null
+  }
+  return ids
+}
+
+/** True when `held` is at least as strong as `required`. */
+export function accessAtLeast(held: AccessLevel | null, required: AccessLevel): boolean {
+  if (!held) return false
+  return ACCESS_RANK[held] >= ACCESS_RANK[required]
+}
+
+export type DmsAction = "view" | "download" | "edit" | "delete" | "share" | "manage_permissions" | "approve"
+
+const ACTION_REQUIREMENT: Record<DmsAction, AccessLevel> = {
+  view: "view",
+  download: "download",
+  edit: "edit",
+  delete: "manage",
+  share: "edit",
+  manage_permissions: "manage",
+  approve: "manage",
+}
+
+/** Whether the resolved access level is sufficient to perform `action`. */
+export function canPerform(action: DmsAction, held: AccessLevel | null): boolean {
+  return accessAtLeast(held, ACTION_REQUIREMENT[action])
+}
+
+// ---------------------------------------------------------------------------
+// Expiry / retention
+// ---------------------------------------------------------------------------
+
+function toDate(value: string | Date | null | undefined): Date | null {
+  if (!value) return null
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
+  const iso = value.includes("T") ? value : value.replace(" ", "T") + "Z"
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/** True when the document's expiry date has passed. */
+export function isExpired(expiresAt: string | Date | null | undefined, now: Date = new Date()): boolean {
+  const d = toDate(expiresAt)
+  return d != null && d.getTime() <= now.getTime()
+}
+
+// ---------------------------------------------------------------------------
+// Share tokens
+// ---------------------------------------------------------------------------
+
+/** Generate a URL-safe, unguessable share token. */
+export function generateShareToken(): string {
+  return randomBytes(24).toString("base64url")
+}
+
+export type ShareLike = {
+  expiresAt: string | Date | null
+  revokedAt: string | Date | null
+}
+
+/** A share link is usable only when it is not revoked and not expired. */
+export function shareTokenValid(share: ShareLike, now: Date = new Date()): boolean {
+  if (toDate(share.revokedAt) != null) return false
+  const exp = toDate(share.expiresAt)
+  if (exp != null && exp.getTime() <= now.getTime()) return false
+  return true
+}

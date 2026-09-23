@@ -95,6 +95,17 @@ export const TENANT_OWNED_TABLES = [
   // Configurable storage retention — default rule + per-module overrides
   "storage_retention_settings",
   "storage_retention_rules",
+  // SPEC 86 — centralized Document Management System. Business layer that sits
+  // on top of file_objects: documents, folder tree, categories, tags, per
+  // subject permissions, share links, approval workflow and an audit trail.
+  "dms_folders",
+  "dms_categories",
+  "dms_tags",
+  "dms_documents",
+  "dms_document_tags",
+  "dms_document_permissions",
+  "dms_document_shares",
+  "dms_audit",
   // Canonical tenant configuration and its append-only change history
   //. These replace the legacy global company_settings writes while
   // keeping the legacy table available as an inherited platform baseline.

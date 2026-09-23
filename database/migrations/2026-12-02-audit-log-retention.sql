@@ -10,6 +10,42 @@
 -- tenant's own audit rows, and the reserved value 0 for the platform-wide rows
 -- stored in audit_log_entries with tenant_id IS NULL.
 
+-- SPEC 67 base table. Normally created by lib/audit-log-store.ts's runtime
+-- self-heal, but included here (IF NOT EXISTS, so it's a no-op where it already
+-- exists) so this file can be imported directly into a database that has not
+-- yet run SPEC 67 — otherwise the `audit_log_no_delete` trigger below fails with
+-- "Table 'audit_log_entries' doesn't exist" (#1146). Keep in sync with
+-- lib/audit-log-store.ts.
+CREATE TABLE IF NOT EXISTS `audit_log_entries` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `request_id` VARCHAR(64) DEFAULT NULL,
+  `tenant_id` INT UNSIGNED DEFAULT NULL,
+  `actor_user_id` INT UNSIGNED DEFAULT NULL,
+  `actor_name` VARCHAR(160) DEFAULT NULL,
+  `actor_email` VARCHAR(190) DEFAULT NULL,
+  `actor_role` VARCHAR(32) DEFAULT NULL,
+  `session_id` VARCHAR(64) DEFAULT NULL,
+  `ip_address` VARCHAR(64) DEFAULT NULL,
+  `user_agent` VARCHAR(512) DEFAULT NULL,
+  `action` VARCHAR(96) NOT NULL,
+  `entity_type` VARCHAR(96) DEFAULT NULL,
+  `entity_id` VARCHAR(128) DEFAULT NULL,
+  `entity_label` VARCHAR(255) DEFAULT NULL,
+  `result` VARCHAR(16) NOT NULL DEFAULT 'success',
+  `before_data` JSON DEFAULT NULL,
+  `after_data` JSON DEFAULT NULL,
+  `metadata` JSON DEFAULT NULL,
+  `integrity_hash` CHAR(64) DEFAULT NULL,
+  `created_at` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_tenant` (`tenant_id`),
+  KEY `idx_audit_actor` (`actor_user_id`),
+  KEY `idx_audit_action` (`action`),
+  KEY `idx_audit_entity` (`entity_type`, `entity_id`),
+  KEY `idx_audit_created` (`created_at`),
+  KEY `idx_audit_request` (`request_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Platform-wide default + compliance floor (single row, id = 1).
 CREATE TABLE IF NOT EXISTS `audit_retention_platform_policy` (
   `id` TINYINT UNSIGNED NOT NULL DEFAULT 1,

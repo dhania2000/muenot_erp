@@ -1,6 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
-import { currentTenantId, scopedWhere, tenantInsert, tenantUpdate } from "@/lib/tenant-scope"
+import { currentTenantId, currentTenantIdOrNull, scopedWhere, tenantInsert, tenantUpdate } from "@/lib/tenant-scope"
+import { isFileUnderLegalHold } from "@/lib/legal-hold-store"
 import {
   DEFAULT_RETENTION_RULE,
   computeExpiry,
@@ -406,10 +407,18 @@ export async function runRetentionSweep(
   result.scanned = expired.length
 
   const provider = await getTenantProvider()
+  const tenantId = currentTenantIdOrNull()
 
   for (const file of expired) {
-    // Defense in depth: never delete anything on legal hold.
+    // Defense in depth: never delete anything on legal hold. Two independent
+    // guards: the SPEC 32 per-file `legal_hold` column, and a SPEC 72 governance
+    // legal hold that covers this file directly or via its module.
     if (file.legalHold) {
+      result.skippedLegalHold++
+      continue
+    }
+    const governanceHold = await isFileUnderLegalHold(tenantId, { id: file.id, module: file.module })
+    if (governanceHold.held) {
       result.skippedLegalHold++
       continue
     }

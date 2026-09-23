@@ -1,18 +1,19 @@
 "use client"
 
-// SPECS 70–72 — frontend-only governance data stores. There is no backend
-// enforcement yet: field security, retention, and legal hold decisions here
-// do not actually affect API responses, exports, or scheduled jobs (see
-// lib/platform-guard.ts for the real, server-enforced role guard). These
-// stores only drive the governance UI so every screen is fully exercisable —
-// create, edit, release/pause — without a backend. Codex will replace this
-// with real, server-enforced policies and jobs.
+// SPECS 71–72 — frontend-only governance data stores. There is no backend
+// enforcement yet: retention and legal hold decisions here do not actually
+// affect API responses, exports, or scheduled jobs (see lib/platform-guard.ts
+// for the real, server-enforced role guard). These stores only drive the
+// governance UI so every screen is fully exercisable — create, edit,
+// release/pause — without a backend. Codex will replace this with real,
+// server-enforced policies and jobs.
 //
-// SPEC 69 (Data Classification) has already been replaced with a real,
-// server-enforced, tenant-scoped, audited model: see lib/data-classification.ts
-// (+ lib/data-classification-model.ts) and app/api/admin/governance/classification.
-// The classification store previously here is gone; do not reintroduce a
-// localStorage classification store.
+// SPEC 69 (Data Classification) and SPEC 70 (Field-Level Security) have already
+// been replaced with real, server-enforced, tenant-scoped, audited models:
+//   - lib/data-classification.ts (+ -model) and app/api/admin/governance/classification
+//   - lib/field-security.ts (+ lib/field-security-model.ts) and
+//     app/api/admin/governance/field-security
+// Their localStorage stores previously here are gone; do not reintroduce them.
 
 const EVENT = "muenot:governance-changed"
 
@@ -48,55 +49,6 @@ export function subscribeGovernance(callback: () => void) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Field security policies (Spec 70)
-// ---------------------------------------------------------------------------
-
-export type FieldEffect = "Visible" | "Read Only" | "Masked" | "Hidden"
-
-export type FieldSecurityPolicy = {
-  id: string
-  module: string
-  entity: string
-  field: string
-  scope: string
-  effect: FieldEffect
-  createdAt: number
-}
-
-const FIELD_SECURITY_KEY = "muenot.governance.field-security.v1"
-const FIELD_SECURITY_SEED: FieldSecurityPolicy[] = [
-  { id: "fs-1", module: "HR", entity: "Employee", field: "Salary (CTC)", scope: "Role: Manager", effect: "Masked", createdAt: 0 },
-  { id: "fs-2", module: "HR", entity: "Employee", field: "Bank account number", scope: "Role: Employee", effect: "Hidden", createdAt: 0 },
-  { id: "fs-3", module: "HR", entity: "Employee", field: "PAN", scope: "Department: Finance", effect: "Visible", createdAt: 0 },
-  { id: "fs-4", module: "Finance", entity: "Payment", field: "Bank routing details", scope: "Permission group: AP Clerk", effect: "Read Only", createdAt: 0 },
-  { id: "fs-5", module: "CRM", entity: "Customer", field: "Contact phone", scope: "Legal entity: EU", effect: "Masked", createdAt: 0 },
-]
-
-export function listFieldSecurityPolicies(): FieldSecurityPolicy[] {
-  const records = read(FIELD_SECURITY_KEY, FIELD_SECURITY_SEED)
-  if (typeof window !== "undefined" && !window.localStorage.getItem(FIELD_SECURITY_KEY)) {
-    write(FIELD_SECURITY_KEY, records)
-  }
-  return records
-}
-
-export function upsertFieldSecurityPolicy(input: Omit<FieldSecurityPolicy, "id" | "createdAt"> & { id?: string }) {
-  const records = listFieldSecurityPolicies()
-  if (input.id) {
-    write(
-      FIELD_SECURITY_KEY,
-      records.map((r) => (r.id === input.id ? { ...r, ...input } : r)),
-    )
-  } else {
-    const record: FieldSecurityPolicy = { ...input, id: `fs-${Date.now().toString(36)}`, createdAt: Date.now() }
-    write(FIELD_SECURITY_KEY, [record, ...records])
-  }
-}
-
-export function deleteFieldSecurityPolicy(id: string) {
-  write(FIELD_SECURITY_KEY, listFieldSecurityPolicies().filter((r) => r.id !== id))
-}
 
 // ---------------------------------------------------------------------------
 // Retention policies (Spec 71)

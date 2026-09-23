@@ -6,6 +6,8 @@ import { ensureEmployeeEventsSchema, logEmployeeEvent } from "@/lib/hr-employee-
 import { initializeEmployeeBalances } from "@/lib/hr-leave"
 import { scopeWhereForModule, canCreateInModule } from "@/lib/permission-enforce"
 import { dataScopeWhere } from "@/lib/data-scope"
+import { enforceFieldSecurity, fieldSecurityActorFromSession } from "@/lib/field-security"
+import { getTenantId } from "@/lib/api-auth"
 
 // Columns that can be written via create/update.
 const ALLOWED = new Set([
@@ -159,7 +161,27 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ employees, total, page, pageSize, facets })
+  // SPEC 70 — field-level security. The employee record carries the platform's
+  // most sensitive fields (salary/bank/PAN/personal identifiers). After RBAC and
+  // data-scope have decided WHICH rows this user may see, field security decides
+  // which FIELDS within those rows are masked/hidden for this actor. Applied
+  // here — the single API read path — so masking is identical for the table,
+  // the profile, and every consumer of this endpoint.
+  const tenantId = await getTenantId()
+  const actor = await fieldSecurityActorFromSession(session)
+  let fieldSecurity: { field: string; effect: string }[] = []
+  if (actor) {
+    const enforced = await enforceFieldSecurity(employees, {
+      tenantId,
+      module: "HR",
+      entity: "Employee",
+      actor,
+    })
+    employees = enforced.rows as any[]
+    fieldSecurity = enforced.applied
+  }
+
+  return NextResponse.json({ employees, total, page, pageSize, facets, fieldSecurity })
 }
 
 export async function POST(request: Request) {

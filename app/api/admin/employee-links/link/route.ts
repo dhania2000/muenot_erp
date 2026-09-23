@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { LinkError, linkEmployeeToUser, unlinkEmployee } from "@/lib/employee-user-link"
 
 /**
- * SPEC 15 — Link / unlink an employee to a login user.
+ * Link / unlink an employee to a login user.
  *
  * POST   { employeePk, userId } → create the one employee → one user link,
  *                                 then synchronize the user's access status.

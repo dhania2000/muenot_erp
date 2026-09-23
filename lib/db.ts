@@ -19,7 +19,7 @@ declare global {
 }
 
 /**
- * SPEC 78 — Scalability: read a bounded integer tuning knob from the
+ * Scalability: read a bounded integer tuning knob from the
  * environment, clamped so a bad value can never destabilize the pool.
  * Every knob keeps its prior default, so existing deployments are unchanged
  * until they opt in.
@@ -64,7 +64,7 @@ if (process.env.NODE_ENV !== "production") {
   globalThis.__mysqlPool = pool
 }
 
-// SPEC 78 — Scalability: log statements slower than this threshold (ms) so the
+// Scalability: log statements slower than this threshold (ms) so the
 // slowest queries surface for indexing / optimization. 0 disables the timer
 // entirely (zero overhead). Statement text is truncated and parameters are
 // never logged, so no tenant data leaks into logs.
@@ -76,7 +76,7 @@ function summarizeSql(sql: string): string {
 }
 
 export async function query<T = any>(sql: string, params: any[] = []): Promise<T> {
-  // Tenant isolation gate (SPEC 2). Inspects the statement and, in "enforce"
+  // Tenant isolation gate. Inspects the statement and, in "enforce"
   // mode, throws before execution when it touches a tenant-scoped table without
   // a tenant_id predicate; in "report" mode (default) it only logs. Pure and
   // cheap — see lib/tenant-guard.ts. Never blocks system/pre-auth queries
@@ -108,7 +108,7 @@ export async function query<T = any>(sql: string, params: any[] = []): Promise<T
 }
 
 /**
- * SPEC 78 — Best-effort snapshot of this node's connection-pool utilization for
+ * Best-effort snapshot of this node's connection-pool utilization for
  * the capacity/observability surface. Reaches into mysql2 internals defensively
  * (they are not a stable public API), returning null fields if unavailable.
  */
@@ -132,8 +132,8 @@ export function getPoolStats(): {
 }
 
 /**
- * SPEC 79 — Database performance: run EXPLAIN on a statement and return the
- * planner rows, so a query flagged by the slow-query log (SPEC 78) can be
+ * Database performance: run EXPLAIN on a statement and return the
+ * planner rows, so a query flagged by the slow-query log can be
  * checked for a full-table scan / filesort / missing index without leaving the
  * app. Diagnostics only — never call this on the hot path. Bypasses the tenant
  * guard because EXPLAIN neither reads nor writes tenant rows; callers must pass

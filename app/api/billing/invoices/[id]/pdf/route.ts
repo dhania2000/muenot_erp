@@ -6,7 +6,7 @@ import { buildBillingInvoicePdf, companyForBillingPdf } from "@/lib/billing/invo
 export const runtime = "nodejs"
 
 /**
- * SPEC 23 — Render a billing invoice (or credit note) as a PDF. `?download=1`
+ * Render a billing invoice (or credit note) as a PDF. `?download=1`
  * forces a download; otherwise it renders inline. Tenant-scoped through
  * getInvoice, so one tenant can never fetch another's document.
  */

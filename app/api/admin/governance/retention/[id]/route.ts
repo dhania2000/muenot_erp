@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { deletePolicy, getPolicy, listExceptions, listRuns, updatePolicy } from "@/lib/retention-engine"
 
-// SPEC 71 — read / update / delete a single retention policy. Tenant-admin
+// read / update / delete a single retention policy. Tenant-admin
 // only, tenant-scoped (a foreign id resolves to null → 404), and audited.
 
 export const runtime = "nodejs"

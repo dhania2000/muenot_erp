@@ -1,7 +1,7 @@
 import "server-only"
 
 /**
- * SPEC 39 — Canonical tenant configuration store.
+ * Canonical tenant configuration store.
  *
  * The old `company_settings` table is deliberately kept as an inherited
  * platform baseline for backwards compatibility. All new writes go to this
@@ -80,7 +80,7 @@ for (const section of companySettingsSections) {
   }
 }
 
-// SPEC 37 tenant descriptors that are not represented by the older form-based
+// tenant descriptors that are not represented by the older form-based
 // settings catalog are still valid tenant keys and are validated as text.
 for (const descriptor of CONFIG_REGISTRY) {
   if (descriptor.scope !== "tenant" || fieldDefinitions.has(descriptor.key)) continue
@@ -205,7 +205,7 @@ function decode(row: TenantSettingRow): string | null {
 
 export async function getTenantSettingRows(tenantId = requireCurrentTenantId()): Promise<TenantSettingRow[]> {
   await ensureTenantSettingsSchema()
-  // SPEC 80 — this read is on the hot path (config resolution runs on nearly
+  // this read is on the hot path (config resolution runs on nearly
   // every authenticated request). Cache it per OWNING tenant so one tenant can
   // never be served another's settings; setTenantSettings() evicts on write.
   return cachedForTenant("config", tenantId, "setting-rows", () =>
@@ -339,7 +339,7 @@ export async function setTenantSettings(
     }
     return { saved, cleared, audit }
   })
-  // SPEC 80 — the tenant just changed its settings; drop the cached rows so the
+  // the tenant just changed its settings; drop the cached rows so the
   // very next read reflects the write instead of a stale (up to TTL) snapshot.
   invalidateTenantTarget("config", tenantId)
   return result

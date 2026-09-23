@@ -1,4 +1,4 @@
--- SPEC 7 — Multi-entity support.
+-- Multi-entity support.
 -- ---------------------------------------------------------------------------
 -- Lets a SINGLE tenant operate multiple legal / business entities, each with
 -- its own tax identity (GST/VAT), bank accounts, accounting book and address,

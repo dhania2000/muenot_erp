@@ -1,11 +1,11 @@
 import "server-only"
 /**
- * SPEC 51 — API request audit logging + rate-usage telemetry source.
+ * API request audit logging + rate-usage telemetry source.
  * ---------------------------------------------------------------------------
  * Every authenticated (and every rejected-after-identification) request to the
  * public API is recorded here: who (key), what (method + path), the outcome
  * (status + error code), latency, source IP, and the correlating request id.
- * This is the backing store for the SPEC 53 "API usage" dashboard and the
+ * This is the backing store for the "API usage" dashboard and the
  * forensic trail for security review. Writes are best-effort — logging must
  * never change or slow the request's own result.
  */
@@ -110,7 +110,7 @@ export type ApiUsageSummary = {
   topPaths: { path: string; count: number }[]
 }
 
-/** Aggregates the audit table into the numbers the SPEC 53 usage dashboard shows. */
+/** Aggregates the audit table into the numbers the usage dashboard shows. */
 export async function getApiUsageSummary(tenantId: number): Promise<ApiUsageSummary> {
   await ensureApiAuditSchema()
   const [totals] = await query<any[]>(

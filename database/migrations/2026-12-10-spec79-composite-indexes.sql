@@ -1,5 +1,5 @@
 -- =============================================================
--- SPEC 79 — Database performance: composite indexes for hot
+-- Database performance: composite indexes for hot
 -- tenant-scoped access patterns (additive, non-destructive).
 -- -------------------------------------------------------------
 -- Every tenant-scoped list query emits `WHERE tenant_id = ? ...` and almost

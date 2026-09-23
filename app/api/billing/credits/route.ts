@@ -4,7 +4,7 @@ import { listCredits, createCredit, creditBalance, BillingError } from "@/lib/bi
 
 export const runtime = "nodejs"
 
-/** SPEC 20 — Credit & adjustment ledger (tenant-scoped) plus running balance. */
+/** Credit & adjustment ledger (tenant-scoped) plus running balance. */
 export async function GET() {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })

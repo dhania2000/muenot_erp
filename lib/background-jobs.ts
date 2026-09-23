@@ -6,7 +6,7 @@ import { fingerprint } from "@/lib/job-idempotency"
 import { classifyJobFailure, retryDisposition, type FailureKind } from "@/lib/job-retry-policy"
 
 /**
- * SPEC 42 — Durable background queue.
+ * Durable background queue.
  *
  * Queue entries are data, never commands or URLs. A reviewed handler registry
  * determines the code that can run for each job type.
@@ -26,7 +26,7 @@ type EmailPayload = {
   from?: string
   department?: "sales" | "hr" | "finance" | "operations" | "recruit"
   headers?: Record<string, string>
-  /** Correlates a queued send with the SPEC 50 tenant email ledger. */
+  /** Correlates a queued send with the tenant email ledger. */
   engineMessageId?: number
   messageId?: string
   inReplyTo?: string
@@ -37,7 +37,7 @@ type EmailPayload = {
 }
 
 /**
- * SPEC 85 — a large bulk action runs in this durable queue. The payload only
+ * a large bulk action runs in this durable queue. The payload only
  * carries the stored run id; the worker rehydrates the actor context, id list,
  * and value from the persisted run so nothing about the operation is trusted
  * from the (data-only) queue entry.

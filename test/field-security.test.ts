@@ -13,7 +13,7 @@ import {
   toSensitiveCategory,
 } from "@/lib/field-security-model"
 
-// SPEC 70 — Field-Level Security. The enforcement decision is a pure function,
+// Field-Level Security. The enforcement decision is a pure function,
 // so Phase 4 ("test unauthorized field access") is exhaustively verifiable here
 // without a database: given policies + an actor, exactly which fields leak?
 

@@ -3,7 +3,7 @@ import { listRetryableDeliveries } from "@/lib/webhooks-store"
 import { retryDelivery } from "@/lib/webhooks/dispatcher"
 
 /**
- * SPEC 70 — scheduled sweep for failed webhook deliveries whose backoff
+ * scheduled sweep for failed webhook deliveries whose backoff
  * window has elapsed (see BACKOFF_MINUTES in lib/webhooks/dispatcher.ts).
  * Register on a short interval (e.g. every 5 minutes) in vercel.json cron.
  */

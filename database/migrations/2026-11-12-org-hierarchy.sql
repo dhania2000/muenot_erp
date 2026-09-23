@@ -1,4 +1,4 @@
--- SPEC 6 — Organization hierarchy.
+-- Organization hierarchy.
 -- ---------------------------------------------------------------------------
 -- One self-referential tree of typed org units per tenant, plus a user↔unit
 -- assignment layer and a change log. Complements (does not replace) the HR

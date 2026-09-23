@@ -5,9 +5,9 @@ import { downloadFile } from "./index"
 import { getFileById, getByObjectKey, type FileObject } from "./file-metadata"
 
 /**
- * SPEC 34 — Malware / file-security scanning.
+ * Malware / file-security scanning.
  * ---------------------------------------------------------------------------
- * Every file the ERP stores (SPEC 32 records one normalized row per object) is
+ * Every file the ERP stores ( records one normalized row per object) is
  * put through a security scan before it can be handed back to a user. This
  * module owns that lifecycle end-to-end and is deliberately split into three
  * decoupled layers:
@@ -24,7 +24,7 @@ import { getFileById, getByObjectKey, type FileObject } from "./file-metadata"
  *      pending → scanning → clean/infected/error, releasing or holding the
  *      file in quarantine per policy.
  *
- * Everything is tenant-scoped through the SPEC 2 helpers, so one tenant can
+ * Everything is tenant-scoped through the helpers, so one tenant can
  * never see, approve, rescan, or unblock another tenant's files.
  */
 

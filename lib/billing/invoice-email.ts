@@ -10,7 +10,7 @@ import {
 } from "@/lib/email"
 
 /**
- * SPEC 23 — Billing invoice email delivery (server-only).
+ * Billing invoice email delivery (server-only).
  *
  * One code path builds the currency-aware billing PDF, composes the message,
  * records the send in `finance_emails` for history/open-tracking, and dispatches

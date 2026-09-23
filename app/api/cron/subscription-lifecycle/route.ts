@@ -7,7 +7,7 @@ import { monitorLogger } from "@/lib/system-monitoring"
 export const runtime = "nodejs"
 
 /**
- * SPEC 16 — Daily SaaS subscription lifecycle sweep.
+ * Daily SaaS subscription lifecycle sweep.
  *
  * Fans out per active tenant (so one customer's subscriptions can never touch
  * another's) and reconciles each tenant's subscriptions against the current

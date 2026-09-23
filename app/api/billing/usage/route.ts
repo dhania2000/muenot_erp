@@ -5,7 +5,7 @@ import { getUsageOverview } from "@/lib/billing/usage-metering"
 export const runtime = "nodejs"
 
 /**
- * SPEC 19 — GET the current tenant's usage overview: every meter's usage for
+ * GET the current tenant's usage overview: every meter's usage for
  * the active period against its configured limit, plus a daily trend series.
  * Admin-only (billingGuard); tenant is derived from session context.
  */

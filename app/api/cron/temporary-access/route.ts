@@ -6,7 +6,7 @@ import { runDueTransitionsForTenant } from "@/lib/temporary-access-store"
 export const runtime = "nodejs"
 
 /**
- * SPEC 64 / 65 — Automatic revocation & scheduled activation of time-boxed
+ * Automatic revocation & scheduled activation of time-boxed
  * access grants.
  *
  * Fans out per active tenant (so one customer's grants can never touch

@@ -1,4 +1,4 @@
-# SPEC 41 — Central scheduler inventory
+# Central scheduler inventory
 
 The platform has one scheduler trigger at `/api/cron/dispatcher`. It loads the reviewed job allow-list, selects due work, claims an idempotent run slot, invokes the internal endpoint with a timeout, retries according to policy, and records the result in `platform_cron_runs`.
 

@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 5 — Enterprise tenant / organization onboarding.
+ * Enterprise tenant / organization onboarding.
  * ---------------------------------------------------------------------------
  * A tenant is provisioned in ONE place — lib/tenant-service.ts#createTenant.
  * That primitive only takes name/slug/plan/deployment_model, which is fine for

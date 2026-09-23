@@ -367,9 +367,9 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   { label: "Approval authority", href: "/admin/approval-authority" },
   { label: "Maker-checker", href: "/admin/maker-checker" },
   { label: "Segregation of duties", href: "/admin/sod" },
-  // SPEC 6 — Organization hierarchy management (org → entity → BU → … → team).
+  // Organization hierarchy management (org → entity → BU → … → team).
   { label: "Organization hierarchy", href: "/modules/organization" },
-  // SPEC 7 — Multi-entity: the legal-entity registry (separate tax/bank/books).
+  // Multi-entity: the legal-entity registry (separate tax/bank/books).
   { label: "Legal entities", href: "/modules/finance/legal-entities" },
   { label: "Employee Links", href: "/admin/employee-links" },
   { label: "Job monitoring", href: "/admin/job-monitoring" },
@@ -407,7 +407,7 @@ export const SECURITY_CHILDREN: NavChild[] = [
   { label: "Access reviews", href: "/admin/security/access-reviews" },
 ]
 
-// SPEC 53 — Developer center groups API key issuance, usage/rate-limit
+// Developer center groups API key issuance, usage/rate-limit
 // dashboards, and webhook delivery under one admin area, distinct from
 // Security & Access per the navigation audit.
 export const DEVELOPER_CHILDREN: NavChild[] = [
@@ -458,7 +458,7 @@ export const BILLING_CHILDREN: NavChild[] = [
 // route tree (`/platform`, gated on the platform axis). Surfacing it as a
 // single Administration entry connects that already-built UI to the sidebar
 // WITHOUT merging it into the tenant Administration pages — the platform vs
-// tenant boundary (SPEC 3) is preserved because the link is only added for
+// tenant boundary is preserved because the link is only added for
 // users who actually carry a platform role.
 const PLATFORM_CONSOLE_CHILD: NavChild = { label: "Platform console", href: "/platform" }
 

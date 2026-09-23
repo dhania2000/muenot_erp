@@ -21,7 +21,7 @@ beforeEach(() => {
   mocks.cron.mockResolvedValue(undefined)
 })
 
-describe("SPEC 43 monitoring isolation", () => {
+describe(" monitoring isolation", () => {
   it("scopes list, counts and alerts to the verified tenant, excluding cron", async () => {
     mocks.tenant.mockResolvedValue({ ok: true, ctx: {} })
     mocks.effectiveTenant.mockReturnValue(42)

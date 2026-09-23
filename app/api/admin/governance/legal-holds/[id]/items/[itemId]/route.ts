@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { removeItem } from "@/lib/legal-hold-store"
 
-// SPEC 72 — remove a coverage item from an active legal hold. Tenant-admin
+// remove a coverage item from an active legal hold. Tenant-admin
 // only, tenant-scoped, and audited.
 
 export const runtime = "nodejs"

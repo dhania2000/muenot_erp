@@ -11,7 +11,7 @@ function isDbConfigured() {
 }
 
 /**
- * SPEC 1 — self-service Business/Organization signup.
+ * self-service Business/Organization signup.
  *
  * Creates a new tenant + owner/admin user transactionally, establishes the
  * tenant session, kicks off email verification, and returns the WhatsApp

@@ -6,7 +6,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * SPEC 22 — Webhook monitoring feed (admin-only). Lists recent gateway webhook
+ * Webhook monitoring feed (admin-only). Lists recent gateway webhook
  * events for the current tenant plus aggregate counts, powering the failed-event
  * monitoring console. Read-only; the receiving endpoint stays unauthenticated
  * (signature-verified) at /api/billing/webhooks/[provider].

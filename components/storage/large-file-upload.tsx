@@ -38,7 +38,7 @@ export type LargeFileUploadProps = {
 }
 
 /**
- * SPEC 30 — Drop-in resumable large-file uploader.
+ * Drop-in resumable large-file uploader.
  *
  * Supports videos, images, documents, ZIPs, training and employee files via
  * chunked multipart upload with live progress, per-chunk retry, and cancel.

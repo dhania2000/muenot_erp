@@ -73,7 +73,7 @@ export const GST_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
 ]
 
 /**
- * SPEC 6 — Organization hierarchy extended actions. They live ALONGSIDE the
+ * Organization hierarchy extended actions. They live ALONGSIDE the
  * base Add/View/Update/Delete on the Organization Hierarchy module and gate the
  * structural operations that are riskier than a plain field edit: moving a
  * subtree, assigning/removing users, and cascading deletes.
@@ -85,7 +85,7 @@ export const ORG_HIERARCHY_EXTRA_ACTIONS: ExtendedAction[] = [
 ]
 
 /**
- * SPEC 7 — Multi-entity extended actions. They live ALONGSIDE the base
+ * Multi-entity extended actions. They live ALONGSIDE the base
  * Add/View/Update/Delete on the Legal Entities module and gate the operations
  * that reshape the group structure: promoting the default entity, managing an
  * entity's bank identities, and recording inter-company transfers.
@@ -542,7 +542,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
-    // SPEC 6 — Organization hierarchy. A single module governs the org tree
+    // Organization hierarchy. A single module governs the org tree
     // (units + user assignments); base Add/View/Update/Delete gate structural
     // changes, while the extended actions separate the higher-risk operations
     // (re-parenting a subtree, assigning users, cascading deletes).
@@ -603,7 +603,7 @@ export function defaultMatrix(scope: PermissionScope = "none"): PermissionMatrix
  * sidebar/page gating can be driven from the new matrix.
  */
 // =============================================================
-// SPEC 8 — Normalized action taxonomy
+// Normalized action taxonomy
 // -------------------------------------------------------------
 // Every extended action declared on a module (File Return, Export Journals,
 // Import/Export, Email Report, Manage Settings, …) is ad-hoc by design so each
@@ -611,7 +611,7 @@ export function defaultMatrix(scope: PermissionScope = "none"): PermissionMatrix
 // SINGLE, normalized vocabulary of *capability categories* so custom roles and
 // the permission UI can group and reason about capabilities consistently
 // across modules. The four base CRUD verbs plus the categories below cover the
-// SPEC 8 action set: view / create / edit / delete, approve / reject, export,
+// action set: view / create / edit / delete, approve / reject, export,
 // import, download, email, configuration and administrative actions.
 // =============================================================
 
@@ -682,7 +682,7 @@ export function classifyExtendedAction(action: Pick<ExtendedAction, "key" | "lab
 }
 
 // =============================================================
-// SPEC 8 — Pure permission-matrix merge (role composition)
+// Pure permission-matrix merge (role composition)
 // -------------------------------------------------------------
 // Custom roles compose ADDITIVELY: a user's effective permission for a cell is
 // the most-permissive grant across every role they hold plus any per-user

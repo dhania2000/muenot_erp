@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { BACKGROUND_JOB_STATUSES, BACKGROUND_JOB_TYPES, retryDelaySeconds } from "@/lib/background-jobs"
 
-describe("SPEC 42 background job queue", () => {
+describe(" background job queue", () => {
   it("uses a reviewed job type registry and explicit terminal states", () => {
     expect(BACKGROUND_JOB_TYPES).toContain("email.send")
     expect(BACKGROUND_JOB_STATUSES).toEqual(expect.arrayContaining(["queued", "running", "completed", "dead_letter", "cancelled"]))

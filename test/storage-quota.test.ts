@@ -14,7 +14,7 @@ import {
 } from "@/lib/storage/storage-quota"
 
 /**
- * SPEC 35 — Phase 4. Pure, DB-free validation of the storage-quota model:
+ * Phase 4. Pure, DB-free validation of the storage-quota model:
  * quota resolution (plan vs custom vs unlimited), usage classification against
  * the warning threshold, and the upload gate across the scenarios the spec
  * cares about — WITHIN quota, WARNING (near the threshold), and OVER quota with

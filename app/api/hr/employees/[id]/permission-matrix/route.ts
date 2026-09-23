@@ -91,7 +91,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (p) clean[mod.key] = p
   }
 
-  // SPEC 13 — evaluate the duties this matrix WOULD grant before persisting.
+  // evaluate the duties this matrix WOULD grant before persisting.
   const override = body.overrideSod === true
   const report = await evaluateProposedMatrix(emp.user_id, clean)
   const blocking = hasBlockingViolation(report.violations)

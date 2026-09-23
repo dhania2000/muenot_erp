@@ -4,7 +4,7 @@ import { setConfigValue } from "@/lib/platform-console"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 4 — Platform configuration. Editing platform-wide settings is
+ * Platform configuration. Editing platform-wide settings is
  * super-admin only and audited. Unknown keys are rejected by setConfigValue so
  * the config surface stays a fixed, reviewed set rather than arbitrary storage.
  */

@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 18 — Phase 3. Server-side FEATURE enforcement.
+ * Phase 3. Server-side FEATURE enforcement.
  * ---------------------------------------------------------------------------
  * The pure resolver (lib/platform/feature-entitlements.ts) decides a feature's
  * state from a plan; this module binds it to a real tenant and turns it into a
@@ -8,7 +8,7 @@ import "server-only"
  * feature is refused on the SERVER even when the client bypasses hidden UI and
  * posts directly to the API.
  *
- * Denial semantics mirror the SPEC 17 quota guard:
+ * Denial semantics mirror the quota guard:
  *   • DISABLED feature  → 403 (the plan does not grant it at all).
  *   • LIMITED over cap  → 402 Payment Required (upgrade to raise the ceiling).
  *   • METERED           → always allowed; overage is reported, never blocked.

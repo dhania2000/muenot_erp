@@ -29,7 +29,7 @@ import {
 export type { BillingTerm } from "@/lib/billing/subscription-lifecycle"
 
 /**
- * SPEC 16 — SaaS subscription engine (data + service layer).
+ * SaaS subscription engine (data + service layer).
  * ---------------------------------------------------------------------------
  * Muenot both runs the ERP internally and sells it as SaaS. This module owns
  * every customer tenant's subscription to the product: the plan catalogue
@@ -38,7 +38,7 @@ export type { BillingTerm } from "@/lib/billing/subscription-lifecycle"
  *
  * All tenant-scoped reads/writes go through lib/tenant-scope helpers so they
  * always carry a tenant_id predicate and satisfy the fail-closed guard
- * (SPEC 2). Plans are a global catalogue and use the raw query() layer.
+ *. Plans are a global catalogue and use the raw query() layer.
  *
  * The lifecycle math is pure and tested (lib/billing/subscription-lifecycle.ts +
  * test/subscription-engine.test.ts); this file composes it with persistence,
@@ -978,7 +978,7 @@ export async function updateSubscription(
 export type ChangePlanRecordInput = { plan_id: number; term?: string }
 
 /**
- * SPEC 25 — Persist a plan change on an owned subscription.
+ * Persist a plan change on an owned subscription.
  * ---------------------------------------------------------------------------
  * Swaps the plan reference, term, amount, seats and currency on the record and
  * writes a `plan_upgraded` / `plan_downgraded` lifecycle event. Financial

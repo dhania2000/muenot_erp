@@ -6,7 +6,7 @@ import { getFileVersionHistory } from "@/lib/storage"
 export const runtime = "nodejs"
 
 /**
- * SPEC 33 — Full version history (with uploader + audit trail) for the logical
+ * Full version history (with uploader + audit trail) for the logical
  * file that version `id` belongs to. Tenant ownership is enforced by the
  * tenant-scoped reads inside getFileVersionHistory.
  */

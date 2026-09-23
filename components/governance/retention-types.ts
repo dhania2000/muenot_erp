@@ -1,4 +1,4 @@
-// SPEC 71 — client-side shape of the retention engine's API responses. These
+// client-side shape of the retention engine's API responses. These
 // mirror the server types in lib/retention-engine.ts but carry no server-only
 // import so they can be shared freely across the governance UI.
 

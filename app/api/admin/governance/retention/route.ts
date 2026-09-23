@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { createPolicy, listPolicies } from "@/lib/retention-engine"
 import { RETENTION_CATALOG } from "@/lib/retention-catalog"
 
-// SPEC 71 — General ERP Data Retention Engine admin API. Tenant-admin only,
+// General ERP Data Retention Engine admin API. Tenant-admin only,
 // tenant-scoped, and audited (the engine records every mutation to the
 // immutable audit log).
 

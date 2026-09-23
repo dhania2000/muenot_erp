@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-// SPEC 77 — the pre-auth limiter is now a shared, DB-backed store. These tests
+// the pre-auth limiter is now a shared, DB-backed store. These tests
 // exercise it against an in-memory simulation of the MySQL row + FOR UPDATE
 // transaction, plus the fail-open fallback when the store is unreachable.
 const mock = vi.hoisted(() => ({
@@ -58,7 +58,7 @@ beforeEach(() => {
   mock.rollback.mockResolvedValue(undefined)
 })
 
-describe("SPEC 77 — shared pre-auth rate limiter", () => {
+describe("shared pre-auth rate limiter", () => {
   it("allows requests up to the limit, then blocks the next one across calls", async () => {
     installWorkingStore()
     const opts = { max: 3, windowMs: 60_000 }

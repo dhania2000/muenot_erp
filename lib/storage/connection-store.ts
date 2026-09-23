@@ -33,7 +33,7 @@ function normalizePathPrefix(value: string | null | undefined): string | null {
 }
 
 /**
- * SPEC 26 — Tenant storage connection registry.
+ * Tenant storage connection registry.
  * ---------------------------------------------------------------------------
  * Each customer (tenant) can register one or more storage backends and mark one
  * active. Rows are tenant-owned (see lib/tenant-tables.ts) so every read/write
@@ -88,7 +88,7 @@ export async function ensureStorageSchema(): Promise<void> {
       KEY idx_tsca_conn (connection_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
-  // SPEC 27 — additive columns for tables created by an earlier build. MySQL has
+  // additive columns for tables created by an earlier build. MySQL has
   // no portable "ADD COLUMN IF NOT EXISTS", so probe information_schema first.
   await ensureColumn(TABLE, "path_prefix", "ADD COLUMN `path_prefix` VARCHAR(500) DEFAULT NULL")
   await ensureColumn(

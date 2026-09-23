@@ -7,7 +7,7 @@ import { listScans } from "@/lib/storage/file-scanning"
 export const runtime = "nodejs"
 
 /**
- * SPEC 34 — File security / malware-scan dashboard. Reads the real,
+ * File security / malware-scan dashboard. Reads the real,
  * already-implemented scan ledger (lib/storage/file-scanning.ts); this route
  * only lists it and rolls up the summary counts.
  */

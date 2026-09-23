@@ -1,5 +1,5 @@
 /**
- * SPEC 84 — Saved Views: shared types.
+ * Saved Views: shared types.
  *
  * A "saved view" captures a table's presentation preferences — search text,
  * filters, column order/visibility, sorting, grouping and page size — so users

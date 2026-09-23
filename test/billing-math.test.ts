@@ -19,7 +19,7 @@ import {
 } from "@/lib/billing/billing-math"
 
 /**
- * SPEC 20 — Phase 4. Pure, DB-free validation of every money calculation in the
+ * Phase 4. Pure, DB-free validation of every money calculation in the
  * billing engine: rounding, line extension, discounts, coupons, taxes (add-on
  * and inclusive), credits, invoice totalling, proration for upgrade/downgrade,
  * refunds and invoice-status derivation. These are the "financial edge cases".

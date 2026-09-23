@@ -3,7 +3,7 @@ import { query } from "@/lib/db"
 /**
  * Source-document integration for Sales Invoices.
  *
- * An invoice can be raised FROM a Quotation, Contract or Project (spec 14–33).
+ * An invoice can be raised FROM a Quotation, Contract or Project (–33).
  * This module is the single place that:
  *   - lists the source documents that belong to a given client,
  *   - resolves a chosen source into commercial auto-fill values,
@@ -222,7 +222,7 @@ export type BillingCheck = {
   consistency?: string
 }
 
-/** Confirm a linked source actually belongs to the invoice's client (spec 29–31). */
+/** Confirm a linked source actually belongs to the invoice's client (–31). */
 async function consistencyError(clientName: string, contractId?: string, quotationId?: string, projectId?: string) {
   const target = normName(clientName)
   if (!target) return null
@@ -258,7 +258,7 @@ async function consistencyError(clientName: string, contractId?: string, quotati
   return null
 }
 
-/** Same client + contract/project + billing period (+ milestone) already billed? (spec 24–26) */
+/** Same client + contract/project + billing period (+ milestone) already billed? (–26) */
 async function duplicateBilling(opts: {
   clientName?: string
   contractId?: string
@@ -369,7 +369,7 @@ export async function runSourceChecks(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Customer credit profile (spec 10–11)
+// Customer credit profile (–11)
 // ---------------------------------------------------------------------------
 
 export async function creditProfile(clientName: string, creditLimit: number | null) {

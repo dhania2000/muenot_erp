@@ -32,7 +32,7 @@ export async function POST(request: Request) {
   )
   if (!rows.length) return NextResponse.json({ error: "No matching employees" }, { status: 404 })
 
-  // SPEC 15 — employee ids whose linked login access must be re-derived because
+  // employee ids whose linked login access must be re-derived because
   // this bulk action changed an access-governing field.
   const accessActions: BulkAction[] = ["set_status", "archive", "reactivate"]
   const syncEmployeeIds: number[] = []

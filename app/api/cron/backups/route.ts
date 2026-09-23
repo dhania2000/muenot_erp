@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth"
 import { runDueBackups } from "@/lib/backup/store"
 
 /**
- * SPEC 75 — Phase 3. Automated tenant backups.
+ * Phase 3. Automated tenant backups.
  *
  * Runs unattended via the central scheduler (registered in lib/cron-jobs.ts)
  * authenticated with the shared CRON_SECRET Bearer token, and is also runnable

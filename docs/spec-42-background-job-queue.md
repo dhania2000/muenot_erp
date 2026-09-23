@@ -1,4 +1,4 @@
-# SPEC 42 — Background job queue
+# Background job queue
 
 The durable queue lives in `platform_background_jobs` and is processed by the reviewed `/api/cron/background-queue` worker through the central scheduler. It supports priority ordering, idempotency, retry with exponential backoff, per-key concurrency limits, timeouts, cancellation, and a dead-letter state after the configured retry limit.
 

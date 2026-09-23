@@ -4,7 +4,7 @@ import { assignPlatformRole, RoleAssignmentError } from "@/lib/platform-roles"
 import { isPlatformRole } from "@/lib/role-model"
 
 /**
- * SPEC 3 — Assign a PLATFORM role to a user. Platform axis only.
+ * Assign a PLATFORM role to a user. Platform axis only.
  *
  * The escalation rules live in `canAssignPlatformRole` (enforced inside
  * `assignPlatformRole`): a caller can never grant above their own platform

@@ -5,7 +5,7 @@ import { getMeter, recordUsage, checkUsageLimit } from "@/lib/billing/usage-mete
 export const runtime = "nodejs"
 
 /**
- * SPEC 19 — Ingestion endpoint for metered usage events.
+ * Ingestion endpoint for metered usage events.
  *
  * Any authenticated part of the app (or a server-to-server caller with a valid
  * session) can post a counter event here; the tenant is taken from the session,

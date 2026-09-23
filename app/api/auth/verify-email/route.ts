@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { verifyEmail, LifecycleError } from "@/lib/user-lifecycle"
 
 /**
- * SPEC 14 — Consume an email-verification token (public; the token is the
+ * Consume an email-verification token (public; the token is the
  * capability). Idempotent: a second click on an already-verified account still
  * reports success as long as the token has not been consumed/expired.
  */

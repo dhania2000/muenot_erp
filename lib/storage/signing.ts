@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import { tenantIdFromKey } from "./keys"
 
 /**
- * SPEC 29 — Signed, short-lived access tokens for the download proxy.
+ * Signed, short-lived access tokens for the download proxy.
  * ---------------------------------------------------------------------------
  * Objects on the tenant's own S3 backend get NATIVE presigned URLs (see
  * S3StorageProvider.presign). Objects served through the app proxy — the

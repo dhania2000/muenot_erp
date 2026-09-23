@@ -49,7 +49,7 @@ npm run start
 3. Go to **Admin → Employees → Invite Employee** to create accounts for your team.
 4. Click **Permissions** next to any employee to grant granular access per module/feature.
 
-## 6. High availability (SPEC 77)
+## 6. High availability
 
 The application is designed to run as **multiple stateless application servers**
 (and background workers) behind a load balancer, with no single point of
@@ -103,7 +103,7 @@ secrets — and are safe to expose to infrastructure.
 - Expired pre-auth rate-limit counters are pruned by the existing
   `api_rate_limit_cleanup` scheduled job.
 
-## 7. Scaling & performance tuning (SPEC 78)
+## 7. Scaling & performance tuning
 
 The app scales from a single SME node up to an MNC-sized, multi-node fleet by
 adjusting a few knobs — the code paths are the same at every size.
@@ -141,7 +141,7 @@ stays in shared MySQL. Metrics for every cache are available via
 Set `DB_SLOW_QUERY_MS` (default 500) to log any statement slower than the
 threshold — statement text is truncated and parameters are never logged, so no
 tenant data leaks. Use the resulting log lines to drive index additions. List
-endpoints already enforce pagination bounds (`per_page` capped at 200, SPEC 51),
+endpoints already enforce pagination bounds (`per_page` capped at 200, ),
 so no endpoint can be made to return an unbounded result set.
 
 ### Benchmarking

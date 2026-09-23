@@ -7,7 +7,7 @@ import {
 } from "@/lib/storage/file-versions"
 
 /**
- * SPEC 33 — Phase 4. Pure, DB-free validation of the versioning policy layer:
+ * Phase 4. Pure, DB-free validation of the versioning policy layer:
  * the audit-action vocabulary, version labels, which files are versionable,
  * and — most importantly — the restore permission model.
  */

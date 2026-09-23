@@ -26,7 +26,7 @@ function formatRemaining(expiresMs: number) {
 }
 
 /**
- * SPEC 65 — persistent, app-wide banner shown whenever the signed-in user has
+ * persistent, app-wide banner shown whenever the signed-in user has
  * an active, server-enforced break-glass grant. Mounted once in the workspace
  * layout so it appears on every page while elevated ("no silent usage"). Reads
  * live state from /api/security/emergency-access/active and lets the user end

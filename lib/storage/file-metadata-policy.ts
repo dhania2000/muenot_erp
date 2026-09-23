@@ -1,5 +1,5 @@
 /**
- * SPEC 32 — File classification + retention policy (pure).
+ * File classification + retention policy (pure).
  * ---------------------------------------------------------------------------
  * The data-governance vocabulary for centralized file metadata, kept free of
  * `server-only` and any Node/DB import so it can be shared with the settings UI

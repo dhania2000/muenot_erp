@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 69-70 — Webhook delivery: signing, sending, retry with backoff.
+ * — Webhook delivery: signing, sending, retry with backoff.
  * ---------------------------------------------------------------------------
  * `emitWebhookEvent` is the single fan-out point business code calls when
  * something webhook-worthy happens (see lib/webhooks-store.ts WEBHOOK_EVENTS

@@ -13,7 +13,7 @@ import {
 import { GatewayError, isRetryableHttpStatus, withRetry, type RetryOptions } from "./retry"
 
 /**
- * SPEC 21 — Stripe adapter (Phase 2).
+ * Stripe adapter (Phase 2).
  * ---------------------------------------------------------------------------
  * Translates Stripe's PaymentIntents API, the `Stripe-Signature` scheme
  * (`t=<ts>,v1=<hmac>` over `"<ts>.<body>"`) and `payment_intent.*`/`charge.*`

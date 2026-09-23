@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 60 — Password policy: configuration, validation, reuse history and
+ * Password policy: configuration, validation, reuse history and
  * lockout, actually enforced by the backend (not just described in the UI).
  * ---------------------------------------------------------------------------
  * Policy values live in the existing tenant-settings store (lib/tenant-settings

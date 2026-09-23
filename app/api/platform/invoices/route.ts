@@ -4,7 +4,7 @@ import { markInvoicePaid } from "@/lib/platform-console"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 4 — Record a payment against an open invoice. Platform-staff surface;
+ * Record a payment against an open invoice. Platform-staff surface;
  * audited. Only an `open` invoice can be marked paid (enforced in the query).
  */
 export async function PATCH(req: NextRequest) {

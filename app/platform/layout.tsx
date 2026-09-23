@@ -6,7 +6,7 @@ import { platformRoleLabel } from "@/lib/role-model"
 import { PlatformNav } from "@/components/platform/platform-nav"
 
 /**
- * SPEC 3/4 — The Muenot PLATFORM console shell. Access is gated on the platform
+ * The Muenot PLATFORM console shell. Access is gated on the platform
  * axis ALONE (`requirePlatformStaff`); a customer's tenant_owner/tenant_admin
  * can never reach it. This is deliberately a separate route tree from the
  * tenant workspace so operating the platform and operating a tenant are

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { deleteExportSchedule } from "@/lib/data-export-store"
 
-// SPEC 73 — delete a recurring export schedule. Tenant-admin only.
+// delete a recurring export schedule. Tenant-admin only.
 
 export const runtime = "nodejs"
 

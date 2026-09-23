@@ -1,7 +1,7 @@
 import { GovernanceTabs } from "@/components/governance/governance-tabs"
 import { RetentionPolicyEditor } from "@/components/governance/retention-policy-editor"
 
-// SPEC 71 — General ERP Data Retention Engine (UI). Generalizes retention
+// General ERP Data Retention Engine (UI). Generalizes retention
 // beyond storage files to any ERP record type, with legal-hold awareness.
 
 export default function RetentionPage() {

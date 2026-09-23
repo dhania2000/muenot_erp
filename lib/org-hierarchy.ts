@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 6 — Organization hierarchy service.
+ * Organization hierarchy service.
  * ---------------------------------------------------------------------------
  * Models an enterprise org structure inside a single tenant as one
  * self-referential tree of typed nodes (`org_units`) plus a user↔unit
@@ -30,7 +30,7 @@ import {
 import { nextRecordId } from "@/lib/record-ids"
 
 // ---------------------------------------------------------------------------
-// Unit types — the enterprise levels from SPEC 6, ordered broad → narrow.
+// Unit types — the enterprise levels from, ordered broad → narrow.
 // The order drives the default "suggested child type" and the display sort.
 // ---------------------------------------------------------------------------
 export const ORG_UNIT_TYPES = [

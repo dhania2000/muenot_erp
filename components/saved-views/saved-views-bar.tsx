@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * SPEC 84 — Saved Views: reusable toolbar.
+ * Saved Views: reusable toolbar.
  *
  * Renders the view switcher, save/update/delete controls, the column
  * visibility+order menu, grouping and page-size selectors. Driven entirely by

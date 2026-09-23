@@ -14,7 +14,7 @@ import {
 } from "@/lib/storage/file-scanning"
 
 /**
- * SPEC 34 — Phase 4. Pure, DB-free validation of the malware / file-security
+ * Phase 4. Pure, DB-free validation of the malware / file-security
  * scanning layer: the lifecycle vocabulary, the safe/unsafe/unknown verdict,
  * the download gate across every lifecycle state, and the deterministic default
  * provider. The three scenarios the spec calls out — MALICIOUS (infected),

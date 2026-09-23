@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 3 — Request-level authorization guards for the platform/tenant boundary.
+ * Request-level authorization guards for the platform/tenant boundary.
  * ---------------------------------------------------------------------------
  * These are the helpers route handlers call. They combine the verified session
  * (lib/auth.ts) with the stored roles (lib/platform-roles.ts) and the pure

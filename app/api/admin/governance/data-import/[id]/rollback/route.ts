@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { rollbackImport } from "@/lib/data-import-store"
 
-// SPEC 74 — undo a completed import. Deletes the exact rows the job inserted
+// undo a completed import. Deletes the exact rows the job inserted
 // (feasible only when the target table has an auto-increment `id`, captured at
 // commit time). Tenant-scoped and audited.
 

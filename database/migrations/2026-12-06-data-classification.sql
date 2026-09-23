@@ -1,4 +1,4 @@
--- SPEC 69 — Data Classification.
+-- Data Classification.
 --
 -- Maps a tenant's module / entity / field to one of five sensitivity levels
 -- (Public, Internal, Confidential, Restricted, Highly Restricted) plus the

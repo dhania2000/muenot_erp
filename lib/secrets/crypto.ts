@@ -2,7 +2,7 @@ import "server-only"
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
 
 /**
- * SPEC 38 — Secret management. PHASE 2: encryption at rest.
+ * Secret management. PHASE 2: encryption at rest.
  * ---------------------------------------------------------------------------
  * AES-256-GCM with a key derived from `SETTINGS_ENCRYPTION_KEY` — the SAME
  * master key and scheme the config/env-var stores already use, so we never

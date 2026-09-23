@@ -1,7 +1,7 @@
 import "server-only"
 
 /**
- * Multi-WABA integration service (Spec 2).
+ * Multi-WABA integration service.
  *
  * The canonical, tenant-scoped lifecycle API for WhatsApp Business integrations.
  * A tenant may connect MANY numbers/WABAs; each is a distinct row with its own

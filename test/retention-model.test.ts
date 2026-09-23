@@ -19,7 +19,7 @@ import {
 import { getCatalogEntry, resolveTargetColumns, RETENTION_CATALOG } from "@/lib/retention-catalog"
 
 /**
- * SPEC 71 — Phase 4. Pure, DB-free validation of the retention model: period
+ * Phase 4. Pure, DB-free validation of the retention model: period
  * arithmetic and clamping, cutoff math, run-state precedence (legal hold always
  * wins), next-run scheduling, exception matching, request normalization, and
  * the catalog column-resolution that keeps the engine install-agnostic. Fixed

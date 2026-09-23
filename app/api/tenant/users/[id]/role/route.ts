@@ -4,7 +4,7 @@ import { assignTenantRole, RoleAssignmentError } from "@/lib/platform-roles"
 import { isTenantRole } from "@/lib/role-model"
 
 /**
- * SPEC 3 — Assign a TENANT role to a user within the caller's own tenant.
+ * Assign a TENANT role to a user within the caller's own tenant.
  *
  * The role is always applied to the caller's EFFECTIVE tenant (their home
  * tenant, or the customer tenant they are actively impersonating). The

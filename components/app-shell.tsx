@@ -544,7 +544,7 @@ export function AppShell({
   logoUrl,
 }: {
   navItems: NavItem[]
-  /** SPEC 82 — permission-gated create/action commands, built server-side. */
+  /** permission-gated create/action commands, built server-side. */
   quickCommands: QuickCommand[]
   user: { name: string; email: string; role: "admin" | "employee" }
   children: React.ReactNode
@@ -619,7 +619,7 @@ export function AppShell({
       : [{ label: item.label, href: item.href }],
   )
 
-  // SPEC 82 — global ⌘K / Ctrl+K shortcut to open the command palette.
+  // global ⌘K / Ctrl+K shortcut to open the command palette.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {

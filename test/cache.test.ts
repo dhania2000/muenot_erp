@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { TtlCache, createCache, cacheRegistrySnapshot } from "@/lib/cache"
 
 /**
- * SPEC 78 — unit coverage for the shared in-process cache: TTL expiry, LRU
+ * unit coverage for the shared in-process cache: TTL expiry, LRU
  * eviction bound, single-flight coalescing, invalidation, and metrics.
  */
 describe("TtlCache", () => {

@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { syncAccessStatusForUser, syncAllAccessStatuses } from "@/lib/employee-user-link"
 
 /**
- * SPEC 15 — Access-status synchronization.
+ * Access-status synchronization.
  *
  * POST { userId } → re-derive one login's access status from its employment.
  * POST {}         → re-derive every employment-governed login in the tenant.

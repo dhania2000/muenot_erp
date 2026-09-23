@@ -1,4 +1,4 @@
--- SPEC 61 / 56-58 — Server-side session store + SSO (OIDC/SAML) identity providers.
+-- — Server-side session store + SSO (OIDC/SAML) identity providers.
 --
 -- Documents the schema that lib/session-store.ts and lib/sso-store.ts also
 -- self-heal at runtime (same pattern as lib/secrets/store.ts and

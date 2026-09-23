@@ -2,7 +2,7 @@ import { Zap } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 
-// SPEC 80 — Cache Monitoring (UI). Honest NOT CONFIGURED state — this
+// Cache Monitoring (UI). Honest NOT CONFIGURED state — this
 // platform has no caching layer (e.g. Redis) connected yet, so no fabricated
 // hit-rate or eviction metrics are shown.
 export default function CacheMonitoringPage() {

@@ -24,7 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
-// SPEC 67 — Central Tenant Audit Log (UI). Aggregates the tenant-scoped
+// Central Tenant Audit Log (UI). Aggregates the tenant-scoped
 // security-sensitive actions already recorded by module-specific audit
 // trails into one searchable, filterable view.
 const AUDIT_EVENTS = [

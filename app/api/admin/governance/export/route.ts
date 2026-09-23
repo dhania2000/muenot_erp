@@ -9,9 +9,9 @@ import {
 import { exportCatalogForClient } from "@/lib/data-export-catalog"
 import { EXPORT_FORMAT_LABELS, EXPORT_FREQUENCIES, FULL_TENANT_EXPORT_KEY } from "@/lib/data-export-model"
 
-// SPEC 73 — Tenant Data Export admin API. Tenant-admin only, tenant-scoped, and
+// Tenant Data Export admin API. Tenant-admin only, tenant-scoped, and
 // audited (the store records every export + schedule mutation to the immutable
-// audit log). Exports respect SPEC 69 data classification: fields the acting
+// audit log). Exports respect data classification: fields the acting
 // role may not export are redacted from the artifact.
 
 export const runtime = "nodejs"

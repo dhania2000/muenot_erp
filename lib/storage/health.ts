@@ -2,7 +2,7 @@ import "server-only"
 import type { HealthCheckId, HealthCheckResult, HealthCheckStatus, HealthReport } from "./types"
 
 /**
- * SPEC 28 — Shared plumbing for provider health diagnostics.
+ * Shared plumbing for provider health diagnostics.
  * ---------------------------------------------------------------------------
  * Providers describe WHAT to probe; this module handles the bookkeeping —
  * timing each probe, catching errors, turning them into actionable messages,

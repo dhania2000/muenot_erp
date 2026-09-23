@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { commitImport } from "@/lib/data-import-store"
 
-// SPEC 74 — commit a prepared import. Inserts the valid, non-duplicate rows,
+// commit a prepared import. Inserts the valid, non-duplicate rows,
 // capturing each new primary key so the batch can be undone, and records an
 // immutable import-history job + audit entry. Errors/duplicates are skipped and
 // surfaced in the job's downloadable error report.

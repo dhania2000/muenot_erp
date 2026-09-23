@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge"
 
 export const dynamic = "force-dynamic"
 
-// SPEC 53 + SPEC 51 — API usage. Request metering is now wired into the shared
+// + API usage. Request metering is now wired into the shared
 // API middleware (lib/api-platform/handler.ts logs every /api/v1 request into
 // api_request_audit), so these numbers are real telemetry, not placeholders.
 export default async function ApiUsagePage() {

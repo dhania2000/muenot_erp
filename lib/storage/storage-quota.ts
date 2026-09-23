@@ -9,20 +9,20 @@ import { BYTES_PER_GB, bytesToGb, formatBytes, gbToBytes } from "./format"
 export { BYTES_PER_GB, bytesToGb, formatBytes, gbToBytes } from "./format"
 
 /**
- * SPEC 35 — Tenant storage quotas.
+ * Tenant storage quotas.
  * ---------------------------------------------------------------------------
  * A tenant's stored bytes are governed by a QUOTA that has to reconcile three
  * concerns the rest of the app already models separately, without duplicating
  * any of them:
  *
  *   • PLAN quota   — the `storage_gb` entitlement of the tenant's subscription
- *                    plan (SPEC 17). `null` there means unlimited. This is the
+ * plan. `null` there means unlimited. This is the
  *                    default ceiling and it moves automatically when a tenant
  *                    upgrades/downgrades.
  *   • CUSTOM quota — a per-tenant override an operator can set (e.g. a
  *                    negotiated add-on) that supersedes the plan number for that
  *                    tenant only. `null` = "inherit the plan".
- *   • Usage        — the live footprint from the SPEC 32 `file_objects` model
+ * • Usage — the live footprint from the `file_objects` model
  *                    (`getStorageUsage`), which this module also breaks down
  *                    PER MODULE for the dashboard.
  *
@@ -31,7 +31,7 @@ export { BYTES_PER_GB, bytesToGb, formatBytes, gbToBytes } from "./format"
  * actually blocks new uploads or is merely reported). The module is split into
  * a pure layer (resolution, status, the upload gate — unit-tested without a DB)
  * and a DB-backed layer (settings persistence, usage, the dashboard). Every
- * DB path is tenant-scoped through the SPEC 2 helpers.
+ * DB path is tenant-scoped through the helpers.
  */
 
 const TABLE = "storage_quota_settings"
@@ -139,7 +139,7 @@ export type QuotaDecision = {
  * this upload, enforcement is on AND the hard-limit flag is set. In every other
  * case the upload is allowed but the returned `status`/`wouldExceed` let callers
  * surface a warning. This mirrors the soft-vs-hard convention used by the usage
- * metering limits (SPEC 19).
+ * metering limits.
  */
 export function decideUpload(
   usedBytes: number,

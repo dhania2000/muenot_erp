@@ -4,7 +4,7 @@ import { createTenant, listTenants } from "@/lib/tenant-service"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 3 — Platform tenant directory. This is a PLATFORM-axis surface: only
+ * Platform tenant directory. This is a PLATFORM-axis surface: only
  * Muenot platform staff/super-admins reach it. A customer tenant_admin/owner
  * is denied regardless of their tenant authority, because requirePlatform*()
  * consults only the platform axis.

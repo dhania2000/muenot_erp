@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 51 — Standard error model for the public API.
+ * Standard error model for the public API.
  * ---------------------------------------------------------------------------
  * Every `/api/v1/*` failure serializes to a single, stable envelope:
  *

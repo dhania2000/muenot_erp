@@ -11,14 +11,14 @@ import {
 import { decideOutcome, type ChangeStatus } from "./maker-checker-core"
 
 // =============================================================================
-// SPEC 12 — Maker-Checker · Phase 2: the framework.
+// Maker-Checker · Phase 2: the framework.
 // -----------------------------------------------------------------------------
 // Business modules don't approve anything themselves. When a high-risk
 // operation (see maker-checker-registry.ts) is attempted, the module hands the
 // intended change here as an inert, serialisable payload. This module:
 //
 //   1. Persists the intended change (status `pending`) — nothing is applied.
-//   2. Raises an approval request on the SPEC 11 engine using the operation's
+// 2. Raises an approval request on the engine using the operation's
 //      module key, so the *existing* rule/level/delegation/escalation machinery
 //      decides who the checker is.
 //   3. Only when a checker approves (segregation enforced in the engine) does
@@ -215,7 +215,7 @@ export type SubmitResult = {
 /**
  * Capture a high-risk change and route it through approval. Nothing in the
  * business domain is mutated here — the payload is stored and an approval
- * request is raised. If no approval rule matches, the SPEC 11 engine reports
+ * request is raised. If no approval rule matches, the engine reports
  * `autoApproved`, and we apply immediately (there is no configured authority to
  * hold it), recording the change as `auto_applied`.
  *

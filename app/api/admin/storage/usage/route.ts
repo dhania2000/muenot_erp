@@ -5,7 +5,7 @@ import { getStorageQuotaDashboard, setQuotaSettings } from "@/lib/storage"
 
 export const runtime = "nodejs"
 
-/** SPEC 35 — storage usage & quota dashboard (already fully modeled). */
+/** storage usage & quota dashboard (already fully modeled). */
 export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

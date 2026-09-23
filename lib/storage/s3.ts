@@ -29,7 +29,7 @@ import { getProviderDefinition, type ServerSideEncryptionMode } from "./provider
 import { clampTtl } from "./signing"
 
 /**
- * SPEC 28 — Classify a failure from the initial HeadBucket probe so the report
+ * Classify a failure from the initial HeadBucket probe so the report
  * can attribute it to the right stage. An HTTP status means we reached the
  * service (so connectivity is fine) and the problem is auth vs. bucket; no
  * status means the request never completed the round trip (network) unless the
@@ -70,9 +70,9 @@ export class S3StorageProvider implements StorageProvider {
   private readonly client: S3Client
   private readonly bucket: string
   private readonly publicBaseUrl: string | null
-  /** SPEC 27 — bucket-level key prefix, applied transparently to every key. */
+  /** bucket-level key prefix, applied transparently to every key. */
   private readonly prefix: string
-  /** SPEC 27 — server-side encryption applied to uploaded objects. */
+  /** server-side encryption applied to uploaded objects. */
   private readonly sse: ServerSideEncryptionMode
 
   constructor(conn: ResolvedConnection) {
@@ -129,7 +129,7 @@ export class S3StorageProvider implements StorageProvider {
       new GetObjectCommand({
         Bucket: this.bucket,
         Key: this.full(key),
-        // SPEC 31 — forward the raw Range so S3 returns a 206 byte slice.
+        // forward the raw Range so S3 returns a 206 byte slice.
         ...(opts.range ? { Range: opts.range } : {}),
       }),
     )
@@ -189,7 +189,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   /**
-   * SPEC 29 — Native S3 presigned GET URL. The URL is time-limited and scoped
+   * Native S3 presigned GET URL. The URL is time-limited and scoped
    * to the single object; the bucket stays private (no public ACL needed).
    * The caller is responsible for having validated session + tenant ownership
    * of `key` before requesting this.
@@ -202,7 +202,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   /**
-   * SPEC 30 — Native S3 multipart upload. The upload ID returned by the service
+   * Native S3 multipart upload. The upload ID returned by the service
    * is stable across requests, so each chunk arrives as its own stateless HTTP
    * request and is streamed straight to the bucket without buffering the whole
    * file server-side.
@@ -266,7 +266,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   /**
-   * SPEC 28 — Full diagnostic run. Probes every storage capability in order and
+   * Full diagnostic run. Probes every storage capability in order and
    * reports each as pass/fail/skip. Later probes are skipped (never run) once a
    * prerequisite fails, so an admin sees exactly where the chain breaks without
    * a cascade of misleading errors. A temporary object is written under a

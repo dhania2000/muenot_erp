@@ -4,7 +4,7 @@ import { setCouponActive, BillingError } from "@/lib/billing/billing-engine"
 
 export const runtime = "nodejs"
 
-/** SPEC 20 — Enable/disable a coupon. Tenant-scoped ownership check inside. */
+/** Enable/disable a coupon. Tenant-scoped ownership check inside. */
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })

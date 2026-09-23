@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 38 — Secret management. Server orchestration (Phases 2 & 3).
+ * Secret management. Server orchestration (Phases 2 & 3).
  * ---------------------------------------------------------------------------
  * The one place the platform READS and WRITES managed secrets. It owns:
  *

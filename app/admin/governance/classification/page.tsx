@@ -1,7 +1,7 @@
 import { GovernanceTabs } from "@/components/governance/governance-tabs"
 import { ClassificationEditor } from "@/components/governance/classification-editor"
 
-// SPEC 69 — Data Classification. Generalizes classification beyond Finance to
+// Data Classification. Generalizes classification beyond Finance to
 // any module/entity/field, with the five standard sensitivity levels. Backed
 // by a real, tenant-scoped, audited server model (lib/data-classification.ts)
 // whose clearance matrix + per-mapping toggles influence access, export and

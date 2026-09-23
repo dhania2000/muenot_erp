@@ -1,7 +1,7 @@
 import "server-only"
 
 /**
- * SPEC 78 — Scalability: a small, dependency-free in-process caching layer.
+ * Scalability: a small, dependency-free in-process caching layer.
  * ---------------------------------------------------------------------------
  * Read-heavy hot paths (plan-tier lookups, config resolution, reference data)
  * repeatedly hit MySQL for values that change rarely. Before this module every

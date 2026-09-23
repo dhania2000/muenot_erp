@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 56-57 — short-lived, signed cookie carrying the OAuth `state` and
+ * — short-lived, signed cookie carrying the OAuth `state` and
  * OIDC `nonce` between the /login redirect and the /callback handler.
  * Signed (not just opaque) so a tampered value fails verification outright;
  * short TTL (5 min) limits the CSRF/replay window.

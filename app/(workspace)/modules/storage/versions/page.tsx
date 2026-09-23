@@ -2,7 +2,7 @@ import { billingGuard } from "@/lib/billing-guard"
 import { LargeUploadsPanel } from "@/components/storage/large-uploads-panel"
 import { FileVersionsPanel } from "@/components/storage/file-versions-panel"
 
-// SPEC 33 — Storage → Versions.
+// Storage → Versions.
 export default async function Page() {
   await billingGuard()
   return (

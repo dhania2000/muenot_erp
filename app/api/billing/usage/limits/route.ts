@@ -7,7 +7,7 @@ export const runtime = "nodejs"
 const PERIODS: LimitPeriod[] = ["month", "day", "none"]
 
 /**
- * SPEC 19 — Configure per-tenant usage quotas. Admin-only. Tenant is derived
+ * Configure per-tenant usage quotas. Admin-only. Tenant is derived
  * from the session, so a request can only ever set its own organisation's
  * limits.
  */

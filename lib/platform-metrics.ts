@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 4 — Read-only platform observability aggregations.
+ * Read-only platform observability aggregations.
  * ---------------------------------------------------------------------------
  * Everything here is derived live from real state (the database, the running
  * process, the environment) — no fabricated numbers. Used by the Super Admin

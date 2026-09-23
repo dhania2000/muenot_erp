@@ -28,7 +28,7 @@ beforeEach(()=>{
     return [[]]
   })
 })
-describe("SPEC 49 contracts",()=>{
+describe(" contracts",()=>{
   it("defaults in-app and mobile push notifications to enabled",()=>expect(CHANNELS.filter(defaultEnabled)).toEqual(["in_app","push"]))
   it("renders literal variables, not expressions",()=>{
     expect(renderTemplate("Hello {{ name }}",{name:"<script>"})).toBe("Hello <script>")
@@ -41,7 +41,7 @@ describe("SPEC 49 contracts",()=>{
   })
   it("accepts internal links and UTC schedules",()=>expect(()=>validateNotice({...notice,link:"/dashboard",at:"2027-01-01T10:00:00Z",priority:10})).not.toThrow())
 })
-describe("SPEC 49 transaction protocol (mock database)",()=>{
+describe(" transaction protocol (mock database)",()=>{
   it("enqueues using caller transaction and tenant-scoped recipient and identity",async()=>{
     expect(await enqueueNotification({query:mock.sql} as any,notice)).toBe(8)
     expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("tenant_id=? AND id=? AND status='active'"),[7,5])

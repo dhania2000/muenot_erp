@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { addItem } from "@/lib/legal-hold-store"
 
-// SPEC 72 — add a coverage item to an active legal hold. Tenant-admin only,
+// add a coverage item to an active legal hold. Tenant-admin only,
 // tenant-scoped, and audited.
 
 export const runtime = "nodejs"

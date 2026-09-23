@@ -19,7 +19,7 @@ afterEach(() => {
   process.env = { ...originalEnv }
 })
 
-describe("SPEC 77 — readiness probe", () => {
+describe("readiness probe", () => {
   it("is ready when the database responds", async () => {
     mock.poolQuery.mockResolvedValue([[{ 1: 1 }]])
     const report = await getReadiness()

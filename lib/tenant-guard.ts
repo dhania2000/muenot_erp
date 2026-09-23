@@ -1,5 +1,5 @@
 /**
- * SPEC 2 — Fail-closed tenant data-access guard.
+ * Fail-closed tenant data-access guard.
  * ---------------------------------------------------------------------------
  * MySQL has no row-level security, so isolation is enforced in the application
  * data layer. Every SQL statement that reaches lib/db.ts#query is inspected

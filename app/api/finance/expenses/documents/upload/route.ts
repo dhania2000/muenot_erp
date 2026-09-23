@@ -4,7 +4,7 @@ import { uploadFile } from "@/lib/storage"
 
 /**
  * Document upload for the Expense form (Phase 22) — receipts, vendor invoices
- * and supporting files. Uses the SPEC 26 storage facade so uploads land in the
+ * and supporting files. Uses the storage facade so uploads land in the
  * tenant's connected storage (their own S3-compatible bucket, or the platform
  * default) under a tenant-scoped key. The returned reference is persisted onto
  * the expense row and resolves back through the download proxy.

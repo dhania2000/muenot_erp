@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 85 — resource registry.
+ * resource registry.
  *
  * A module gains bulk actions by registering a `BulkResourceDef` here. Each
  * resource owns three concerns the engine delegates: loading records already

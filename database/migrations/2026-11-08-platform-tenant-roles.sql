@@ -1,5 +1,5 @@
 -- =============================================================
--- SPEC 3 — Platform vs Tenant role separation (additive, non-destructive)
+-- Platform vs Tenant role separation (additive, non-destructive)
 -- -------------------------------------------------------------
 -- Introduces two ORTHOGONAL role axes on `users` plus an audit trail, so that
 -- operating the Muenot PLATFORM and operating a single TENANT's data are

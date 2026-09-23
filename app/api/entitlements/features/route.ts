@@ -3,7 +3,7 @@ import { requireTenant } from "@/lib/api-auth"
 import { getTenantFeatureMap } from "@/lib/platform/feature-guard"
 
 /**
- * SPEC 18 — Phase 3. The tenant's own resolved feature map.
+ * Phase 3. The tenant's own resolved feature map.
  * Returns every catalogued feature with its resolved state (enabled / disabled
  * / limited / metered) and live usage for capacity features. This is the SAME
  * resolution the server guard enforces, so the client can render accurate

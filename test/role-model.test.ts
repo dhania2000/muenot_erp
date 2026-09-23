@@ -17,7 +17,7 @@ import {
 } from "@/lib/role-model"
 
 /**
- * SPEC 3 — Phase 4. These tests are the evidence that the platform/tenant
+ * Phase 4. These tests are the evidence that the platform/tenant
  * boundary holds: a platform role never leaks tenant-data authority, a tenant
  * role never reaches the platform, impersonation is bounded, and no actor can
  * escalate privileges (their own or others') beyond what they already hold.

@@ -10,7 +10,7 @@ import {
 import type { BulkActorContext, BulkResourceDef } from "@/lib/bulk-actions/types"
 
 /**
- * SPEC 85 — engine unit tests. The engine is deliberately persistence-free, so
+ * engine unit tests. The engine is deliberately persistence-free, so
  * these exercise its batching, permission, partial-failure, export, and
  * cancellation behavior against an in-memory resource.
  */

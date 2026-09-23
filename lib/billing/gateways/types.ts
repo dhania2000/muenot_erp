@@ -1,5 +1,5 @@
 /**
- * SPEC 21 — Payment gateway abstraction (Phase 1: provider interface).
+ * Payment gateway abstraction (Phase 1: provider interface).
  * ---------------------------------------------------------------------------
  * Muenot must be able to charge through Razorpay today and Stripe (or any
  * future provider) tomorrow WITHOUT the billing engine knowing which one is

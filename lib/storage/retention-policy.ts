@@ -1,8 +1,8 @@
 /**
- * SPEC 36 — Configurable storage retention (pure).
+ * Configurable storage retention (pure).
  * ---------------------------------------------------------------------------
- * SPEC 32 gave every stored file a fixed-preset retention policy baked in at
- * upload time. SPEC 36 makes retention CONFIGURABLE per tenant: a tenant sets a
+ * gave every stored file a fixed-preset retention policy baked in at
+ * upload time. makes retention CONFIGURABLE per tenant: a tenant sets a
  * default rule, overrides it per module, puts individual files on legal hold,
  * and can manually override a single file's expiry — and an automatic cleanup
  * job purges whatever has aged out (never touching anything under legal hold).
@@ -47,7 +47,7 @@ export const MAX_RETENTION_AMOUNT = 3650 // 10y in days; also caps months/years 
 
 /**
  * The safe default: keep for 7 years (the common statutory floor for
- * tax/audit records), matching the SPEC 32 `default` preset. A tenant can lower
+ * tax/audit records), matching the `default` preset. A tenant can lower
  * or raise this, or switch to permanent.
  */
 export const DEFAULT_RETENTION_RULE: RetentionRule = { mode: "duration", amount: 7, unit: "years" }

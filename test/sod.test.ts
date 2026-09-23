@@ -17,7 +17,7 @@ import {
 import type { ModulePermission } from "@/lib/permission-model"
 
 /**
- * SPEC 13 — Phase 4. DB-free proof of the segregation-of-duties policy engine:
+ * Phase 4. DB-free proof of the segregation-of-duties policy engine:
  * a single user must never hold both sides of an incompatible duty pair, a
  * disabled conflict must never fire, and only "block" enforcement stops an
  * assignment. Plus conflict-matrix / duty-catalog integrity for the four

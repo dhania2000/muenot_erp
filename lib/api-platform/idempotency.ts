@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 51 — Idempotency for unsafe (mutating) requests.
+ * Idempotency for unsafe (mutating) requests.
  * ---------------------------------------------------------------------------
  * Callers send an `Idempotency-Key` header on POST/PUT/PATCH. The first request
  * with a given (key_id, idempotency_key) runs normally and its response is

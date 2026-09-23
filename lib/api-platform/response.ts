@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 51 — Standard success/error envelopes + response headers.
+ * Standard success/error envelopes + response headers.
  * ---------------------------------------------------------------------------
  * Success:  { "data": <payload>, "meta"?: <pagination/etc>, "request_id": "..." }
  * Error:    { "error": { "code", "message", "details?", "request_id" } }

@@ -60,7 +60,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   await query("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?", [passwordHash, id])
   await recordPasswordChange(target.id, passwordHash, null)
 
-  // SPEC 60 — an admin-forced reset evicts the target from every device: all
+  // an admin-forced reset evicts the target from every device: all
   // of their standing sessions are revoked so the old password (and any live
   // session an attacker may hold) can no longer be used.
   try {

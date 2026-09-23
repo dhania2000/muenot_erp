@@ -8,7 +8,7 @@ import { logStorageAudit } from "@/lib/storage/connection-store"
 export const runtime = "nodejs"
 
 /**
- * SPEC 36 — Phase 3. Per-module retention override.
+ * Phase 3. Per-module retention override.
  *   POST { module, rule }        → set/replace a module-specific rule.
  *   POST { module, rule: null }  → clear the override (module follows default).
  */

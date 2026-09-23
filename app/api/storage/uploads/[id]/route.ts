@@ -6,7 +6,7 @@ import { getSessionStatus } from "@/lib/storage/multipart-store"
 export const runtime = "nodejs"
 
 /**
- * SPEC 30 — A single upload session.
+ * A single upload session.
  * GET    → current status incl. which part numbers already landed (resume).
  * DELETE → cancel the upload (aborts the provider multipart upload).
  */

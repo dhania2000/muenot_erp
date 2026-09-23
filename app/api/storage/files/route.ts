@@ -6,7 +6,7 @@ import { listFileMetadata } from "@/lib/storage"
 export const runtime = "nodejs"
 
 /**
- * SPEC 33 — List the current tenant's versioned files (one row per logical
+ * List the current tenant's versioned files (one row per logical
  * file: the current version). Powers the "Document versions" file picker.
  */
 export async function GET(req: NextRequest) {

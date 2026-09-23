@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { deleteClassificationMapping, updateClassificationMapping } from "@/lib/data-classification"
 
-// SPEC 69 — update / delete a single classification mapping. Tenant-admin only,
+// update / delete a single classification mapping. Tenant-admin only,
 // tenant-scoped (a foreign id resolves to null → 404), and audited.
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {

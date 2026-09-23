@@ -3,7 +3,7 @@ import { configureGatewaysFromEnv, hasGateway, getGateway } from "@/lib/billing/
 import { applyGatewayEvent } from "@/lib/billing/gateways/webhook-service"
 
 /**
- * SPEC 21 — Provider-neutral webhook receiver (Phase 3).
+ * Provider-neutral webhook receiver (Phase 3).
  * ---------------------------------------------------------------------------
  * A single endpoint serves every provider: `/api/billing/webhooks/razorpay`,
  * `/api/billing/webhooks/stripe`, etc. It looks up the adapter by the path

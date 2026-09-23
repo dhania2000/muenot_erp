@@ -5,7 +5,7 @@ import { completeLargeUpload } from "@/lib/storage"
 export const runtime = "nodejs"
 
 /**
- * SPEC 30 — Finalize a multipart upload once every chunk has landed. Returns
+ * Finalize a multipart upload once every chunk has landed. Returns
  * the tenant-scoped storage key + result so the caller can persist a reference.
  */
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {

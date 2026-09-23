@@ -2,7 +2,7 @@ import { Archive } from "lucide-react"
 import { requirePlatformStaff } from "@/lib/platform-guard"
 import { BackupsConsole } from "@/components/platform/backups-console"
 
-// SPEC 75 — Platform Backup Operations. A real, tenant-aware backup engine:
+// Platform Backup Operations. A real, tenant-aware backup engine:
 // per-tenant + baseline policies, encrypted logical snapshots (database / file
 // manifest / configuration), integrity verification, retention and
 // non-destructive restore testing. History is never fabricated — a scope shows

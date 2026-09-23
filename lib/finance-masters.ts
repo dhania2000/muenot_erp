@@ -5,7 +5,7 @@ import { query } from "@/lib/db"
  *
  * Three reusable masters back the invoice line editor so tax rates, HSN/SAC
  * codes and product/service definitions are configured in ONE place instead of
- * being hard-coded across the UI (spec 44–50):
+ * being hard-coded across the UI (–50):
  *
  *   - finance_tax_rates   : configurable GST rate slabs + tax categories.
  *   - finance_hsn_sac     : reusable HSN (goods) / SAC (services) catalogue.
@@ -131,7 +131,7 @@ async function seedIfEmpty() {
   }
 
   if (await isEmpty("finance_products")) {
-    // Representative service catalogue (spec 45 — service-oriented business).
+    // Representative service catalogue (service-oriented business).
     const items: Array<[string, string, string, number, string]> = [
       ["SVC-CONSULT", "Consulting Services", "Hours", 0, "998311"],
       ["SVC-DEV", "Software Development", "Hours", 0, "998314"],

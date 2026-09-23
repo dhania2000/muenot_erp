@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 62 — IP allowlisting.
+ * IP allowlisting.
  * ---------------------------------------------------------------------------
  * Tenants can restrict sign-in to specific CIDR ranges. Enforcement is
  * opt-in per tenant (security.ip_allowlist_enabled) so adding entries never

@@ -4,7 +4,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * SPEC 77 — Liveness probe.
+ * Liveness probe.
  *
  * Answers "is this process up and able to serve HTTP?" with no dependency
  * checks, so a transient database outage does not cause the orchestrator to

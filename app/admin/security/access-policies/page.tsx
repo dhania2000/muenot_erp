@@ -20,7 +20,7 @@ const PLATFORM_ROLES: { role: string; description: string }[] = [
   { role: "none", description: "Not a platform operator." },
 ]
 
-// SPEC 63 — Access policies. A fixed, enforced role model already exists
+// Access policies. A fixed, enforced role model already exists
 // (lib/role-model.ts + lib/platform-guard.ts) and is checked on every
 // tenant-admin route. On top of that, tenant admins can now define CUSTOM,
 // condition-based policies in the builder below: those are persisted
@@ -30,7 +30,7 @@ const PLATFORM_ROLES: { role: string; description: string }[] = [
 export default function AccessPoliciesPage() {
   return (
     <div className="space-y-6">
-      <SecurityHeading title="Access policies" spec="Spec 63">
+      <SecurityHeading title="Access policies" spec="">
         Roles that control what a user can see and do, plus custom conditional policies. The platform and tenant
         role axes are enforced on every admin request; conditional policies are evaluated at sign-in.
       </SecurityHeading>

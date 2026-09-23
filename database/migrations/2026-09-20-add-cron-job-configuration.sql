@@ -1,5 +1,5 @@
 -- ============================================================================
--- SPEC 40 — Safe platform scheduled-job configuration.
+-- Safe platform scheduled-job configuration.
 -- The endpoint is always selected from the reviewed application allow-list;
 -- this schema intentionally has no command or user-supplied URL column.
 -- ============================================================================

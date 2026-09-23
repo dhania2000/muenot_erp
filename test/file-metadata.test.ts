@@ -17,7 +17,7 @@ import {
 import { checksumMatches, formatFileRef, normalizeUploadStatus, sha256 } from "@/lib/storage/file-metadata"
 
 /**
- * SPEC 32 — Phase 4. Pure, DB-free validation of the centralized file metadata
+ * Phase 4. Pure, DB-free validation of the centralized file metadata
  * governance layer: integrity hashing, classification vocabulary, and the
  * retention policy → concrete expiry → lifecycle-eligibility pipeline. Uses
  * fixed clocks so the time-based assertions are deterministic.

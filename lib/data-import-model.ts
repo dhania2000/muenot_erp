@@ -1,5 +1,5 @@
 /**
- * SPEC 74 — Enterprise Data Import (pure, testable model).
+ * Enterprise Data Import (pure, testable model).
  * ---------------------------------------------------------------------------
  * An import takes a chosen DATASET (a module registered in IMPORT_CONFIGS), a
  * user-supplied FILE (CSV / Excel / JSON) parsed into raw rows, and a MAPPING

@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 51 — The shared public-API request pipeline.
+ * The shared public-API request pipeline.
  * ---------------------------------------------------------------------------
  * `withApiV1` wraps a route handler so that EVERY `/api/v1/*` endpoint gets the
  * same cross-cutting behavior, in a fixed order, without re-implementing it:
@@ -8,7 +8,7 @@ import "server-only"
  *   1. Request ID        — generate `req_...`, echoed on every response + logs.
  *   2. Version pin       — honor `X-API-Version`; reject unknown versions.
  *   3. Authentication    — Bearer API key (lib/api-auth.ts), fail-closed.
- *   4. IP restrictions   — per-key CIDR allowlist (SPEC 52).
+ * 4. IP restrictions — per-key CIDR allowlist.
  *   5. Environment gate  — optionally require a live/test key.
  *   6. Authorization     — required scopes must all be granted.
  *   7. Rate limiting     — per-key fixed window; sets X-RateLimit-* headers.
@@ -54,7 +54,7 @@ export type ApiV1Options = {
   /** Required scope(s). All listed scopes must be granted on the key. */
   scopes?: string | string[]
   /**
-   * Rate limiting for this endpoint (SPEC 53). Limits are resolved from the
+   * Rate limiting for this endpoint. Limits are resolved from the
    * caller's plan tier; pass a partial override here to make an expensive
    * endpoint stricter (each provided window caps at min(plan, override)).
    * Pass `false` to disable rate limiting for this endpoint entirely.
@@ -71,7 +71,7 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"])
 /**
  * Plan-tier lookups hit the tenants table, so cache the resolved tier briefly
  * to keep the rate-limit check off the DB on the hot path. The shared TTL cache
- * (SPEC 78) bounds memory under many tenants and single-flights concurrent
+ * bounds memory under many tenants and single-flights concurrent
  * misses so a cold cache under load does not stampede the tenants table.
  */
 const TIER_CACHE_TTL_MS = 60_000
@@ -211,7 +211,7 @@ export function withApiV1<P = Record<string, string>>(
         }
       }
 
-      // 7. Rate limiting (per key, plan-tiered, multi-window — SPEC 53).
+      // 7. Rate limiting (per key, plan-tiered, multi-window — ).
       let rateHeaders: Record<string, string> = {}
       if (options.rateLimit !== false) {
         const planTier = await tierForTenant(auth.tenantId)

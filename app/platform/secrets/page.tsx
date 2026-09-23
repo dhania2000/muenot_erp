@@ -4,7 +4,7 @@ import { isEncryptionConfigured } from "@/lib/secrets/crypto"
 import { SecretsManager } from "@/components/platform/secrets-manager"
 
 /**
- * SPEC 38 — Secret management console. Any platform staff may VIEW the masked
+ * Secret management console. Any platform staff may VIEW the masked
  * inventory and access audit; only a platform super-admin may set or rotate a
  * value. No plaintext ever reaches this surface — the overview is the masked,
  * exposure-free projection.

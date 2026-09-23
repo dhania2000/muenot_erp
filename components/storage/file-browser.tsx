@@ -61,7 +61,7 @@ function formatDate(iso: string | null): string {
 const PAGE_SIZE = 20
 
 /**
- * SPEC 32 — File browsing. Table over the tenant's centralized file metadata
+ * File browsing. Table over the tenant's centralized file metadata
  * (module, owner, provider, type, size, version, security state,
  * classification, uploader, updated date) with search, module filter and
  * pagination. Clicking a row opens the File Detail drawer.

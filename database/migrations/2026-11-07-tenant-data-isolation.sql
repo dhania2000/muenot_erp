@@ -1,5 +1,5 @@
 -- =============================================================
--- SPEC 2 — Tenant data isolation (additive, non-destructive)
+-- Tenant data isolation (additive, non-destructive)
 -- -------------------------------------------------------------
 -- Adds the `tenant_id` discriminator, a covering index, and a foreign key to
 -- every tenant-owned business table (see lib/tenant-tables.ts for the

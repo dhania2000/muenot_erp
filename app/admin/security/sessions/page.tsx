@@ -10,7 +10,7 @@ import { listActiveSessions } from "@/lib/session-store"
 
 export const dynamic = "force-dynamic"
 
-// SPEC 61 — Session management, backed by lib/session-store.ts. Every login
+// Session management, backed by lib/session-store.ts. Every login
 // (password or SSO) now writes a server-side session row keyed by the `sid`
 // embedded in the signed JWT, so this screen lists real, revocable sessions
 // rather than a static mock.
@@ -23,7 +23,7 @@ export default async function SessionsPage() {
 
   return (
     <div className="space-y-6">
-      <SecurityHeading title="Session management" spec="Spec 61">
+      <SecurityHeading title="Session management" spec="">
         See who is signed in, from where, and end sessions individually or all at once.
       </SecurityHeading>
 
@@ -39,7 +39,7 @@ export default async function SessionsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Session policy</CardTitle>
-          <CardDescription>Spec 61 — enforced defaults; per-tenant tuning is not yet exposed here.</CardDescription>
+          <CardDescription>enforced defaults; per-tenant tuning is not yet exposed here.</CardDescription>
         </CardHeader>
         <CardContent>
           <FieldSpecGrid>

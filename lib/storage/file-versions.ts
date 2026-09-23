@@ -12,9 +12,9 @@ import {
 } from "./file-metadata"
 
 /**
- * SPEC 33 — File / document versioning.
+ * File / document versioning.
  * ---------------------------------------------------------------------------
- * SPEC 32 already models the *version chain* for a logical file inside
+ * already models the *version chain* for a logical file inside
  * `file_objects` (version, is_current, supersedes_id): every re-upload of the
  * same (module, entity, filename) retires the prior current row and creates
  * version N+1. This module is the versioning *behaviour* on top of that model:
@@ -28,7 +28,7 @@ import {
  *   - keep an append-only AUDIT trail of the version actions (restore/download)
  *     alongside the intrinsic upload metadata every version already carries.
  *
- * Everything is tenant-scoped through the SPEC 2 helpers, so one tenant can
+ * Everything is tenant-scoped through the helpers, so one tenant can
  * never see, restore, download or audit another tenant's file versions.
  */
 

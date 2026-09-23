@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { deleteException } from "@/lib/retention-engine"
 
-// SPEC 71 — remove a single retention exception. Tenant-admin only, tenant-scoped, audited.
+// remove a single retention exception. Tenant-admin only, tenant-scoped, audited.
 
 export const runtime = "nodejs"
 

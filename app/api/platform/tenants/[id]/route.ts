@@ -4,7 +4,7 @@ import { setTenantStatus, type TenantStatus } from "@/lib/tenant-service"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 4 — Tenant lifecycle. Suspending / reactivating / deactivating a
+ * Tenant lifecycle. Suspending / reactivating / deactivating a
  * customer tenant is a high-privilege platform action (it can lock an entire
  * customer out), so it is restricted to platform super admins and every change
  * is written to the platform audit log as a security-relevant event.

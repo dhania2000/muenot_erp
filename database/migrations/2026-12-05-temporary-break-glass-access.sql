@@ -1,4 +1,4 @@
--- SPEC 64 — Temporary access & SPEC 65 — Break-glass (emergency) access.
+-- Temporary access & Break-glass (emergency) access.
 --
 -- A single time-boxed access-grant table backing both features. It is also
 -- self-healed at runtime by lib/temporary-access-store.ts (same pattern as

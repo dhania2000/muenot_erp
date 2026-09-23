@@ -1,6 +1,6 @@
 "use client"
 
-// SPEC 68 — Audit log retention admin. Configure the tenant's retention window,
+// Audit log retention admin. Configure the tenant's retention window,
 // archive/purge behavior, place and release legal holds, run the lifecycle on
 // demand, and export sealed immutable archives.
 import { useState } from "react"

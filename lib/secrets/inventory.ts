@@ -1,12 +1,12 @@
 /**
- * SPEC 38 — Secret management. PHASE 1: INVENTORY.
+ * Secret management. PHASE 1: INVENTORY.
  * ---------------------------------------------------------------------------
  * The single, reviewed catalogue of every SECRET the platform holds. This is
  * pure data — descriptors, never values — so the masking, rotation and audit
  * rules built on top of it (lib/secrets/model.ts) are unit-testable without a
  * database, a running server, or `server-only` (Phase 4).
  *
- * A secret is deliberately narrower than a config value (SPEC 37): only the
+ * A secret is deliberately narrower than a config value: only the
  * classes the spec enumerates live here —
  *   API keys · OAuth secrets · Storage credentials · SMTP credentials ·
  *   Payment secrets · Webhook secrets · Encryption keys.

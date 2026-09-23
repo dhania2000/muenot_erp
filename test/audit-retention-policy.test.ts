@@ -16,7 +16,7 @@ import {
 } from "@/lib/audit-retention-policy"
 
 /**
- * SPEC 68 — Phase 4. Pure, DB-free validation of the audit retention model:
+ * Phase 4. Pure, DB-free validation of the audit retention model:
  * day-count clamping, the platform compliance FLOOR that a tenant may never
  * drop below, the tenant → platform resolution precedence, retention cutoff
  * arithmetic, and the legal-hold matching predicate (including the guarantee

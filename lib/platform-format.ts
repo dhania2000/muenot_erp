@@ -1,4 +1,4 @@
-/** SPEC 4 — client-safe formatting helpers for the platform console. */
+/** client-safe formatting helpers for the platform console. */
 
 export function formatCurrency(amount: number, currency = "USD"): string {
   try {

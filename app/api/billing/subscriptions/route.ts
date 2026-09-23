@@ -10,8 +10,8 @@ import {
 export const runtime = "nodejs"
 
 /**
- * SPEC 16 — Tenant subscriptions. Reads are scoped to the acting tenant by the
- * tenant-scope data layer (SPEC 2); a client can never see another tenant's
+ * Tenant subscriptions. Reads are scoped to the acting tenant by the
+ * tenant-scope data layer; a client can never see another tenant's
  * subscription. billingGuard enforces an authenticated admin session.
  */
 

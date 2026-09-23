@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth"
 import { getCurrentTenant } from "@/lib/tenant-context"
 import { getOperationGates, setOperationGate, listChanges, type ChangeStatus } from "@/lib/maker-checker"
 
-// SPEC 12 — admin console backend. Configure which high-risk operations require
+// admin console backend. Configure which high-risk operations require
 // maker-checker, and review captured changes. Admin-only, tenant-scoped.
 
 async function requireAdmin() {

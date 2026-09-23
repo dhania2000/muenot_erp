@@ -15,16 +15,16 @@ import {
 export const runtime = "nodejs"
 
 /**
- * SPEC 29 + SPEC 31 — Tenant-scoped media delivery proxy.
+ * + Tenant-scoped media delivery proxy.
  * ---------------------------------------------------------------------------
- * ACCESS (SPEC 29): a request is authorised one of two ways, and the object
+ * ACCESS: a request is authorised one of two ways, and the object
  * key's tenant segment MUST match in BOTH — a forged/guessed cross-tenant key
  * returns 404:
  *   1. A valid session whose tenant owns the key (interactive browsing), or
  *   2. A short-lived HMAC-signed token bound to this exact key (cookieless
  *      contexts: <img>/<video>/<embed>, PDF viewers, emailed links).
  *
- * DELIVERY (SPEC 31): once authorised, the object is streamed with CDN-friendly
+ * DELIVERY: once authorised, the object is streamed with CDN-friendly
  * semantics driven by lib/storage/cdn.ts:
  *   - HTTP Range → 206 Partial Content (seekable video/audio, CDN slice fetch),
  *   - per-media-kind Cache-Control (signed URLs are cacheable per-URL for the
@@ -158,7 +158,7 @@ function buildHeaders(args: {
   headers.set("Content-Type", obj.contentType || "application/octet-stream")
   if (obj.size != null) headers.set("Content-Length", String(obj.size))
 
-  // SPEC 31 — media-aware, context-aware cache policy.
+  // media-aware, context-aware cache policy.
   headers.set("Cache-Control", cacheControlFor({ access, kind, remainingTtlSeconds: remainingTtl }))
 
   // Content-Disposition: inline for media, attachment for documents/downloads.

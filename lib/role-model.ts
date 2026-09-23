@@ -1,8 +1,8 @@
 // =============================================================
-// SPEC 3 — Platform vs Tenant role model (pure, testable core)
+// Platform vs Tenant role model (pure, testable core)
 // -------------------------------------------------------------
 // The ERP is a single Muenot platform hosting many independent customer
-// tenants (see SPEC 1/2). Until now the only roles were the coarse
+// tenants (see ). Until now the only roles were the coarse
 // `users.role` = admin | employee, which made a Muenot admin functionally
 // identical to a customer-tenant admin — there was NO boundary between
 // operating the PLATFORM and operating a single TENANT's data.
@@ -22,7 +22,7 @@
 //                      permission matrix to specific modules)
 //     employee      -> normal user, scoped by the permission matrix
 //
-// THE BOUNDARY (the core requirement of SPEC 3):
+// THE BOUNDARY (the core requirement of ):
 //   * A platform role NEVER implicitly grants tenant-data permissions. A
 //     platform super admin cannot add/edit/delete a customer tenant's
 //     records just by being a platform admin — they must explicitly and

@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth"
 import { getConsolidatedReport } from "@/lib/legal-entities"
 
 /**
- * SPEC 7 — entity-level + consolidated reporting.
+ * entity-level + consolidated reporting.
  * Rolls up the posted General Ledger per entity and returns a consolidated
  * total with inter-company movements eliminated. Optional financial_year /
  * date_from / date_to filters narrow the window.

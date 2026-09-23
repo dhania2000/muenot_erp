@@ -11,7 +11,7 @@ import {
 export const runtime = "nodejs"
 
 /**
- * SPEC 16 — Lifecycle actions on a single subscription:
+ * Lifecycle actions on a single subscription:
  *   renew   — record a payment / extend by one term and restore access
  *   cancel  — cancel now, or schedule at period end ({ atPeriodEnd: true })
  *   suspend — admin block (e.g. compliance / non-payment escalation)

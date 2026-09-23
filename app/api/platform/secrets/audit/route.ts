@@ -3,7 +3,7 @@ import { requirePlatformStaff } from "@/lib/platform-guard"
 import { listAccessLog } from "@/lib/secrets/store"
 
 /**
- * SPEC 38 — Secret access audit. Any platform staff may read the access log
+ * Secret access audit. Any platform staff may read the access log
  * (create/update/rotate/clear/access). The log records WHO touched WHICH secret
  * and WHEN — never the value — so it is safe to return in full.
  */

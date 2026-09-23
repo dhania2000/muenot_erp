@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 19 — Usage Metering (per-tenant).
+ * Usage Metering (per-tenant).
  * ---------------------------------------------------------------------------
  * Tracks how much of each measurable resource a tenant consumes so the product
  * can power usage-based billing, quotas and capacity reports.

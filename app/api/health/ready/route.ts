@@ -5,7 +5,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * SPEC 77 — Readiness probe.
+ * Readiness probe.
  *
  * Answers "should the load balancer send this node traffic right now?" Returns
  * 503 when a critical dependency (the database) is unreachable so the node is

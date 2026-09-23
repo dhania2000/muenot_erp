@@ -9,7 +9,7 @@ import {
 } from "@/lib/legal-entities"
 
 /**
- * SPEC 7 — per-entity bank / cash identities.
+ * per-entity bank / cash identities.
  * GET  : list bank accounts for one entity.
  * POST : add a bank account (optionally marked primary).
  */

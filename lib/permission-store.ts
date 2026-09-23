@@ -120,7 +120,7 @@ export async function getUserMatrix(userId: number): Promise<PermissionMatrix | 
 }
 
 /**
- * SPEC 8 — the EFFECTIVE matrix enforcement reads: the most-permissive union
+ * the EFFECTIVE matrix enforcement reads: the most-permissive union
  * of every custom role the user holds PLUS their per-user override matrix.
  *
  * Backward compatible: a user with only a personal matrix resolves to exactly
@@ -141,7 +141,7 @@ export async function getEffectiveUserMatrix(userId: number): Promise<Permission
     return getUserMatrix(userId)
   }
 
-  // SPEC 80 — the effective matrix is read on every permission check (sidebar
+  // the effective matrix is read on every permission check (sidebar
   // build, record scoping, API authorization). Cache it keyed by the OWNING
   // tenant so tenant A can never be served a matrix resolved for tenant B; the
   // userId is part of the subkey so users never collide either. Permission
@@ -207,7 +207,7 @@ export async function setUserMatrix(userId: number, matrix: PermissionMatrix, gr
     )
   }
 
-  // SPEC 80 — a personal matrix feeds the effective matrix in every tenant the
+  // a personal matrix feeds the effective matrix in every tenant the
   // user belongs to, and this path has no single tenant id to scope by, so drop
   // the whole permissions cache. Permission writes are rare; correctness wins.
   invalidateTargetForAllTenants("permissions")

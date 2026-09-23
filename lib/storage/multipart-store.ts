@@ -4,7 +4,7 @@ import { currentTenantId, scopedWhere, tenantInsert, tenantUpdate, tenantDelete 
 import type { MultipartPart } from "./types"
 
 /**
- * SPEC 30 — Resumable multipart upload session store.
+ * Resumable multipart upload session store.
  * ---------------------------------------------------------------------------
  * A "session" is one large file being uploaded in chunks. The heavy bytes live
  * in the tenant's storage backend (S3 / Vercel Blob); this store only tracks

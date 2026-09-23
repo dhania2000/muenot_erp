@@ -186,7 +186,7 @@ export function EmailsClient({ canSend, canManage = false }: { canSend: boolean;
         </div>
       </div>
 
-      {/* Filters: mail type, status, opened, date range (spec 76-80). */}
+      {/* Filters: mail type, status, opened, date range. */}
       <div className="flex flex-wrap items-center gap-2">
         <Select value={mailTypeFilter} onValueChange={(v) => setMailTypeFilter(v as MailTypeFilter)}>
           <SelectTrigger className="w-36" aria-label="Filter by type">

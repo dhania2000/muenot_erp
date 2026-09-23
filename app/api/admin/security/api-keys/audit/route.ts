@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth"
 import { getCurrentTenant } from "@/lib/tenant-context"
 import { listApiKeyEvents } from "@/lib/api-keys-store"
 
-// SPEC 52 — Read the immutable API-key audit trail (created / revoked /
+// Read the immutable API-key audit trail (created / revoked /
 // deleted / authenticated / auth_failed), optionally filtered to one key.
 export async function GET(request: Request) {
   const session = await getSession()

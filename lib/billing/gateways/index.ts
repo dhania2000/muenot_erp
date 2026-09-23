@@ -1,5 +1,5 @@
 /**
- * SPEC 21 — Payment gateway abstraction: public surface.
+ * Payment gateway abstraction: public surface.
  * Import providers and the canonical contract from here.
  */
 export * from "./types"

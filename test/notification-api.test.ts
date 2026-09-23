@@ -7,7 +7,7 @@ import { GET as preferences, POST as save } from "@/app/api/notification-prefere
 import { GET as worker } from "@/app/api/cron/notification-delivery/route"
 const request=(body:unknown,origin="https://erp.example")=>new Request("https://erp.example/api/admin/notification-engine",{method:"POST",headers:{origin},body:JSON.stringify(body)})
 beforeEach(()=>{vi.clearAllMocks();vi.stubEnv("APP_URL","https://erp.example");mock.guard.mockResolvedValue({ok:true,ctx:{},session:{userId:2}});mock.template.mockResolvedValue(10)})
-describe("SPEC 49 API boundaries",()=>{
+describe(" API boundaries",()=>{
   it("denies unauthenticated reads and writes",async()=>{
     mock.guard.mockResolvedValue({ok:false,status:403,reason:"Forbidden"})
     for(const response of [await GET(),await POST(request({})),await preferences(),await save(request({}))])expect(response.status).toBe(403)

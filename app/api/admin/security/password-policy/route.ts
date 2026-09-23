@@ -3,7 +3,7 @@ import { requireTenantAdmin } from "@/lib/platform-guard"
 import { getPasswordPolicy } from "@/lib/password-policy"
 import { setBool, setGlobalSetting } from "@/lib/settings/server"
 
-// SPEC 60 — Password policy configuration, actually enforced. GET returns the
+// Password policy configuration, actually enforced. GET returns the
 // live policy every auth code path checks (lib/password-policy.ts); PUT
 // persists it into the same settings store, so this screen is no longer a
 // disconnected mock.

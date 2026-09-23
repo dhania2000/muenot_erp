@@ -19,7 +19,7 @@ import {
 } from "@/lib/clients-db"
 
 /**
- * SPEC 67 + SPEC 51 — Public API surface for third-party integrations.
+ * + Public API surface for third-party integrations.
  * ---------------------------------------------------------------------------
  * Runs through the shared `withApiV1` pipeline (lib/api-platform/handler.ts),
  * which applies versioning, Bearer API-key auth, per-key IP restrictions,

@@ -1,5 +1,5 @@
 /**
- * SPEC 78 — Phase 4: scalability benchmark harness.
+ * Phase 4: scalability benchmark harness.
  * ---------------------------------------------------------------------------
  * A dependency-free, repeatable micro-benchmark for the two scalability
  * primitives this spec added/tuned, plus an optional live database probe:
@@ -156,7 +156,7 @@ async function benchPool() {
 
 async function main() {
   console.log("=".repeat(72))
-  console.log("SPEC 78 — Scalability benchmark")
+  console.log("Scalability benchmark")
   console.log(`node ${process.version} · ${new Date().toISOString()}`)
   console.log("=".repeat(72))
   console.log("")

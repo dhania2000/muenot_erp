@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * SPEC 16 — Shared client types and presentation helpers for the SaaS
+ * Shared client types and presentation helpers for the SaaS
  * subscription engine UI (subscriptions, plans, renewals).
  */
 

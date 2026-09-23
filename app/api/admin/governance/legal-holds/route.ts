@@ -3,10 +3,10 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { createHold, listHolds } from "@/lib/legal-hold-store"
 import { RETENTION_CATALOG } from "@/lib/retention-catalog"
 
-// SPEC 72 — General ERP Legal Hold admin API. Tenant-admin only, tenant-scoped,
+// General ERP Legal Hold admin API. Tenant-admin only, tenant-scoped,
 // and audited (the store records every mutation to the immutable audit log).
-// Held records/files are never removed by the SPEC 71 retention engine or the
-// SPEC 36 storage retention sweep.
+// Held records/files are never removed by the retention engine or the
+// storage retention sweep.
 
 export const runtime = "nodejs"
 

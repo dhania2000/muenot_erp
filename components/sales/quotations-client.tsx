@@ -97,7 +97,7 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<QuotationRow | null>(null)
 
-  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  // open the create dialog when the command palette deep-links here.
   useNewRecordParam(() => {
     setEditing(null)
     setDialogOpen(true)

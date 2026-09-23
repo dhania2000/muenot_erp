@@ -1,7 +1,7 @@
 import type { SessionPayload } from "@/lib/auth"
 
 /**
- * SPEC 85 — Generic bulk-action engine.
+ * Generic bulk-action engine.
  * ---------------------------------------------------------------------------
  * A single reusable framework any module can register a resource with to gain
  * multi-record operations (edit, assign, approve/reject, archive, delete,

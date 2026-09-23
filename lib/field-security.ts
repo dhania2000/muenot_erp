@@ -1,10 +1,10 @@
 import "server-only"
 /**
- * SPEC 70 — Field-Level Security (server store + request wiring).
+ * Field-Level Security (server store + request wiring).
  * ---------------------------------------------------------------------------
  * Replaces the frontend-only localStorage placeholder (the field-security
  * section of lib/governance-store.ts) with a real, tenant-scoped, audited,
- * DB-backed model — the same upgrade SPEC 69 made for classification.
+ * DB-backed model — the same upgrade made for classification.
  *
  * A policy pins a `module / entity / field` to a MASK / HIDE / READ-ONLY effect
  * for a defined audience (everyone, a role and below, a department, a legal

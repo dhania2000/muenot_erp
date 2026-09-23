@@ -8,7 +8,7 @@ export const runtime = "nodejs"
 export const maxDuration = 300
 
 /**
- * SPEC 36 — Phase 3. On-demand retention sweep for the current tenant.
+ * Phase 3. On-demand retention sweep for the current tenant.
  *   POST { dryRun: true }  → preview what WOULD be purged (no deletion).
  *   POST { dryRun: false } → force a real purge now, ignoring the auto switch.
  * Legal-hold files are never deleted in either mode.

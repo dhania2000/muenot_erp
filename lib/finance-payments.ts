@@ -228,7 +228,7 @@ export async function getOutstandingInvoices(party?: string) {
   )) as any[]
 }
 
-/** Receivable ageing buckets by due date (spec 81–82). */
+/** Receivable ageing buckets by due date (–82). */
 export async function receivableAgeing(party?: string) {
   await ensurePaymentsSchema()
   const where: string[] = [

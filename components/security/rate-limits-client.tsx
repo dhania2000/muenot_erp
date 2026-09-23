@@ -64,7 +64,7 @@ const WINDOW_LABEL: Record<LiveWindow["window"], string> = {
 }
 
 /**
- * SPEC 53 — Live rate-limit monitor. Limits are plan-derived and ENFORCED on
+ * Live rate-limit monitor. Limits are plan-derived and ENFORCED on
  * every `/api/v1/*` request by lib/api-platform/handler.ts. This screen reads
  * the real enforced tier, the shared counters for the tenant's own API
  * keys, and the blocked-request (429) count from the request audit trail — no

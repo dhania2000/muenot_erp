@@ -43,7 +43,7 @@ import {
 import { toast } from "sonner"
 
 // -----------------------------------------------------------------------------
-// SPEC 14 — User lifecycle admin console.
+// User lifecycle admin console.
 //   - Directory tab: every tenant user with their lifecycle state and the full
 //     joiner→mover→leaver action set (invite, activate, suspend/reactivate,
 //     temporary access, role/department assignment, password/MFA reset,
@@ -127,7 +127,7 @@ export function UsersLifecycleManager() {
   }, [users])
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 p-6 md:p-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">User lifecycle</h1>

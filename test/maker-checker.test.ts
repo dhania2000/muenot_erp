@@ -17,7 +17,7 @@ import {
 } from "@/lib/maker-checker-registry"
 
 /**
- * SPEC 12 — Phase 4. DB-free proof of the two security guarantees the
+ * Phase 4. DB-free proof of the two security guarantees the
  * maker-checker framework must never get wrong: segregation of duties
  * (a maker can never check their own request) and bypass prevention (a gated
  * change only takes effect after an `approved` request). Plus registry
@@ -25,7 +25,7 @@ import {
  */
 
 describe("registry — high-risk operations", () => {
-  it("covers every SPEC 12 operation family", () => {
+  it("covers every operation family", () => {
     const categories = new Set(MAKER_CHECKER_OPERATIONS.map((o) => o.category))
     for (const c of ["vendor", "banking", "payment", "accounting", "tax", "access", "master-data"]) {
       expect(categories.has(c as any)).toBe(true)

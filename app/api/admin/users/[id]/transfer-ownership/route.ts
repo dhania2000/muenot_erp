@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { transferDataOwnership, LifecycleError } from "@/lib/user-lifecycle"
 
 /**
- * SPEC 14 — Standalone data-ownership transfer (also runnable as part of
+ * Standalone data-ownership transfer (also runnable as part of
  * offboarding via PATCH deactivate). Reassigns the source user's owned records
  * to another user in the same tenant. Tenant-scoped and audited.
  */

@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 83 — Enterprise Dashboard Engine: saved-dashboard persistence.
+ * Enterprise Dashboard Engine: saved-dashboard persistence.
  *
  * Dashboards are tenant-scoped and come in three scopes:
  *   - personal : owned by a single user (owner_user_id)

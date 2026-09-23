@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 53 — Tiered API rate limiting for the public `/api/v1/*` surface.
+ * Tiered API rate limiting for the public `/api/v1/*` surface.
  * ---------------------------------------------------------------------------
  * The simple single-window limiter in lib/rate-limit.ts is not enough for a
  * multi-tenant API: different plans buy different throughput, some endpoints
@@ -235,7 +235,7 @@ export type RateLimitScopeSnapshot = {
 
 /**
  * Read the live, in-process state of every active scope without consuming
- * budget. Powers the SPEC 53 monitoring UI: real current usage per window and
+ * budget. Powers the monitoring UI: real current usage per window and
  * any active abuse hard-block. Expired buckets are skipped so callers only see
  * counters that are still meaningful.
  */

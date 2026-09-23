@@ -22,7 +22,7 @@ const parse = (v: unknown) => {
 }
 
 // Legacy workflow-run monitor DTO. Retained for compatibility; actual business
-// events and subscriber deliveries live in the SPEC 48 event bus.
+// events and subscriber deliveries live in the event bus.
 export type AutomationEvent = {
   id: number
   workflowId: number
@@ -409,11 +409,31 @@ export async function emailCenter(filters: EmailFilters = {}) {
 }
 
 export async function automationOverview(tenant: number) {
+  // Each subsystem is queried independently so that a single failing source
+  // (e.g. a table that has not been created yet for this tenant) degrades that
+  // one metric to zero instead of blanking the entire overview.
+  const settle = async <T>(work: Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await work
+    } catch (err) {
+      console.log("[v0] automationOverview source failed:", (err as Error)?.message)
+      return fallback
+    }
+  }
+
   const [events, notifications, email, businessEvents] = await Promise.all([
-    automationEvents(tenant),
-    notificationCenter(tenant),
-    emailCenter(),
-    eventSummary(tenant),
+    settle(automationEvents(tenant), {
+      subscribers: [] as { enabled: boolean }[],
+      statusSummary: {} as Record<string, number>,
+    } as Awaited<ReturnType<typeof automationEvents>>),
+    settle(notificationCenter(tenant), {
+      summary: { total: 0, unread: 0 },
+    } as Awaited<ReturnType<typeof notificationCenter>>),
+    settle(emailCenter(), {
+      summary: { total: 0, sent: 0, failed: 0, draft: 0 },
+      senders: [] as { configured: boolean }[],
+    } as Awaited<ReturnType<typeof emailCenter>>),
+    settle(eventSummary(tenant), { recent: 0, failed: 0 }),
   ])
   const activeSubscribers = events.subscribers.filter((s) => s.enabled).length
   const pending = ["queued", "waiting", "approval", "external"].reduce(

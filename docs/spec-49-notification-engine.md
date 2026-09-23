@@ -1,4 +1,4 @@
-# SPEC 49 — Notification engine
+# Notification engine
 
 ## Scope and migration audit
 
@@ -44,7 +44,7 @@ Exactly-once external delivery is not promised. A provider may accept before con
 
 ## Operations
 
-1. Apply database/migrations/2026-09-21-spec49-notification-engine.sql before deployment, or allow the existing lazy schema initializer to create the four tables. Preserve the existing notifications table.
+1. Apply database/migrations/2026-09-21--notification-engine.sql before deployment, or allow the existing lazy schema initializer to create the four tables. Preserve the existing notifications table.
 2. Configure CRON_SECRET and enable the notification_delivery scheduler job (every minute), or call /api/cron/notification-delivery with Bearer authentication. Do not run unauthenticated cron requests.
 3. Configure SMTP / tenant WhatsApp before enabling those channels. Register reviewed SMS/push adapters in server initialization if needed.
 4. Tenant admins manage templates, queue/schedule notifications and inspect delivery/history at /admin/automation/notifications.

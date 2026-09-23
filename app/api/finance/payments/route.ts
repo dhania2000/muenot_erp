@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // SPEC 12 — maker-checker. When payment creation is gated, the receipt is
+    // maker-checker. When payment creation is gated, the receipt is
     // NOT posted here; it is captured and held until a different person (never
     // the maker — segregation is enforced in the approval engine) approves it.
     if (await isOperationGated("finance.payment.create")) {

@@ -14,7 +14,7 @@ import { formatMoney, InvoiceStatusBadge, StatCard, type Invoice, type BillingSu
 type ListData = { invoices: Invoice[]; summary: BillingSummary }
 
 /**
- * SPEC 20 — Recurring billing runner. Kicks off a billing cycle that generates
+ * Recurring billing runner. Kicks off a billing cycle that generates
  * an invoice for every active subscription whose current period is not yet
  * invoiced (idempotent per subscription+period), then shows the resulting
  * invoice book and money summary.

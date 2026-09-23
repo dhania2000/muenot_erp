@@ -11,7 +11,7 @@ import {
 } from "@/lib/legal-entities"
 
 /**
- * SPEC 7 — Legal entity detail.
+ * Legal entity detail.
  * GET    : fetch one entity.
  * PATCH  : update fields (name, tax identity, address, book, default flag…).
  * DELETE : remove an entity (blocked while it still owns posted ledger rows).
@@ -25,7 +25,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params
   const entity = await getEntity(Number(id))
   if (!entity) return NextResponse.json({ error: "Entity not found" }, { status: 404 })
-  // SPEC 10 — the record must fall within the user's data-level scope.
+  // the record must fall within the user's data-level scope.
   if (!(await canAccessRecord(session, PERMISSION_KEY, entity))) {
     return NextResponse.json({ error: "This entity is outside your data access scope" }, { status: 403 })
   }

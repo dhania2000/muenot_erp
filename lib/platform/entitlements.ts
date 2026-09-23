@@ -1,5 +1,5 @@
 /**
- * SPEC 17 — Phase 1. The plan ENTITLEMENT model.
+ * Phase 1. The plan ENTITLEMENT model.
  * ---------------------------------------------------------------------------
  * A plan is more than a price: it is the contract for what a tenant is allowed
  * to do. This module is the single, pure (DB-free, framework-free) definition
@@ -260,7 +260,7 @@ export function formatQuota(q: Quota): string {
 }
 
 // ---------------------------------------------------------------------------
-// Presets — sensible defaults for the seeded plan catalog (SPEC 4/17).
+// Presets — sensible defaults for the seeded plan catalog.
 // ---------------------------------------------------------------------------
 
 export const ENTITLEMENT_PRESETS: Record<string, PlanEntitlements> = {

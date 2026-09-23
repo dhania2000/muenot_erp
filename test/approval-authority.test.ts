@@ -17,7 +17,7 @@ import {
 } from "@/lib/approval-authority-core"
 
 /**
- * SPEC 11 — Phase 4. Exhaustive, DB-free proof that the configurable approval
+ * Phase 4. Exhaustive, DB-free proof that the configurable approval
  * authority behaves correctly for every capability the spec requires:
  * amount / department / role / entity matching, rule selection precedence,
  * multi-level sequential chains, parallel level modes (all / any / quorum),

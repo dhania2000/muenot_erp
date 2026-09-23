@@ -1,8 +1,8 @@
 /**
- * SPEC 68 — Audit log retention (pure model).
+ * Audit log retention (pure model).
  * ---------------------------------------------------------------------------
- * SPEC 67 gave the platform a single immutable, append-only audit trail
- * (`audit_log_entries`, see lib/audit-log-store.ts). SPEC 68 makes the LIFECYCLE
+ * gave the platform a single immutable, append-only audit trail
+ * (`audit_log_entries`, see lib/audit-log-store.ts). makes the LIFECYCLE
  * of that trail configurable while preserving its immutability:
  *
  *   - Platform policy — a platform-wide DEFAULT retention window plus a MINIMUM

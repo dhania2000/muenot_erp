@@ -1,7 +1,7 @@
 import "server-only"
 
 /**
- * SPEC 77 — High availability: shared, distributed pre-auth rate limiter.
+ * High availability: shared, distributed pre-auth rate limiter.
  *
  * Pre-auth endpoints (signup, mobile login/refresh, public app-version and
  * shopkeeper registration) need brute-force protection BEFORE a tenant/session

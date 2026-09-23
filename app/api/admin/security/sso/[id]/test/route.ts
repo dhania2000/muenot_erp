@@ -13,7 +13,7 @@ async function requireAdminTenant() {
 }
 
 /**
- * SPEC 57/58 — "Test connection". For OIDC this actually reaches the IdP:
+ * "Test connection". For OIDC this actually reaches the IdP:
  * resolves discovery (or validates manual endpoints) and fetches the JWKS,
  * which is the same trust anchor the real login callback verifies against.
  * SAML has no live handshake to test without a real IdP-initiated flow, so it

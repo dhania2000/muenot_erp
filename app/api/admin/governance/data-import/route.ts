@@ -4,7 +4,7 @@ import { analyzeImport, listImportJobs } from "@/lib/data-import-store"
 import { importCatalogForClient } from "@/lib/data-import-catalog"
 import { IMPORT_ROW_LIMIT, IMPORT_STATUS_LABELS } from "@/lib/data-import-model"
 
-// SPEC 74 — Enterprise Data Import admin API. Tenant-admin only, tenant-scoped,
+// Enterprise Data Import admin API. Tenant-admin only, tenant-scoped,
 // and audited (the store records every commit + rollback to the immutable audit
 // log). GET returns the importable-dataset catalog plus this tenant's import
 // history. POST runs a DRY-RUN analysis (map → validate → dedupe → preview) and

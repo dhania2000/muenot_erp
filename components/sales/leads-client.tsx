@@ -205,7 +205,7 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
   const [callTarget, setCallTarget] = useState<CallTarget | null>(null)
   const [callOpen, setCallOpen] = useState(false)
 
-  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  // open the create dialog when the command palette deep-links here.
   useNewRecordParam(() => {
     setEditing(null)
     setDialogOpen(true)

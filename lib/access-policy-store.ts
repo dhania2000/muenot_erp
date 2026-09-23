@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 63 — Access policy persistence + enforcement loader.
+ * Access policy persistence + enforcement loader.
  * ---------------------------------------------------------------------------
  * Stores the tenant-defined conditional access policies edited in
  * components/security/access-policy-builder.tsx, and exposes both the CRUD the

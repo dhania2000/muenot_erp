@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 85 — durable record of every bulk run.
+ * durable record of every bulk run.
  *
  * One row per submission. Holds the request (resource/action/value/ids), the
  * actor snapshot (so a background worker can execute without a live session),

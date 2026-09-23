@@ -6,7 +6,7 @@ import { TemporaryAccessClient } from "./temporary-access-client"
 
 export const dynamic = "force-dynamic"
 
-// SPEC 64 — Temporary access. Fully backed and enforced: grants are stored in
+// Temporary access. Fully backed and enforced: grants are stored in
 // `temporary_access_grants` (lib/temporary-access-store.ts) with user, optional
 // role elevation, scope, start/expiry, reason and approver. Role elevations
 // change `users.tenant_role` (re-resolved by every request guard) and the
@@ -24,7 +24,7 @@ export default async function TemporaryAccessPage() {
 
   return (
     <div className="space-y-6">
-      <SecurityHeading title="Temporary access" spec="Spec 64">
+      <SecurityHeading title="Temporary access" spec="">
         Grant a user a time-boxed access window and/or role elevation with a required reason and approver. Access
         starts immediately or on a schedule and is revoked automatically at expiry.
       </SecurityHeading>

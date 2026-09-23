@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 
 export const dynamic = "force-dynamic"
 
-// SPEC 59 — MFA (TOTP) enrollment. Enrollment itself is real (lib/user-lifecycle.ts,
+// MFA (TOTP) enrollment. Enrollment itself is real (lib/user-lifecycle.ts,
 // wired through /api/auth/mfa for self-service and the admin "reset_mfa" action in
 // /api/admin/users/[id]). What is NOT enforced yet is a tenant-wide policy — nothing
 // requires enrollment, so this screen reports live enrollment status honestly rather
@@ -26,7 +26,7 @@ export default async function MfaPage() {
 
   return (
     <div className="space-y-6">
-      <SecurityHeading title="Multi-factor authentication" spec="Spec 59">
+      <SecurityHeading title="Multi-factor authentication" spec="">
         TOTP enrollment (authenticator app + backup codes) is enforced by the backend today. What is not yet
         available is a tenant-wide policy that requires it — enrollment is currently opt-in per user.
       </SecurityHeading>

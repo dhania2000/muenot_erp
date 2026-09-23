@@ -132,7 +132,7 @@ async function fanOut(params: {
     for(const r of recipients) await enqueueNotification(c,{tenantId,userId:r.id,channel:"in_app",key:`activity:${key}:${r.id}`,title:title.slice(0,255),body:body?.slice(0,4000)??"",link,context:{actorId:actor?.userId,actorName:actor?.name,moduleKey,groupSlug,action,entityTable,entityId}})
   })
 
-  // SPEC 19 — meter notification volume per tenant. Fire-and-forget: metering
+  // meter notification volume per tenant. Fire-and-forget: metering
   // must never affect the notification delivery it is measuring. Only recorded
   // when a tenant is in context (skips system/pre-auth paths).
   if (currentTenantIdOrNull() != null) {

@@ -104,7 +104,7 @@ export async function GET(request: Request) {
     args.push(...scoped.params)
   }
 
-  // SPEC 10 — data-level scope (self / team / entity / branch / all). Layers
+  // data-level scope (self / team / entity / branch / all). Layers
   // ON TOP of the RBAC scope above: the two are ANDed, so a manager with a
   // "team" data scope still only sees rows the RBAC view scope also permits.
   // Unconfigured users / admins are unaffected (dataScopeWhere returns null).
@@ -161,7 +161,7 @@ export async function GET(request: Request) {
     }
   }
 
-  // SPEC 70 — field-level security. The employee record carries the platform's
+  // field-level security. The employee record carries the platform's
   // most sensitive fields (salary/bank/PAN/personal identifiers). After RBAC and
   // data-scope have decided WHICH rows this user may see, field security decides
   // which FIELDS within those rows are masked/hidden for this actor. Applied

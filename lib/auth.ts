@@ -30,8 +30,8 @@ export type SessionPayload = {
    */
   tenantId?: number
   /**
-   * SPEC 3 — platform/tenant role axes, captured at login from the DB. Optional
-   * so pre-SPEC-3 tokens still verify; guards re-resolve from the DB source of
+   * platform/tenant role axes, captured at login from the DB. Optional
+   * so pre- tokens still verify; guards re-resolve from the DB source of
    * truth (lib/platform-roles.ts) rather than trusting these for authorization.
    * They are carried in the token only for cheap, allocation-free UI hints.
    */
@@ -45,7 +45,7 @@ export type SessionPayload = {
    */
   impersonatedTenantId?: number | null
   /**
-   * SPEC 61 — opaque session id (jti) that keys the server-side session
+   * opaque session id (jti) that keys the server-side session
    * record in lib/session-store.ts. Optional so tokens issued before the
    * session store existed still verify — `getSession()` treats a missing
    * `sid` as always-active (nothing to revoke it against) rather than
@@ -84,7 +84,7 @@ export async function getSession(): Promise<SessionPayload | null> {
   if (!token) return null
   const session = await verifySessionToken(token)
   if (session) {
-    // SPEC 61 — a cryptographically valid token can still have been revoked
+    // a cryptographically valid token can still have been revoked
     // (admin-forced sign-out, "sign out all devices", concurrent-session cap).
     // The session store is the live-ness source of truth; a token whose `sid`
     // is missing or revoked there is treated as signed out. Fails open on a
@@ -117,7 +117,7 @@ export async function getSession(): Promise<SessionPayload | null> {
         console.error("[v0] tenant resolution failed:", err)
       }
     }
-    // SPEC 3 — when a platform operator is actively impersonating a customer
+    // when a platform operator is actively impersonating a customer
     // tenant, the data layer must scope to THAT tenant, not their home tenant.
     // The impersonation id is carried in the verified (signed) token and is
     // only ever set by the audited impersonation endpoint. It is honored here

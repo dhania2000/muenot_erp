@@ -41,7 +41,7 @@ describe("type guards", () => {
   })
 })
 
-describe("computeDueTransitions — SPEC 64 scheduled activation", () => {
+describe("computeDueTransitions — scheduled activation", () => {
   it("activates a pending temporary grant once its start time has arrived", () => {
     const g = grant({ id: 7, status: "pending", startAt: NOW - MIN, expiresAt: NOW + 10 * MIN })
     const { toActivate, toExpire } = computeDueTransitions([g], NOW)
@@ -63,7 +63,7 @@ describe("computeDueTransitions — SPEC 64 scheduled activation", () => {
   })
 })
 
-describe("computeDueTransitions — SPEC 64/65 automatic revocation", () => {
+describe("computeDueTransitions — automatic revocation", () => {
   it("expires an active grant of either kind once past its expiry", () => {
     const temp = grant({ id: 1, kind: "temporary", status: "active", startAt: NOW - 30 * MIN, expiresAt: NOW - MIN })
     const bg = grant({ id: 2, kind: "break_glass", status: "active", startAt: NOW - 30 * MIN, expiresAt: NOW })

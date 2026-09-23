@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 61 — Server-side session store.
+ * Server-side session store.
  * ---------------------------------------------------------------------------
  * lib/auth.ts issues a stateless, signed JWT cookie: the token alone is
  * sufficient to authenticate a request, which means there was previously no
@@ -91,7 +91,7 @@ export function newSessionId(): string {
 
 /**
  * Record a new session at login time. Also enforces the concurrent-session
- * cap (SPEC 61 policy) by revoking the oldest active sessions for the user
+ * cap ( policy) by revoking the oldest active sessions for the user
  * once the limit would be exceeded, so a stolen/forgotten device cannot
  * accumulate unlimited standing sessions.
  */
@@ -204,7 +204,7 @@ export async function revokeAllSessionsForUser(
 }
 
 /**
- * SPEC 63 — device recognition for "block unknown devices" access policies.
+ * device recognition for "block unknown devices" access policies.
  * A device is considered known when the user has signed in from the same
  * user-agent before (any prior session, including expired/revoked ones).
  * Returns null when it cannot be determined (no user-agent, or store error) so

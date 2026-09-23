@@ -36,7 +36,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     actorName: session.name,
   })
 
-  // SPEC 15 — re-derive the linked login's access status from the new
+  // re-derive the linked login's access status from the new
   // employment status. Best-effort: a sync failure must not fail the status
   // change itself (the change is already persisted and audited).
   try {

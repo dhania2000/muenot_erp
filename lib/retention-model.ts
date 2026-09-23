@@ -1,5 +1,5 @@
 /**
- * SPEC 71 — General ERP Data Retention Engine (pure, testable model).
+ * General ERP Data Retention Engine (pure, testable model).
  * ---------------------------------------------------------------------------
  * A retention policy says: for a given MODULE + RECORD TYPE, once records are
  * older than a RETENTION PERIOD, take an ACTION (archive or delete) — unless

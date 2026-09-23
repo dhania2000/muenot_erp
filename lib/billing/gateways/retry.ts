@@ -1,5 +1,5 @@
 /**
- * SPEC 21 — Transport retry + error classification (shared by adapters).
+ * Transport retry + error classification (shared by adapters).
  * ---------------------------------------------------------------------------
  * Payment APIs fail transiently (network blips, 429s, 5xx). We retry those
  * with exponential backoff, but NEVER retry a definitive decline or a client

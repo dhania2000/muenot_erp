@@ -22,7 +22,7 @@ function fail(request: Request, reason: string) {
 }
 
 /**
- * SPEC 56-57 — OIDC callback: exchanges the code, verifies the ID token
+ * — OIDC callback: exchanges the code, verifies the ID token
  * against the IdP's live JWKS, then finds-or-provisions the local user and
  * mints the same session (JWT + server-side session row) that password
  * login issues, so every downstream guard treats an SSO session identically.

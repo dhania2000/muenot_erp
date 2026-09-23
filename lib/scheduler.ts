@@ -11,7 +11,7 @@ import {
 } from "@/lib/cron-jobs"
 
 /**
- * SPEC 41 — Central scheduler abstraction.
+ * Central scheduler abstraction.
  *
  * The cron configuration and persistence primitives remain in cron-jobs.ts,
  * while this module owns the platform-level execution contract: categorising

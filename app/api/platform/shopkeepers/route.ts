@@ -4,7 +4,7 @@ import { listShopkeepers, provisionShopkeeper, ShopkeeperProvisioningError } fro
 import type { RawShopkeeperInput } from "@/lib/shopkeeper-provisioning-core"
 
 /**
- * SPEC 15 — Super Admin Shopkeeper directory + provisioning.
+ * Super Admin Shopkeeper directory + provisioning.
  * PLATFORM-axis only: a customer tenant_owner/tenant_admin can never reach it
  * (requirePlatform* consults only the platform axis). Viewing is open to
  * platform staff; provisioning a new Shopkeeper is a high-privilege action

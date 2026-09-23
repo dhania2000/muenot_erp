@@ -7,7 +7,7 @@ import {
 } from "@/lib/tenant-onboarding"
 
 /**
- * SPEC 5 — Finalize (provision) an onboarding session. Super-admin only,
+ * Finalize (provision) an onboarding session. Super-admin only,
  * because it creates a live tenant and its first owner user. The orchestrator
  * is idempotent: a failed run records its partial progress, so re-POSTing here
  * resumes provisioning instead of duplicating anything.

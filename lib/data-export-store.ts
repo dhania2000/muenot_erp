@@ -1,10 +1,10 @@
 import "server-only"
 /**
- * SPEC 73 — Tenant Data Export (server store + job execution).
+ * Tenant Data Export (server store + job execution).
  * ---------------------------------------------------------------------------
  * Replaces the frontend-only localStorage placeholder (lib/governance-store.ts)
  * for the Export Center with a real, tenant-scoped, audited, DB-backed export
- * pipeline that respects SPEC 69 data classification.
+ * pipeline that respects data classification.
  *
  * A job binds a SCOPE (one catalog dataset, or the whole tenant) + a FORMAT and
  * produces a single stored ARTIFACT. Execution:
@@ -13,7 +13,7 @@ import "server-only"
  *      LIVE schema, skipping datasets whose table is absent.
  *   2. Query rows tenant-scoped (a job can never read another tenant's data)
  *      and capped at MAX_ROWS_PER_DATASET.
- *   3. Redact every field the acting role may not export via the SPEC 69
+ * 3. Redact every field the acting role may not export via the
  *      clearance matrix (enforceExportClassification).
  *   4. Serialize to CSV / Excel / JSON / PDF and seal the bytes into the job
  *      row with a content type, filename, byte size and an EXPIRY.

@@ -1,11 +1,11 @@
 import "server-only"
 
 /**
- * SPEC 80 — Safe caching architecture.
+ * Safe caching architecture.
  * ---------------------------------------------------------------------------
- * SPEC 78 gave us a bounded, observable per-node primitive (`TtlCache` in
+ * gave us a bounded, observable per-node primitive (`TtlCache` in
  * lib/cache.ts). But a raw cache is a LEAK WAITING TO HAPPEN in a multi-tenant
- * system with no row-level security (SPEC 2): the moment a caller forgets to
+ * system with no row-level security: the moment a caller forgets to
  * put the tenant id in the key, tenant A can be served tenant B's cached rows.
  *
  * This module is the safety layer that makes that mistake structurally
@@ -69,7 +69,7 @@ export type CacheTargetDef = {
  * reference data (master data).
  */
 export const CACHE_TARGETS = {
-  /** SPEC 37/39 — resolved tenant configuration / settings rows. */
+  /** resolved tenant configuration / settings rows. */
   config: {
     name: "config",
     scope: "tenant",
@@ -77,7 +77,7 @@ export const CACHE_TARGETS = {
     maxEntries: 5_000,
     description: "Per-tenant configuration and settings rows.",
   },
-  /** SPEC 8 — a user's effective permission matrix (within a tenant). */
+  /** a user's effective permission matrix (within a tenant). */
   permissions: {
     name: "permissions",
     scope: "tenant",
@@ -85,7 +85,7 @@ export const CACHE_TARGETS = {
     maxEntries: 50_000,
     description: "Effective per-user permission matrices, scoped by tenant.",
   },
-  /** SPEC 17/18 — a tenant's plan entitlements contract. */
+  /** a tenant's plan entitlements contract. */
   entitlements: {
     name: "entitlements",
     scope: "tenant",

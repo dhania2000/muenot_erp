@@ -9,7 +9,7 @@ import { isRetentionUnit } from "@/lib/storage/retention-policy"
 export const runtime = "nodejs"
 
 /**
- * SPEC 36 — Phase 3. Per-file manual retention override + legal hold.
+ * Phase 3. Per-file manual retention override + legal hold.
  *   POST { fileId, action: "hold" }               → place on legal hold (never deleted).
  *   POST { fileId, action: "release" }            → release the legal hold.
  *   POST { fileId, action: "override", rule }     → manually pin retention.

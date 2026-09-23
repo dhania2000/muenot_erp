@@ -41,12 +41,12 @@ export async function POST(request: Request) {
     }
 
     // Source IP (first hop of X-Forwarded-For, else X-Real-IP) and geo hint,
-    // used by SPEC 62 (IP allowlist) and SPEC 63 (access policy) enforcement.
+    // used by (IP allowlist) and (access policy) enforcement.
     const forwardedFor = request.headers.get("x-forwarded-for")
     const requestIp = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
     const requestCountry = request.headers.get("x-vercel-ip-country")
 
-    // SPEC 67 — base audit context for this sign-in attempt. The acting user is
+    // base audit context for this sign-in attempt. The acting user is
     // resolved once the account is loaded; each call overrides actor fields.
     const auditBase: AuditContext = {
       requestId: request.headers.get("x-request-id")?.trim() || crypto.randomUUID(),
@@ -79,7 +79,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
 
-    // SPEC 62 — IP allowlist: evaluated before the password check (like the
+    // IP allowlist: evaluated before the password check (like the
     // lockout check below) so a blocked network never learns whether the
     // credentials were otherwise valid.
     const requireIpAllowlist = await getBool("security.ip_allowlist_enabled", false)
@@ -125,7 +125,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // SPEC 60 — password lockout: check BEFORE verifying the password so a
+    // password lockout: check BEFORE verifying the password so a
     // locked account never leaks whether the submitted password was correct.
     const lockout = await checkLockout(user.id)
     if (lockout.locked) {
@@ -156,7 +156,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
 
-    // SPEC 14 — evaluate the full lifecycle gate (invited / suspended /
+    // evaluate the full lifecycle gate (invited / suspended /
     // deactivated / expired temporary access / email verification) AFTER the
     // password check, so a wrong password never reveals account state.
     const snapshot = await getLoginSnapshot(user.id)
@@ -176,7 +176,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: decision.reason, code: decision.code }, { status: 403 })
       }
 
-      // SPEC 63 — conditional access policies. Evaluated after the password +
+      // conditional access policies. Evaluated after the password +
       // lifecycle gates so a wrong password never reveals policy state. A
       // matching Deny blocks sign-in outright; a matching "Require MFA"
       // obligation forces the MFA challenge below even when org policy would
@@ -215,7 +215,7 @@ export async function POST(request: Request) {
         )
       }
 
-      // SPEC 14 — MFA challenge. When enabled, the password step alone is not
+      // MFA challenge. When enabled, the password step alone is not
       // enough: without a code we ask the client to collect one (no session is
       // issued); with a code we verify a live TOTP or a one-time backup code.
       const policyRequiresMfa =
@@ -248,7 +248,7 @@ export async function POST(request: Request) {
     // tenant from the verified session, never from client input.
     const tenantId = (await resolveTenantIdForUser(user.id)) ?? undefined
 
-    // SPEC 3 — capture the platform/tenant role axes from the DB source of
+    // capture the platform/tenant role axes from the DB source of
     // truth. Carried in the token for cheap UI hints only; guards re-resolve
     // from the DB before authorizing. A fresh login never carries an
     // impersonation — that is only ever set by the audited impersonation
@@ -275,7 +275,7 @@ export async function POST(request: Request) {
     )
     await setSessionCookie(token, durationSeconds)
 
-    // SPEC 61 — persist a server-side session record so this login shows up
+    // persist a server-side session record so this login shows up
     // in Session management, can be individually revoked, and counts against
     // the per-user concurrent-session cap. Best-effort: a session-store
     // failure never blocks sign-in, since the JWT cookie alone still works.
@@ -295,7 +295,7 @@ export async function POST(request: Request) {
       console.error("[v0] session store write failed (login still succeeds):", err)
     }
 
-    // SPEC 67 — enterprise audit trail of the successful sign-in.
+    // enterprise audit trail of the successful sign-in.
     void recordAuditLog(
       {
         action: AUDIT_ACTIONS.authLogin,

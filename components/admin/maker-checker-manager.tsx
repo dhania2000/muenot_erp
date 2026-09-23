@@ -19,7 +19,7 @@ import { Loader2, ShieldCheck, ShieldOff } from "lucide-react"
 import { toast } from "sonner"
 
 // -----------------------------------------------------------------------------
-// SPEC 12 admin console. Left: toggle which high-risk operations require a
+// admin console. Left: toggle which high-risk operations require a
 // second person. Right: the audit trail of captured changes and where each one
 // sits in its approval lifecycle. Types mirror lib/maker-checker.ts exactly.
 // -----------------------------------------------------------------------------

@@ -5,7 +5,7 @@ import { runRenewalCycle } from "@/lib/billing/renewal-engine"
 export const runtime = "nodejs"
 
 /**
- * SPEC 24 — Run one renewal cycle for the current tenant: reconcile lifecycle,
+ * Run one renewal cycle for the current tenant: reconcile lifecycle,
  * queue + deliver due renewal reminders, process failed-payment retries (with
  * escalation to suspension when exhausted), and ensure renewal invoices exist.
  * Idempotent — safe to trigger repeatedly from the console or a scheduler.

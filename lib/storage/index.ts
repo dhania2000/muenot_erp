@@ -30,7 +30,7 @@ import type {
 } from "./types"
 
 /**
- * SPEC 26 — Storage facade.
+ * Storage facade.
  * ---------------------------------------------------------------------------
  * The one entry point the rest of the app uses. It resolves the ACTIVE storage
  * connection for the current tenant and returns a uniform provider; when a
@@ -55,7 +55,7 @@ async function toBuffer(file: File): Promise<Buffer> {
 }
 
 /**
- * SPEC 32 — Optional centralized-metadata descriptor. When a caller passes this
+ * Optional centralized-metadata descriptor. When a caller passes this
  * to `uploadFile`, the storage facade records a normalized `file_objects` row
  * (tenant, owner, module, entity, key, provider, MIME, size, SHA-256, status,
  * version, retention, classification) alongside the physical upload — so every
@@ -79,7 +79,7 @@ export type FileMetadataInput = {
  * `path` is the logical path within the tenant namespace (e.g.
  * "finance-expenses/<uuid>-<name>"); it is sanitized and prefixed automatically.
  *
- * When `opts.metadata` is provided, a SPEC 32 `file_objects` row is recorded and
+ * When `opts.metadata` is provided, a `file_objects` row is recorded and
  * returned as `result.file`. Metadata recording never fails the upload: if the
  * bytes landed but the metadata write throws, the upload still succeeds and the
  * error is logged.
@@ -93,7 +93,7 @@ export async function uploadFile(
     const validationError = await validateUpload(file)
     if (validationError) return { ok: false, error: validationError }
   }
-  // SPEC 35 — enforce the tenant's storage quota before accepting the bytes.
+  // enforce the tenant's storage quota before accepting the bytes.
   if (!opts.skipQuota) {
     const quota = await checkStorageQuota(file.size)
     if (!quota.allowed) return { ok: false, error: quota.reason }
@@ -125,7 +125,7 @@ export async function uploadFile(
     } catch (metaErr) {
       console.error("[v0] file metadata record failed (upload succeeded):", metaErr)
     }
-    // SPEC 34 — kick off an asynchronous security scan for the new object.
+    // kick off an asynchronous security scan for the new object.
     if (recorded) enqueueScan(recorded, { requestedBy: opts.metadata.ownerId ?? null })
     return { ok: true, result: { ...result, file: recorded } }
   } catch (err) {
@@ -145,7 +145,7 @@ const PROXY_MARKER = "/api/storage/file/"
 /**
  * Resolve a value stored in a `storage_url` column, whichever form it takes,
  * into a streamable object. Backward compatible across:
- *   - legacy absolute URLs (public Vercel Blob links saved before SPEC 26),
+ * - legacy absolute URLs (public Vercel Blob links saved before ),
  *   - the app's proxy path (/api/storage/file/<key>),
  *   - a bare tenant-namespaced key.
  * New rows store the key; old rows keep working unchanged.
@@ -176,7 +176,7 @@ export async function openStoredObject(ref: string): Promise<DownloadResult> {
 }
 
 /**
- * Delete an object for the current tenant. When a SPEC 32 metadata row exists
+ * Delete an object for the current tenant. When a metadata row exists
  * for the key it is soft-deleted (audit trail preserved) unless it is under a
  * legal hold, in which case the physical delete is skipped too.
  */
@@ -191,7 +191,7 @@ export async function deleteFile(key: string): Promise<void> {
 }
 
 /**
- * SPEC 29 — Issue a short-lived presigned URL for a stored object.
+ * Issue a short-lived presigned URL for a stored object.
  *
  * This is the secure way to hand a file link to the browser (or embed one in a
  * PDF/email): permission + tenant ownership are validated HERE, before any URL
@@ -209,7 +209,7 @@ export async function getSignedDownloadUrl(ref: string, opts: { expiresIn?: numb
   const key = keyFromRef(ref)
   const tenantId = currentTenantId()
   if (!keyBelongsToTenant(key, tenantId)) throw new CrossTenantAccessError("File not found")
-  // SPEC 34 — block the link if the object is quarantined / not yet cleared.
+  // block the link if the object is quarantined / not yet cleared.
   await enforceDownloadPolicyForKey(key)
   const { provider } = await getTenantStorage()
   return provider.presign(key, opts)
@@ -241,7 +241,7 @@ export async function listFiles(subPrefix = "", opts: { limit?: number } = {}): 
 }
 
 /**
- * SPEC 30 — Large / resumable multipart uploads.
+ * Large / resumable multipart uploads.
  * ---------------------------------------------------------------------------
  * These four functions are the tenant-safe orchestration layer the API routes
  * call. They pair the active provider's native multipart primitives with the
@@ -271,7 +271,7 @@ export async function beginLargeUpload(input: {
   const validationError = await validateLargeUpload({ name: input.filename, size: input.size })
   if (validationError) return { ok: false, error: validationError }
 
-  // SPEC 35 — reject the session up front if it would breach a hard quota, so a
+  // reject the session up front if it would breach a hard quota, so a
   // huge multipart upload is never started only to be rejected at completion.
   const quota = await checkStorageQuota(input.size)
   if (!quota.allowed) return { ok: false, error: quota.reason }
@@ -337,7 +337,7 @@ export async function uploadLargePart(
 
 /**
  * Finalize a session once every part has landed. When `metadata` is provided a
- * SPEC 32 `file_objects` row is recorded for the assembled object. Large
+ * `file_objects` row is recorded for the assembled object. Large
  * multipart objects are never buffered server-side, so their checksum is left
  * null (integrity for these relies on the provider's per-part ETags); size,
  * provider and key are recorded from the session/result.
@@ -424,7 +424,7 @@ export async function abortLargeUpload(
 
 export { tenantKey, tenantPrefix, keyBelongsToTenant, tenantIdFromKey } from "./keys"
 export { providerFromConnection as buildProvider }
-// SPEC 32 — Centralized file metadata (model, lifecycle, integrity, retention).
+// Centralized file metadata (model, lifecycle, integrity, retention).
 export {
   ensureFileMetadataSchema,
   recordFileMetadata,
@@ -454,7 +454,7 @@ export {
   type FileClassification,
   type RetentionPolicyId,
 } from "./file-metadata-policy"
-// SPEC 33 — File / document versioning (history, restore, download, audit).
+// File / document versioning (history, restore, download, audit).
 export {
   getFileVersionHistory,
   restoreFileVersion,
@@ -472,7 +472,7 @@ export {
   type VersionAuditAction,
   type RestoreActor,
 } from "./file-versions"
-// SPEC 35 — Tenant storage quotas (plan/custom quota, threshold, hard limit, dashboard).
+// Tenant storage quotas (plan/custom quota, threshold, hard limit, dashboard).
 export {
   ensureStorageQuotaSchema,
   getQuotaSettings,
@@ -503,7 +503,7 @@ export {
   type QuotaAlert,
   type QuotaAlertLevel,
 } from "./storage-quota"
-// SPEC 36 — Configurable storage retention (default/module rules, sweep, legal hold).
+// Configurable storage retention (default/module rules, sweep, legal hold).
 export {
   ensureRetentionSchema,
   getRetentionSettings,
@@ -540,7 +540,7 @@ export {
   type RetentionMode,
   type RetentionUnit,
 } from "./retention-policy"
-// SPEC 31 — CDN / media-delivery policy helpers.
+// CDN / media-delivery policy helpers.
 export {
   mediaKindFor,
   cacheControlFor,

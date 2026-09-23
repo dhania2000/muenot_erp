@@ -1,4 +1,4 @@
-# SPEC 57 — OIDC
+# OIDC
 
 The existing tenant provider store and OIDC flow are reused. A provider can use discovery or explicit endpoints; Google Workspace, Microsoft Entra ID, Okta and generic OIDC are configured per tenant.
 

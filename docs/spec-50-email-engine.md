@@ -1,4 +1,4 @@
-# SPEC 50 — Central Email Engine
+# Central Email Engine
 
 ## Existing functionality reused
 
@@ -36,7 +36,7 @@ It writes a tenant-scoped message ledger, resolves a tenant sender profile, carr
 
 ## Migration
 
-Run `database/migrations/2026-09-21-spec50-email-engine.sql`. The service also creates the same tables idempotently for existing installations.
+Run `database/migrations/2026-09-21--email-engine.sql`. The service also creates the same tables idempotently for existing installations.
 
 ## Delivery status
 

@@ -1,5 +1,5 @@
 // =============================================================
-// SPEC 64 / 65 — Temporary & break-glass access (pure, testable core)
+// Temporary & break-glass access (pure, testable core)
 // -------------------------------------------------------------
 // The scheduling and validation rules that drive automatic revocation and
 // scheduled activation live here so they can be unit-tested without a

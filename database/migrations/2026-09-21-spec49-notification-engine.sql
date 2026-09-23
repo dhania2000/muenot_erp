@@ -1,4 +1,4 @@
--- SPEC 49: centralized notification queue. Existing bell schema remains unchanged.
+-- : centralized notification queue. Existing bell schema remains unchanged.
 CREATE TABLE IF NOT EXISTS notification_templates (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, name VARCHAR(120) NOT NULL, title VARCHAR(255) NOT NULL, body TEXT NOT NULL, created_by INT UNSIGNED NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY tenant_idx(tenant_id,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS notification_preferences (tenant_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, channel VARCHAR(20) NOT NULL, enabled BOOLEAN NOT NULL, destination VARCHAR(512) NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY(tenant_id,user_id,channel)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

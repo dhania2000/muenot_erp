@@ -25,7 +25,7 @@ async function requireAdminTenant() {
 }
 
 /**
- * SPEC 53 — Real, read-only view of the ENFORCED rate-limit configuration and
+ * Real, read-only view of the ENFORCED rate-limit configuration and
  * live usage for the public `/api/v1/*` surface. Limits are plan-derived and
  * applied on every request by lib/api-platform/handler.ts (not a preview):
  * this endpoint reports the tenant's effective tier, the per-plan reference

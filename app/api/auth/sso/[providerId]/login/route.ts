@@ -7,7 +7,7 @@ import { ssoOrigin } from "@/lib/sso-origin"
 
 const requestOrigin = ssoOrigin
 
-/** SPEC 56-57 — redirects the browser to the IdP's authorization endpoint. */
+/** — redirects the browser to the IdP's authorization endpoint. */
 export async function GET(request: Request, { params }: { params: Promise<{ providerId: string }> }) {
   const { providerId } = await params
   const provider = await getProviderById(Number(providerId))

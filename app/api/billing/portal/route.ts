@@ -8,7 +8,7 @@ import { listGateways } from "@/lib/billing/gateways/registry"
 export const runtime = "nodejs"
 
 /**
- * SPEC 25 — Customer Billing Portal snapshot.
+ * Customer Billing Portal snapshot.
  * Composes everything a tenant admin needs to self-serve their subscription:
  * current plan, usage, billing cycle, invoices, payment methods, payment
  * history, renewal date, upgrade/downgrade options, cancellation state, and

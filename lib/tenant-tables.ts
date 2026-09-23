@@ -1,5 +1,5 @@
 /**
- * SPEC 2 — Tenant-owned entity registry (single source of truth).
+ * Tenant-owned entity registry (single source of truth).
  * ---------------------------------------------------------------------------
  * A table is "tenant-owned" when its rows belong to exactly one customer
  * organization and must never be visible to another. This registry is the ONE
@@ -17,7 +17,7 @@
  *
  * NOT tenant-owned (deliberately excluded):
  *   - `tenants`                     : the tenant directory itself.
- *   - `users`                       : already carries tenant_id (SPEC 1) and is
+ * - `users` : already carries tenant_id and is
  *                                     scoped by the auth layer, but is listed in
  *                                     TENANT_SCOPED_IDENTITY below so the guard
  *                                     still protects direct user reads.
@@ -48,22 +48,22 @@ export const TENANT_OWNED_TABLES = [
   "sales_revenue_forecast",
   // Clients master
   "clients",
-  // Organization hierarchy (SPEC 6)
+  // Organization hierarchy
   "org_units",
   "org_unit_assignments",
   "org_unit_change_log",
-  // Multi-entity support (SPEC 7)
+  // Multi-entity support
   "legal_entities",
   "legal_entity_bank_accounts",
   "intercompany_transactions",
-  // SaaS subscription engine (SPEC 16)
+  // SaaS subscription engine
   "saas_subscriptions",
   "saas_subscription_events",
-  // Usage metering (SPEC 19)
+  // Usage metering
   "usage_events",
   "usage_daily",
   "usage_limits",
-  // Billing engine (SPEC 20)
+  // Billing engine
   "billing_invoices",
   "billing_invoice_lines",
   "billing_coupons",
@@ -71,36 +71,36 @@ export const TENANT_OWNED_TABLES = [
   "billing_payments",
   "billing_refunds",
   "billing_reconciliation",
-  // Payment gateway abstraction (SPEC 21) — inbound webhook idempotency ledger
+  // Payment gateway abstraction — inbound webhook idempotency ledger
   "billing_gateway_events",
-  // Renewal management (SPEC 24)
+  // Renewal management
   "saas_renewal_reminders",
   "saas_renewal_attempts",
-  // Customer-owned storage (SPEC 26) — each tenant's storage backend + creds
+  // Customer-owned storage — each tenant's storage backend + creds
   "tenant_storage_connections",
   "tenant_storage_audit",
-  // Large / resumable uploads (SPEC 30) — multipart session + per-chunk ledger
+  // Large / resumable uploads — multipart session + per-chunk ledger
   "storage_upload_sessions",
   "storage_upload_parts",
-  // Centralized file metadata (SPEC 32) — one normalized row per stored file
+  // Centralized file metadata — one normalized row per stored file
   "file_objects",
-  // File / document version audit trail (SPEC 33)
+  // File / document version audit trail
   "file_version_audit",
-  // Malware / file-security scan state (SPEC 34)
+  // Malware / file-security scan state
   "file_security_scans",
-  // Tenant storage quotas (SPEC 35) — custom quota / threshold / hard-limit config
+  // Tenant storage quotas — custom quota / threshold / hard-limit config
   "storage_quota_settings",
   // Storage → Migration — module/sub-module data mapped to a storage folder
   "tenant_storage_migrations",
-  // Configurable storage retention (SPEC 36) — default rule + per-module overrides
+  // Configurable storage retention — default rule + per-module overrides
   "storage_retention_settings",
   "storage_retention_rules",
   // Canonical tenant configuration and its append-only change history
-  // (SPEC 39). These replace the legacy global company_settings writes while
+  //. These replace the legacy global company_settings writes while
   // keeping the legacy table available as an inherited platform baseline.
   "tenant_settings",
   "tenant_settings_audit",
-  // Reusable workflow definitions, execution history and owned task records (SPEC 46).
+  // Reusable workflow definitions, execution history and owned task records.
   "erp_workflows",
   "erp_workflow_runs",
   "erp_workflow_events",
@@ -141,11 +141,11 @@ export const TENANT_OWNED_TABLES = [
   "marketing_whatsapp_campaign_events",
   "marketing_whatsapp_automations",
   "marketing_whatsapp_diagnostics",
-  // Server-side session store + SSO identity providers (SPEC 61, 56-58).
+  // Server-side session store + SSO identity providers.
   "user_sessions",
   "sso_providers",
   "sso_login_events",
-  // API key platform + webhook delivery engine (SPEC 67-70).
+  // API key platform + webhook delivery engine.
   "api_keys",
   "api_rate_limit_policies",
   "api_rate_limit_counters",
@@ -168,8 +168,8 @@ export const TENANT_OWNED_TABLES = [
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]
 
 /**
- * Identity tables that already carry `tenant_id` from SPEC 1. The guard also
- * protects these, but the migration does NOT try to add the column (SPEC 1
+ * Identity tables that already carry `tenant_id` from. The guard also
+ * protects these, but the migration does NOT try to add the column (
  * owns it).
  */
 export const TENANT_SCOPED_IDENTITY = ["users"] as const

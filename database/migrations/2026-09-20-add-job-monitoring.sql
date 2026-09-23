@@ -1,4 +1,4 @@
--- SPEC 43: preserve unknown for historical jobs; new producers record source.
+-- : preserve unknown for historical jobs; new producers record source.
 -- Idempotent, including when the runtime schema initializer ran first.
 SET @monitor_column_exists = (SELECT COUNT(*) FROM information_schema.columns
   WHERE table_schema=DATABASE() AND table_name='platform_background_jobs' AND column_name='trigger_source');

@@ -4,7 +4,7 @@ import { listCoupons, createCoupon, BillingError } from "@/lib/billing/billing-e
 
 export const runtime = "nodejs"
 
-/** SPEC 20 — Coupons collection (tenant-scoped). */
+/** Coupons collection (tenant-scoped). */
 export async function GET() {
   const session = await billingGuard().catch(() => null)
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })

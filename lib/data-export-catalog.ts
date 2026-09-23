@@ -1,8 +1,8 @@
 /**
- * SPEC 73 — Tenant Data Export catalog (pure metadata).
+ * Tenant Data Export catalog (pure metadata).
  * ---------------------------------------------------------------------------
  * The registry of what a tenant admin may export. Each dataset binds a stable
- * export KEY to a MODULE + ENTITY (the SPEC 69 classification coordinates used
+ * export KEY to a MODULE + ENTITY (the classification coordinates used
  * to redact sensitive fields) and a physical TABLE plus the candidate columns
  * used to scope the query to a single tenant and order it deterministically.
  *
@@ -20,7 +20,7 @@ export type ExportDataset = {
   key: string
   /** Human module grouping (matches classification `module`). */
   module: string
-  /** Classification entity — drives SPEC 69 export redaction. */
+  /** Classification entity — drives export redaction. */
   entity: string
   /** UI label. */
   label: string

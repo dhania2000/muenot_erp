@@ -15,7 +15,7 @@ import {
 } from "@/lib/abac-model"
 
 /**
- * SPEC 9 — Phase 4. ABAC is an additive RESTRICTION layer on top of RBAC, so
+ * Phase 4. ABAC is an additive RESTRICTION layer on top of RBAC, so
  * the whole value of the feature rests on the combining engine resolving
  * overlapping policies deterministically and fail-safe. These tests pin the
  * pure model (no DB / server-only imports) so a change to condition
@@ -352,7 +352,7 @@ describe("sanitizeCondition / sanitizePolicyInput — validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("attribute catalog integrity", () => {
-  it("covers every SPEC-9 required attribute", () => {
+  it("covers every required attribute", () => {
     const keys = new Set(ABAC_ATTRIBUTE_CATALOG.map((a) => a.key))
     for (const required of [
       "department",

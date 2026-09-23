@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 2 — Tenant-scoped data access helpers.
+ * Tenant-scoped data access helpers.
  * ---------------------------------------------------------------------------
  * The safe, ergonomic way for routes/services to read and write tenant-owned
  * data. Every helper derives the tenant from the verified session context

@@ -12,7 +12,7 @@ import { setCurrentTenant } from "@/lib/tenant-context"
 import { TENANT_OWNED_TABLES } from "@/lib/tenant-tables"
 
 /**
- * SPEC 2 — Phase 3/4: automated + penetration-style validation of the
+ * Phase 3/4: automated + penetration-style validation of the
  * fail-closed data-access guard. These tests never touch a database; they
  * exercise the pure inspection logic that decides whether a statement can leak
  * across tenants.

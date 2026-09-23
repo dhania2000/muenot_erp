@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 51 — Pagination, filtering, and sorting standards.
+ * Pagination, filtering, and sorting standards.
  * ---------------------------------------------------------------------------
  * A single, consistent query-parameter contract for every collection endpoint:
  *
@@ -114,7 +114,7 @@ export type PaginatedResult<T> = {
 }
 
 /**
- * SPEC 79 — Database performance: run the `COUNT(*)` and the page `SELECT` for
+ * Database performance: run the `COUNT(*)` and the page `SELECT` for
  * a list endpoint concurrently instead of one after the other, halving the
  * round-trip latency of the common "rows + total" response.
  *

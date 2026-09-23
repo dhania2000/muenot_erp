@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { getImportJobIssues } from "@/lib/data-import-store"
 import { buildImportErrorCsv } from "@/lib/data-import-model"
 
-// SPEC 74 — download the row-level error report for a completed job as CSV
+// download the row-level error report for a completed job as CSV
 // (Row, Type, Details). Tenant-scoped: a job from another tenant 404s.
 
 export const runtime = "nodejs"

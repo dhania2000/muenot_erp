@@ -40,6 +40,28 @@ DB_USER=muenot_erp
 DB_PASSWORD=your-db-password
 DB_NAME=muenot_erp
 
+# ---- Connection pool tuning (SPEC 78 — Scalability)  [OPTIONAL] ----
+# All optional; the defaults reproduce the previous behavior. Tune these when
+# scaling horizontally. IMPORTANT: (number of app nodes x DB_POOL_SIZE) must
+# stay within your MySQL server's max_connections.
+#
+# DB_POOL_SIZE          Max pooled connections PER node.        (default 10)
+# DB_QUEUE_LIMIT        Max requests waiting for a connection;
+#                       0 = unlimited. Set >0 to fail fast and
+#                       shed load under a spike.                (default 0)
+# DB_MAX_IDLE           Idle connections to keep before reaping.(default = DB_POOL_SIZE)
+# DB_IDLE_TIMEOUT_MS    Idle connection lifetime in ms.         (default 60000)
+# DB_CONNECT_TIMEOUT_MS Connection establishment timeout in ms. (default 10000)
+# DB_DISABLE_KEEPALIVE  Set "true" to disable TCP keep-alive
+#                       (keep-alive is ON by default and avoids
+#                       "server has gone away" on idle sockets).(default off)
+# DB_SLOW_QUERY_MS      Log any query slower than this many ms
+#                       (statement text truncated, params never
+#                       logged). 0 disables the timer.          (default 500)
+#DB_POOL_SIZE=25
+#DB_QUEUE_LIMIT=0
+#DB_SLOW_QUERY_MS=500
+
 
 # =============================================================================
 # 3. EMAIL - GENERIC FALLBACK  [OPTIONAL]

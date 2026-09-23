@@ -85,6 +85,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["business_events", "Business event deliveries", "/api/cron/business-events", "* * * * *"],
   ["notification_delivery", "Notification delivery worker", "/api/cron/notification-delivery", "* * * * *"],
   ["temporary_access", "Temporary & break-glass access scheduler", "/api/cron/temporary-access", "* * * * *"],
+  ["access_reviews", "Access review scheduler & escalation", "/api/cron/access-reviews", "0 * * * *"],
 ].map(([key, name, endpoint, expression]) => ({
   key,
   name,

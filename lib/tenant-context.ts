@@ -51,6 +51,17 @@ export function getCurrentTenant(): TenantContext {
   return storage.getStore()?.tenant ?? null
 }
 
+/**
+ * Run `fn` inside a fresh tenant scope. Unlike `setCurrentTenant`, this uses
+ * `storage.run()` so the scope is isolated to this callback and cannot leak
+ * into sibling async executions — required for background workers that process
+ * several tenants' jobs concurrently and have no per-request session to seed
+ * the context.
+ */
+export function runWithTenant<T>(tenant: TenantContext, fn: () => Promise<T>): Promise<T> {
+  return storage.run({ tenant }, fn)
+}
+
 /** The current tenant id, or throws if there is no tenant in context. */
 export function requireCurrentTenantId(): number {
   const tenant = getCurrentTenant()

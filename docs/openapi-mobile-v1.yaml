@@ -53,7 +53,6 @@ paths:
   /team: { get: { summary: Active users in the authenticated tenant, responses: { '200': { description: Team } } } }
   /notifications: { get: { summary: Current user's notifications, responses: { '200': { description: Notifications } } }, patch: { summary: Mark own notifications read, responses: { '200': { description: Updated } } } }
   /subscription: { get: { summary: Current tenant subscription and entitlements, responses: { '200': { description: Subscription } } } }
-  /devices: { post: { summary: Register encrypted future-FCM device token, responses: { '200': { description: Registered } } }, delete: { summary: Disable own device token, responses: { '200': { description: Disabled } } } }
   /contacts/{id}:
     parameters: [{ name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }]
     get:
@@ -167,10 +166,45 @@ paths:
         '200': { description: Updated order, content: { application/json: { schema: { type: object, properties: { order: { $ref: '#/components/schemas/Order' } } } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+  /devices:
+    post:
+      summary: Register an installation and encrypted FCM token (tenant is derived from bearer session)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRegistration' }
+      responses: { '200': { description: Registered or safely updated }, '400': { description: Invalid device registration fields }, '401': { $ref: '#/components/responses/Unauthorized' }, '409': { description: Token is active for a different installation } }
+    patch:
+      summary: Refresh the FCM token for the authenticated installation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRegistration' }
+      responses: { '200': { description: Updated }, '409': { description: Token is active for a different installation } }
+    delete:
+      summary: Revoke only a device registered to the current mobile session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { deviceId: { type: string, maxLength: 160 }, pushToken: { type: string, maxLength: 4096 } }, anyOf: [{ required: [deviceId] }, { required: [pushToken] }] }
+      responses: { '200': { description: Disabled }, '401': { $ref: '#/components/responses/Unauthorized' } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
+    DeviceRegistration:
+      type: object
+      required: [deviceId, pushToken, platform]
+      properties:
+        deviceId: { type: string, minLength: 1, maxLength: 160, description: Stable installation ID generated and persisted by the app }
+        pushToken: { type: string, minLength: 20, maxLength: 4096, description: FCM registration token; send only over HTTPS }
+        pushProvider: { type: string, enum: [fcm], default: fcm }
+        platform: { type: string, enum: [android, ios] }
+        appVersion: { type: string, maxLength: 40 }
+        deviceName: { type: string, maxLength: 120 }
     LoginRequest:
       type: object
       required: [email, password]

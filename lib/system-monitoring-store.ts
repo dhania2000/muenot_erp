@@ -94,14 +94,20 @@ export async function health() {
   const existing = await getSystemHealth()
   const integrations = getIntegrations()
   const emailConfigured = Boolean(integrations.find((item) => item.name === "Email (SMTP)")?.connected)
+  const blobConfigured = Boolean(integrations.find((item) => item.name === "Blob storage")?.connected)
   const config = [
     ["WhatsApp", Boolean(getAppId() && getAppSecret())],
     ["Email/SMTP", emailConfigured],
     ["FCM", Boolean(process.env.FCM_PROJECT_ID)],
+    ["Blob storage", blobConfigured],
     ["Cron", Boolean(process.env.CRON_SECRET)],
   ] as const
-  const checks = [...existing.checks.map((c) => ({ name: c.name, status: c.status === "ok" ? "HEALTHY" : c.status === "warn" ? "DEGRADED" : "DOWN", reason: c.status === "down" ? "Check failed; see sanitized database diagnostics" : c.detail })), ...config.map(([name, configured]) => ({ name, status: configured ? "HEALTHY" : "UNKNOWN", reason: configured ? "Configured" : "Not configured in this runtime" }))]
-  await Promise.allSettled(checks.map((check) => pool.query("INSERT INTO system_health_checks (name, status, safe_reason, last_checked_at) VALUES (?, ?, ?, UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE status = VALUES(status), safe_reason = VALUES(safe_reason), last_checked_at = UTC_TIMESTAMP(3)", [check.name, check.status, redactString(check.reason)])))
+  const checks = [
+    { name: "Application", status: "HEALTHY", reason: `Process responding; uptime ${existing.runtime.uptimeSeconds}s`, responseTimeMs: null as number | null },
+    ...existing.checks.map((c) => ({ name: c.name, status: c.status === "ok" ? "HEALTHY" : c.status === "warn" ? "DEGRADED" : "DOWN", reason: c.status === "down" ? "Check failed; see sanitized database diagnostics" : c.detail, responseTimeMs: c.name === "Database" ? Number(/(\d+)ms round-trip/.exec(c.detail)?.[1]) || null : null })),
+    ...config.map(([name, configured]) => ({ name, status: configured ? "HEALTHY" : "UNKNOWN", reason: configured ? "Configured" : "Not configured in this runtime", responseTimeMs: null as number | null })),
+  ]
+  await Promise.allSettled(checks.map((check) => pool.query("INSERT INTO system_health_checks (name, status, safe_reason, response_time_ms, last_checked_at) VALUES (?, ?, ?, ?, UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE status = VALUES(status), safe_reason = VALUES(safe_reason), response_time_ms = VALUES(response_time_ms), last_checked_at = UTC_TIMESTAMP(3)", [check.name, check.status, redactString(check.reason), check.responseTimeMs])))
   return { overall: existing.overall, checks, runtime: existing.runtime }
 }
 

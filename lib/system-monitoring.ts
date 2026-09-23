@@ -57,6 +57,7 @@ export async function persistMonitorEvent(input: MonitorEvent): Promise<void> {
   try {
     let incidentId: number | null = null
     if (severity === "ERROR" || severity === "CRITICAL") {
+      const [previous] = await pool.query<any[]>("SELECT id, status FROM system_incidents WHERE environment = ? AND fingerprint = ? LIMIT 1", [environment, fingerprint])
       const [upsert] = await pool.query<any>(
         `INSERT INTO system_incidents (environment, fingerprint, title, service, component, operation, error_code, severity, affected_tenant_count, first_seen_at, last_seen_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))
@@ -66,6 +67,10 @@ export async function persistMonitorEvent(input: MonitorEvent): Promise<void> {
         [environment, fingerprint, message.slice(0, 255), service, component, operation, errorCode, severity],
       )
       incidentId = Number(upsert.insertId)
+      if (!previous[0] || previous[0].status === "RESOLVED") await pool.query(
+        "INSERT INTO system_incident_events (incident_id, actor_user_id, action, created_at) VALUES (?, NULL, ?, UTC_TIMESTAMP(3))",
+        [incidentId, previous[0] ? "auto_reopen" : "opened"],
+      )
       if (input.tenantId && Number.isSafeInteger(input.tenantId)) {
         const [tenant] = await pool.query<any>("INSERT IGNORE INTO system_incident_tenants (incident_id, tenant_id) VALUES (?, ?)", [incidentId, input.tenantId])
         if (tenant.affectedRows) await pool.query("UPDATE system_incidents SET affected_tenant_count = affected_tenant_count + 1 WHERE id = ?", [incidentId])

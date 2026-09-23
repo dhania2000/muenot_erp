@@ -43,7 +43,7 @@ export function MarketingWebsiteAnalyticsClient() {
   const params = new URLSearchParams({ range, compare: "1" })
   if (propertyId) params.set("propertyId", String(propertyId))
   const key = `/api/marketing/website-analytics?${params.toString()}`
-  const { data, isLoading, mutate } = useSWR(key, fetcher, { refreshInterval: 30_000, keepPreviousData: true })
+  const { data, isLoading, mutate } = useSWR<any>(key, fetcher, { refreshInterval: 30_000, keepPreviousData: true })
 
   const property = data?.property ?? null
   const analytics = data?.analytics ?? null

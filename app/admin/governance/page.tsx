@@ -147,7 +147,7 @@ export default function GovernanceAuditLogPage() {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </div>
-            <Select value={module} onValueChange={setModule}>
+            <Select value={module} onValueChange={(v) => setModule(v ?? "")}>
               <SelectTrigger className="w-full sm:w-44">
                 <SelectValue />
               </SelectTrigger>
@@ -159,7 +159,7 @@ export default function GovernanceAuditLogPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={result} onValueChange={setResult}>
+            <Select value={result} onValueChange={(v) => setResult(v ?? "")}>
               <SelectTrigger className="w-full sm:w-40">
                 <SelectValue />
               </SelectTrigger>

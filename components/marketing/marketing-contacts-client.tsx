@@ -102,8 +102,8 @@ export function MarketingContactsClient({
   params.set("offset", String(page * PAGE_SIZE))
 
   const listKey = `/api/marketing/contacts?${params.toString()}`
-  const { data, isLoading, mutate } = useSWR(listKey, fetcher)
-  const { data: statsData, mutate: mutateStats } = useSWR("/api/marketing/contacts/stats", fetcher)
+  const { data, isLoading, mutate } = useSWR<any>(listKey, fetcher)
+  const { data: statsData, mutate: mutateStats } = useSWR<any>("/api/marketing/contacts/stats", fetcher)
 
   const contacts: any[] = data?.contacts || []
   const total: number = data?.total || 0

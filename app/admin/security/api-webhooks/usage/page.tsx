@@ -39,7 +39,7 @@ export default async function ApiUsagePage() {
         Request-level telemetry for the public API — how many calls are being made, and how they resolve.
       </SecurityHeading>
 
-      <BackendStatus level="full">
+      <BackendStatus level="live">
         Every request to <code className="rounded bg-muted px-1">/api/v1</code> is metered by the shared API middleware
         — method, path, status, latency, environment, and source IP are recorded per request and aggregated below. Rate
         limiting is enforced per key (default 120 requests / minute) with standard{" "}

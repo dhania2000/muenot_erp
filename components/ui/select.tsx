@@ -6,7 +6,29 @@ import { Select as SelectPrimitive } from "@base-ui/react/select"
 import { cn } from "@/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
-const Select = SelectPrimitive.Root
+// The app calls Select with a Radix-style single-string API
+// (`value: string`, `onValueChange: (value: string) => void`), while Base UI's
+// Root is generic and types the value as `string | null`. This wrapper exposes
+// the stable string API and coerces Base UI's nullable "cleared" value to "".
+type SelectProps = Omit<
+  React.ComponentProps<typeof SelectPrimitive.Root>,
+  "value" | "defaultValue" | "onValueChange"
+> & {
+  value?: string
+  defaultValue?: string
+  onValueChange?: (value: string) => void
+}
+
+function Select({ value, defaultValue, onValueChange, ...props }: SelectProps) {
+  return (
+    <SelectPrimitive.Root
+      value={value as never}
+      defaultValue={defaultValue as never}
+      onValueChange={((v: string | null) => onValueChange?.(v ?? "")) as never}
+      {...props}
+    />
+  )
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
@@ -18,13 +40,26 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   )
 }
 
-function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
+function SelectValue({
+  className,
+  asChild,
+  children,
+  ...props
+}: SelectPrimitive.Value.Props & { asChild?: boolean }) {
+  if (asChild && React.isValidElement(children)) {
+    return (
+      <SelectPrimitive.Value
+        data-slot="select-value"
+        className={cn("flex flex-1 text-left", className)}
+        {...props}
+        render={children}
+      />
+    )
+  }
   return (
-    <SelectPrimitive.Value
-      data-slot="select-value"
-      className={cn("flex flex-1 text-left", className)}
-      {...props}
-    />
+    <SelectPrimitive.Value data-slot="select-value" className={cn("flex flex-1 text-left", className)} {...props}>
+      {children}
+    </SelectPrimitive.Value>
   )
 }
 

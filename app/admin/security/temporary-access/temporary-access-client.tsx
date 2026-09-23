@@ -150,7 +150,7 @@ export function TemporaryAccessClient({ initialUsers }: { initialUsers: UserRow[
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label className="text-xs">User</Label>
-            <Select value={userId} onValueChange={setUserId}>
+            <Select value={userId} onValueChange={(v) => setUserId(v ?? "")}>
               <SelectTrigger>
                 <SelectValue placeholder="Select a user" />
               </SelectTrigger>
@@ -165,7 +165,7 @@ export function TemporaryAccessClient({ initialUsers }: { initialUsers: UserRow[
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Temporary role (optional)</Label>
-            <Select value={role} onValueChange={setRole}>
+            <Select value={role} onValueChange={(v) => setRole(v ?? "")}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>

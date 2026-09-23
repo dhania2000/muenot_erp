@@ -23,7 +23,7 @@ import {
 } from "@/components/knowledge-base/kb-lib"
 import {
   Plus, Search, SlidersHorizontal, Download, Star, Pin, AlertTriangle, Eye, Paperclip,
-  BookOpen, ChevronLeft, ChevronRight, Menu,
+  BookOpen, ChevronLeft, ChevronRight, Menu, Upload,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 

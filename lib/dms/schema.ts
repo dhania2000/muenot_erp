@@ -20,6 +20,17 @@ export function ensureDmsSchema(): Promise<void> {
   return ensured
 }
 
+/** Add a column to an existing table only when it is not already present. */
+async function addColumnIfMissing(table: string, column: string, definition: string): Promise<void> {
+  const rows = await query<any[]>(
+    `SELECT COUNT(*) AS n FROM information_schema.columns
+     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+    [table, column],
+  )
+  if (Number(rows?.[0]?.n ?? 0) > 0) return
+  await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`)
+}
+
 async function doEnsure(): Promise<void> {
   await query(`
     CREATE TABLE IF NOT EXISTS dms_folders (
@@ -92,6 +103,12 @@ async function doEnsure(): Promise<void> {
       KEY idx_dms_doc_expiry (expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+
+  // SPEC 87 — link a document to its configurable approval workflow + the
+  // approval-authority request currently governing it. Added idempotently so
+  // pre-SPEC-87 deployments self-heal on the next request.
+  await addColumnIfMissing("dms_documents", "workflow_type", "VARCHAR(40) DEFAULT NULL")
+  await addColumnIfMissing("dms_documents", "approval_request_id", "BIGINT DEFAULT NULL")
 
   await query(`
     CREATE TABLE IF NOT EXISTS dms_document_tags (

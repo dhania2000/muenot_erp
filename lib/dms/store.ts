@@ -103,6 +103,8 @@ function mapDocument(r: any): DmsDocument {
     sourceEntityId: r.source_entity_id ?? null,
     status: normalizeStatus(r.status),
     approvalStatus: normalizeApproval(r.approval_status),
+    workflowType: normalizeWorkflowType(r.workflow_type),
+    approvalRequestId: r.approval_request_id == null ? null : Number(r.approval_request_id),
     approvedBy: r.approved_by == null ? null : Number(r.approved_by),
     approvedAt: r.approved_at ?? null,
     expiresAt: r.expires_at ?? null,
@@ -380,6 +382,8 @@ export type DocumentFilter = {
   status?: DocStatus
   search?: string
   sourceModule?: string
+  sourceEntityType?: string
+  sourceEntityId?: string
   ownerId?: number
   limit?: number
 }
@@ -406,6 +410,14 @@ export async function listDocuments(filter: DocumentFilter = {}): Promise<DmsDoc
   if (filter.sourceModule) {
     clauses.push("d.source_module = ?")
     extra.push(filter.sourceModule)
+  }
+  if (filter.sourceEntityType) {
+    clauses.push("d.source_entity_type = ?")
+    extra.push(filter.sourceEntityType)
+  }
+  if (filter.sourceEntityId) {
+    clauses.push("d.source_entity_id = ?")
+    extra.push(filter.sourceEntityId)
   }
   if (filter.ownerId != null) {
     clauses.push("d.owner_id = ?")

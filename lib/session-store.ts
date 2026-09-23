@@ -203,6 +203,29 @@ export async function revokeAllSessionsForUser(
   return (result as any)?.affectedRows ?? 0
 }
 
+/**
+ * SPEC 63 — device recognition for "block unknown devices" access policies.
+ * A device is considered known when the user has signed in from the same
+ * user-agent before (any prior session, including expired/revoked ones).
+ * Returns null when it cannot be determined (no user-agent, or store error) so
+ * a device-trust policy condition safely does not match rather than locking a
+ * user out on missing data.
+ */
+export async function isKnownDevice(userId: number, userAgent: string | null): Promise<boolean | null> {
+  if (!userAgent) return null
+  try {
+    await ensureSessionSchema()
+    const rows = await query<{ n: number }[]>(
+      `SELECT COUNT(*) AS n FROM \`user_sessions\` WHERE \`user_id\` = ? AND \`user_agent\` = ? LIMIT 1`,
+      [userId, userAgent.slice(0, 500)],
+    )
+    return Number(rows[0]?.n ?? 0) > 0
+  } catch (err) {
+    console.error("[v0] session store: known-device check failed", err)
+    return null
+  }
+}
+
 function parseUserAgent(ua: string | null): { device: string; browser: string } {
   if (!ua) return { device: "Unknown device", browser: "Unknown browser" }
   const isMobile = /Mobile|Android|iPhone/i.test(ua)

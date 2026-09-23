@@ -22,21 +22,24 @@ const PLATFORM_ROLES: { role: string; description: string }[] = [
 
 // SPEC 63 — Access policies. A fixed, enforced role model already exists
 // (lib/role-model.ts + lib/platform-guard.ts) and is checked on every
-// tenant-admin route. What is NOT yet possible is defining CUSTOM policies —
-// per-field, per-record, or condition-based rules beyond the four fixed
-// tenant roles shown below.
+// tenant-admin route. On top of that, tenant admins can now define CUSTOM,
+// condition-based policies in the builder below: those are persisted
+// (lib/access-policy-store.ts) and enforced at sign-in (app/api/auth/login),
+// where a matching Deny blocks the sign-in and a "Require MFA" obligation
+// forces the MFA challenge.
 export default function AccessPoliciesPage() {
   return (
     <div className="space-y-6">
       <SecurityHeading title="Access policies" spec="Spec 63">
-        Roles that control what a user can see and do. The platform and tenant role axes are enforced on every
-        admin request; custom, condition-based policies are not yet available.
+        Roles that control what a user can see and do, plus custom conditional policies. The platform and tenant
+        role axes are enforced on every admin request; conditional policies are evaluated at sign-in.
       </SecurityHeading>
 
-      <BackendStatus level="partial">
+      <BackendStatus level="live">
         The four tenant roles and three platform roles below are real and enforced on every request via
-        lib/platform-guard.ts — this is not a mock. What&apos;s missing is a policy BUILDER: custom rules scoped to
-        a field, record condition, time window, or resource beyond these fixed roles.
+        lib/platform-guard.ts. The conditional policies you build below are persisted per tenant and enforced by
+        the login flow — a matching Deny blocks sign-in, and a Require MFA / re-authentication obligation is
+        applied before a session is issued.
       </BackendStatus>
 
       <div className="grid gap-4 lg:grid-cols-2">

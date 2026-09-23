@@ -15,10 +15,12 @@ vi.mock("@/lib/user-lifecycle", () => ({
   getLoginSnapshot: async () => ({ lifecycleState: "active", accessExpiresAt: null, emailVerifiedAt: "2026-01-01", mfaEnabled: true }),
   consumeMfaChallenge: mock.consume,
 }))
-vi.mock("@/lib/session-store", () => ({ createSession: vi.fn(), newSessionId: () => "test-session" }))
+vi.mock("@/lib/session-store", () => ({ createSession: vi.fn(), newSessionId: () => "test-session", isKnownDevice: async () => null }))
 vi.mock("@/lib/mfa-policy", () => ({ requiresMfaByPolicy: () => true }))
 vi.mock("@/lib/password-policy", () => ({ checkLockout: async () => ({ locked: false }), recordFailedLogin: mock.failed, recordSuccessfulLogin: mock.success }))
 vi.mock("@/lib/ip-allowlist-store", () => ({ checkIpAllowlist: vi.fn() }))
+vi.mock("@/lib/security-audit-store", () => ({ recordSecurityEvent: vi.fn() }))
+vi.mock("@/lib/access-policy-store", () => ({ evaluateAccessPolicies: async () => ({ denied: false, deniedByPolicy: null, requireMfa: false, requireReauth: false, matched: [] }) }))
 
 import { POST } from "@/app/api/auth/login/route"
 

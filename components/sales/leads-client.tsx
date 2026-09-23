@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
+import { useNewRecordParam } from "@/lib/use-new-record-param"
 import { formatDateTime } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -203,6 +204,12 @@ export function LeadsClient({ canManage, canCall = false }: { canManage: boolean
   const [emailOpen, setEmailOpen] = useState(false)
   const [callTarget, setCallTarget] = useState<CallTarget | null>(null)
   const [callOpen, setCallOpen] = useState(false)
+
+  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  useNewRecordParam(() => {
+    setEditing(null)
+    setDialogOpen(true)
+  }, canManage)
 
   const leads = data?.leads ?? []
 

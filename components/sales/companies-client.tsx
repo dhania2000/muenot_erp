@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import { useNewRecordParam } from "@/lib/use-new-record-param"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import useSWR from "swr"
@@ -143,6 +144,12 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
   const [showArchived, setShowArchived] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<CompanyRow | null>(null)
+
+  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  useNewRecordParam(() => {
+    setEditing(null)
+    setDialogOpen(true)
+  }, canManage)
 
   const { data, isLoading, mutate } = useSWR<{ companies: CompanyRow[] }>(
     `/api/sales/companies${showArchived ? "?archived=1" : ""}`,

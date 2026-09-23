@@ -28,6 +28,7 @@ export default function ScrollTestPage() {
   return (
     <AppShell
       navItems={navItems}
+      quickCommands={[]}
       user={{ name: "System Admin", email: "contact@muenot.co.in", role: "admin" }}
       brandName="Muenot Technologies"
     >

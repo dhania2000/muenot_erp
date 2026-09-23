@@ -8,6 +8,7 @@ import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell } from "@/components/app-shell"
 import { ImpersonationBanner } from "@/components/platform/impersonation-banner"
 import { buildWorkspaceNav } from "@/lib/workspace-nav"
+import { buildWorkspaceCommands } from "@/lib/workspace-commands"
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession()
@@ -21,12 +22,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // separate console shell — the admin routes are just sections of the same app.
   const callPerms = await callPermissions(session)
   const navItems = await buildWorkspaceNav(session, settings)
+  const quickCommands = await buildWorkspaceCommands(session)
 
   return (
     <SettingsProvider initial={settings}>
       <SettingsBranding />
       <CallProvider currentUserId={session.userId} permissions={callPerms}>
-        <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
+        <AppShell navItems={navItems} quickCommands={quickCommands} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
           <ImpersonationBanner />
           {children}
         </AppShell>

@@ -3,6 +3,7 @@
 import useSWR from "swr"
 import { useMemo, useState } from "react"
 import { fetcher } from "@/lib/fetcher"
+import { useNewRecordParam } from "@/lib/use-new-record-param"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -126,6 +127,9 @@ export function SalesInvoicesClient() {
     setEditing(null)
     setDialogOpen(true)
   }
+
+  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  useNewRecordParam(openNew)
   function openEdit(row: InvoiceRow) {
     setEditing(row)
     setDialogOpen(true)

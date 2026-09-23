@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
+import { useNewRecordParam } from "@/lib/use-new-record-param"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -681,6 +682,12 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<ClientRow | null>(null)
   const [viewing, setViewing] = useState<ClientRow | null>(null)
+
+  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  useNewRecordParam(() => {
+    setEditing(null)
+    setDialogOpen(true)
+  }, canManage)
   const [merging, setMerging] = useState<ClientRow | null>(null)
 
   const clients = data?.clients ?? []

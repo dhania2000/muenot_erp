@@ -40,7 +40,13 @@ import { cn } from "@/lib/utils"
 
 type FlatNav = { label: string; href: string }
 
-type QuickCommand = { label: string; href: string; hint?: string }
+export type QuickCommand = {
+  label: string
+  href: string
+  hint?: string
+  /** "create" rows are grouped under "Create"; everything else under "Quick actions". */
+  kind?: "create" | "action"
+}
 
 type SearchHit = { id: string | number; title: string; subtitle: string; meta: string }
 type SearchGroup = { key: string; label: string; href: string; results: SearchHit[] }
@@ -60,6 +66,7 @@ const MAX_RECENT = 6
 
 const groupIcon: Record<string, typeof Search> = {
   navigation: ArrowRight,
+  create: Plus,
   commands: Plus,
   recent: History,
   employees: UsersRound,
@@ -184,7 +191,9 @@ export function CommandPalette({
     const out: { key: string; label: string; items: Selectable[] }[] = []
 
     const navMatches = (q ? navItems.filter((n) => n.label.toLowerCase().includes(q)) : navItems).slice(0, q ? 8 : 6)
-    const cmdMatches = (q ? quickCommands.filter((c) => c.label.toLowerCase().includes(q)) : quickCommands).slice(0, q ? 6 : 5)
+    const cmdPool = q ? quickCommands.filter((c) => c.label.toLowerCase().includes(q)) : quickCommands
+    const createMatches = cmdPool.filter((c) => c.kind === "create").slice(0, 6)
+    const actionMatches = cmdPool.filter((c) => c.kind !== "create").slice(0, q ? 6 : 5)
 
     if (!q && recent.length > 0) {
       out.push({
@@ -215,11 +224,26 @@ export function CommandPalette({
       })
     }
 
-    if (cmdMatches.length) {
+    if (createMatches.length) {
+      out.push({
+        key: "create",
+        label: "Create",
+        items: createMatches.map((c) => ({
+          id: `create:${c.href}`,
+          label: c.label,
+          sublabel: c.hint,
+          groupKey: "create",
+          href: c.href,
+          onSelect: () => router.push(c.href),
+        })),
+      })
+    }
+
+    if (actionMatches.length) {
       out.push({
         key: "commands",
         label: "Quick actions",
-        items: cmdMatches.map((c) => ({
+        items: actionMatches.map((c) => ({
           id: `cmd:${c.href}`,
           label: c.label,
           sublabel: c.hint,

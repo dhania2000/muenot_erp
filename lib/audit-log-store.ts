@@ -36,6 +36,16 @@ import { getClientIp } from "@/lib/rate-limit"
 export type AuditResult = "success" | "failure" | "denied"
 
 /**
+ * SPEC 68 — the ONLY authorized way to remove an audit row is the retention
+ * purge, and only after the row has been sealed into the immutable archive.
+ * The BEFORE DELETE trigger rejects every delete UNLESS this connection-scoped
+ * session flag is set to 1, which lib/audit-retention.ts sets on a dedicated
+ * transaction connection, deletes, then clears. UPDATEs remain rejected
+ * unconditionally — an audit row's content is never mutable.
+ */
+export const AUDIT_PURGE_SESSION_FLAG = "@audit_retention_purge"
+
+/**
  * Phase 1 — inventory of auditable operations, expressed as a stable
  * `<entity>.<verb>` taxonomy. Kept open (string) so modules can log new actions
  * without a code change here, while these constants document the major surface.
@@ -155,31 +165,34 @@ async function runEnsure(): Promise<void> {
 }
 
 /**
- * Database-level immutability. Reject any UPDATE or DELETE against the audit
- * table with a SIGNAL error. Best-effort and idempotent: we check
- * information_schema first (CREATE TRIGGER has no IF NOT EXISTS on most MySQL
- * versions) and swallow any failure so a hosting account that forbids trigger
- * creation still gets application-level immutability.
+ * Database-level immutability. Reject any UPDATE against the audit table
+ * unconditionally, and reject every DELETE EXCEPT an authorized retention purge
+ * (SPEC 68) that sets the AUDIT_PURGE_SESSION_FLAG on its own connection first.
+ * Best-effort and idempotent: CREATE TRIGGER has no IF NOT EXISTS on most MySQL
+ * versions, so we drop-then-create to upgrade older installs, and swallow any
+ * failure so a hosting account that forbids trigger creation still gets
+ * application-level immutability (the store exposes no update/delete function).
  */
 async function ensureImmutabilityTriggers(): Promise<void> {
   try {
-    const existing = (await query(
-      `SELECT trigger_name AS name FROM information_schema.triggers
-        WHERE trigger_schema = DATABASE() AND trigger_name IN ('audit_log_no_update','audit_log_no_delete')`,
-    )) as { name: string }[]
-    const names = new Set(existing.map((r) => String(r.name)))
-    if (!names.has("audit_log_no_update")) {
-      await query(
-        `CREATE TRIGGER \`audit_log_no_update\` BEFORE UPDATE ON \`audit_log_entries\`
-         FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log_entries is append-only'`,
-      )
-    }
-    if (!names.has("audit_log_no_delete")) {
-      await query(
-        `CREATE TRIGGER \`audit_log_no_delete\` BEFORE DELETE ON \`audit_log_entries\`
-         FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log_entries is append-only'`,
-      )
-    }
+    await query(`DROP TRIGGER IF EXISTS \`audit_log_no_update\``)
+    await query(
+      `CREATE TRIGGER \`audit_log_no_update\` BEFORE UPDATE ON \`audit_log_entries\`
+       FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log_entries is append-only'`,
+    )
+    await query(`DROP TRIGGER IF EXISTS \`audit_log_no_delete\``)
+    // The compound body is a single CREATE TRIGGER statement (safe for one
+    // pool.query call — no multi-statement mode needed). Deletes are allowed
+    // only when the retention purge has flagged this connection.
+    await query(
+      `CREATE TRIGGER \`audit_log_no_delete\` BEFORE DELETE ON \`audit_log_entries\`
+       FOR EACH ROW
+       BEGIN
+         IF ${AUDIT_PURGE_SESSION_FLAG} IS NULL OR ${AUDIT_PURGE_SESSION_FLAG} <> 1 THEN
+           SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log_entries is append-only; deletion is only permitted via authorized retention purge';
+         END IF;
+       END`,
+    )
   } catch (err) {
     console.warn("[v0] audit immutability triggers not installed (app-level immutability still applies):", (err as Error).message)
   }

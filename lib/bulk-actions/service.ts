@@ -118,6 +118,36 @@ export async function submitBulkAction(
 }
 
 /**
+ * Rebuild the actor context for a stored run from its persisted actor snapshot.
+ * There is no live session on the background path, so the run's own record of
+ * who submitted it is the source of truth for tenant + per-record scoping.
+ */
+function actorContextFromRun(run: BulkRun): BulkActorContext {
+  const session: SessionPayload = {
+    userId: run.actor.userId,
+    email: run.actor.email ?? "",
+    name: run.actor.name ?? "",
+    role: run.actor.role === "admin" ? "admin" : "employee",
+    tenantId: run.tenantId,
+  }
+  return { tenantId: run.tenantId, session }
+}
+
+/**
+ * Background-queue entry point. Loads a stored run, rebuilds its actor context,
+ * and executes it to completion. Returns null when the run no longer exists or
+ * has already reached a terminal state (so a duplicate job is a safe no-op).
+ */
+export async function resumeBulkRun(runId: number, signal?: AbortSignal): Promise<BulkActionReport | null> {
+  const run = await getBulkRun(runId)
+  if (!run) return null
+  // A completed/failed run has already been finalized and audited; re-running
+  // it would double-apply. Treat a duplicate delivery as an idempotent no-op.
+  if (run.status === "completed" || run.status === "failed") return run.report
+  return runAndFinalize(run.resourceKey, run.id, actorContextFromRun(run), undefined, signal)
+}
+
+/**
  * Execute a stored run to completion and finalize its status + audit entry.
  * Shared by the inline path and the background worker (which reconstructs the
  * actor context from the stored run — there is no live session there).

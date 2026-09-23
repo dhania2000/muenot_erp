@@ -11,7 +11,7 @@ import { classifyJobFailure, retryDisposition, type FailureKind } from "@/lib/jo
  * Queue entries are data, never commands or URLs. A reviewed handler registry
  * determines the code that can run for each job type.
  */
-export const BACKGROUND_JOB_TYPES = ["email.send"] as const
+export const BACKGROUND_JOB_TYPES = ["email.send", "bulk.action"] as const
 export type BackgroundJobType = (typeof BACKGROUND_JOB_TYPES)[number]
 
 export const BACKGROUND_JOB_STATUSES = ["queued", "running", "completed", "failed", "dead_letter", "cancelled"] as const
@@ -36,7 +36,17 @@ type EmailPayload = {
   attachmentPaths?: string[]
 }
 
-export type BackgroundJobPayload = EmailPayload
+/**
+ * SPEC 85 — a large bulk action runs in this durable queue. The payload only
+ * carries the stored run id; the worker rehydrates the actor context, id list,
+ * and value from the persisted run so nothing about the operation is trusted
+ * from the (data-only) queue entry.
+ */
+type BulkActionPayload = {
+  runId: number
+}
+
+export type BackgroundJobPayload = EmailPayload | BulkActionPayload
 
 export type BackgroundJob = {
   id: number
@@ -145,8 +155,16 @@ function validateEmailPayload(payload: unknown): EmailPayload {
   }
 }
 
+function validateBulkActionPayload(payload: unknown): BulkActionPayload {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Bulk action payload must be an object")
+  const runId = Number((payload as Record<string, unknown>).runId)
+  if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("A valid bulk run id is required")
+  return { runId }
+}
+
 function validatePayload(jobType: BackgroundJobType, payload: unknown): BackgroundJobPayload {
   if (jobType === "email.send") return validateEmailPayload(payload)
+  if (jobType === "bulk.action") return validateBulkActionPayload(payload)
   throw new Error("Unknown background job type")
 }
 
@@ -344,6 +362,13 @@ const JOB_HANDLERS: Record<BackgroundJobType, JobHandler> = {
       await markTenantEmailAccepted(email.engineMessageId, result)
     }
     return { messageId: result.messageId ?? null, providerThreadId: result.providerThreadId ?? null }
+  },
+  async "bulk.action"(payload, context) {
+    const { runId } = payload as BulkActionPayload
+    const { resumeBulkRun } = await import("@/lib/bulk-actions/service")
+    const report = await resumeBulkRun(runId, context.signal)
+    if (!report) return { skipped: "run not found or not resumable" }
+    return { total: report.total, succeeded: report.succeeded, failed: report.failed, skipped: report.skipped }
   },
 }
 

@@ -119,6 +119,22 @@ export function getPoolStats(): {
   }
 }
 
+/**
+ * SPEC 79 — Database performance: run EXPLAIN on a statement and return the
+ * planner rows, so a query flagged by the slow-query log (SPEC 78) can be
+ * checked for a full-table scan / filesort / missing index without leaving the
+ * app. Diagnostics only — never call this on the hot path. Bypasses the tenant
+ * guard because EXPLAIN neither reads nor writes tenant rows; callers must pass
+ * a fully-parameterized statement (values are never interpolated).
+ */
+export async function explainQuery(
+  sql: string,
+  params: any[] = [],
+): Promise<Array<Record<string, unknown>>> {
+  const [rows] = await pool.query(`EXPLAIN ${sql}`, params)
+  return rows as Array<Record<string, unknown>>
+}
+
 /** Execute a group of statements atomically. Callers still include their normal tenant predicates. */
 export async function withTransaction<T>(
   fn: (connection: mysql.PoolConnection) => Promise<T>,

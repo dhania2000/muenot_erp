@@ -15,6 +15,7 @@ import "server-only"
  * are validated against the allowlist, values are always parameterized).
  */
 import { ApiError, validationError } from "@/lib/api-platform/errors"
+import { query } from "@/lib/db"
 
 export const DEFAULT_PER_PAGE = 50
 export const MAX_PER_PAGE = 200
@@ -102,6 +103,55 @@ export function buildWhere(filters: ParsedFilters): { clause: string; params: un
 export function buildOrderBy(sort: ParsedSort): string {
   if (!sort.column) return ""
   return `ORDER BY \`${sort.column}\` ${sort.direction}`
+}
+
+export type PaginatedResult<T> = {
+  rows: T[]
+  total: number
+  page: number
+  perPage: number
+  totalPages: number
+}
+
+/**
+ * SPEC 79 — Database performance: run the `COUNT(*)` and the page `SELECT` for
+ * a list endpoint concurrently instead of one after the other, halving the
+ * round-trip latency of the common "rows + total" response.
+ *
+ * Callers pass the shared FROM/WHERE (`fromWhere`, e.g.
+ * "FROM `sales_leads` WHERE tenant_id = ? AND status = ?") with its params, the
+ * column list, and the already-parsed ORDER BY + pagination. The page params
+ * are the shared params plus LIMIT/OFFSET; the count reuses the shared params
+ * only. Both statements go through `query`, so the tenant guard still applies.
+ */
+export async function paginatedList<T = any>(opts: {
+  columns?: string
+  fromWhere: string
+  params?: any[]
+  orderBy?: string
+  pagination: ParsedPagination
+}): Promise<PaginatedResult<T>> {
+  const { fromWhere, pagination } = opts
+  const params = opts.params ?? []
+  const columns = opts.columns ?? "*"
+  const orderBy = opts.orderBy ? ` ${opts.orderBy}` : ""
+
+  const [rows, countRows] = await Promise.all([
+    query<T[]>(
+      `SELECT ${columns} ${fromWhere}${orderBy} LIMIT ? OFFSET ?`,
+      [...params, pagination.limit, pagination.offset],
+    ),
+    query<Array<{ total: number }>>(`SELECT COUNT(*) AS total ${fromWhere}`, params),
+  ])
+
+  const total = Number(countRows[0]?.total ?? 0)
+  return {
+    rows,
+    total,
+    page: pagination.page,
+    perPage: pagination.perPage,
+    totalPages: Math.max(1, Math.ceil(total / pagination.perPage)),
+  }
 }
 
 /** Combines parsed pieces into everything a list query needs. Convenience only. */

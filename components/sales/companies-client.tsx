@@ -37,7 +37,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { CompanyDialog } from "@/components/sales/company-dialog"
 import { ExcelImportButton } from "@/components/sales/excel-import-button"
 import { ExcelExportButton } from "@/components/excel-export-button"
-import { SelectAllCheckbox, SelectionToolbar, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
+import { SelectAllCheckbox, useDeleteManager, useRowSelection } from "@/components/sales/bulk-delete"
+import { BulkActionBar, type BulkActionOption } from "@/components/bulk-actions/bulk-action-bar"
 
 const COMPANY_IMPORT_ALIASES = {
   company_name: ["companyname", "company", "name"],
@@ -236,6 +237,25 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
     onDeleted: clear,
   })
 
+  // SPEC 85 — bulk operations dispatched through the generic /api/bulk endpoint.
+  const bulkActions = useMemo<BulkActionOption[]>(
+    () => [
+      ...STATUS_OPTIONS.map((status) => ({
+        kind: "set_status",
+        label: `Set status: ${status}`,
+        value: { status },
+      })),
+      {
+        kind: "archive",
+        label: "Archive selected",
+        destructive: true,
+        confirmText: "Archived companies are hidden from the active list but can be restored later.",
+      },
+      { kind: "export", label: "Export CSV" },
+    ],
+    [],
+  )
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
@@ -355,11 +375,13 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
       </div>
 
       {canManage && (
-        <SelectionToolbar
-          count={selected.size}
+        <BulkActionBar
+          resourceKey="sales.companies"
           noun="company"
+          selected={[...selected]}
+          actions={bulkActions}
           onClear={clear}
-          onDelete={() => del.requestBulk([...selected])}
+          onDone={mutate}
         />
       )}
 

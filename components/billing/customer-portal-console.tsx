@@ -128,7 +128,7 @@ export function CustomerPortalConsole() {
   const cancelScheduled = sub?.cancel_at_period_end
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pl-4 sm:pl-6 lg:pl-8">
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold text-foreground">Customer Billing Portal</h1>
         <p className="text-sm text-muted-foreground">

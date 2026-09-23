@@ -17,6 +17,7 @@ import {
   type MessageStatus,
 } from "@/lib/whatsapp-store"
 import { routeConversation } from "@/lib/whatsapp-routing"
+import { enqueueWhatsAppMessageNotifications } from "@/lib/whatsapp-push-notifications"
 import { runInboundAutomations } from "@/lib/whatsapp-automations"
 import { applyCampaignStatusByWamid, markCampaignReplied } from "@/lib/whatsapp-campaigns"
 
@@ -315,10 +316,9 @@ async function processChange(input: {
             contactId: contact.id,
           })
           await routeConversation({ conversationId: conversation.id, messageText })
-        await runInboundAutomations({
-          conversationId: conversation.id,
-          integrationId,
-          phone: fromPhone,
+          await runInboundAutomations({
+            conversationId: conversation.id,
+            phone: fromPhone,
             messageText,
             isNewContact: ctx.isNewContact,
             isNewConversation: ctx.isNewConversation,
@@ -326,6 +326,18 @@ async function processChange(input: {
           })
         } catch (err) {
           console.error("[v0] inbound routing/automation failed:", (err as Error).message)
+        }
+        try {
+          const deliveryContext = await getInboundContext({ conversationId: conversation.id, contactId: contact.id })
+          const queued = await enqueueWhatsAppMessageNotifications({
+            tenantId: Number(integration.tenant_id), wamid: m.id, conversationId: conversation.id,
+            assignedAgentId: deliveryContext.assignedAgentId, contactName: contact.profile_name,
+            preview: parsed.body, timestamp: tsToDate(m.timestamp)?.toISOString() ?? null,
+          })
+          if (queued.recipients === 0) console.info("[mobile-push] whatsapp_event_has_no_recipients", { tenantId:Number(integration.tenant_id),conversationId:conversation.id })
+        } catch {
+          // Notifications are best-effort; never fail the accepted WhatsApp webhook.
+          console.warn("[mobile-push] whatsapp_event_queue_failed", { tenantId:Number(integration.tenant_id),conversationId:conversation.id })
         }
       }
     } catch (err) {

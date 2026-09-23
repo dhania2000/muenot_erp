@@ -63,7 +63,7 @@ export async function processNotification(id:number) {
       const [r]=await c.query<any>("INSERT INTO notifications (user_id,actor_id,actor_name,module_key,group_slug,action,title,body,link,entity_table,entity_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",[d.user_id,context.actorId??null,context.actorName?.slice(0,150)??null,context.moduleKey?.slice(0,80)??"notifications",context.groupSlug?.slice(0,40)??null,context.action?.slice(0,20)??"create",d.title,d.body.slice(0,500),d.link,context.entityTable?.slice(0,80)??"notification_deliveries",context.entityId?.slice(0,40)??String(id)])
       await c.query("UPDATE notification_deliveries SET status='delivered',attempts=?,result_id=? WHERE id=?",[d.attempts,String(r.insertId),id]);await log(c,d,"delivered");return null
     }
-    const destination=d.channel==="email"?user.email:pref?.destination
+    const destination=d.channel==="email"?user.email:d.channel==="push"?`user:${d.user_id}`:pref?.destination
     if(!providerFor(d.channel)||!destination) {
       await c.query("UPDATE notification_deliveries SET status='blocked',attempts=?,error_code='provider_or_destination_missing' WHERE id=?",[d.attempts,id]);await log(c,d,"blocked");return null
     }
@@ -77,10 +77,11 @@ export async function processNotification(id:number) {
   let timer:ReturnType<typeof setTimeout>|undefined
   try {
     const resultData=await Promise.race([
-      providerFor(external.channel as Channel)!({tenantId:Number(external.tenant_id),userId:Number(external.user_id),destination:external.destination,title:external.title,body:external.body,idempotencyKey:`notification:${external.tenant_id}:${id}`,signal:abort.signal}),
+      providerFor(external.channel as Channel)!({tenantId:Number(external.tenant_id),userId:Number(external.user_id),destination:external.destination,title:external.title,body:external.body,idempotencyKey:`notification:${external.tenant_id}:${id}`,signal:abort.signal,link:external.link,context:typeof external.source_context==="string"?JSON.parse(external.source_context):external.source_context??{}}),
       new Promise<never>((_,reject)=>{timer=setTimeout(()=>{abort.abort();reject(Object.assign(new Error("Timeout"),{code:"ETIMEDOUT"}))},20000)}),
     ])
     result=resultData.providerId?.slice(0,191)??null
+    if(resultData.skipped)status="skipped"
   } catch(e) {
     const missing=e && typeof e==="object" && "code" in e && e.code==="PROVIDER_UNCONFIGURED"
     const kind=classifyJobFailure(e)

@@ -45,7 +45,9 @@ Plans remain configurable through the existing plan entitlement JSON: enable onl
 
 ## Realtime design
 
-The existing path remains `Meta webhook → resolved tenant/integration → persisted WhatsApp message → notification service`. `mobile_device_registrations` stores an encrypted device registration token plus hash, user/tenant/session and provider metadata. It is a provider-neutral boundary designed for FCM. No Firebase SDK, private key or Android implementation is present in this repository. A future delivery provider must decrypt only server-side and call FCM after notification authorization.
+The shared path is `Meta webhook → resolved tenant/integration → persisted WhatsApp message → deduplicated notification queue → FCM worker`. Device tokens remain encrypted at rest and are only decrypted server-side. In-app history is created by the existing notification engine and remains available through `/notifications`; FCM is an additional channel on the same queued event. Push enqueue/delivery errors are best-effort and cannot fail WhatsApp webhook processing.
+
+For production, configure `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, and `FCM_PRIVATE_KEY` as server-only secrets. `FCM_PRIVATE_KEY` may use literal `\n` sequences; never prefix these with `NEXT_PUBLIC_` or bundle them into Expo. The backend uses service-account OAuth and the Firebase Cloud Messaging HTTP v1 API. Deploy the additive `2026-09-23-mobile-push-infrastructure.sql` migration. A worker invocation of the existing notification delivery worker is required for queued FCM deliveries and retries.
 
 ## Migration and deployment
 
@@ -57,6 +59,6 @@ The migration is additive. The runtime initializes mobile/profile tables as a de
 
 1. Implement native MFA challenge completion for MFA-enabled users.
 2. Migrate/create tenant-owned Shopkeeper product and order domains before enabling those endpoints.
-3. Add an FCM delivery provider and Firebase credentials in the server secret store.
+3. Configure the Firebase project/service account secrets and enable the Firebase Cloud Messaging API.
 4. Add cursor pagination to very large WhatsApp datasets and production distributed rate limiting.
 5. Create the separate Android repository; it must only use these HTTPS APIs.

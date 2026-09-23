@@ -15,5 +15,5 @@ export function renderTemplate(text:string,variables:Record<string,string>) {
     return variables[key]
   })
 }
-export function defaultEnabled(channel:Channel){return channel==="in_app"}
+export function defaultEnabled(channel:Channel){return channel==="in_app"||channel==="push"}
 export function escapeHtml(s:string){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]!))}

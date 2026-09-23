@@ -29,7 +29,7 @@ beforeEach(()=>{
   })
 })
 describe("SPEC 49 contracts",()=>{
-  it("defaults only in-app to enabled",()=>expect(CHANNELS.filter(defaultEnabled)).toEqual(["in_app"]))
+  it("defaults in-app and mobile push notifications to enabled",()=>expect(CHANNELS.filter(defaultEnabled)).toEqual(["in_app","push"]))
   it("renders literal variables, not expressions",()=>{
     expect(renderTemplate("Hello {{ name }}",{name:"<script>"})).toBe("Hello <script>")
     expect(()=>renderTemplate("{{name}}",Object.create({name:"inherited"}))).toThrow()

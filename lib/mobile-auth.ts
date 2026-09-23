@@ -1,7 +1,7 @@
 import "server-only"
 import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { SignJWT, jwtVerify } from "jose"
-import { query } from "@/lib/db"
+import { query, withTransaction } from "@/lib/db"
 import { verifyPassword } from "@/lib/password"
 import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/password-policy"
 import { getLoginSnapshot } from "@/lib/user-lifecycle"
@@ -42,10 +42,16 @@ export function ensureMobileAuthSchema() {
     await query(`CREATE TABLE IF NOT EXISTS mobile_device_registrations (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, tenant_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL,
       mobile_session_id VARCHAR(64) NOT NULL, provider VARCHAR(20) NOT NULL DEFAULT 'fcm', token_hash CHAR(64) NOT NULL,
-      token_encrypted TEXT NOT NULL, device_name VARCHAR(120) NULL, platform VARCHAR(32) NULL, enabled TINYINT(1) NOT NULL DEFAULT 1,
+      token_encrypted TEXT NOT NULL, device_id VARCHAR(160) NULL, app_version VARCHAR(40) NULL, device_name VARCHAR(120) NULL, platform VARCHAR(32) NULL, enabled TINYINT(1) NOT NULL DEFAULT 1,
       last_seen_at DATETIME NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY(id), UNIQUE KEY uq_mobile_device_token(tenant_id,token_hash), KEY idx_mobile_device_user(tenant_id,user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+    const columns = await query<any[]>("SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='mobile_device_registrations'")
+    const knownColumns = new Set(columns.map((row) => String(row.column_name)))
+    if (!knownColumns.has("device_id")) await query("ALTER TABLE mobile_device_registrations ADD COLUMN device_id VARCHAR(160) NULL AFTER token_encrypted")
+    if (!knownColumns.has("app_version")) await query("ALTER TABLE mobile_device_registrations ADD COLUMN app_version VARCHAR(40) NULL AFTER device_id")
+    const indexes = await query<any[]>("SELECT index_name FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='mobile_device_registrations'")
+    if (!indexes.some((row) => row.index_name === "uq_mobile_device_installation")) await query("ALTER TABLE mobile_device_registrations ADD UNIQUE KEY uq_mobile_device_installation(tenant_id,user_id,device_id)")
     await query(`CREATE TABLE IF NOT EXISTS mobile_api_audit (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, tenant_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL,
       session_id VARCHAR(64) NULL, action VARCHAR(80) NOT NULL, method VARCHAR(12) NULL, path VARCHAR(255) NULL,
@@ -109,7 +115,9 @@ export async function refreshMobileSession(refreshToken: unknown) {
   if (!row || row.user_status !== "active" || row.tenant_status !== "active") return { ok: false as const, status: 401, error: "Session is no longer active." }
   const roles = await getStoredRoles(Number(row.user_id))
   await query("UPDATE mobile_sessions SET revoked_at=NOW(),revoked_reason='rotated' WHERE session_id=?", [row.session_id])
-  return { ok: true as const, tokens: await issue({ userId: Number(row.user_id), tenantId: Number(row.tenant_id), name: row.name, email: row.email, role: row.role, tenantRole: roles?.tenantRole ?? (row.role === "admin" ? "tenant_admin" : "employee") }, row.device_name, row.platform) }
+  const tokens = await issue({ userId: Number(row.user_id), tenantId: Number(row.tenant_id), name: row.name, email: row.email, role: row.role, tenantRole: roles?.tenantRole ?? (row.role === "admin" ? "tenant_admin" : "employee") }, row.device_name, row.platform)
+  await query("UPDATE mobile_device_registrations SET mobile_session_id=? WHERE tenant_id=? AND user_id=? AND mobile_session_id=? AND enabled=1", [tokens.sessionId,row.tenant_id,row.user_id,row.session_id])
+  return { ok: true as const, tokens }
 }
 
 export async function authenticateMobileRequest(request: Request): Promise<MobilePrincipal | null> {
@@ -131,8 +139,13 @@ export async function authenticateMobileRequest(request: Request): Promise<Mobil
   } catch { return null }
 }
 
-export async function revokeMobileSession(sessionId: string, userId: number, reason = "logout") {
-  await ensureMobileAuthSchema(); await query("UPDATE mobile_sessions SET revoked_at=NOW(),revoked_reason=? WHERE session_id=? AND user_id=? AND revoked_at IS NULL", [reason.slice(0, 60), sessionId, userId])
+export async function revokeMobileSession(sessionId: string, userId: number, reason = "logout", tenantId?: number) {
+  await ensureMobileAuthSchema()
+  if (tenantId == null) throw new Error("Tenant context is required to revoke a mobile session")
+  await withTransaction(async (connection) => {
+    await connection.query("UPDATE mobile_sessions SET revoked_at=NOW(),revoked_reason=? WHERE session_id=? AND user_id=? AND tenant_id=? AND revoked_at IS NULL", [reason.slice(0, 60), sessionId, userId, tenantId])
+    await connection.query("UPDATE mobile_device_registrations SET enabled=0 WHERE mobile_session_id=? AND user_id=? AND tenant_id=?", [sessionId,userId,tenantId])
+  })
 }
 export async function listMobileSessions(userId: number, tenantId: number) {
   await ensureMobileAuthSchema(); return query<any[]>("SELECT session_id,device_name,platform,created_at,last_active_at,expires_at FROM mobile_sessions WHERE user_id=? AND tenant_id=? AND revoked_at IS NULL AND expires_at>NOW() ORDER BY last_active_at DESC", [userId, tenantId])

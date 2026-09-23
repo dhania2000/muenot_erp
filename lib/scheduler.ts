@@ -62,6 +62,7 @@ const CATEGORY_BY_JOB: Record<string, SchedulerCategory> = {
   subscription_reminders: "billing",
   subscription_lifecycle: "billing",
   calendar_sync: "data_sync",
+  backups: "data_sync",
   storage_retention: "storage_cleanup",
   monitor_retention: "storage_cleanup",
   audit_retention: "storage_cleanup",

@@ -13,7 +13,7 @@ import { toast } from "sonner"
 import { NotesPanel } from "@/components/notes-panel"
 import { CommandPalette } from "@/components/shared/command-palette"
 import { ScreenMonitorProvider, useScreenMonitor } from "@/components/hr/screen-monitor-provider"
-import { AttendanceIdleTracker } from "@/components/hr/attendance-idle-tracker"
+import { AttendanceIdleTracker, clearAttendanceIdleTracking, flushAttendanceIdleBeforeClockOut } from "@/components/hr/attendance-idle-tracker"
 import type { IdleStatus } from "@/lib/attendance-idle-config"
 import { LanguageWidget } from "@/components/providers/language-widget"
 import { cn } from "@/lib/utils"
@@ -173,6 +173,8 @@ type ClockStatus = {
   clockIn?: string | null
   clockOut?: string | null
   workedHours?: number
+  attendanceRowId?: number | null
+  sessionStart?: string | null
 }
 
 /** Format a decimal hours value (e.g. 7.25) as "7h 15m". */
@@ -298,6 +300,10 @@ function HeaderClockButton() {
   async function toggle() {
     setBusy(true)
     try {
+      if (state === "in" && !await flushAttendanceIdleBeforeClockOut()) {
+        toast.error("Idle time could not sync. Check your connection and try clocking out again.")
+        return
+      }
       // Location is required — abort the punch (send nothing) if we can't get it.
       const location = await getBrowserLocation()
       if (!location.ok) {
@@ -324,6 +330,7 @@ function HeaderClockButton() {
         void startMonitoring()
       } else if ((json as { state?: string }).state === "out") {
         toast.success("Clocked out")
+        clearAttendanceIdleTracking(data?.attendanceRowId && data.sessionStart ? `${data.attendanceRowId}:${data.sessionStart}` : null)
         setIdleStatus("active")
         // Clocking out always stops capture immediately.
         void stopMonitoring("clock_out")
@@ -338,7 +345,7 @@ function HeaderClockButton() {
 
   return (
     <>
-      <AttendanceIdleTracker active={state === "in"} onStatusChange={setIdleStatus} />
+      <AttendanceIdleTracker active={state === "in"} trackingKey={data?.attendanceRowId && data.sessionStart ? `${data.attendanceRowId}:${data.sessionStart}` : null} onStatusChange={setIdleStatus} />
       {state === "in" ? (
         <span
           className={cn(
@@ -559,6 +566,10 @@ export function AppShell({
   }, [pathname, onSettings])
 
   async function handleLogout() {
+    if (!await flushAttendanceIdleBeforeClockOut()) {
+      toast.error("Idle time could not sync. Check your connection and try signing out again.")
+      return
+    }
     await fetch("/api/auth/logout", { method: "POST" })
     router.push("/login")
     router.refresh()

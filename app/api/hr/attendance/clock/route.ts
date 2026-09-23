@@ -13,6 +13,8 @@ import {
   type DayContext,
 } from "@/lib/hr-attendance"
 import { IDLE_GRACE_MINUTES } from "@/lib/attendance-idle-config"
+import { getIdleSessionTotals } from "@/lib/attendance-idle-sessions"
+import { resolveTenantIdForUser } from "@/lib/tenant-service"
 
 const DEFAULT_TIME_ZONE = "Asia/Kolkata"
 
@@ -80,6 +82,7 @@ type AttendanceRow = {
   working_hours: number
   active_since: string | null
   idle_minutes: number
+  auto_break_seconds: number
   work_date: string
 }
 
@@ -186,6 +189,7 @@ async function ensureTable(): Promise<void> {
       clock_out DATETIME DEFAULT NULL,
       active_since DATETIME DEFAULT NULL,
       break_minutes INT UNSIGNED NOT NULL DEFAULT 0,
+      auto_break_seconds INT UNSIGNED NOT NULL DEFAULT 0,
       working_hours DECIMAL(6,2) NOT NULL DEFAULT 0,
       status VARCHAR(40) NOT NULL DEFAULT 'Present',
       late_minutes INT UNSIGNED NOT NULL DEFAULT 0,
@@ -273,6 +277,13 @@ async function hasIdleColumn(): Promise<boolean> {
     } else {
       idleColumnReady = true
     }
+    if (idleColumnReady) {
+      const auto = await query<{ Field: string }[]>("SHOW COLUMNS FROM hr_attendance LIKE 'auto_break_seconds'")
+      if (auto.length === 0) {
+        try { await query("ALTER TABLE hr_attendance ADD COLUMN auto_break_seconds INT UNSIGNED NOT NULL DEFAULT 0") }
+        catch { idleColumnReady = false }
+      }
+    }
   } catch {
     idleColumnReady = false
   }
@@ -288,7 +299,7 @@ async function todaysRecord(
   const base = withSession
     ? "id, clock_in, clock_out, break_minutes, working_hours, active_since, work_date"
     : "id, clock_in, clock_out, break_minutes, working_hours, work_date"
-  const columns = withIdle ? `${base}, idle_minutes` : base
+  const columns = withIdle ? `${base}, idle_minutes, auto_break_seconds` : base
   const rows = await query<AttendanceRow[]>(
     `SELECT ${columns} FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1`,
     [employeeId, today(timeZone)],
@@ -297,7 +308,24 @@ async function todaysRecord(
   if (!row) return null
   if (!withSession) row.active_since = null
   if (!withIdle) row.idle_minutes = 0
+  if (!withIdle) row.auto_break_seconds = 0
   return row
+}
+
+/** An open overnight shift takes precedence over today's closed/empty row. */
+async function currentRecord(employeeId: number, withSession: boolean, withIdle: boolean, timeZone: string) {
+  const base = withSession
+    ? "id, clock_in, clock_out, break_minutes, working_hours, active_since, work_date"
+    : "id, clock_in, clock_out, break_minutes, working_hours, work_date"
+  const columns = withIdle ? `${base}, idle_minutes, auto_break_seconds` : base
+  const rows = await query<AttendanceRow[]>(`SELECT ${columns} FROM hr_attendance
+    WHERE employee_id=? AND clock_in IS NOT NULL AND clock_out IS NULL ORDER BY work_date DESC LIMIT 1`, [employeeId])
+  if (rows[0]) {
+    if (!withSession) rows[0].active_since = null
+    if (!withIdle) { rows[0].idle_minutes = 0; rows[0].auto_break_seconds = 0 }
+    return rows[0]
+  }
+  return todaysRecord(employeeId, withSession, withIdle, timeZone)
 }
 
 /**
@@ -306,7 +334,7 @@ async function todaysRecord(
  */
 function isOpen(record: AttendanceRow | null, withSession: boolean): boolean {
   if (!record) return false
-  if (withSession) return Boolean(record.active_since)
+  if (withSession && record.active_since) return true
   return Boolean(record.clock_in) && !record.clock_out
 }
 
@@ -327,7 +355,7 @@ export async function GET() {
     const timeZone = await getTimeZone()
     const employee = await ensureEmployee(session)
 
-    const record = await todaysRecord(employee.id, withSession, withIdle, timeZone)
+    const record = await currentRecord(employee.id, withSession, withIdle, timeZone)
     return NextResponse.json({
       linked: true,
       state: isOpen(record, withSession) ? "in" : "out",
@@ -335,6 +363,9 @@ export async function GET() {
       clockOut: record?.clock_out ?? null,
       workedHours: record ? Number(record.working_hours || 0) : 0,
       idleMinutes: record ? Number(record.idle_minutes || 0) : 0,
+      idleBreakSeconds: record ? Number(record.auto_break_seconds || 0) : 0,
+      attendanceRowId: record?.id ?? null,
+      sessionStart: isOpen(record, withSession) ? sessionStart(record!, withSession, timeZone) : null,
     })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load status" }, { status: 500 })
@@ -379,11 +410,11 @@ export async function POST(request: Request) {
       )
     }
 
-    const record = await todaysRecord(employee.id, withSession, withIdle, timeZone)
+    const record = await currentRecord(employee.id, withSession, withIdle, timeZone)
     const now = nowDateTime(timeZone)
     const withLocation = await hasLocationColumns()
 
-    const workDate = today(timeZone)
+    const workDate = record?.work_date ?? today(timeZone)
     const withCalc = await hasCalcColumns()
 
     // First punch of the day → create the row and open a session (clock in).
@@ -423,23 +454,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, state: "in", clockIn: now, clockOut: null, status: metrics.status })
     }
 
-    // Currently in an open session → clock out, accumulate worked hours, and
-    // recompute the break total as the day's span minus worked time.
+    // Currently in an open session → clock out, preserving manually recorded
+    // breaks while adding only the per-idle-session excess beyond grace.
     if (isOpen(record, withSession)) {
       const firstIn = record.clock_in || sessionStart(record, withSession, timeZone)
       const sessionHours = hoursBetween(sessionStart(record, withSession, timeZone), now)
-      // `idle_minutes` is the TOTAL no-activity time reported by the client
-      // while clocked in. Break = Idle - grace: the first IDLE_GRACE_MINUTES of
-      // idle stays paid work and only the remainder becomes break, so Idle and
-      // Break are always distinct once idle exceeds the grace window. Only the
-      // break portion is reclassified out of worked hours.
+      // Every continuous idle session gets its own grace period. The session
+      // ledger deduplicates retries and retains exact second-level duration.
+      // Historical rows without ledger entries retain the previous aggregate
+      // fallback, so old deployments/records remain readable.
       const idleMinutes = withIdle ? Math.max(0, Math.round(Number(record.idle_minutes || 0))) : 0
-      const breakMinutes = Math.max(0, idleMinutes - IDLE_GRACE_MINUTES)
+      const tenantId = await resolveTenantIdForUser(session.userId)
+      const totals = tenantId ? await getIdleSessionTotals(tenantId, record.id) : null
+      const idleBreakSeconds = totals?.hasSessions ? totals.breakSeconds : Math.max(0, idleMinutes - IDLE_GRACE_MINUTES) * 60
+      const previousAutoSeconds = Number(record.auto_break_seconds || 0)
+      const manualBreakMinutes = Math.max(0, Number(record.break_minutes || 0) - Math.round(previousAutoSeconds / 60))
+      const breakMinutes = manualBreakMinutes + Math.round(idleBreakSeconds / 60)
       const grossWorked = Number(record.working_hours || 0) + sessionHours
-      const worked = Number(Math.max(0, grossWorked - breakMinutes / 60).toFixed(2))
+      const worked = Number(Math.max(0, grossWorked - Math.max(0, idleBreakSeconds - previousAutoSeconds) / 3600).toFixed(2))
 
       const sets = ["clock_out = ?", "working_hours = ?", "break_minutes = ?"]
       const params: unknown[] = [now, worked, breakMinutes]
+      if (withIdle) { sets.push("auto_break_seconds = ?"); params.push(idleBreakSeconds) }
       if (withSession) sets.push("active_since = NULL")
       if (withLocation) {
         sets.push("location = COALESCE(?, location)", "latitude = COALESCE(?, latitude)", "longitude = COALESCE(?, longitude)")

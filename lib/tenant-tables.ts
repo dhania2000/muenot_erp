@@ -114,6 +114,8 @@ export const TENANT_OWNED_TABLES = [
   "notification_preferences",
   "notification_deliveries",
   "notification_delivery_log",
+  // Session-wise inactivity tied to an existing attendance row.
+  "hr_attendance_idle_sessions",
   // WhatsApp Business platform (SPEC — multi-tenant WhatsApp isolation).
   // Each tenant connects its own WhatsApp Business number(s); every row below
   // belongs to exactly one tenant and must never be visible to another.

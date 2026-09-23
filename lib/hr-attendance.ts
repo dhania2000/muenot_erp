@@ -160,6 +160,9 @@ async function doEnsureSchema() {
   // Idle time (minutes) accrued while clocked in but away from the screen for
   // longer than the grace window — reclassified from work to break at clock-out.
   await addColumn("hr_attendance", "`idle_minutes` INT UNSIGNED NOT NULL DEFAULT 0")
+  // Exact automatic idle-break duration; break_minutes remains the legacy
+  // whole-minute reporting field so manual break workflows stay compatible.
+  await addColumn("hr_attendance", "`auto_break_seconds` INT UNSIGNED NOT NULL DEFAULT 0")
   // Screen-sharing-missing time (minutes) accrued while clocked in but NOT
   // sharing the entire screen (denied / stopped / unsupported / wrong surface).
   // Unlike idle, this gets NO grace window — every minute becomes break — but it

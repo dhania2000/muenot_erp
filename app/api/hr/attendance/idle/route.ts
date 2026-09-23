@@ -1,26 +1,19 @@
 import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
-import { ensureAttendanceSchema, getTimeZone } from "@/lib/hr-attendance"
+import { ensureAttendanceSchema } from "@/lib/hr-attendance"
+import { resolveTenantIdForUser } from "@/lib/tenant-service"
+import { upsertIdleSession } from "@/lib/attendance-idle-sessions"
 
 // ---------------------------------------------------------------------------
 // Non-work time reporting for the currently clocked-in employee.
 //
-// Two DISTINCT client sources feed this endpoint, distinguished by `type`, both
-// reporting TOTAL elapsed minutes for their stretch:
-//   1. type "idle" (default) — Inactivity: the full continuous no-activity
-//      stretch once it crosses the grace window (see attendance-idle-config for
-//      the single source of truth). Accumulated into `idle_minutes`. The grace
-//      window applies to this: at clock-out Break = Idle - grace, so the first
-//      `grace` minutes stay paid work and only the remainder becomes break.
-//   2. type "screen-missing" — while the employee has not shared their entire
-//      screen (denied / stopped / unsupported / wrong surface). Accumulated into
-//      `screen_missing_minutes`. There is NO grace here: every reported minute
-//      becomes break at clock-out. Kept in its own column so reports can tell
-//      screen-missing break apart from idle break.
-//
-// Both columns live on today's OPEN attendance row and are consumed by the
-// clock route at clock-out (Break = max(0, idle - grace) + screen_missing).
+// The browser reports a stable sessionId with start/end timestamps for each
+// continuous inactivity stretch. Heartbeats and final reports are idempotent;
+// the clock route applies the shared grace threshold to each stretch.
+// Legacy minute reports and the separate screen-missing source remain accepted
+// for compatibility with older clients. Reports attach to the current OPEN row,
+// including an overnight shift.
 // ---------------------------------------------------------------------------
 
 /** Reports below this (minutes) are noise and ignored — the client pre-graces. */
@@ -28,32 +21,22 @@ const MIN_REPORT_MINUTES = 1
 /** Defensive cap so a single report can never poison the row. */
 const MAX_SINGLE_REPORT_MINUTES = 16 * 60
 
-function todayInTz(timeZone: string): string {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  })
-  return fmt.format(new Date())
-}
-
 export async function POST(request: Request) {
   try {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     await ensureAttendanceSchema()
-    const timeZone = await getTimeZone()
 
-    let body: { minutes?: unknown; type?: unknown } = {}
+    let body: { minutes?: unknown; type?: unknown; sessionId?: unknown; startAt?: unknown; endAt?: unknown; ended?: unknown } = {}
     try {
       body = await request.json()
     } catch {
       // ignore — validated below
     }
+    const isSessionReport = body.type !== "screen-missing" && body.sessionId !== undefined
     const minutes = Number(body.minutes)
-    if (!Number.isFinite(minutes) || minutes < MIN_REPORT_MINUTES) {
+    if (!isSessionReport && (!Number.isFinite(minutes) || minutes < MIN_REPORT_MINUTES)) {
       return NextResponse.json({ ok: true, skipped: true })
     }
     const capped = Math.min(Math.round(minutes), MAX_SINGLE_REPORT_MINUTES)
@@ -61,15 +44,15 @@ export async function POST(request: Request) {
     const isScreenMissing = body.type === "screen-missing"
 
     // Resolve the employee linked to this session's login email.
+    const tenantId = await resolveTenantIdForUser(session.userId)
+    if (!tenantId) return NextResponse.json({ error: "Tenant unavailable" }, { status: 403 })
     const emp = await query<{ id: number }[]>(
       "SELECT id FROM hr_employees WHERE official_email = ? OR personal_email = ? ORDER BY id LIMIT 1",
       [session.email, session.email],
     )
     if (!emp[0]) return NextResponse.json({ ok: true, skipped: true })
 
-    const workDate = todayInTz(timeZone)
-
-    // Read today's row defensively — `active_since` may not exist on older DBs.
+    // A shift opened yesterday remains the active attendance row after midnight.
     type Row = {
       id: number
       clock_in: string | null
@@ -82,15 +65,15 @@ export async function POST(request: Request) {
     try {
       row = (
         await query<Row[]>(
-          "SELECT id, clock_in, clock_out, active_since, idle_minutes, screen_missing_minutes FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1",
-          [emp[0].id, workDate],
+          "SELECT id, clock_in, clock_out, active_since, idle_minutes, screen_missing_minutes FROM hr_attendance WHERE employee_id = ? AND clock_in IS NOT NULL AND clock_out IS NULL ORDER BY work_date DESC LIMIT 1",
+          [emp[0].id],
         )
       )[0]
     } catch {
       row = (
         await query<Row[]>(
-          "SELECT id, clock_in, clock_out, idle_minutes FROM hr_attendance WHERE employee_id = ? AND work_date = ? LIMIT 1",
-          [emp[0].id, workDate],
+          "SELECT id, clock_in, clock_out, idle_minutes FROM hr_attendance WHERE employee_id = ? AND clock_in IS NOT NULL AND clock_out IS NULL ORDER BY work_date DESC LIMIT 1",
+          [emp[0].id],
         )
       )[0]
     }
@@ -100,6 +83,22 @@ export async function POST(request: Request) {
     // clock-in with no clock-out yet).
     const open = row.active_since ? true : Boolean(row.clock_in && !row.clock_out)
     if (!open) return NextResponse.json({ ok: true, skipped: true })
+
+    if (isSessionReport) {
+      const sessionKey = typeof body.sessionId === "string" ? body.sessionId : ""
+      const startMs = typeof body.startAt === "string" ? Date.parse(body.startAt) : NaN
+      const endMs = typeof body.endAt === "string" ? Date.parse(body.endAt) : NaN
+      const now = Date.now()
+      if (!/^[0-9a-f-]{36}$/i.test(sessionKey) || !Number.isFinite(startMs) || !Number.isFinite(endMs)
+        || endMs < startMs || endMs > now + 5_000 || startMs < now - MAX_SINGLE_REPORT_MINUTES * 60_000
+        || endMs - startMs > MAX_SINGLE_REPORT_MINUTES * 60_000 || typeof body.ended !== "boolean") {
+        return NextResponse.json({ error: "Invalid idle session interval" }, { status: 400 })
+      }
+      const totals = await upsertIdleSession({ tenantId, attendanceRowId: row.id, employeeId: emp[0].id,
+        sessionKey, startMs, endMs, ended: body.ended })
+      if (!totals) return NextResponse.json({ ok: true, skipped: true })
+      return NextResponse.json({ ok: true, idleSeconds: totals.idleSeconds, breakSeconds: totals.breakSeconds })
+    }
 
     if (isScreenMissing) {
       const nextMinutes = Math.round(Number(row.screen_missing_minutes || 0)) + capped

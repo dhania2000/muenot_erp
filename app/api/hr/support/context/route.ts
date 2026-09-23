@@ -24,7 +24,7 @@ export async function GET() {
         department: employee.department,
         designation: employee.designation,
         reporting_manager: employee.reporting_manager,
-        official_email: employee.official_email,
+        official_email: session.email,
       }
     : null
 

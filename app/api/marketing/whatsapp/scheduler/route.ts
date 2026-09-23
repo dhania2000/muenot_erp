@@ -3,7 +3,6 @@ import { getSession } from "@/lib/auth"
 import { runCampaignScheduler } from "@/lib/whatsapp-campaigns"
 import { runNoReplyAutomations } from "@/lib/whatsapp-automations"
 import { syncTemplatesFromMeta } from "@/lib/whatsapp-templates"
-import { forEachActiveTenant } from "@/lib/tenant-scope"
 
 /**
  * Drives time-based work: sends due/scheduled campaign batches and fires
@@ -14,16 +13,16 @@ import { forEachActiveTenant } from "@/lib/tenant-scope"
  */
 async function run() {
   // `no_reply` automations read tenant-owned conversations/contacts, so they
-  // must run inside a bound tenant context — fan out over every active tenant
-  // rather than issuing a single cross-tenant query.
-  const [campaigns, automationsFanout, templates] = await Promise.all([
+  // must run inside a bound tenant context. When called without a bound tenant,
+  // runNoReplyAutomations() fans out over every active tenant itself and
+  // returns the total number of automations fired.
+  const [campaigns, automations, templates] = await Promise.all([
     runCampaignScheduler(),
-    forEachActiveTenant(() => runNoReplyAutomations()),
+    runNoReplyAutomations(),
     // Reconcile template statuses/rejections with Meta on each tick. Best-effort:
     // a Graph outage must not stop campaign or automation processing.
     syncTemplatesFromMeta().catch((err) => ({ ok: false, error: (err as Error).message })),
   ])
-  const automations = automationsFanout.reduce((sum, n) => sum + (typeof n === "number" ? n : 0), 0)
   return { ok: true, campaigns, automations, templates }
 }
 

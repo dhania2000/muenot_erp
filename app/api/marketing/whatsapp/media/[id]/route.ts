@@ -43,7 +43,6 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   recordMedia({
     integrationId: integration.id,
     mediaId,
-    integrationId: integration.id,
     mimeType: result.contentType,
     fileSize: result.data.byteLength,
   }).catch(() => {})

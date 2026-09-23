@@ -152,7 +152,7 @@ export async function POST(request: Request) {
     const name = String(body.name || "").trim()
     if (name.length < 2 || name.length > 200)
       return NextResponse.json({ error: "Group name required (2-200 chars)" }, { status: 400 })
-    const memberIds = Array.from(new Set((body.memberIds || []).map((n: any) => Number(n)).filter(Boolean)))
+    const memberIds = Array.from(new Set<number>((body.memberIds || []).map((n: any) => Number(n)).filter(Boolean)))
     if (!memberIds.length) return NextResponse.json({ error: "Select at least one member" }, { status: 400 })
     const adminIds = new Set<number>((body.adminIds || []).map((n: any) => Number(n)))
 
@@ -224,7 +224,7 @@ export async function POST(request: Request) {
     if (session.role !== "admin")
       return NextResponse.json({ error: "Only management can create management conversations" }, { status: 403 })
     const name = String(body.name || "Management").trim()
-    const extra = Array.from(new Set((body.memberIds || []).map((n: any) => Number(n)).filter(Boolean)))
+    const extra = Array.from(new Set<number>((body.memberIds || []).map((n: any) => Number(n)).filter(Boolean)))
     // Default audience = all admins (management), plus any explicitly selected users.
     const admins = await query<any[]>("SELECT id FROM users WHERE role='admin' AND status='active'")
     await query(

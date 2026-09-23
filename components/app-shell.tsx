@@ -550,9 +550,7 @@ export function AppShell({
 }) {
   const pathname = usePathname()
   const router = useRouter()
-  const [openGroup, setOpenGroup] = useState<string | null>(
-    () => navItems.find((i) => i.children?.length && (pathname === i.href || pathname.startsWith(`${i.href}/`)))?.href ?? null,
-  )
+  const [openGroup, setOpenGroup] = useState<string | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)

@@ -29,6 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Label } from "@/components/ui/label"
+import { AutomationTabs } from "@/components/automation/automation-tabs"
 
 const initial: Workflow = { name: "", description: "", module: "sales_leads", trigger: "manual", conditions: { logic: "AND", children: [] }, actions: [], elseActions: [] }
 const control = "h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
@@ -323,6 +324,8 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
           </p>
         </div>
       </div>
+
+      <AutomationTabs />
 
       {message && (
         <Alert role="status">

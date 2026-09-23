@@ -71,6 +71,9 @@ const groupIcon: Record<string, typeof Search> = {
   assets: Package,
   projects: Folder,
   tasks: ListChecks,
+  deals: Briefcase,
+  documents: FileText,
+  reports: FileText,
 }
 
 function GroupIcon({ groupKey, className }: { groupKey: string; className?: string }) {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-const mock = vi.hoisted(() => ({ sql: vi.fn(), exchange: vi.fn(), save: vi.fn(), subscribe: vi.fn(), registration: vi.fn(), verify: vi.fn(), sync: vi.fn() }))
+const mock = vi.hoisted(() => ({ sql: vi.fn(), exchange: vi.fn(), save: vi.fn(), subscribe: vi.fn(), subscriptionStatus: vi.fn(), registration: vi.fn(), verify: vi.fn(), sync: vi.fn() }))
 vi.mock("@/lib/db", () => ({ query: mock.sql }))
 vi.mock("@/lib/tenant-scope", () => ({ currentTenantId: () => 7, currentTenantIdOrNull: () => 7, runForTenant: async (_: any, fn: any) => fn() }))
 vi.mock("@/lib/whatsapp-registration", () => ({
@@ -9,24 +9,32 @@ vi.mock("@/lib/whatsapp-registration", () => ({
 vi.mock("@/lib/whatsapp", () => ({
   GRAPH_VERSION: "v26.0", getAppId: () => "123", exchangeEmbeddedSignupCode: mock.exchange,
   verifyWhatsAppCredentials: mock.verify, getWabaName: async () => "Existing business", upsertWhatsAppIntegration: mock.save,
-  subscribeWabaWebhook: mock.subscribe, getWabaSubscriptionStatus: async () => ({ ok: true, subscribed: true }),
+  subscribeWabaWebhook: mock.subscribe, getWabaSubscriptionStatus: mock.subscriptionStatus,
   getWhatsAppIntegration: vi.fn(), toPublicIntegration: (row: any) => ({ id: row.id, phoneNumberId: row.phone_number_id }),
 }))
 vi.mock("@/lib/whatsapp-templates", () => ({ syncTemplatesFromMeta: mock.sync }))
+vi.mock("@/lib/whatsapp-signup-discovery", () => ({
+  SignupDiscoveryError: class SignupDiscoveryError extends Error {},
+  discoverSignupAssets: async (_token: string, input: { wabaId?: string; phoneNumberId?: string; businessId?: string }) => ({
+    wabaId: input.wabaId || "100", phoneNumberId: input.phoneNumberId || "200", businessId: input.businessId,
+  }),
+}))
 import { handleWhatsAppSignupCallback } from "@/lib/whatsapp-signup"
 import { encryptToken } from "@/lib/token-crypto"
 let session: any, progress: any
 const input = { state: "opaque-test-state", code: "test-authorization", wabaId: "100", phoneNumberId: "200", expectedTenantId: 7, expectedUserId: 5 }
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubEnv("SETTINGS_ENCRYPTION_KEY", "test-only")
+  mock.save.mockReset()
   session = { id: 2, tenant_id: 7, user_id: 5, status: "pending", expires_at: "2099-01-01", waba_id: "100", phone_number_id: "200" }
   progress = null
   mock.exchange.mockResolvedValue({ ok: true, accessToken: "test-token" })
   mock.verify.mockResolvedValue({ displayPhoneNumber: "+910000000000", verifiedName: "Test", qualityRating: "GREEN", platformType: "CLOUD_API" })
   mock.registration.mockResolvedValue({ cloudApiRegistered: true, status: "registered" })
+  mock.subscriptionStatus.mockResolvedValue({ ok: true, subscribed: true })
   mock.sync.mockResolvedValue({ ok: true, total: 1 })
   mock.sql.mockImplementation(async (sql: string, args: any[]) => {
-    if (sql.startsWith("SELECT * FROM `marketing_whatsapp_signup_sessions`")) return [session]
+    if (sql.includes("FROM `marketing_whatsapp_signup_sessions` WHERE")) return [session]
     if (sql.includes("SELECT * FROM marketing_whatsapp_signup_progress")) return progress ? [progress] : []
     if (sql.includes("INSERT INTO marketing_whatsapp_signup_progress")) progress = { exchange_status: "exchanging" }
     if (sql.includes("exchange_status='exchanged'")) progress = { exchange_status: "exchanged", token_encrypted: args[0] }
@@ -72,6 +80,36 @@ describe("Embedded Signup durable finalization", () => {
     expect(result.ok).toBe(true)
     expect(result.integration?.id).toBe(4)
     expect(result.registration?.status).toBe("failed")
+  })
+  it("webhook subscription failure is visible but keeps the persisted connection", async () => {
+    mock.subscriptionStatus.mockResolvedValue({ ok: true, subscribed: false })
+    mock.subscribe.mockResolvedValue({ ok: false })
+    const result = await handleWhatsAppSignupCallback(input)
+    expect(result.ok).toBe(true)
+    expect(result.integration?.id).toBe(4)
+    expect(result.autoConfig?.webhookSubscribed).toBe(false)
+  })
+  it("reports connection persistence failure without marking signup complete", async () => {
+    mock.save.mockRejectedValue(new Error("database unavailable"))
+    const result = await handleWhatsAppSignupCallback(input)
+    expect(result).toMatchObject({ ok: false, failureCode: "TOKEN_PERSISTENCE_FAILED" })
+    expect(session.status).toBe("pending")
+  })
+  it("keeps the state retryable after Meta phone verification fails", async () => {
+    mock.verify.mockRejectedValueOnce(new Error("Meta unavailable"))
+    expect((await handleWhatsAppSignupCallback(input)).failureCode).toBe("PHONE_VERIFICATION_FAILED")
+    expect(session.status).toBe("pending")
+    const retry = await handleWhatsAppSignupCallback(input)
+    expect(retry.ok).toBe(true)
+    expect(mock.exchange).toHaveBeenCalledTimes(1)
+  })
+  it("classifies a signup-session database write failure after connection persistence", async () => {
+    const original = mock.sql.getMockImplementation()!
+    mock.sql.mockImplementation((sql: string, args: any[]) => sql.startsWith("UPDATE `marketing_whatsapp_signup_sessions`")
+      ? Promise.reject(new Error("database unavailable")) : original(sql, args))
+    const result = await handleWhatsAppSignupCallback(input)
+    expect(result).toMatchObject({ ok: false, failureCode: "DATABASE_TRANSACTION_FAILED" })
+    expect(mock.save).toHaveBeenCalled()
   })
   it("rejects changed identifiers on duplicate callback", async () => {
     session.status = "completed"

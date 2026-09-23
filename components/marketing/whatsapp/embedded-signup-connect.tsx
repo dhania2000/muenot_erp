@@ -178,13 +178,12 @@ export function EmbeddedSignupConnect({
       if (!code) { setHint("Facebook login was cancelled or not authorized. You can retry."); onFailed?.(); return }
 
       // Meta's FINISH message and login callback can arrive in either order.
-      for (let i = 0; i < 50 && (!sessionInfo.current.wabaId || !sessionInfo.current.phoneNumberId); i++) {
+      for (let i = 0; i < 50 && !sessionInfo.current.wabaId && !sessionInfo.current.phoneNumberId; i++) {
         await new Promise(resolve => setTimeout(resolve, 100))
       }
       const { wabaId, phoneNumberId, businessId } = sessionInfo.current
-      if (!wabaId || !phoneNumberId) {
-        throw new Error("Meta did not return your WhatsApp number details. Please try the connection again.")
-      }
+      // The server can discover a missing WABA/phone from the exchanged code.
+      // FINISH_ONLY_WABA and mobile browsers need not supply both identifiers.
 
       const cbRes = await fetch(callbackUrl, {
         method: "POST",

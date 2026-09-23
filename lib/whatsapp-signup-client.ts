@@ -30,12 +30,17 @@ export function launchFacebookSignup(sdk: FacebookSdk, config: SignupConfig): Pr
 }
 
 export function signupDetails(event: Pick<MessageEvent, "origin" | "data">) {
-  if (!["https://www.facebook.com", "https://web.facebook.com"].includes(event.origin)) return null
+  // Android Custom Tabs can emit the Embedded Signup message from Meta's
+  // mobile host. Keep an exact allowlist; never accept arbitrary subdomains.
+  if (!["https://www.facebook.com", "https://web.facebook.com", "https://m.facebook.com"].includes(event.origin)) return null
   try {
     const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data
-    if (data?.type !== "WA_EMBEDDED_SIGNUP" || data.event !== "FINISH") return null
+    if (data?.type !== "WA_EMBEDDED_SIGNUP" || !["FINISH", "FINISH_ONLY_WABA"].includes(data.event)) return null
     const { waba_id, phone_number_id, business_id } = data.data ?? {}
-    if (typeof waba_id !== "string" || !/^\d+$/.test(waba_id) || typeof phone_number_id !== "string" || !/^\d+$/.test(phone_number_id)) return null
-    return { wabaId: waba_id, phoneNumberId: phone_number_id, businessId: typeof business_id === "string" ? business_id : undefined }
+    const id = (value: unknown) => typeof value === "string" && /^\d+$/.test(value) ? value : undefined
+    const wabaId = id(waba_id)
+    const phoneNumberId = id(phone_number_id)
+    if (!wabaId && !phoneNumberId) return null
+    return { wabaId, phoneNumberId, businessId: id(business_id) }
   } catch { return null }
 }

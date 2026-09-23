@@ -16,7 +16,7 @@ beforeEach(() => {
   process.env.APP_URL = "https://erp.example.test"
   dep.tenant.mockResolvedValue({ id: 7, tenant_type: "SHOPKEEPER", status: "active" })
   dep.create.mockResolvedValue({ state: "trusted-state", appId: "public-app", configId: "public-config", graphVersion: "v26.0", ready: true })
-  dep.callback.mockResolvedValue({ ok: true, registration: { cloudApiRegistered: true }, autoConfig: { webhookSubscribed: true } })
+  dep.callback.mockResolvedValue({ ok: true, integration: { id: 4, wabaId: "123", phoneNumberId: "456" }, registration: { cloudApiRegistered: true }, autoConfig: { webhookSubscribed: true } })
   db.query.mockImplementation(async (sql: string) => sql.includes("SELECT l.*") ? [launchRow] : { affectedRows: 1 })
   db.connQuery.mockImplementation(async (sql: string) => sql.includes("FOR UPDATE") ? [[launchRow]] : [{ affectedRows: 1 }])
 })
@@ -34,8 +34,8 @@ it("denies suspended, pending, and unauthorized users before issuing any link", 
   await expect(createMobileOnboarding({ ...principal, role: "employee", tenantRole: "employee" })).rejects.toMatchObject({ status: 403 })
 })
 it("rejects an expired/revoked launch token", async () => {
-  db.query.mockImplementation(async (sql: string) => sql.includes("SELECT l.*") ? [] : {})
-  await expect(launchMobileSignup("A".repeat(43))).rejects.toMatchObject({ status: 410 })
+  db.query.mockImplementation(async (sql: string) => sql.includes("SELECT l.*") ? [] : sql.includes("SELECT status, (expires_at") ? [{ expired: 1, status: "started" }] : {})
+  await expect(launchMobileSignup("A".repeat(43))).rejects.toMatchObject({ status: 410, code: "ONBOARDING_SESSION_EXPIRED" })
   expect(dep.create).not.toHaveBeenCalled()
 })
 it("consumes a launch only once and reuses the existing Meta signup session", async () => {
@@ -57,4 +57,34 @@ it("passes server-bound tenant/user to the existing code exchange and returns no
   expect(dep.callback).toHaveBeenCalledWith(expect.objectContaining({ expectedTenantId: 7, expectedUserId: 5, wabaId: "123", phoneNumberId: "456" }))
   expect(result).toEqual({ connected: true, messagingReady: true, webhookSubscribed: true })
   expect(JSON.stringify(result)).not.toContain("secret-code")
+})
+it("accepts missing browser session IDs for server-side discovery", async () => {
+  db.query.mockImplementation(async (sql: string) => sql.includes("SELECT l.*") ? [{ ...launchRow, status: "started", signup_state: "trusted-state" }] : { affectedRows: 1 })
+  await finishMobileSignup({ launchToken: "A".repeat(43), state: "trusted-state", code: "code", wabaId: "", phoneNumberId: "" })
+  expect(dep.callback).toHaveBeenCalledWith(expect.objectContaining({ wabaId: "", phoneNumberId: "" }))
+})
+it("rejects missing authorization code before finalization", async () => {
+  db.query.mockImplementation(async (sql: string) => sql.includes("SELECT l.*") ? [{ ...launchRow, status: "started", signup_state: "trusted-state" }] : { affectedRows: 1 })
+  await expect(finishMobileSignup({ launchToken: "A".repeat(43), state: "trusted-state", code: "", wabaId: "123", phoneNumberId: "456" }))
+    .rejects.toMatchObject({ code: "AUTH_CODE_MISSING" })
+  expect(dep.callback).not.toHaveBeenCalled()
+})
+it("returns a typed Meta exchange failure and allows retry", async () => {
+  db.query.mockImplementation(async (sql: string) => sql.includes("SELECT l.*") ? [{ ...launchRow, status: "started", signup_state: "trusted-state" }] : { affectedRows: 1 })
+  dep.callback.mockResolvedValueOnce({ ok: false, failureCode: "CODE_EXCHANGE_FAILED" })
+  await expect(finishMobileSignup({ launchToken: "A".repeat(43), state: "trusted-state", code: "code", wabaId: "123", phoneNumberId: "456" }))
+    .rejects.toMatchObject({ code: "CODE_EXCHANGE_FAILED" })
+  expect(db.query.mock.calls.some(([sql]) => String(sql).includes("status='failed'"))).toBe(false)
+})
+it("returns saved connection on a completed duplicate callback", async () => {
+  db.query.mockImplementation(async (sql: string) => sql.includes("SELECT l.*") ? [{ ...launchRow, status: "completed", signup_state: "trusted-state" }] : { affectedRows: 1 })
+  const result = await finishMobileSignup({ launchToken: "A".repeat(43), state: "trusted-state", code: "", wabaId: "", phoneNumberId: "" })
+  expect(result.connected).toBe(true)
+  expect(db.query.mock.calls.some(([sql]) => String(sql).includes("SET status='completed'"))).toBe(false)
+})
+it("reports database completion failure without losing a persisted connection", async () => {
+  db.query.mockImplementation(async (sql: string) => sql.includes("SELECT l.*") ? [{ ...launchRow, status: "started", signup_state: "trusted-state" }]
+    : sql.includes("SET status='completed'") ? Promise.reject(new Error("db down")) : { affectedRows: 1 })
+  await expect(finishMobileSignup({ launchToken: "A".repeat(43), state: "trusted-state", code: "code", wabaId: "123", phoneNumberId: "456" }))
+    .rejects.toMatchObject({ code: "DATABASE_TRANSACTION_FAILED" })
 })

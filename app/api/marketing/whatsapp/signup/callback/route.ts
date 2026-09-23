@@ -32,7 +32,7 @@ export async function POST(request: Request) {
   const wabaId = body.wabaId?.trim()
   const phoneNumberId = body.phoneNumberId?.trim()
 
-  if (!state || !code || !wabaId || !phoneNumberId) {
+  if (!state || !code) {
     return NextResponse.json(
       { error: "Missing signup details. Please restart the WhatsApp connection." },
       { status: 400 },
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
       expectedUserId: session.userId,
     })
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: 422 })
+      return NextResponse.json({ error: result.error, code: result.failureCode }, { status: 422 })
     }
     return NextResponse.json({ connected: true, integration: result.integration, autoConfig: result.autoConfig, registration: result.registration })
   } catch (err) {

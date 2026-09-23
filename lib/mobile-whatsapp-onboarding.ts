@@ -8,10 +8,16 @@ import { createWhatsAppSignupSession, handleWhatsAppSignupCallback } from "@/lib
 import { auditMobileAction, type MobilePrincipal } from "@/lib/mobile-auth"
 
 const hash = (token: string) => createHash("sha256").update(token).digest("hex")
-const TTL_MS = 10 * 60_000
+const TTL_MS = 20 * 60_000
 type Launch = { id: number; tenant_id: number; user_id: number; mobile_session_id: string; status: "pending" | "started" | "completed" | "failed"; signup_state: string | null; expires_at: string }
 type LaunchRecord = Launch & RowDataPacket
-export class MobileOnboardingError extends Error { constructor(message: string, public status = 400) { super(message) } }
+export class MobileOnboardingError extends Error {
+  constructor(message: string, public status = 400, public code = "ONBOARDING_FAILED") { super(message) }
+}
+function diagnostic(stage: string, result: string, code?: string, row?: Partial<Launch>) {
+  console.info("[mobile.whatsapp.onboarding]", { stage, result, ...(code ? { code } : {}),
+    ...(row ? { onboardingId: row.id, tenantId: row.tenant_id, userId: row.user_id } : {}) })
+}
 let ensured: Promise<void> | undefined
 export function ensureMobileOnboardingSchema() {
   return ensured ??= query(`CREATE TABLE IF NOT EXISTS mobile_whatsapp_onboarding (
@@ -47,16 +53,22 @@ export async function createMobileOnboarding(principal: MobilePrincipal) {
 }
 
 async function getLaunch(token: string): Promise<Launch> {
-  if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new MobileOnboardingError("Invalid onboarding session.", 401)
+  if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new MobileOnboardingError("Invalid onboarding session.", 401, "ONBOARDING_SESSION_MISSING")
   await ensureMobileOnboardingSchema()
   const [row] = await query<Launch[]>(`SELECT l.* FROM mobile_whatsapp_onboarding l
     JOIN mobile_sessions s ON s.session_id=l.mobile_session_id AND s.user_id=l.user_id AND s.tenant_id=l.tenant_id
     JOIN users u ON u.id=l.user_id AND u.tenant_id=l.tenant_id
     JOIN tenants t ON t.id=l.tenant_id
-    WHERE l.token_hash=? AND l.expires_at>NOW() AND s.revoked_at IS NULL AND s.expires_at>NOW()
+    WHERE l.token_hash=? AND (l.status='completed' OR l.expires_at>UTC_TIMESTAMP()) AND s.revoked_at IS NULL AND s.expires_at>UTC_TIMESTAMP()
       AND u.status='active' AND u.role='admin' AND u.tenant_role IN ('tenant_owner','tenant_admin')
       AND t.status='active' AND t.tenant_type='SHOPKEEPER' LIMIT 1`, [hash(token)])
-  if (!row) throw new MobileOnboardingError("Onboarding session expired. Return to the app and retry.", 410)
+  if (!row) {
+    const [known] = await query<Array<{ expired: number; status: string }>>(
+      "SELECT status, (expires_at<=UTC_TIMESTAMP()) AS expired FROM mobile_whatsapp_onboarding WHERE token_hash=? LIMIT 1", [hash(token)])
+    const code = !known ? "ONBOARDING_SESSION_MISSING" : Number(known.expired) ? "ONBOARDING_SESSION_EXPIRED" : "TENANT_MAPPING_FAILED"
+    diagnostic("session_lookup", "failed", code)
+    throw new MobileOnboardingError("Onboarding session expired or unavailable. Return to the app and retry.", 410, code)
+  }
   return row
 }
 
@@ -78,18 +90,36 @@ export async function launchMobileSignup(token: string) {
 
 export async function finishMobileSignup(input: { launchToken: string; state: string; code: string; wabaId: string; phoneNumberId: string; businessId?: string }) {
   const row = await getLaunch(input.launchToken)
-  if (row.status !== "started" || !row.signup_state || row.signup_state !== input.state) throw new MobileOnboardingError("Onboarding state is invalid or already used.", 409)
-  if (!/^\d+$/.test(input.wabaId) || !/^\d+$/.test(input.phoneNumberId) || !input.code) throw new MobileOnboardingError("Meta did not return valid signup details.", 400)
+  diagnostic("completion", "started", undefined, row)
+  if (!row.signup_state || row.signup_state !== input.state) {
+    diagnostic("state_validation", "failed", "STATE_SESSION_MISMATCH", row)
+    throw new MobileOnboardingError("Onboarding state does not match this session.", 409, "STATE_SESSION_MISMATCH")
+  }
+  if (row.status !== "started" && row.status !== "completed") {
+    diagnostic("session_validation", "failed", "ONBOARDING_SESSION_ALREADY_CONSUMED", row)
+    throw new MobileOnboardingError("Onboarding session was already used.", 409, "ONBOARDING_SESSION_ALREADY_CONSUMED")
+  }
+  if (row.status !== "completed" && !input.code.trim()) {
+    diagnostic("authorization_code", "failed", "AUTH_CODE_MISSING", row)
+    throw new MobileOnboardingError("Meta did not return an authorization code.", 400, "AUTH_CODE_MISSING")
+  }
+  if ([input.wabaId, input.phoneNumberId, input.businessId].some(id => id && !/^\d+$/.test(id)))
+    throw new MobileOnboardingError("Meta returned invalid signup identifiers.", 400, "SESSION_INFO_INVALID")
   const result = await handleWhatsAppSignupCallback({ state: row.signup_state, code: input.code, wabaId: input.wabaId,
     phoneNumberId: input.phoneNumberId, businessId: input.businessId, expectedTenantId: row.tenant_id, expectedUserId: row.user_id })
   if (!result.ok) {
-    await query("UPDATE mobile_whatsapp_onboarding SET status='failed',completed_at=NOW() WHERE id=? AND status='started'", [row.id])
+    diagnostic("shared_finalization", "failed", result.failureCode ?? "CONNECTION_FAILED", row)
     await auditMobileAction({ tenantId: row.tenant_id, userId: row.user_id, action: "whatsapp_connection_failed" })
-    throw new MobileOnboardingError("WhatsApp connection could not be completed. Check its status in the app and retry if needed.", 422)
+    throw new MobileOnboardingError("WhatsApp connection could not be completed. Check its status in the app and retry if needed.", 422, result.failureCode ?? "CONNECTION_FAILED")
   }
-  await query("UPDATE mobile_whatsapp_onboarding SET status='completed',completed_at=NOW() WHERE id=? AND status='started'", [row.id])
+  if (!result.integration) throw new MobileOnboardingError("Connection was not persisted. Retry status shortly.", 503, "CONNECTION_PERSISTENCE_FAILED")
+  if (row.status !== "completed") {
+    try { await query("UPDATE mobile_whatsapp_onboarding SET status='completed',completed_at=UTC_TIMESTAMP() WHERE id=? AND status='started'", [row.id]) }
+    catch { diagnostic("onboarding_session_persistence", "failed", "DATABASE_TRANSACTION_FAILED", row); throw new MobileOnboardingError("Connection saved, but onboarding status could not be updated. Retry completion.", 503, "DATABASE_TRANSACTION_FAILED") }
+  }
   await auditMobileAction({ tenantId: row.tenant_id, userId: row.user_id, action: "whatsapp_connected" })
   const messagingReady = result.registration?.cloudApiRegistered === true
   const webhookSubscribed = result.autoConfig?.webhookSubscribed === true
-  return { connected: messagingReady && webhookSubscribed, messagingReady, webhookSubscribed }
+  diagnostic("completion", "completed", undefined, row)
+  return { connected: true, messagingReady, webhookSubscribed }
 }

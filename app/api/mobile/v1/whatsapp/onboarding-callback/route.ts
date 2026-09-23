@@ -10,5 +10,7 @@ export async function POST(request: Request) {
     return mobileJson(await finishMobileSignup({ launchToken: String(body.launchToken ?? ""), state: String(body.state ?? ""),
       code: String(body.code ?? ""), wabaId: String(body.wabaId ?? ""), phoneNumberId: String(body.phoneNumberId ?? ""),
       businessId: typeof body.businessId === "string" ? body.businessId : undefined }))
-  } catch (error) { return mobileJson({ error: error instanceof MobileOnboardingError ? error.message : "Could not complete WhatsApp connection." }, { status: error instanceof MobileOnboardingError ? error.status : 500 }) }
+  } catch (error) { if (!(error instanceof MobileOnboardingError)) console.error("[mobile.whatsapp.onboarding]", { stage: "completion_endpoint", result: "failed", code: "COMPLETION_INTERNAL_ERROR" })
+    return mobileJson({ error: error instanceof MobileOnboardingError ? error.message : "Could not complete WhatsApp connection.",
+    code: error instanceof MobileOnboardingError ? error.code : "COMPLETION_INTERNAL_ERROR" }, { status: error instanceof MobileOnboardingError ? error.status : 500 }) }
 }

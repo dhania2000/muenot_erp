@@ -18,6 +18,7 @@ import { syncTemplatesFromMeta } from "@/lib/whatsapp-templates"
 import { decryptToken, encryptToken } from "@/lib/token-crypto"
 import { ensureRegistrationSchema, finalizeWhatsAppRegistration, readMetaRegistration, withWhatsAppLock, type RegistrationResult } from "@/lib/whatsapp-registration"
 import { getWabaSubscriptionStatus } from "@/lib/whatsapp"
+import { discoverSignupAssets, SignupDiscoveryError } from "@/lib/whatsapp-signup-discovery"
 
 /**
  * Secure WhatsApp Business "Embedded Signup" onboarding.
@@ -123,6 +124,7 @@ export type SignupSessionRow = {
   created_at: string
   expires_at: string | null
   completed_at: string | null
+  is_expired?: number
 }
 
 export type StartSignupResult = {
@@ -222,13 +224,16 @@ export async function resolveTenantFromSignupState(
   await ensureSignupTable()
 
   const rows = await query<SignupSessionRow[]>(
-    "SELECT * FROM `marketing_whatsapp_signup_sessions` WHERE `state` = ? LIMIT 1",
+    "SELECT *, (expires_at IS NOT NULL AND expires_at < UTC_TIMESTAMP()) AS is_expired FROM `marketing_whatsapp_signup_sessions` WHERE `state` = ? LIMIT 1",
     [clean],
   )
   const row = rows[0]
   if (!row) return null
   if (row.status !== "pending" && row.status !== "completed") return null
-  if (row.status !== "completed" && row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+  const expired = row.is_expired === undefined && row.expires_at
+    ? Date.parse(row.expires_at.replace(" ", "T").replace(/Z?$/, "Z")) < Date.now()
+    : Boolean(Number(row.is_expired))
+  if (row.status !== "completed" && expired) {
     await query("UPDATE `marketing_whatsapp_signup_sessions` SET `status` = 'expired' WHERE `id` = ?", [row.id])
     return null
   }
@@ -251,6 +256,7 @@ async function markSignupSession(
 
 export type ConnectResult = {
   ok: boolean
+  failureCode?: string
   registration?: RegistrationResult
   error?: string
   integration?: WhatsAppIntegrationPublic
@@ -295,7 +301,7 @@ export async function connectWhatsAppBusinessAccount(input: {
   try {
     profile = await verifyWhatsAppCredentials({ phoneNumberId, accessToken })
   } catch (err) {
-    return { ok: false, error: `Meta rejected these credentials: ${(err as Error).message}` }
+    return { ok: false, failureCode: "PHONE_VERIFICATION_FAILED", error: "Meta could not verify this WhatsApp phone number." }
   }
 
   const businessName = input.businessName?.trim() || (await getWabaName({ wabaId, accessToken })) || null
@@ -306,6 +312,7 @@ export async function connectWhatsAppBusinessAccount(input: {
     displayPhoneNumber: profile.displayPhoneNumber,
     verifiedName: profile.verifiedName,
     businessName,
+    businessId: input.businessId ?? null,
     qualityRating: profile.qualityRating,
     platformType: profile.platformType,
     accessToken,
@@ -317,7 +324,7 @@ export async function connectWhatsAppBusinessAccount(input: {
     [currentTenantId(), phoneNumberId],
   )
   if (!row) {
-    return { ok: false, error: "The integration was saved but could not be read back." }
+    return { ok: false, failureCode: "CONNECTION_PERSISTENCE_FAILED", error: "The integration was saved but could not be read back." }
   }
 
   // Best-effort auto-configuration: subscribe the webhook and sync templates.
@@ -332,7 +339,9 @@ export async function connectWhatsAppBusinessAccount(input: {
     webhookError = "Webhook subscription could not be completed."
   }
 
-  const registration = await finalizeWhatsAppRegistration(currentTenantId(), Number(row.id))
+  let registration: RegistrationResult | undefined
+  try { registration = await finalizeWhatsAppRegistration(currentTenantId(), Number(row.id)) }
+  catch { console.warn("[whatsapp.signup]", { stage: "phone_registration", result: "failed", tenantId: currentTenantId(), connectionId: row.id }) }
   let templatesSynced = 0
   let templatesError: string | undefined
   try {
@@ -362,80 +371,128 @@ export async function connectWhatsAppBusinessAccount(input: {
 type SignupCallbackInput = {
   state: string
   code: string
-  wabaId: string
-  phoneNumberId: string
+  wabaId?: string
+  phoneNumberId?: string
   businessId?: string | null
   expectedTenantId?: number | null
   expectedUserId?: number | null
 }
 export async function handleWhatsAppSignupCallback(input: SignupCallbackInput): Promise<ConnectResult> {
-  await ensureRegistrationSchema()
-  return withWhatsAppLock("signup:" + input.state, () => finalizeSignupCallback(input))
+  try {
+    await ensureRegistrationSchema()
+    return await withWhatsAppLock("signup:" + input.state, () => finalizeSignupCallback(input))
+  } catch {
+    console.warn("[whatsapp.signup]", { stage: "completion_database", result: "failed", code: "DATABASE_TRANSACTION_FAILED" })
+    return { ok: false, failureCode: "DATABASE_TRANSACTION_FAILED", error: "WhatsApp completion could not be saved. Please retry." }
+  }
 }
 
 async function finalizeSignupCallback(input: SignupCallbackInput): Promise<ConnectResult> {
   const resolved = await resolveTenantFromSignupState(input.state)
   if (!resolved) {
-    return { ok: false, error: "This WhatsApp signup link has expired or is invalid. Please start again." }
+    return { ok: false, failureCode: "SIGNUP_SESSION_MISSING_OR_EXPIRED", error: "This WhatsApp signup link has expired or is invalid. Please start again." }
   }
+  const diagnostic = (stage: string, result: string, code?: string) => console.info("[whatsapp.signup]", {
+    stage, result, ...(code ? { code } : {}), tenantId: resolved.tenantId, signupId: resolved.id,
+  })
   if (input.expectedTenantId != null && input.expectedTenantId !== resolved.tenantId) {
     // Never let one tenant consume another tenant's signup state.
-    return { ok: false, error: "This WhatsApp signup does not belong to your organization." }
+    diagnostic("tenant_mapping", "failed", "TENANT_MISMATCH")
+    return { ok: false, failureCode: "TENANT_MISMATCH", error: "This WhatsApp signup does not belong to your organization." }
   }
   if (input.expectedUserId != null && input.expectedUserId !== resolved.userId) {
-    return { ok: false, error: "This WhatsApp signup was started by another administrator." }
+    diagnostic("tenant_mapping", "failed", "USER_MISMATCH")
+    return { ok: false, failureCode: "USER_MISMATCH", error: "This WhatsApp signup was started by another administrator." }
   }
 
   if (resolved.status === "completed") {
-    if (resolved.wabaId !== input.wabaId || resolved.phoneNumberId !== input.phoneNumberId) {
-      return { ok: false, error: "Signup details do not match the completed connection." }
+    if ((input.wabaId && resolved.wabaId !== input.wabaId) || (input.phoneNumberId && resolved.phoneNumberId !== input.phoneNumberId)) {
+      return { ok: false, failureCode: "STATE_SESSION_MISMATCH", error: "Signup details do not match the completed connection." }
     }
     const [row] = await query<import("@/lib/whatsapp").WhatsAppIntegrationRow[]>(
       "SELECT * FROM marketing_whatsapp_integration WHERE tenant_id=? AND phone_number_id=? AND waba_id=? LIMIT 1",
       [resolved.tenantId, resolved.phoneNumberId, resolved.wabaId],
     )
-    if (!row) return { ok: false, error: "Connection no longer exists. Start a new signup only if you want to reconnect it." }
+    if (!row) return { ok: false, failureCode: "CONNECTION_MISSING", error: "Connection no longer exists. Start a new signup only if you want to reconnect it." }
+    diagnostic("completion", "idempotent_replay")
     return { ok: true, integration: toPublicIntegration(row), registration: await readMetaRegistration(row) }
   }
 
   const code = input.code?.trim()
   if (!code) {
     await markSignupSession(resolved.id, "failed", { error: "Missing authorization code." })
-    return { ok: false, error: "Meta did not return an authorization code. Please try connecting again." }
+    return { ok: false, failureCode: "AUTH_CODE_MISSING", error: "Meta did not return an authorization code. Please try connecting again." }
   }
 
   const [progress] = await query<any[]>("SELECT * FROM marketing_whatsapp_signup_progress WHERE tenant_id=? AND signup_id=?", [resolved.tenantId, resolved.id])
   let accessToken = decryptToken(progress?.token_encrypted)
   if (!accessToken) {
-    if (progress) return { ok: false, error: "The previous authorization exchange could not be confirmed. Check the saved connection; reauthorization may be required." }
-    if (!process.env.SETTINGS_ENCRYPTION_KEY) return { ok: false, error: "Configure secure credential storage before finalizing signup." }
+    if (progress) return { ok: false, failureCode: "CODE_EXCHANGE_UNCERTAIN", error: "The previous authorization exchange could not be confirmed. Check the saved connection; reauthorization may be required." }
+    if (!process.env.SETTINGS_ENCRYPTION_KEY) return { ok: false, failureCode: "CREDENTIAL_STORAGE_UNAVAILABLE", error: "Configure secure credential storage before finalizing signup." }
+    diagnostic("code_exchange", "started")
     await query("INSERT INTO marketing_whatsapp_signup_progress (tenant_id,signup_id,exchange_status) VALUES (?,?,'exchanging')", [resolved.tenantId, resolved.id])
     const exchange = await exchangeEmbeddedSignupCode(code)
     if (!exchange.ok || !exchange.accessToken) {
-      return { ok: false, error: "Meta authorization exchange failed. Check the app configuration and retry authorization if necessary." }
+      diagnostic("code_exchange", "failed", "CODE_EXCHANGE_FAILED")
+      return { ok: false, failureCode: "CODE_EXCHANGE_FAILED", error: "Meta authorization exchange failed. Check the app configuration and retry authorization if necessary." }
     }
     accessToken = exchange.accessToken
     await query("UPDATE marketing_whatsapp_signup_progress SET exchange_status='exchanged',token_encrypted=? WHERE tenant_id=? AND signup_id=?", [encryptToken(accessToken), resolved.tenantId, resolved.id])
+    diagnostic("code_exchange", "completed")
+  }
+
+  let assets: { wabaId: string; phoneNumberId: string; businessId?: string }
+  if (!input.wabaId || !input.phoneNumberId) diagnostic("session_info", "incomplete", "SESSION_INFO_MISSING")
+  try {
+    assets = await discoverSignupAssets(accessToken, { wabaId: input.wabaId, phoneNumberId: input.phoneNumberId, businessId: input.businessId ?? undefined })
+    diagnostic("asset_discovery", "completed")
+  } catch (error) {
+    const code = error instanceof SignupDiscoveryError ? error.code : "META_DISCOVERY_FAILED"
+    diagnostic("asset_discovery", "failed", code)
+    return { ok: false, failureCode: code, error: "Could not verify the WhatsApp Business account and phone number from Meta. Please retry or check the number in WhatsApp Manager." }
   }
 
   // Enter the resolved tenant's context so upsert/subscribe/sync are all scoped.
-  const result = await runForTenant({ tenantId: resolved.tenantId }, () =>
-    connectWhatsAppBusinessAccount({
+  let result: ConnectResult
+  try {
+    result = await runForTenant({ tenantId: resolved.tenantId }, () =>
+      connectWhatsAppBusinessAccount({
       userId: resolved.userId,
       accessToken: accessToken as string,
-      wabaId: input.wabaId,
-      phoneNumberId: input.phoneNumberId,
-      businessId: input.businessId ?? null,
+      wabaId: assets.wabaId,
+      phoneNumberId: assets.phoneNumberId,
+      businessId: assets.businessId ?? null,
     }),
-  )
+    )
+  } catch {
+    diagnostic("token_persistence", "failed", "TOKEN_PERSISTENCE_FAILED")
+    return { ok: false, failureCode: "TOKEN_PERSISTENCE_FAILED", error: "Could not save the WhatsApp connection securely. Please retry." }
+  }
+  diagnostic("token_persistence", result.ok ? "completed" : "failed", result.ok ? undefined : result.failureCode ?? "CONNECTION_PERSISTENCE_FAILED")
+  if (result.ok) {
+    diagnostic("phone_registration", result.registration?.cloudApiRegistered ? "completed" : "pending_or_failed",
+      result.registration?.cloudApiRegistered ? undefined : result.registration?.status === "failed" || !result.registration ? "PHONE_REGISTRATION_FAILED" : "PHONE_REGISTRATION_PENDING")
+    diagnostic("webhook_subscription", result.autoConfig?.webhookSubscribed ? "completed" : "pending_or_failed", result.autoConfig?.webhookSubscribed ? undefined : "WEBHOOK_SUBSCRIPTION_FAILED")
+    if (!assets.businessId) diagnostic("business_discovery", "missing", "BUSINESS_ID_MISSING")
+  }
 
-  await markSignupSession(resolved.id, result.ok ? "completed" : "failed", {
-    wabaId: input.wabaId,
-    phoneNumberId: input.phoneNumberId,
-    businessId: input.businessId ?? null,
-    error: result.ok ? null : result.error ?? "Connection failed.",
-  })
-  if (result.ok) await query("UPDATE marketing_whatsapp_signup_progress SET exchange_status='completed',token_encrypted=NULL,connection_id=? WHERE tenant_id=? AND signup_id=?", [result.integration?.id, resolved.tenantId, resolved.id])
+  // Do not consume a valid state after a recoverable Meta/DB failure. The
+  // exchanged token is already encrypted in progress, so a retry can resume
+  // without exchanging the one-time authorization code again.
+  if (!result.ok) return result
+  try {
+    await markSignupSession(resolved.id, "completed", {
+      wabaId: assets.wabaId,
+      phoneNumberId: assets.phoneNumberId,
+      businessId: assets.businessId ?? null,
+    })
+    await query("UPDATE marketing_whatsapp_signup_progress SET exchange_status='completed',token_encrypted=NULL,connection_id=? WHERE tenant_id=? AND signup_id=?", [result.integration?.id, resolved.tenantId, resolved.id])
+  } catch {
+    diagnostic("completion_database", "failed", "DATABASE_TRANSACTION_FAILED")
+    return { ok: false, failureCode: "DATABASE_TRANSACTION_FAILED", error: "Connection saved, but signup state needs retry." }
+  }
+
+  if (result.ok) diagnostic("completion", "completed")
 
   return result
 }

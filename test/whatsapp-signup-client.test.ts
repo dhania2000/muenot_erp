@@ -47,16 +47,18 @@ describe("Meta popup launch", () => {
 
 describe("Meta signup messages", () => {
   const data = { type: "WA_EMBEDDED_SIGNUP", event: "FINISH", data: { waba_id: "123", phone_number_id: "456", business_id: "789" } }
-  it.each(["https://www.facebook.com", "https://web.facebook.com"])("accepts exact trusted origin %s", origin => {
+  it.each(["https://www.facebook.com", "https://web.facebook.com", "https://m.facebook.com"])("accepts exact trusted origin %s", origin => {
     expect(signupDetails({ origin, data: JSON.stringify(data) })).toEqual({ wabaId: "123", phoneNumberId: "456", businessId: "789" })
   })
   it.each(["https://facebook.com.attacker.test", "https://attackerfacebook.com", "http://www.facebook.com"])("rejects untrusted origin %s", origin => {
     expect(signupDetails({ origin, data })).toBeNull()
   })
-  it("rejects malformed, cancellation and incomplete messages", () => {
+  it("rejects malformed and cancellation messages while retaining partial signup details", () => {
     const origin = "https://www.facebook.com"
-    for (const invalid of ["not-json", { ...data, event: "CANCEL" }, { ...data, data: { waba_id: "123" } }]) {
+    for (const invalid of ["not-json", { ...data, event: "CANCEL" }, { ...data, data: {} }]) {
       expect(signupDetails({ origin, data: invalid })).toBeNull()
     }
+    expect(signupDetails({ origin, data: { ...data, event: "FINISH_ONLY_WABA", data: { waba_id: "123" } } }))
+      .toEqual({ wabaId: "123", phoneNumberId: undefined, businessId: undefined })
   })
 })

@@ -8,6 +8,20 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /app-version:
+    get:
+      security: []
+      summary: Latest published Muenot Shopkeeper Android APK metadata; available before login
+      description: 'Compare Android versionCode, never versionName. If installedVersionCode >= latestVersionCode there is no update. Otherwise update is mandatory when installedVersionCode < minimumVersionCode or forceUpdate is true; else optional. A bad release can be unpublished, but Android does not permit an ordinary downgrade over a higher installed versionCode. Successful responses may be cached for 30 seconds.'
+      responses:
+        '200':
+          description: Public latest published release only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MobileAppVersion' }
+        '404': { description: No published Android release }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { description: Version service temporarily unavailable }
   /auth/register:
     post:
       security: []
@@ -227,6 +241,20 @@ components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   schemas:
+    MobileAppVersion:
+      type: object
+      required: [platform, latestVersion, latestVersionCode, minimumVersionCode, forceUpdate, apkUrl, apkSize, apkSha256, releaseNotes, publishedAt]
+      properties:
+        platform: { type: string, enum: [android] }
+        latestVersion: { type: string, example: '1.1.0' }
+        latestVersionCode: { type: integer, minimum: 1, example: 3 }
+        minimumVersionCode: { type: integer, minimum: 1, example: 2 }
+        forceUpdate: { type: boolean }
+        apkUrl: { type: string, format: uri, description: Immutable HTTPS APK URL }
+        apkSize: { type: integer, minimum: 1, description: Bytes }
+        apkSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        releaseNotes: { type: array, items: { type: string } }
+        publishedAt: { type: string, format: date-time }
     RegistrationReceipt:
       type: object
       required: [applicationId, status, registrationToken]

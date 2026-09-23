@@ -132,6 +132,34 @@ export class TtlCache<V = unknown> {
     this.store.delete(key)
   }
 
+  /**
+   * Drop every entry whose key starts with `prefix`, returning the count
+   * removed. This is what makes group invalidation possible: the tenant-safe
+   * cache layer (lib/tenant-cache.ts) prefixes every key with `t:<tenantId>:`,
+   * so evicting one tenant's entire footprint is a single prefix sweep — the
+   * mechanism that keeps a stale entry from ever outliving a tenant write.
+   */
+  deleteByPrefix(prefix: string): number {
+    if (prefix === "") {
+      const removed = this.store.size
+      this.store.clear()
+      return removed
+    }
+    let removed = 0
+    for (const key of [...this.store.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.store.delete(key)
+        removed++
+      }
+    }
+    return removed
+  }
+
+  /** Snapshot of the live keys (order = LRU, oldest first). For diagnostics/tests. */
+  keys(): string[] {
+    return [...this.store.keys()]
+  }
+
   /** Drop every entry; counters are preserved for lifetime metrics. */
   clear(): void {
     this.store.clear()

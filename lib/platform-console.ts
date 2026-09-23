@@ -26,6 +26,7 @@ import {
   parseEntitlements,
   presetForCode,
 } from "@/lib/platform/entitlements"
+import { invalidateTenantTarget, invalidateTargetForAllTenants } from "@/lib/tenant-cache"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -487,11 +488,16 @@ export async function upsertPlan(input: {
       input.sort_order ?? 0,
     ],
   )
+  // SPEC 80 — a plan's entitlements just changed for EVERY tenant on that plan.
+  // There is no per-tenant key to target, so clear the entitlements cache.
+  invalidateTargetForAllTenants("entitlements")
 }
 
 export async function setPlanActive(code: string, active: boolean): Promise<void> {
   await ensurePlatformConsoleSchema()
   await query("UPDATE `platform_plans` SET `is_active` = ? WHERE `code` = ?", [active ? 1 : 0, code])
+  // SPEC 80 — activation state gates plan resolution across tenants.
+  invalidateTargetForAllTenants("entitlements")
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +563,8 @@ export async function changeSubscriptionPlan(tenantId: number, planCode: string)
     plan.currency,
     tenantId,
   ])
+  // SPEC 80 — this tenant's plan changed; drop its cached entitlements.
+  invalidateTenantTarget("entitlements", tenantId)
 }
 
 export async function setSubscriptionStatus(tenantId: number, status: SubscriptionStatus): Promise<void> {
@@ -567,6 +575,8 @@ export async function setSubscriptionStatus(tenantId: number, status: Subscripti
     canceledAt,
     tenantId,
   ])
+  // SPEC 80 — subscription status feeds entitlement resolution for this tenant.
+  invalidateTenantTarget("entitlements", tenantId)
 }
 
 // ---------------------------------------------------------------------------

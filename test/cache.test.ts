@@ -78,6 +78,26 @@ describe("TtlCache", () => {
     expect(cache.get("a")).toBeUndefined()
   })
 
+  it("deleteByPrefix drops only the matching keys and reports the count", () => {
+    const cache = new TtlCache<number>("t")
+    cache.set("t:1:a", 1)
+    cache.set("t:1:b", 2)
+    cache.set("t:2:a", 3)
+    const removed = cache.deleteByPrefix("t:1:")
+    expect(removed).toBe(2)
+    expect(cache.get("t:1:a")).toBeUndefined()
+    expect(cache.get("t:1:b")).toBeUndefined()
+    expect(cache.get("t:2:a")).toBe(3)
+  })
+
+  it("deleteByPrefix with an empty prefix clears everything", () => {
+    const cache = new TtlCache<number>("t")
+    cache.set("a", 1)
+    cache.set("b", 2)
+    expect(cache.deleteByPrefix("")).toBe(2)
+    expect(cache.keys()).toEqual([])
+  })
+
   it("tracks hit/miss metrics", () => {
     const cache = new TtlCache<number>("t")
     cache.get("a") // miss

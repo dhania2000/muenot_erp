@@ -1,12 +1,18 @@
 "use client"
 
-// SPECS 69–72 — frontend-only governance data stores. There is no backend
-// enforcement yet: classification, field security, retention, and legal
-// hold decisions here do not actually affect API responses, exports, or
-// scheduled jobs (see lib/platform-guard.ts for the real, server-enforced
-// role guard). These stores only drive the governance UI so every screen
-// is fully exercisable — create, edit, release/pause — without a backend.
-// Codex will replace this with real, server-enforced policies and jobs.
+// SPECS 70–72 — frontend-only governance data stores. There is no backend
+// enforcement yet: field security, retention, and legal hold decisions here
+// do not actually affect API responses, exports, or scheduled jobs (see
+// lib/platform-guard.ts for the real, server-enforced role guard). These
+// stores only drive the governance UI so every screen is fully exercisable —
+// create, edit, release/pause — without a backend. Codex will replace this
+// with real, server-enforced policies and jobs.
+//
+// SPEC 69 (Data Classification) has already been replaced with a real,
+// server-enforced, tenant-scoped, audited model: see lib/data-classification.ts
+// (+ lib/data-classification-model.ts) and app/api/admin/governance/classification.
+// The classification store previously here is gone; do not reintroduce a
+// localStorage classification store.
 
 const EVENT = "muenot:governance-changed"
 
@@ -40,57 +46,6 @@ export function subscribeGovernance(callback: () => void) {
     window.removeEventListener(EVENT, callback)
     window.removeEventListener("storage", callback)
   }
-}
-
-// ---------------------------------------------------------------------------
-// Classification mappings (Spec 69)
-// ---------------------------------------------------------------------------
-
-export type ClassificationLevel = "Public" | "Internal" | "Confidential" | "Restricted" | "Highly Restricted"
-
-export type ClassificationMapping = {
-  id: string
-  module: string
-  entity: string
-  field: string
-  level: ClassificationLevel
-  createdAt: number
-}
-
-const CLASSIFICATION_KEY = "muenot.governance.classification.v1"
-const CLASSIFICATION_SEED: ClassificationMapping[] = [
-  { id: "cm-1", module: "HR", entity: "Employee", field: "Bank account number", level: "Highly Restricted", createdAt: 0 },
-  { id: "cm-2", module: "HR", entity: "Employee", field: "PAN / tax ID", level: "Restricted", createdAt: 0 },
-  { id: "cm-3", module: "HR", entity: "Employee", field: "Salary (CTC)", level: "Restricted", createdAt: 0 },
-  { id: "cm-4", module: "Finance", entity: "Invoice", field: "Line-item pricing", level: "Confidential", createdAt: 0 },
-  { id: "cm-5", module: "CRM", entity: "Customer", field: "Contact email", level: "Internal", createdAt: 0 },
-  { id: "cm-6", module: "Sales", entity: "Deal", field: "Deal value", level: "Confidential", createdAt: 0 },
-  { id: "cm-7", module: "Storage", entity: "File", field: "Entire record", level: "Public", createdAt: 0 },
-]
-
-export function listClassificationMappings(): ClassificationMapping[] {
-  const records = read(CLASSIFICATION_KEY, CLASSIFICATION_SEED)
-  if (typeof window !== "undefined" && !window.localStorage.getItem(CLASSIFICATION_KEY)) {
-    write(CLASSIFICATION_KEY, records)
-  }
-  return records
-}
-
-export function upsertClassificationMapping(input: Omit<ClassificationMapping, "id" | "createdAt"> & { id?: string }) {
-  const records = listClassificationMappings()
-  if (input.id) {
-    write(
-      CLASSIFICATION_KEY,
-      records.map((r) => (r.id === input.id ? { ...r, ...input } : r)),
-    )
-  } else {
-    const record: ClassificationMapping = { ...input, id: `cm-${Date.now().toString(36)}`, createdAt: Date.now() }
-    write(CLASSIFICATION_KEY, [record, ...records])
-  }
-}
-
-export function deleteClassificationMapping(id: string) {
-  write(CLASSIFICATION_KEY, listClassificationMappings().filter((r) => r.id !== id))
 }
 
 // ---------------------------------------------------------------------------

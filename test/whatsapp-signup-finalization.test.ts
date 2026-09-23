@@ -90,10 +90,18 @@ describe("Embedded Signup durable finalization", () => {
     expect(result.autoConfig?.webhookSubscribed).toBe(false)
   })
   it("reports connection persistence failure without marking signup complete", async () => {
-    mock.save.mockRejectedValue(new Error("database unavailable"))
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {})
+    mock.save.mockRejectedValue(Object.assign(new Error("sensitive value"), {
+      code: "ER_BAD_FIELD_ERROR", sqlState: "42S22", sqlMessage: "Unknown column 'business_id' in 'field list'",
+    }))
     const result = await handleWhatsAppSignupCallback(input)
     expect(result).toMatchObject({ ok: false, failureCode: "TOKEN_PERSISTENCE_FAILED" })
     expect(session.status).toBe("pending")
+    expect(warning).toHaveBeenCalledWith("[whatsapp.signup]", expect.objectContaining({
+      stage: "token_persistence", tenantId: 7, signupId: 2, databaseErrorCode: "ER_BAD_FIELD_ERROR", column: "business_id",
+    }))
+    expect(JSON.stringify(warning.mock.calls)).not.toContain("sensitive value")
+    warning.mockRestore()
   })
   it("keeps the state retryable after Meta phone verification fails", async () => {
     mock.verify.mockRejectedValueOnce(new Error("Meta unavailable"))

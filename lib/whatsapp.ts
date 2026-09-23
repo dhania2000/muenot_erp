@@ -2,6 +2,7 @@ import "server-only"
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { query } from "@/lib/db"
 import { encryptToken, decryptToken } from "@/lib/token-crypto"
+import { persistenceStep, WhatsAppPersistenceError } from "@/lib/whatsapp-persistence-diagnostics"
 import { currentTenantId, currentTenantIdOrNull } from "@/lib/tenant-scope"
 
 /**
@@ -547,24 +548,30 @@ export type ConnectWhatsApp = {
 
 export async function upsertWhatsAppIntegration(data: ConnectWhatsApp) {
   const { withWhatsAppLock } = await import("@/lib/whatsapp-registration")
-  return withWhatsAppLock("phone:" + data.phoneNumberId, async () => {
-    await ensureWhatsAppTable()
-    const foreign = await query<{ tenant_id: number }[]>(
-      "SELECT tenant_id FROM marketing_whatsapp_integration WHERE phone_number_id=? AND tenant_id<>? LIMIT 1",
-      [data.phoneNumberId, currentTenantId()],
-    )
-    if (foreign.length) throw new Error("This phone number is already assigned to another workspace.")
-    return saveWhatsAppIntegration(data)
-  })
+  try {
+    return await withWhatsAppLock("phone:" + data.phoneNumberId, async () => {
+      await persistenceStep("integration_schema", () => ensureWhatsAppTable())
+      const foreign = await persistenceStep("phone_ownership_check", () => query<{ tenant_id: number }[]>(
+        "SELECT tenant_id FROM marketing_whatsapp_integration WHERE phone_number_id=? AND tenant_id<>? LIMIT 1",
+        [data.phoneNumberId, currentTenantId()],
+      ))
+      if (foreign.length) throw new WhatsAppPersistenceError("phone_ownership_conflict", null)
+      return saveWhatsAppIntegration(data)
+    })
+  } catch (error) {
+    if (error instanceof WhatsAppPersistenceError) throw error
+    throw new WhatsAppPersistenceError("connection_lock", error)
+  }
 }
 
 async function saveWhatsAppIntegration(data: ConnectWhatsApp) {
-  await ensureWhatsAppTable()
+  await persistenceStep("integration_schema", () => ensureWhatsAppTable())
   // Tenant is derived from the verified session context, never from the caller,
   // and stamped so the row belongs to exactly one tenant. The tenant-scoped
   // unique key (tenant_id, phone_number_id) makes the upsert per-tenant.
   const tenantId = currentTenantId()
-  await query(
+  const encryptedToken = await persistenceStep("token_encryption", () => encryptToken(data.accessToken))
+  await persistenceStep("integration_upsert", () => query(
     `INSERT INTO \`marketing_whatsapp_integration\`
       (tenant_id, waba_id, phone_number_id, display_phone_number, verified_name, business_name,
        business_id, quality_rating, platform_type, access_token, connected_by_user_id)
@@ -589,10 +596,10 @@ async function saveWhatsAppIntegration(data: ConnectWhatsApp) {
       data.businessId ?? null,
       data.qualityRating,
       data.platformType,
-      encryptToken(data.accessToken),
+      encryptedToken,
       data.connectedByUserId,
     ],
-  )
+  ))
 }
 
 export async function deleteWhatsAppIntegration(id: number) {

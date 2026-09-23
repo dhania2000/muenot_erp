@@ -19,6 +19,7 @@ import { decryptToken, encryptToken } from "@/lib/token-crypto"
 import { ensureRegistrationSchema, finalizeWhatsAppRegistration, readMetaRegistration, withWhatsAppLock, type RegistrationResult } from "@/lib/whatsapp-registration"
 import { getWabaSubscriptionStatus } from "@/lib/whatsapp"
 import { discoverSignupAssets, SignupDiscoveryError } from "@/lib/whatsapp-signup-discovery"
+import { persistenceStep, safeWhatsAppPersistenceError } from "@/lib/whatsapp-persistence-diagnostics"
 
 /**
  * Secure WhatsApp Business "Embedded Signup" onboarding.
@@ -319,10 +320,10 @@ export async function connectWhatsAppBusinessAccount(input: {
     connectedByUserId: input.userId,
   })
 
-  const [row] = await query<import("@/lib/whatsapp").WhatsAppIntegrationRow[]>(
+  const [row] = await persistenceStep("integration_readback", () => query<import("@/lib/whatsapp").WhatsAppIntegrationRow[]>(
     "SELECT * FROM marketing_whatsapp_integration WHERE tenant_id=? AND phone_number_id=? LIMIT 1",
     [currentTenantId(), phoneNumberId],
-  )
+  ))
   if (!row) {
     return { ok: false, failureCode: "CONNECTION_PERSISTENCE_FAILED", error: "The integration was saved but could not be read back." }
   }
@@ -464,8 +465,9 @@ async function finalizeSignupCallback(input: SignupCallbackInput): Promise<Conne
       businessId: assets.businessId ?? null,
     }),
     )
-  } catch {
-    diagnostic("token_persistence", "failed", "TOKEN_PERSISTENCE_FAILED")
+  } catch (error) {
+    console.warn("[whatsapp.signup]", { stage: "token_persistence", result: "failed", code: "TOKEN_PERSISTENCE_FAILED",
+      tenantId: resolved.tenantId, signupId: resolved.id, ...safeWhatsAppPersistenceError(error) })
     return { ok: false, failureCode: "TOKEN_PERSISTENCE_FAILED", error: "Could not save the WhatsApp connection securely. Please retry." }
   }
   diagnostic("token_persistence", result.ok ? "completed" : "failed", result.ok ? undefined : result.failureCode ?? "CONNECTION_PERSISTENCE_FAILED")

@@ -116,7 +116,7 @@ export function MfaPolicyEditor() {
           <CardTitle className="text-base">Tenant MFA policy</CardTitle>
         </div>
         <CardDescription>
-          Spec 59 — policy editor. Codex will wire enforcement at login once this is saved.
+          Configure multi-factor authentication requirements for this tenant.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">

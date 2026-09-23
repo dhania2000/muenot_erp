@@ -312,7 +312,7 @@ export function SalesInvoiceDialog({
     setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev))
   }
 
-  // Fill a line from the product/service master (spec 46). Values remain editable.
+  // Fill a line from the product/service master. Values remain editable.
   function applyProduct(key: string, code: string) {
     const prod = products.find((p) => p.code === code)
     if (!prod) return
@@ -359,7 +359,7 @@ export function SalesInvoiceDialog({
         if (a.source_type) next.source_type = a.source_type
         return next
       })
-      // Copy quotation commercial lines (server recomputes totals — spec 18).
+      // Copy quotation commercial lines (server recomputes totals — ).
       if (kind === "quotation" && Array.isArray(src.autofill?.items) && src.autofill.items.length > 0) {
         setLines(
           src.autofill.items.map((it: any) => ({

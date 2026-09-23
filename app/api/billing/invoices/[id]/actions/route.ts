@@ -12,7 +12,7 @@ import {
 export const runtime = "nodejs"
 
 /**
- * SPEC 20 — Money actions on a single invoice:
+ * Money actions on a single invoice:
  *   finalize — move a draft to open so it can be paid
  *   void     — cancel an unpaid invoice
  *   pay      — record a (full or partial) payment

@@ -22,7 +22,7 @@ import { Link2, Link2Off, Loader2, RefreshCw, ServerCog, UserRoundCog } from "lu
 import { toast } from "sonner"
 
 // -----------------------------------------------------------------------------
-// SPEC 15 — Employee ⇄ User link console.
+// Employee ⇄ User link console.
 //   - Mappings tab : every employee, its resolved login, relation classification,
 //                    and link / unlink / sync actions.
 //   - Logins tab   : users with no employee (service accounts + unlinked logins),

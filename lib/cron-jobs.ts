@@ -1,7 +1,7 @@
 import "server-only"
 
 /**
- * SPEC 40 — Safe scheduled-job configuration.
+ * Safe scheduled-job configuration.
  *
  * Job definitions are a reviewed allow-list. The database stores only the
  * schedule and operational policy; it never stores shell commands or arbitrary

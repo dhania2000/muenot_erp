@@ -1,7 +1,7 @@
 /**
- * SPEC 18 — Phases 1 & 2. FEATURE-LEVEL entitlements.
+ * Phases 1 & 2. FEATURE-LEVEL entitlements.
  * ---------------------------------------------------------------------------
- * SPEC 17 modelled the plan CONTRACT (modules, quotas, flags, tiers). SPEC 18
+ * modelled the plan CONTRACT (modules, quotas, flags, tiers).
  * projects that contract onto the concrete FEATURES a tenant actually touches
  * and resolves each into one of four canonical states:
  *

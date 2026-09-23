@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { GatewayEvent } from "@/lib/billing/gateways/types"
 
 /**
- * SPEC 22 — Phase 4: duplicate / out-of-order / retry validation of the webhook
+ * Phase 4: duplicate / out-of-order / retry validation of the webhook
  * processing ledger. The DB, tenant-scope helpers and billing engine are mocked
  * with an in-memory store so we exercise the pure idempotency + retry logic:
  *

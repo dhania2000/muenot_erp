@@ -3,7 +3,7 @@ import { registerApplier, type ApplyContext } from "./maker-checker"
 import { recordPayment, type RecordPaymentInput } from "./finance-payments"
 
 // =============================================================================
-// SPEC 12 — Maker-Checker · appliers.
+// Maker-Checker · appliers.
 // -----------------------------------------------------------------------------
 // The mutations that run *after* a captured high-risk change is approved. Each
 // applier receives the exact payload the maker prepared and performs the real

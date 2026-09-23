@@ -74,7 +74,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   }
   const roleIds = body.roleIds.map((r) => Number(r)).filter((n) => Number.isInteger(n) && n > 0)
 
-  // SPEC 13 — evaluate the duties this assignment WOULD grant before persisting.
+  // evaluate the duties this assignment WOULD grant before persisting.
   const override = body.overrideSod === true
   const report = await evaluateProposedRoles(emp.user_id, roleIds)
   const blocking = hasBlockingViolation(report.violations)

@@ -9,7 +9,7 @@ export default async function AccessReviewsPage() {
   if (!guard.ok) return <p className="p-6">Tenant administrator access is required.</p>
   return (
     <div className="flex flex-col gap-6">
-      <SecurityHeading title="Access reviews" spec="Spec 66">
+      <SecurityHeading title="Access reviews" spec="">
         Periodically re-certify access across users, roles, permissions, temporary access, API keys, and service accounts.
       </SecurityHeading>
       <AccessReviewCampaigns />

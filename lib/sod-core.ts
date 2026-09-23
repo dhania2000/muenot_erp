@@ -1,5 +1,5 @@
 // =============================================================================
-// SPEC 13 — Segregation of Duties: pure policy engine (Phase 2).
+// Segregation of Duties: pure policy engine (Phase 2).
 // -----------------------------------------------------------------------------
 // DB-free and framework-free. Given the set of duty keys a user HOLDS and the
 // resolved (per-tenant) conflict matrix, decide which conflicts are violated

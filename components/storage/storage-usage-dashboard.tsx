@@ -48,7 +48,7 @@ const STATUS_LABEL: Record<string, { label: string; className: string }> = {
 }
 
 /**
- * SPEC 35 — Storage usage & quota dashboard. Reads the real, already-modeled
+ * Storage usage & quota dashboard. Reads the real, already-modeled
  * quota resolution (plan ⊕ custom override) and per-module usage breakdown.
  */
 export function StorageUsageDashboard() {

@@ -1,6 +1,6 @@
 "use client"
 
-// SPEC 67 — Audit log viewer: search, filter, inspect, and export the immutable
+// Audit log viewer: search, filter, inspect, and export the immutable
 // enterprise audit trail. Read-only by design; the log itself is append-only.
 import { useCallback, useEffect, useMemo, useState } from "react"
 import useSWR from "swr"

@@ -6,7 +6,7 @@ import { configureGatewaysFromEnv, getGateway, hasGateway, listGateways } from "
 import { nextRecordId } from "@/lib/record-ids"
 
 /**
- * SPEC 21 — Open a gateway charge for an invoice (Phase 3, billing → gateway).
+ * Open a gateway charge for an invoice (Phase 3, billing → gateway).
  * ---------------------------------------------------------------------------
  * Session-protected (admin billing). Opens a charge through the requested
  * provider and records a PENDING payment stamped with the provider handle so

@@ -9,7 +9,7 @@ import {
   SENSITIVE_CATEGORIES,
 } from "@/lib/field-security-model"
 
-// SPEC 70 — Field-Level Security admin API. Tenant-admin only, tenant-scoped,
+// Field-Level Security admin API. Tenant-admin only, tenant-scoped,
 // and audited (the store records every mutation to the immutable audit log).
 
 export async function GET() {

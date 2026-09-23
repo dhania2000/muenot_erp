@@ -7,7 +7,7 @@ import { getScanForFile, scanFileNow, approveFile } from "@/lib/storage/file-sca
 export const runtime = "nodejs"
 export const maxDuration = 60
 
-/** SPEC 34 — one file's security state, plus the rescan / release actions. */
+/** one file's security state, plus the rescan / release actions. */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ fileId: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

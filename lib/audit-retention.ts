@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 68 — Audit log retention (server).
+ * Audit log retention (server).
  * ---------------------------------------------------------------------------
  * Persists the platform + tenant retention policies and legal holds, and runs
  * the lifecycle job that seals aged audit entries into an IMMUTABLE archive and

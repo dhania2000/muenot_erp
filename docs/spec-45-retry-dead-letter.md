@@ -1,4 +1,4 @@
-# SPEC 45 — Retry and dead-letter handling
+# Retry and dead-letter handling
 
 The common retry policy distinguishes temporary rejection/service failures from
 permanent errors and uncertain delivery. SMTP 4xx, HTTP 429/5xx and connection

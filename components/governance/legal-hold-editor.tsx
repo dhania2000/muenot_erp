@@ -63,8 +63,8 @@ export function LegalHoldEditor() {
               Legal holds
             </CardTitle>
             <CardDescription>
-              Spec 72 — frontend-only editor. Active holds are meant to block retention archive/delete jobs and
-              destructive bulk actions across every covered module once enforcement exists server-side.
+              Active holds block retention archive/delete jobs and destructive bulk actions across
+              every covered module.
             </CardDescription>
           </div>
           <Button size="sm" className="gap-1.5" onClick={() => setCreating(emptyDraft())}>

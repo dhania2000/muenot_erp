@@ -1,7 +1,7 @@
 import { GovernanceTabs } from "@/components/governance/governance-tabs"
 import { ExportCenterPanel } from "@/components/governance/export-center-panel"
 
-// SPEC 73 — Central Export Center (UI). A reusable export-job layer that
+// Central Export Center (UI). A reusable export-job layer that
 // wraps existing module-specific export buttons instead of replacing them —
 // full-tenant and scheduled exports go through background jobs with
 // permission-checked, expiring download links.

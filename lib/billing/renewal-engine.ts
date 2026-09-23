@@ -28,21 +28,21 @@ import {
 } from "@/lib/billing/renewal-schedule"
 
 /**
- * SPEC 24 — Renewal management engine (data + service layer).
+ * Renewal management engine (data + service layer).
  * ---------------------------------------------------------------------------
  * Phases 2 & 3: turns the pure schedule (renewal-schedule.ts) into a running,
  * tenant-scoped renewal cycle. A single `runRenewalCycle` pass:
- *   1. reconciles the lifecycle (auto-renew roll-forward, dunning, expiry — SPEC 16)
+ * 1. reconciles the lifecycle (auto-renew roll-forward, dunning, expiry — )
  *   2. queues + delivers the due renewal reminder for each subscription
  *   3. attempts failed-payment retries for lapsed renewals, escalating to
  *      suspension once the retry schedule is exhausted
- *   4. ensures a renewal invoice exists for each billable period (SPEC 20)
+ * 4. ensures a renewal invoice exists for each billable period
  *
  * The cycle is idempotent: reminders are keyed on (subscription, period, kind)
  * and retries on (subscription, period, attempt_no), so re-running it — whether
  * from the console button or the /api/billing/run cron — never double-sends or
  * double-charges. Every write goes through the tenant-scope helpers, so the
- * cycle can only ever touch the caller's own tenant (fail-closed, SPEC 2).
+ * cycle can only ever touch the caller's own tenant (fail-closed, ).
  */
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ export type RenewalOverview = {
 
 /**
  * Result of attempting to collect a failed renewal payment. Injectable so the
- * gateway registry (SPEC 21) can be wired in later; the default reflects that
+ * gateway registry can be wired in later; the default reflects that
  * this environment has no stored payment instrument to charge.
  */
 export type RenewalChargeResult = {
@@ -260,7 +260,7 @@ function mapAttempt(r: any): RenewalAttempt {
   }
 }
 
-/** Append a subscription audit event (mirrors the SPEC 16 event log). */
+/** Append a subscription audit event (mirrors the event log). */
 async function logEvent(
   sub: LiteSubscription,
   eventType: string,

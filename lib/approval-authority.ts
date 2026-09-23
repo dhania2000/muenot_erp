@@ -19,7 +19,7 @@ import {
 import { violatesSegregation, SEGREGATION_MESSAGE } from "./maker-checker-core"
 
 // =============================================================================
-// SPEC 11 — Approval Authority: DB persistence + orchestration.
+// Approval Authority: DB persistence + orchestration.
 // -----------------------------------------------------------------------------
 // This is the stateful half of the engine. It owns the schema (self-healing,
 // tenant-scoped like the rest of the app) and turns the pure decisions made in
@@ -921,7 +921,7 @@ export async function actOnApprovalRequest(input: ActInput, opts: { isAdmin?: bo
 
   if (request.status !== "pending") return { ok: false, error: "Request is already decided", code: 409 }
 
-  // SPEC 12 — segregation of duties / bypass prevention. The maker of a request
+  // segregation of duties / bypass prevention. The maker of a request
   // can never act as its own checker, for anyone, admins included. Cancel is the
   // maker's own withdrawal and is handled above, so only checker actions reach
   // here. This is the single choke point every approve/reject/delegate/escalate

@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 68-70 — Webhook endpoint registry + delivery ledger.
+ * — Webhook endpoint registry + delivery ledger.
  * ---------------------------------------------------------------------------
  * Endpoints are tenant-owned subscriptions to named business events (see
  * WEBHOOK_EVENTS below). Each endpoint gets a per-endpoint signing secret,
@@ -163,7 +163,7 @@ async function runEnsure(): Promise<void> {
       KEY \`idx_webhook_deliveries_retry\` (\`status\`, \`next_retry_at\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
-  // SPEC 54 — backfill the custom-headers column on tables created before it existed.
+  // backfill the custom-headers column on tables created before it existed.
   await addColumnIfMissing("webhook_endpoints", "custom_headers", "`custom_headers` TEXT DEFAULT NULL")
 }
 

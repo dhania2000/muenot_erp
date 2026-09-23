@@ -25,7 +25,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "This reset link is invalid or has expired" }, { status: 400 })
     }
 
-    // SPEC 60 — full policy enforcement: strength rules + reuse history.
+    // full policy enforcement: strength rules + reuse history.
     let newHash: string
     try {
       newHash = await assertAndHashNewPassword(result.userId, newPassword)
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     await recordPasswordChange(result.userId, newHash, tenantId ?? null)
     await consumeResetToken(result.tokenId)
 
-    // SPEC 60 — session invalidation after password reset. A forgotten-password
+    // session invalidation after password reset. A forgotten-password
     // reset happens off-session (the actor holds no cookie), so every standing
     // session for this user is revoked: if the reset was triggered by an
     // attacker who had a live session, that session dies here.

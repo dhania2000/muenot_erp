@@ -21,7 +21,7 @@ beforeEach(()=>{
   })
   mock.query.mockResolvedValue([])
 })
-describe("SPEC 46 workflow model",()=>{
+describe(" workflow model",()=>{
   it("validates every supported action",()=>{
     const w=workflow([{type:"notify",userId:4,message:"Hello"},{type:"approval",userId:4,message:"Approve"},{type:"delay",seconds:60},{type:"schedule",at:"2030-01-01T00:00:00Z"},{type:"webhook",target:"crm"},{type:"assign",userId:4},{type:"create",title:"Follow up",description:"Call",userId:4}])
     expect(validateWorkflow(w)).toEqual(w)
@@ -57,7 +57,7 @@ describe("SPEC 46 workflow model",()=>{
     expect(approvalAllowed(2,4,4)).toBe(true)
   })
 })
-describe("SPEC 46 durable execution protocol (mock DB)",()=>{
+describe(" durable execution protocol (mock DB)",()=>{
   it("locks a run and updates only its tenant's lead, preserving row version",async()=>{
     await advanceWorkflow(8)
     expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("FOR UPDATE"),[8])

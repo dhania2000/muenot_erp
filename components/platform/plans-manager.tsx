@@ -107,7 +107,7 @@ function planToForm(plan: Plan): FormState {
   }
 }
 
-// SPEC 18 — how each resolved feature state reads in the plan matrix.
+// how each resolved feature state reads in the plan matrix.
 const FEATURE_STATE_STYLE: Record<FeatureState, { label: string; className: string }> = {
   enabled: { label: "Enabled", className: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
   limited: { label: "Limited", className: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400" },

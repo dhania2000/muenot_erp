@@ -15,7 +15,7 @@ import {
 } from "@/lib/dr/model"
 
 /**
- * SPEC 76 — Phase 2/4. Pure, DB-free validation of the disaster-recovery model:
+ * Phase 2/4. Pure, DB-free validation of the disaster-recovery model:
  * objective normalization + formatting, honest readiness derivation, roll-up,
  * and the incident lifecycle state machine.
  */

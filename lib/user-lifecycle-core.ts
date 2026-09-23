@@ -1,9 +1,9 @@
 /**
- * SPEC 14 — User lifecycle: the PURE state model.
+ * User lifecycle: the PURE state model.
  * ---------------------------------------------------------------------------
  * This module is deliberately free of any I/O (no DB, no `server-only`) so the
  * whole joiner / mover / leaver decision surface is unit-testable in isolation
- * — the same split SPEC 13 uses (lib/sod-core.ts is the pure engine, lib/sod.ts
+ * — the same split uses (lib/sod-core.ts is the pure engine, lib/sod.ts
  * is the DB layer). lib/user-lifecycle.ts is the DB layer that drives these
  * rules; the login route consumes `evaluateLogin` as the single gate.
  *

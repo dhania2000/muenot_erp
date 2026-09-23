@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 83 — Enterprise Dashboard Engine: widget registry + data resolvers.
+ * Enterprise Dashboard Engine: widget registry + data resolvers.
  *
  * Every widget declares the permission `feature` slug required to see it (empty
  * string = always available). The catalog is filtered by the caller's feature

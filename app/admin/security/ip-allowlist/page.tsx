@@ -33,7 +33,7 @@ type IpAllowlistEntry = {
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
-// SPEC 62 — IP allowlisting. Enforcement runs in app/api/auth/login before the
+// IP allowlisting. Enforcement runs in app/api/auth/login before the
 // password check once security.ip_allowlist_enabled is on for the tenant.
 export default function IpAllowlistPage() {
   const { data, isLoading, mutate } = useSWR<{
@@ -113,7 +113,7 @@ export default function IpAllowlistPage() {
 
   return (
     <div className="space-y-6">
-      <SecurityHeading title="IP allowlist" spec="Spec 62">
+      <SecurityHeading title="IP allowlist" spec="">
         Restrict sign-in to specific IP ranges. When enabled, requests outside the allowlist are blocked before a
         session is issued.
       </SecurityHeading>
@@ -265,7 +265,7 @@ export default function IpAllowlistPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Entry fields</CardTitle>
-          <CardDescription>Spec 62 — captured per range.</CardDescription>
+          <CardDescription>captured per range.</CardDescription>
         </CardHeader>
         <CardContent>
           <FieldSpecGrid>

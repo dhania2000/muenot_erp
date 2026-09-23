@@ -5,7 +5,7 @@ import { assertNoPlaintextExposure } from "@/lib/secrets/model"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 38 — Secret management API.
+ * Secret management API.
  * ---------------------------------------------------------------------------
  * GET returns the MASKED inventory (any platform staff). Writing or clearing a
  * secret is super-admin only and double-audited (secret access log + platform

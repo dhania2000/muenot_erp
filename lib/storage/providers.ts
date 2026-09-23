@@ -1,5 +1,5 @@
 /**
- * SPEC 26 — Customer-owned storage: provider catalog.
+ * Customer-owned storage: provider catalog.
  * ---------------------------------------------------------------------------
  * A single source of truth describing every storage backend a tenant can
  * connect. All S3-compatible providers share ONE implementation (lib/storage/s3.ts)
@@ -149,7 +149,7 @@ export function isS3Provider(id: string): boolean {
 }
 
 /**
- * SPEC 27 — Server-side encryption at the object-storage layer.
+ * Server-side encryption at the object-storage layer.
  * ---------------------------------------------------------------------------
  * Independent of the at-rest encryption we apply to stored SECRETS. This tells
  * the S3 backend how each uploaded OBJECT should be encrypted server-side:

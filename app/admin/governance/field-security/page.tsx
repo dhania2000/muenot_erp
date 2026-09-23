@@ -1,7 +1,7 @@
 import { GovernanceTabs } from "@/components/governance/governance-tabs"
 import { FieldSecurityEditor } from "@/components/governance/field-security-editor"
 
-// SPEC 70 — Field-Level Security (UI). Server-enforced field access policies
+// Field-Level Security (UI). Server-enforced field access policies
 // scoped by role / department / legal entity / permission group, applied to
 // API responses, UI, exports, and reports.
 

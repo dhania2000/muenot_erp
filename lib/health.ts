@@ -1,7 +1,7 @@
 import "server-only"
 
 /**
- * SPEC 77 — High availability: application health probes.
+ * High availability: application health probes.
  *
  * A horizontally scaled deployment (multiple application servers + background
  * workers behind a load balancer) needs machine-readable probes so the LB /

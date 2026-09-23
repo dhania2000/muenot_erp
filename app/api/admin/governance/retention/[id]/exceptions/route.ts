@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { createException, listExceptions } from "@/lib/retention-engine"
 
-// SPEC 71 — retention policy exceptions (records/criteria carved out of a
+// retention policy exceptions (records/criteria carved out of a
 // policy). Tenant-admin only, tenant-scoped, audited.
 
 export const runtime = "nodejs"

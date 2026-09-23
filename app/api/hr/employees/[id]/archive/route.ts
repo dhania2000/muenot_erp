@@ -28,7 +28,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     actorName: session.name,
   })
 
-  // SPEC 15 — an archived employee is off the active roster, so re-derive the
+  // an archived employee is off the active roster, so re-derive the
   // linked login's access (deactivates it unless the person is still active in
   // another entity). Best-effort so archiving never fails on a sync error.
   try {

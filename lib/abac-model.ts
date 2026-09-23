@@ -1,7 +1,7 @@
 // =============================================================
-// SPEC 9 — Attribute-Based Access Control (ABAC): pure model + engine
+// Attribute-Based Access Control (ABAC): pure model + engine
 // -------------------------------------------------------------
-// RBAC (SPEC 8) answers "does this ROLE grant this action on this module?".
+// RBAC answers "does this ROLE grant this action on this module?".
 // ABAC answers a second, orthogonal question: "given the ATTRIBUTES of the
 // acting user, the record being touched, and the environment, is this specific
 // access permitted?".  It is the layer that expresses rules like:
@@ -110,7 +110,7 @@ export function getAbacAttribute(key: string): AbacAttributeDef | undefined {
 
 /**
  * The standardized action vocabulary a policy can be scoped to. Mirrors the
- * SPEC 8 action taxonomy (CRUD + the extended verbs) so an ABAC policy and an
+ * action taxonomy (CRUD + the extended verbs) so an ABAC policy and an
  * RBAC grant speak the same action language. "*" matches every action.
  */
 export const ABAC_ACTIONS = [
@@ -192,7 +192,7 @@ export type AbacDecision = "permit" | "deny" | "not_applicable"
 
 /**
  * How conflicting matched policies are resolved. These mirror the classic
- * XACML combining algorithms and are the heart of SPEC 9 Phase 4:
+ * XACML combining algorithms and are the heart of Phase 4:
  *   - deny-overrides   : any matched deny wins over any permit (default, safest)
  *   - permit-overrides : any matched permit wins over any deny
  *   - priority         : the highest-priority matched policy decides; ties break

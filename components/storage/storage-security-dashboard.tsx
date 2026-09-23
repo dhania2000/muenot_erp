@@ -45,7 +45,7 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
 }
 
 /**
- * SPEC 34 — File security / malware-scan dashboard. Reads the real,
+ * File security / malware-scan dashboard. Reads the real,
  * already-implemented scan ledger; rescan / release call the same backend
  * actions the file detail drawer uses.
  */

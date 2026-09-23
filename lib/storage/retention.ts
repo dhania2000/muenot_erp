@@ -33,10 +33,10 @@ async function getTenantProvider(): Promise<StorageProvider> {
 }
 
 /**
- * SPEC 36 — Configurable storage retention (server).
+ * Configurable storage retention (server).
  * ---------------------------------------------------------------------------
  * Persists a tenant's retention configuration and runs the automatic cleanup.
- * Two tenant-scoped tables sit on top of the SPEC 32 `file_objects` model:
+ * Two tenant-scoped tables sit on top of the `file_objects` model:
  *
  *   • storage_retention_settings  — one row per tenant: the DEFAULT rule and the
  *                                   auto-cleanup master switch.
@@ -44,9 +44,9 @@ async function getTenantProvider(): Promise<StorageProvider> {
  *                                   rule that overrides the default for that module.
  *
  * Per-file concerns already live on `file_objects`:
- *   - legal_hold            → SPEC 32 column; blocks all deletion (never purged).
+ * - legal_hold → column; blocks all deletion (never purged).
  *   - retention_expires_at  → the concrete "delete after" timestamp.
- *   - retention_override    → SPEC 36 column added here: when 1 the file's expiry
+ * - retention_override → column added here: when 1 the file's expiry
  *                             was set MANUALLY and policy syncs must leave it alone.
  *
  * The sweep is the integration point that actually deletes bytes + metadata; it
@@ -101,7 +101,7 @@ async function doEnsure(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
 
-  // SPEC 36 — mark files whose retention was set by hand so policy syncs skip them.
+  // mark files whose retention was set by hand so policy syncs skip them.
   await ensureFileObjectsOverrideColumn()
 }
 
@@ -411,7 +411,7 @@ export async function runRetentionSweep(
 
   for (const file of expired) {
     // Defense in depth: never delete anything on legal hold. Two independent
-    // guards: the SPEC 32 per-file `legal_hold` column, and a SPEC 72 governance
+    // guards: the per-file `legal_hold` column, and a governance
     // legal hold that covers this file directly or via its module.
     if (file.legalHold) {
       result.skippedLegalHold++

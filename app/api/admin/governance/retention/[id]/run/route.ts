@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { getPolicy, listRuns, runPolicy } from "@/lib/retention-engine"
 
-// SPEC 71 — on-demand execution of a retention policy. Tenant-admin only.
+// on-demand execution of a retention policy. Tenant-admin only.
 // Pass { dryRun: true } to preview the number of eligible records without
 // archiving or deleting anything.
 

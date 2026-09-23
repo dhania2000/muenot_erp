@@ -4,7 +4,7 @@ import { canActOnRecord } from "@/lib/permission-enforce"
 import { getEntity, setDefaultEntity, EntityNotFoundError } from "@/lib/legal-entities"
 
 /**
- * SPEC 7 — promote one legal entity to be the tenant's default (demoting the
+ * promote one legal entity to be the tenant's default (demoting the
  * current default). The default entity is what new documents pre-select.
  */
 const PERMISSION_KEY = "finance.entities"

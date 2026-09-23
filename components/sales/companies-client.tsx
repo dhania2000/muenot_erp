@@ -146,7 +146,7 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<CompanyRow | null>(null)
 
-  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  // open the create dialog when the command palette deep-links here.
   useNewRecordParam(() => {
     setEditing(null)
     setDialogOpen(true)
@@ -237,7 +237,7 @@ export function CompaniesClient({ canManage }: { canManage: boolean }) {
     onDeleted: clear,
   })
 
-  // SPEC 85 — bulk operations dispatched through the generic /api/bulk endpoint.
+  // bulk operations dispatched through the generic /api/bulk endpoint.
   const bulkActions = useMemo<BulkActionOption[]>(
     () => [
       ...STATUS_OPTIONS.map((status) => ({

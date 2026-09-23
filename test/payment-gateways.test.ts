@@ -17,7 +17,7 @@ import { StripeGateway } from "@/lib/billing/gateways/stripe"
 import type { PaymentGateway } from "@/lib/billing/gateways/types"
 
 /**
- * SPEC 21 — Phase 4. Provider-agnostic validation of the payment gateway
+ * Phase 4. Provider-agnostic validation of the payment gateway
  * abstraction: money conversion, retry/backoff classification, charge
  * success/failure, webhook signature verification, event normalization, and
  * the registry. Adapters call an injected `fetch`, so nothing here touches the

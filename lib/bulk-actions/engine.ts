@@ -1,5 +1,5 @@
 /**
- * SPEC 85 — bulk-action execution core.
+ * bulk-action execution core.
  *
  * Pure with respect to persistence: given a resource definition, a request and
  * an actor context, it loads the records, validates each one's permission,

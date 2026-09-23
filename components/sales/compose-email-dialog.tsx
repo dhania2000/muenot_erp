@@ -70,7 +70,7 @@ type FormState = {
  * Optional starting context when the composer is opened from a specific place
  * (e.g. the email detail dialog's "Follow up" / "New conversation" actions).
  * A replyToEmailId forces the follow-up to thread into that EXACT email's
- * conversation — the strongest, least-ambiguous follow-up path (spec 160/162) —
+ * conversation — the strongest, least-ambiguous follow-up path —
  * instead of re-discovering one by recipient address.
  */
 export type ComposeInitial = {

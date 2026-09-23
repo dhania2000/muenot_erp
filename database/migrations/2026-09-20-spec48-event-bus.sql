@@ -1,4 +1,4 @@
--- SPEC 48: additive central event bus / durable subscriber deliveries.
+-- : additive central event bus / durable subscriber deliveries.
 CREATE TABLE IF NOT EXISTS erp_business_events (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, event_type VARCHAR(60) NOT NULL, schema_version INT NOT NULL DEFAULT 1, fanout_complete BOOLEAN NOT NULL DEFAULT 0, entity_id BIGINT UNSIGNED NOT NULL, event_key VARCHAR(191) NOT NULL, request_hash CHAR(64) NOT NULL, actor_id INT UNSIGNED NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY event_identity(tenant_id,event_type,event_key), KEY tenant_idx(tenant_id,id)) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS erp_event_subscriptions (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, tenant_id INT UNSIGNED NOT NULL, name VARCHAR(120) NOT NULL, event_type VARCHAR(60) NOT NULL, config JSON NOT NULL, created_by INT UNSIGNED NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY route_idx(tenant_id,event_type,enabled)) ENGINE=InnoDB;

@@ -21,9 +21,9 @@ import {
 } from "@/lib/legal-hold-model"
 
 /**
- * SPEC 72 — Phase 4. Pure, DB-free validation of the legal-hold model: the
- * predicates the automated deletion services (SPEC 71 record retention engine
- * and SPEC 36 storage retention sweep) consult to guarantee that held data is
+ * Phase 4. Pure, DB-free validation of the legal-hold model: the
+ * predicates the automated deletion services ( record retention engine
+ * and storage retention sweep) consult to guarantee that held data is
  * never destroyed. A hold ALWAYS wins over any retention policy, so these tests
  * are the contract that proves deletion prevention.
  */

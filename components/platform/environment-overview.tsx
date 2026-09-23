@@ -5,7 +5,7 @@ import { CATEGORY_LABELS, type ConfigCategory } from "@/lib/config/registry"
 import type { ConfigSource, ResolvedConfigEntry } from "@/lib/config/resolve"
 
 /**
- * SPEC 37 — Phase 3. The safe surface: a read-only, categorized view of the
+ * Phase 3. The safe surface: a read-only, categorized view of the
  * EFFECTIVE configuration. Every value shown here has already been through the
  * secret-safe projection (lib/config/resolve.ts), so a secret renders as a lock
  * + mask and never its plaintext. Editing stays in the dedicated, audited

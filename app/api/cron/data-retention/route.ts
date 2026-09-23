@@ -8,14 +8,14 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
 /**
- * SPEC 71 — Phase 4. Automatic data-retention lifecycle.
+ * Phase 4. Automatic data-retention lifecycle.
  *
  * Runs unattended via the central scheduler (registered in lib/cron-jobs.ts)
  * authenticated with the shared CRON_SECRET Bearer token, and is also runnable
  * on demand by a signed-in user. Sweeps every active tenant's runnable
  * retention policies: policies that are paused, under a legal hold, whose
  * target table/columns are missing, or whose delete is blocked by data
- * classification (SPEC 69) are skipped; the rest archive or delete records past
+ * classification are skipped; the rest archive or delete records past
  * their retention window and record an immutable run + audit entry.
  *
  * The sweep is strictly tenant-scoped (runTenantSweep filters every hot-table

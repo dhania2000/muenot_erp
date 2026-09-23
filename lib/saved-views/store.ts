@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 84 — Saved Views: persistence.
+ * Saved Views: persistence.
  *
  * Views are tenant-scoped and belong to a single table (`table_key`). Their
  * visibility controls who else can see them:
@@ -13,7 +13,7 @@ import "server-only"
  * public/role views. Team views may be created by any member of that team, and
  * edited by their creator (or a shared-view manager). A runtime `ensureSchema`
  * self-heals the table so installs converge without a manual migration step —
- * the same pattern SPEC 83's dashboard store uses.
+ * the same pattern 's dashboard store uses.
  */
 import { query } from "@/lib/db"
 import type { SavedViewRecord, TableViewConfig, ViewVisibility } from "./types"

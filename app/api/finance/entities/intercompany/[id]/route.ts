@@ -10,7 +10,7 @@ import {
 } from "@/lib/legal-entities"
 
 /**
- * SPEC 7 — inter-company transaction lifecycle.
+ * inter-company transaction lifecycle.
  * PATCH  : move the transaction through draft -> posted -> settled / cancelled.
  *          Only posted/settled rows are eliminated on consolidation.
  * DELETE : remove the transaction.

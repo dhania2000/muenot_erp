@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { SSO_OIDC_PRESETS, sameTenant } from "@/lib/sso-provider-catalog"
 
-describe("SPEC 56 SSO foundation", () => {
+describe(" SSO foundation", () => {
   it("supplies safe OIDC presets for supported enterprise providers", () => {
     expect(SSO_OIDC_PRESETS.google_workspace.discoveryUrl).toContain("accounts.google.com")
     expect(SSO_OIDC_PRESETS.microsoft_entra.discoveryUrl).toContain("login.microsoftonline.com")

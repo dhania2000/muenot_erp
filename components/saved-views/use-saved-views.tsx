@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * SPEC 84 — Saved Views: reusable client hook.
+ * Saved Views: reusable client hook.
  *
  * `useSavedViews` gives any table a complete, persistable presentation state
  * (search, filters, column order/visibility, sorting, grouping, page size) plus

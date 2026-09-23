@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 75 — Backup architecture (server store, engine + job execution).
+ * Backup architecture (server store, engine + job execution).
  * ---------------------------------------------------------------------------
  * Replaces the honest "NOT CONFIGURED" placeholder with a real, tenant-aware,
  * audited backup pipeline that works with the infrastructure this app already
@@ -67,7 +67,7 @@ const MAX_ROWS_PER_TABLE = 100_000
 
 /**
  * Largest artifact we will seal into a single MySQL row. Sealing into the DB
- * is the one durable sink that works on every install (mirrors SPEC 73's export
+ * is the one durable sink that works on every install (mirrors 's export
  * artifacts). Overridable so operators on a larger `max_allowed_packet` can
  * raise it. Kept safely under a default 16MB packet.
  */

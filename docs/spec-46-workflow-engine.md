@@ -1,15 +1,15 @@
-# SPEC 46 — Reusable workflow engine
+# Reusable workflow engine
 
 ## Audit and integration boundary
 
 The existing code has four distinct automation paths:
 
-| Implementation | Existing responsibilities | SPEC 46 decision |
+| Implementation | Existing responsibilities | decision |
 | --- | --- | --- |
 | `lib/marketing/journeys-engine.ts` | Marketing enrollment, audience rules, journey steps | Retain; do not migrate active journeys implicitly |
 | `lib/finance-expense-workflow.ts` / `lib/approval-authority.ts` | Expense lifecycle, approval tiers, segregation of duties, posting | Retain as domain authority; engine cannot update financial state |
 | `lib/operations-task-automation.ts` / `lib/recruit-task-automation.ts` | Module-specific task generation | Retain; some legacy tables lack verified tenant isolation, so not exposed as generic writable tables |
-| SPEC 40–45 scheduler / queue | Due work, retries, job monitoring | Register a reviewed workflow worker in the existing scheduler |
+| –45 scheduler / queue | Due work, retries, job monitoring | Register a reviewed workflow worker in the existing scheduler |
 
 The first reviewed adapters are **Sales leads** and **cross-module workflow tasks**. Sales detail links into the workflow console with its record ID. Source lookup and writes require both tenant ID and record ID. Sales priority/assignment changes increment `row_version`; assignment appends owner history. Won/lost state, payments, ledger entries and arbitrary SQL are not writable actions.
 
@@ -24,7 +24,7 @@ The first reviewed adapters are **Sales leads** and **cross-module workflow task
 - Creation produces an `erp_workflow_tasks` record linked to its source run; it does not create arbitrary ERP/financial records. Further workflows can target these records.
 - Pending approval, run history, task list and cancellation of remaining actions. Cancellation is not compensation for earlier effects.
 
-Nested conditions/OR/ELSE, visual branching and dry-run designer are SPEC 47, not part of this builder. Automatic record-change/event subscriptions are reserved for the central event architecture in SPEC 48; this increment does not claim event-driven integration of every ERP module. Scheduled triggers are explicit one-off run requests, not recurring per-definition schedules.
+Nested conditions/OR/ELSE, visual branching and dry-run designer are, not part of this builder. Automatic record-change/event subscriptions are reserved for the central event architecture in; this increment does not claim event-driven integration of every ERP module. Scheduled triggers are explicit one-off run requests, not recurring per-definition schedules.
 
 ## Execution and safety
 
@@ -41,7 +41,7 @@ Nested conditions/OR/ELSE, visual branching and dry-run designer are SPEC 47, no
 
 ## Deployment / testing
 
-1. Apply `database/migrations/2026-09-20-spec46-workflow-engine.sql`. Runtime also creates these additive tables idempotently and ensures the existing notifications schema. Existing Sales lifecycle and tenant-isolation migrations must already be applied.
+1. Apply `database/migrations/2026-09-20--workflow-engine.sql`. Runtime also creates these additive tables idempotently and ensures the existing notifications schema. Existing Sales lifecycle and tenant-isolation migrations must already be applied.
 2. Set `CRON_SECRET`; the new worker fails closed even in development without it. Ensure the central dispatcher is running and `workflow_worker` is enabled in scheduler configuration.
 3. Optional webhook configuration: `WORKFLOW_WEBHOOK_TARGETS={"TENANT_ID":{"crm":"https://your-reviewed-public-host.example/hook"}}`. Replace placeholders with the actual tenant ID and reviewed endpoint; never store secrets in the workflow definition. Deployment admins control this allowlist.
 4. Sign in as a tenant admin, create a workflow, choose a source lead owned by that tenant, and start it. Use another active admin as approver. Confirm approve/reject, notification delivery, field/owner history, created task, delay, scheduled start and cancellation.

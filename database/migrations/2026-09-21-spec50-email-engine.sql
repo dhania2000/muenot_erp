@@ -1,4 +1,4 @@
--- SPEC 50: centralized, tenant-scoped email engine. Transport secrets remain in
+-- : centralized, tenant-scoped email engine. Transport secrets remain in
 -- the existing encrypted environment-variable store; this migration stores no secrets.
 SET NAMES utf8mb4;
 

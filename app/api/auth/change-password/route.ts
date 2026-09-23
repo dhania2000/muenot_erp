@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Current password is incorrect" }, { status: 401 })
   }
 
-  // SPEC 60 — full policy enforcement: strength rules + reuse history.
+  // full policy enforcement: strength rules + reuse history.
   let newHash: string
   try {
     newHash = await assertAndHashNewPassword(session.userId, newPassword)
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
   ])
   await recordPasswordChange(session.userId, newHash, session.tenantId ?? null)
 
-  // SPEC 60 — session invalidation after password change. The user stays
+  // session invalidation after password change. The user stays
   // signed in on the device they just used (their current sid is preserved),
   // but every OTHER standing session is revoked so a change made in response
   // to a suspected compromise actually evicts the other devices.

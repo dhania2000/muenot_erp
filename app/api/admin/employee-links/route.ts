@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { getLinkOverview } from "@/lib/employee-user-link"
 
 /**
- * SPEC 15 — Employee ⇄ User link console data.
+ * Employee ⇄ User link console data.
  *
  * GET → the full mapping overview for the caller's effective tenant: every
  *       employee with its resolved login + relation, the lone users (service

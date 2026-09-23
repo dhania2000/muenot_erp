@@ -3,7 +3,7 @@ import { getFeatureChecker } from "@/lib/permissions"
 import type { QuickCommand } from "@/components/shared/command-palette"
 
 /**
- * SPEC 82 — the permission-aware command registry that powers the global
+ * the permission-aware command registry that powers the global
  * command palette's non-navigation rows: quick "Create <record>" actions and a
  * handful of high-value "Run action / jump" commands.
  *

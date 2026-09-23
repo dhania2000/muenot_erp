@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 67 — Enterprise audit log foundation.
+ * Enterprise audit log foundation.
  * ---------------------------------------------------------------------------
  * A single, immutable, append-only record of every meaningful operation across
  * the platform. Distinct from lib/security-audit-store.ts (which is a focused
@@ -36,7 +36,7 @@ import { getClientIp } from "@/lib/rate-limit"
 export type AuditResult = "success" | "failure" | "denied"
 
 /**
- * SPEC 68 — the ONLY authorized way to remove an audit row is the retention
+ * the ONLY authorized way to remove an audit row is the retention
  * purge, and only after the row has been sealed into the immutable archive.
  * The BEFORE DELETE trigger rejects every delete UNLESS this connection-scoped
  * session flag is set to 1, which lib/audit-retention.ts sets on a dedicated
@@ -167,7 +167,7 @@ async function runEnsure(): Promise<void> {
 /**
  * Database-level immutability. Reject any UPDATE against the audit table
  * unconditionally, and reject every DELETE EXCEPT an authorized retention purge
- * (SPEC 68) that sets the AUDIT_PURGE_SESSION_FLAG on its own connection first.
+ * that sets the AUDIT_PURGE_SESSION_FLAG on its own connection first.
  * Best-effort and idempotent: CREATE TRIGGER has no IF NOT EXISTS on most MySQL
  * versions, so we drop-then-create to upgrade older installs, and swallow any
  * failure so a hosting account that forbids trigger creation still gets

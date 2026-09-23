@@ -1,4 +1,4 @@
--- SPEC 62 — IP allowlisting for sign-in.
+-- IP allowlisting for sign-in.
 --
 -- Documents the schema that lib/ip-allowlist-store.ts also self-heals at
 -- runtime (same pattern as lib/session-store.ts and lib/secrets/store.ts),

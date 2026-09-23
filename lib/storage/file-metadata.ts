@@ -20,7 +20,7 @@ import {
 import type { StorageProviderId } from "./providers"
 
 /**
- * SPEC 32 — Centralized file metadata.
+ * Centralized file metadata.
  * ---------------------------------------------------------------------------
  * A single normalized model (`file_objects`) that records the metadata for
  * EVERY file the ERP stores, regardless of which module owns it. Before this

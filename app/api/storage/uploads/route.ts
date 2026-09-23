@@ -6,7 +6,7 @@ import { listActiveSessions } from "@/lib/storage/multipart-store"
 export const runtime = "nodejs"
 
 /**
- * SPEC 30 — Resumable large-upload sessions.
+ * Resumable large-upload sessions.
  * GET  → the current tenant's active (resumable) sessions.
  * POST → open a new multipart session from declared file metadata.
  */

@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 37 — Environment / Configuration management.
+ * Environment / Configuration management.
  * ---------------------------------------------------------------------------
  * Phase 2 (the service), server orchestration. This is the single entry point
  * the rest of the app uses to READ effective configuration. It gathers the raw

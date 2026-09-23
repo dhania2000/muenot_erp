@@ -1,10 +1,10 @@
 /**
- * Pure IP address / CIDR utilities shared by SPEC 62 (IP allowlist) and
- * SPEC 63 (access policies). Intentionally free of any server-only / DB
+ * Pure IP address / CIDR utilities shared by (IP allowlist) and
+ * (access policies). Intentionally free of any server-only / DB
  * imports so it can be unit-tested directly and reused by the pure access
  * policy engine core as well as the server-only allowlist store.
  *
- * Supports BOTH IPv4 and IPv6 (SPEC 62). Every address is normalised to a
+ * Supports BOTH IPv4 and IPv6. Every address is normalised to a
  * BigInt plus its family so a single mask/compare path works for both. An
  * IPv4-mapped IPv6 address (::ffff:a.b.c.d) is treated as its IPv4 form so a
  * range written in either notation matches consistently.

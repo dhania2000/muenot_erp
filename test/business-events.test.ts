@@ -28,7 +28,7 @@ beforeEach(()=>{
     return [[]]
   })
 })
-describe("SPEC 48 event contracts",()=>{
+describe(" event contracts",()=>{
   it("inventories all nine event families with honest publisher status",()=>{
     expect(Object.keys(EVENT_CATALOG)).toHaveLength(9)
     expect(EVENT_CATALOG["deal.won"].publisher).toBe("active")
@@ -51,7 +51,7 @@ describe("SPEC 48 event contracts",()=>{
     expect(retryState(6).status).toBe("failed")
   })
 })
-describe("SPEC 48 outbox and delivery transaction protocol (mock DB)",()=>{
+describe(" outbox and delivery transaction protocol (mock DB)",()=>{
   it("publishes and snapshots subscriber deliveries on the supplied connection",async()=>{
     expect(await publishEvent({query:mock.sql} as any,event)).toBe(10)
     expect(mock.query).not.toHaveBeenCalled()

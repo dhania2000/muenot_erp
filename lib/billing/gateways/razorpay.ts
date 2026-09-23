@@ -13,7 +13,7 @@ import {
 import { GatewayError, isRetryableHttpStatus, withRetry, type RetryOptions } from "./retry"
 
 /**
- * SPEC 21 — Razorpay adapter (Phase 2).
+ * Razorpay adapter (Phase 2).
  * ---------------------------------------------------------------------------
  * Translates Razorpay's Orders API, `X-Razorpay-Signature` HMAC scheme and
  * `payment.*`/`refund.*` webhook envelope into the canonical PaymentGateway

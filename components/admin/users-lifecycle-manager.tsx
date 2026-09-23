@@ -43,7 +43,7 @@ import {
 import { toast } from "sonner"
 
 // -----------------------------------------------------------------------------
-// SPEC 14 — User lifecycle admin console.
+// User lifecycle admin console.
 //   - Directory tab: every tenant user with their lifecycle state and the full
 //     joiner→mover→leaver action set (invite, activate, suspend/reactivate,
 //     temporary access, role/department assignment, password/MFA reset,

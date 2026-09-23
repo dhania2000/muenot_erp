@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { PolicySaveBar, type SaveState } from "@/components/security/policy-save-bar"
 
-// SPEC 60 — Password policy editor, wired to the real backend. Reads/writes
+// Password policy editor, wired to the real backend. Reads/writes
 // the same `security.*` settings that lib/password-policy.ts enforces at
 // register, login, change-password, forgot-password, and admin-reset time —
 // so a change here takes effect immediately, everywhere passwords are set.

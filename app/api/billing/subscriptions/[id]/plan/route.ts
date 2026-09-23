@@ -5,7 +5,7 @@ import { changeSubscriptionPlan, BillingError } from "@/lib/billing/billing-engi
 export const runtime = "nodejs"
 
 /**
- * SPEC 25 — Self-service upgrade / downgrade from the customer portal.
+ * Self-service upgrade / downgrade from the customer portal.
  * Switches the subscription to a new plan (and optionally a new term),
  * applies proration (immediate prorated invoice on upgrade, account credit on
  * downgrade), and persists the change. The subscription id is resolved through

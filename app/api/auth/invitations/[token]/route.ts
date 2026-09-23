@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { acceptInvitation, getInvitationByToken, LifecycleError } from "@/lib/user-lifecycle"
 
 /**
- * SPEC 14 — Public invitation endpoints (no session required; the token is the
+ * Public invitation endpoints (no session required; the token is the
  * capability). GET validates a token so the acceptance page can render the
  * invitee's email; POST accepts it, setting the password and activating.
  */

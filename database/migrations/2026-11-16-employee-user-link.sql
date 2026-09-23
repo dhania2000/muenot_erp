@@ -1,4 +1,4 @@
--- SPEC 15 — Employee ⇄ User link.
+-- Employee ⇄ User link.
 --
 -- Establishes the durable relationship between HR employees and login users:
 --   * `users.account_type`      — 'person' (default) or 'service' (no employee).

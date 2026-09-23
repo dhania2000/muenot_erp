@@ -5,8 +5,8 @@ import { listInvoices, createInvoice, getBillingSummary, BillingError } from "@/
 export const runtime = "nodejs"
 
 /**
- * SPEC 20 — Invoices collection. GET lists every invoice for the acting tenant
- * (tenant-scoped data layer, SPEC 2) plus the billing summary; POST creates a
+ * Invoices collection. GET lists every invoice for the acting tenant
+ * (tenant-scoped data layer, ) plus the billing summary; POST creates a
  * one-time or recurring invoice with discounts, coupons, tax, credit and
  * adjustments through the pure money core.
  */

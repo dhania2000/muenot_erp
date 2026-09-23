@@ -3,7 +3,7 @@ import { requirePlatformStaff, requirePlatformSuperAdmin } from "@/lib/platform-
 import { createOnboarding, listOnboarding } from "@/lib/tenant-onboarding"
 
 /**
- * SPEC 5 — Tenant onboarding directory. PLATFORM-axis surface: only Muenot
+ * Tenant onboarding directory. PLATFORM-axis surface: only Muenot
  * platform staff can view onboarding sessions; creating (which culminates in
  * provisioning a real tenant) is restricted to super admins, matching the
  * tenant-create guard.

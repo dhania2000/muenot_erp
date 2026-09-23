@@ -1,5 +1,5 @@
 /**
- * SPEC 16 — SaaS Subscription Engine: pure lifecycle model.
+ * SaaS Subscription Engine: pure lifecycle model.
  * ---------------------------------------------------------------------------
  * This module contains ZERO database or IO code so the entire subscription
  * state machine is deterministic and unit-testable. The service layer

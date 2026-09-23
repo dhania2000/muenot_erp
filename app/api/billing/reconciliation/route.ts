@@ -5,7 +5,7 @@ import { listReconciliation, ingestReconciliation, BillingError } from "@/lib/bi
 export const runtime = "nodejs"
 
 /**
- * SPEC 20 — Payment reconciliation. GET lists settlement lines; POST ingests a
+ * Payment reconciliation. GET lists settlement lines; POST ingests a
  * gateway settlement and auto-matches it to a payment by reference or amount.
  */
 export async function GET() {

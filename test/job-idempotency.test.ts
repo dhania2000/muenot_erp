@@ -41,7 +41,7 @@ function database() {
   return { run, effects: () => effects }
 }
 
-describe("SPEC 44 duplicate execution protocol", () => {
+describe(" duplicate execution protocol", () => {
   it("replays a committed result for concurrent identical business keys", async () => {
     const db = database()
     const values = await Promise.all(Array.from({ length: 10 }, () => db.run("tenant:1:period:9", { amount: 100 })))

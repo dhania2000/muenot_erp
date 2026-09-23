@@ -3,7 +3,7 @@ import { RazorpayGateway } from "./razorpay"
 import { StripeGateway } from "./stripe"
 
 /**
- * SPEC 21 — Gateway registry (Phase 2/3).
+ * Gateway registry (Phase 2/3).
  * ---------------------------------------------------------------------------
  * The single lookup the billing layer uses to reach a provider by name. Adding
  * a new provider is: implement `PaymentGateway`, then `registerGateway(...)`.

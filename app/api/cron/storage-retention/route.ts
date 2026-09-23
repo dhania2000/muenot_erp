@@ -7,7 +7,7 @@ export const runtime = "nodejs"
 export const maxDuration = 300
 
 /**
- * SPEC 36 — Phase 2. Automatic storage-retention cleanup.
+ * Phase 2. Automatic storage-retention cleanup.
  *
  * Runs unattended via Vercel Cron (see vercel.json) authenticated with the
  * shared `CRON_SECRET` Bearer token — the same pattern every other cron uses —

@@ -7,7 +7,7 @@ import { resolveBillingRecipient, sendBillingInvoiceEmail } from "@/lib/billing/
 export const runtime = "nodejs"
 
 /**
- * SPEC 23 — Email a billing invoice (or credit note) as a PDF attachment.
+ * Email a billing invoice (or credit note) as a PDF attachment.
  * Draft invoices must be finalized first so a customer never receives a
  * non-final document. Tenant-scoped through getInvoice/markInvoiceSent.
  */

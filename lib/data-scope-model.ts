@@ -1,8 +1,8 @@
 // =============================================================
-// SPEC 10 — Data-level permissions: model + pure scope engine
+// Data-level permissions: model + pure scope engine
 // -------------------------------------------------------------
 // RBAC (permission-model.ts) already scopes records by SELF ownership
-// (none/all/added/owned/both). SPEC 10 adds the RELATIONAL data scopes an
+// (none/all/added/owned/both). adds the RELATIONAL data scopes an
 // enterprise needs — the visibility a position grants over OTHER people's
 // records:
 //

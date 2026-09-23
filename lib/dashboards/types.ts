@@ -1,5 +1,5 @@
 /**
- * SPEC 83 — Enterprise Dashboard Engine: shared types.
+ * Enterprise Dashboard Engine: shared types.
  *
  * These types are imported by both server (catalog/store/API) and client
  * (engine UI), so this module must stay free of any server-only imports.

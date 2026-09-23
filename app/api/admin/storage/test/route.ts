@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const provider = providerFromConnection(conn)
-    // SPEC 28 — run the full capability battery rather than one opaque probe.
+    // run the full capability battery rather than one opaque probe.
     const report = await provider.diagnose()
 
     const passed = report.checks.filter((c) => c.status === "pass").length

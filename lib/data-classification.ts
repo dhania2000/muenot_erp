@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 69 — Data Classification (server store + request wiring).
+ * Data Classification (server store + request wiring).
  * ---------------------------------------------------------------------------
  * Replaces the frontend-only localStorage placeholder (lib/governance-store.ts)
  * for classification with a real, tenant-scoped, audited, DB-backed model.

@@ -8,7 +8,7 @@
 // release/pause — without a backend. Codex will replace this with real,
 // server-enforced policies and jobs.
 //
-// SPEC 69 (Data Classification) and SPEC 70 (Field-Level Security) have already
+// (Data Classification) and (Field-Level Security) have already
 // been replaced with real, server-enforced, tenant-scoped, audited models:
 //   - lib/data-classification.ts (+ -model) and app/api/admin/governance/classification
 //   - lib/field-security.ts (+ lib/field-security-model.ts) and
@@ -51,7 +51,7 @@ export function subscribeGovernance(callback: () => void) {
 
 
 // ---------------------------------------------------------------------------
-// Retention policies (Spec 71)
+// Retention policies
 // ---------------------------------------------------------------------------
 
 export type RetentionAction = "Archive" | "Delete"
@@ -139,7 +139,7 @@ export function deleteRetentionPolicy(id: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Legal holds (Spec 72)
+// Legal holds
 // ---------------------------------------------------------------------------
 
 export type LegalHoldStatus = "Active" | "Released"
@@ -226,7 +226,7 @@ export function releaseLegalHold(id: string, releasedBy: string, reason: string)
 }
 
 // ---------------------------------------------------------------------------
-// Export jobs (Spec 73)
+// Export jobs
 // ---------------------------------------------------------------------------
 
 export type ExportJobStatus = "Queued" | "Running" | "Completed" | "Expired"
@@ -310,7 +310,7 @@ export function startExportJob(input: { module: string; format: string; recurrin
 }
 
 // ---------------------------------------------------------------------------
-// Import jobs (Spec 74)
+// Import jobs
 // ---------------------------------------------------------------------------
 
 export type ImportJobStatus = "Completed" | "Completed with errors" | "Failed — invalid headers"

@@ -17,7 +17,7 @@ import {
 } from "@/lib/billing/subscription-lifecycle"
 
 /**
- * SPEC 16 — Phase 4. Pure, DB-free validation of the subscription lifecycle:
+ * Phase 4. Pure, DB-free validation of the subscription lifecycle:
  * term/date math, the dunning ladder, auto-renewal roll-forward, grace periods,
  * trial handling and terminal-state immutability.
  */

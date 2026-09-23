@@ -11,7 +11,7 @@ import {
 } from "@/lib/user-lifecycle"
 
 /**
- * SPEC 14 — Self-service MFA (TOTP) enrollment for the signed-in user.
+ * Self-service MFA (TOTP) enrollment for the signed-in user.
  *   POST   → begin enrollment; returns a secret + otpauth:// URL to show as QR.
  *   PUT    → confirm enrollment with a live 6-digit code; returns backup codes.
  *   DELETE → disable MFA for the caller's own account.

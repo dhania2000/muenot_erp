@@ -13,7 +13,7 @@ import {
 // so tests can exercise "exceed the limit" without also tripping minute/hour/day.
 const burstTier: RateLimitTier = { second: 3, minute: 1_000, hour: 10_000, day: 100_000 }
 
-describe("SPEC 53 — tiered API rate limiting", () => {
+describe("tiered API rate limiting", () => {
   beforeEach(() => __resetRateLimitEngine())
   afterEach(() => __resetRateLimitEngine())
 

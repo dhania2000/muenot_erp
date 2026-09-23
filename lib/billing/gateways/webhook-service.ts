@@ -12,11 +12,11 @@ import {
 import type { GatewayEvent } from "./types"
 
 /**
- * SPEC 22 — Payment webhook processing, storage, retry & monitoring.
+ * Payment webhook processing, storage, retry & monitoring.
  * ---------------------------------------------------------------------------
  * The ONE place where a verified, provider-neutral webhook event becomes a
  * billing effect (payment settled/failed, refund recorded). Built on the
- * SPEC 21 gateway bridge, this layer adds the durable event ledger that makes
+ * gateway bridge, this layer adds the durable event ledger that makes
  * at-least-once delivery safe and observable:
  *
  *   - Event storage      : every verified event is persisted (raw + normalized)
@@ -114,7 +114,7 @@ async function ensureGatewayEventsSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
 
-  // Bring SPEC 21 installs (which lacked these columns) up to the SPEC 22 model.
+  // Bring installs (which lacked these columns) up to the model.
   const cols = await tableColumns("billing_gateway_events")
   const adds: string[] = []
   if (!cols.has("attempts")) adds.push("ADD COLUMN attempts INT UNSIGNED NOT NULL DEFAULT 1")
@@ -199,7 +199,7 @@ type ClaimOutcome = { action: "process" | "duplicate"; attempts: number }
  * for a redelivered one either `duplicate` (already terminal, or genuinely
  * in-flight) or `process` (previously failed / crashed-stale → retry).
  *
- * This is the retry heart of SPEC 22: SPEC 21 treated EVERY redelivery of a
+ * This is the retry heart of : treated EVERY redelivery of a
  * known event id as a duplicate, so a transient failure left the event stuck
  * and never re-applied. We now only short-circuit on terminal rows.
  */

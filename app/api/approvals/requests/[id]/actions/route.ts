@@ -34,9 +34,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.code })
 
-  // SPEC 12 — propagate the decision to any captured maker-checker change bound
+  // propagate the decision to any captured maker-checker change bound
   // to this request. Applies the deferred operation on approval; discards it on
-  // reject/cancel. A no-op for plain SPEC 11 requests with no captured change.
+  // reject/cancel. A no-op for plain requests with no captured change.
   try {
     await handleApprovalOutcome(Number(id), result.status)
   } catch (err) {

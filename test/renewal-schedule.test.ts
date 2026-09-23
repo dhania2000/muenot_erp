@@ -9,7 +9,7 @@ import {
 } from "@/lib/billing/renewal-schedule"
 
 /**
- * SPEC 24 — Phase 4. Pure, DB-free validation of the renewal schedule: which
+ * Phase 4. Pure, DB-free validation of the renewal schedule: which
  * reminder fires when, and how failed-payment retries are spaced and escalated
  * across the past-due + grace window. Uses fixed clocks so time-based scenarios
  * are deterministic.

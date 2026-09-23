@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 72 — Legal Hold (server store + enforcement).
+ * Legal Hold (server store + enforcement).
  * ---------------------------------------------------------------------------
  * Replaces the frontend-only localStorage placeholder (lib/governance-store.ts)
  * for legal holds with a real, tenant-scoped, audited, DB-backed model that
@@ -10,10 +10,10 @@ import "server-only"
  * lib/legal-hold-model.ts for the scope taxonomy). The enforcement helpers here
  * are consulted by every automated deletion path:
  *
- *   • lib/retention-engine.ts (SPEC 71 record retention) — a module- or
+ * • lib/retention-engine.ts ( record retention) — a module- or
  *     record-type-scoped hold skips the whole policy; record/criteria-scoped
  *     holds are added to the sweep's exclusion WHERE so held rows survive.
- *   • lib/storage/retention.ts (SPEC 36 storage retention) — a file- or
+ * • lib/storage/retention.ts ( storage retention) — a file- or
  *     module-scoped hold makes the sweep skip the covered file.
  *
  * The hold ALWAYS wins over any retention policy — it can never be overridden
@@ -558,7 +558,7 @@ export async function getPolicyHoldCoverage(
 export type FileHoldResult = { held: boolean; holdName: string | null }
 
 /**
- * Is a storage file protected by an active legal hold? Consulted by the SPEC 36
+ * Is a storage file protected by an active legal hold? Consulted by the
  * storage retention sweep before deleting bytes/metadata.
  */
 export async function isFileUnderLegalHold(

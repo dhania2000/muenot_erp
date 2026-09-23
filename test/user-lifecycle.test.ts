@@ -13,7 +13,7 @@ import {
 } from "@/lib/user-lifecycle-core"
 
 /**
- * SPEC 14 — Phase 4. DB-free proof of the user-lifecycle state model against
+ * Phase 4. DB-free proof of the user-lifecycle state model against
  * the three canonical identity-governance scenarios:
  *
  *   Joiner  — invitation → acceptance/activation → verification → able to log in.

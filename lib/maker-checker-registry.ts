@@ -1,12 +1,12 @@
 /**
- * SPEC 12 — Maker-Checker · Phase 1: identify high-risk operations.
+ * Maker-Checker · Phase 1: identify high-risk operations.
  *
  * The authoritative catalogue of sensitive operations that must pass through a
  * maker-checker (four-eyes) gate before they take effect. This module is PURE
  * data + pure helpers — no DB, no I/O — so the set of governed operations is
  * declarative, reviewable, and unit-testable.
  *
- * Each operation maps to an approval-engine `moduleKey` (SPEC 11), so admins
+ * Each operation maps to an approval-engine `moduleKey`, so admins
  * configure *who* must approve using the existing approval-authority rules,
  * while this registry defines *what* is high-risk and therefore gated.
  */
@@ -39,7 +39,7 @@ export type MakerCheckerOperation = {
 }
 
 /**
- * The eight high-risk operation families called out by SPEC 12. Keys are
+ * The eight high-risk operation families called out by. Keys are
  * namespaced `domain.entity.action` so new operations slot in without
  * colliding, and so the key can be persisted on a change record forever.
  */

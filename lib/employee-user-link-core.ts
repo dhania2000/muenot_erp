@@ -1,5 +1,5 @@
 /**
- * SPEC 15 — Employee ⇄ User link: pure model.
+ * Employee ⇄ User link: pure model.
  *
  * This module is intentionally DB-free so the mapping rules (classification,
  * status synchronization, and link validation) can be unit-tested in isolation

@@ -1,6 +1,6 @@
--- SPEC 68 — Audit log retention.
+-- Audit log retention.
 --
--- Builds on SPEC 67's immutable, append-only `audit_log_entries`
+-- Builds on 's immutable, append-only `audit_log_entries`
 -- (lib/audit-log-store.ts). These tables are also self-healed at runtime by
 -- lib/audit-retention.ts (same pattern as lib/audit-log-store.ts), so a fresh
 -- database converges without running this file manually and an existing one can
@@ -10,10 +10,10 @@
 -- tenant's own audit rows, and the reserved value 0 for the platform-wide rows
 -- stored in audit_log_entries with tenant_id IS NULL.
 
--- SPEC 67 base table. Normally created by lib/audit-log-store.ts's runtime
+-- base table. Normally created by lib/audit-log-store.ts's runtime
 -- self-heal, but included here (IF NOT EXISTS, so it's a no-op where it already
 -- exists) so this file can be imported directly into a database that has not
--- yet run SPEC 67 — otherwise the `audit_log_no_delete` trigger below fails with
+-- yet run otherwise the `audit_log_no_delete` trigger below fails with
 -- "Table 'audit_log_entries' doesn't exist" (#1146). Keep in sync with
 -- lib/audit-log-store.ts.
 CREATE TABLE IF NOT EXISTS `audit_log_entries` (
@@ -138,7 +138,7 @@ DROP TRIGGER IF EXISTS `audit_archive_no_delete`;
 CREATE TRIGGER `audit_archive_no_delete` BEFORE DELETE ON `audit_log_archive_batches`
   FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log_archive_batches is append-only';
 
--- Upgrade SPEC 67's delete guard so the ONLY permitted deletion path is the
+-- Upgrade 's delete guard so the ONLY permitted deletion path is the
 -- authorized retention purge (which sets @audit_retention_purge = 1 on its own
 -- connection first). UPDATEs stay rejected unconditionally.
 --

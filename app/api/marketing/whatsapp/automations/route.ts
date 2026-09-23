@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   const caps = await resolveWhatsAppCaps(session)
   if (!caps.canManageAutomation) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-  // SPEC 18 — plan-level feature entitlement, enforced server-side (not just
+  // plan-level feature entitlement, enforced server-side (not just
   // UI hiding): confirm the tenant's plan grants an automation workflow and has
   // capacity for one more before we create it.
   if (session.tenantId != null) {

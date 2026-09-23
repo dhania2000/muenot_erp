@@ -15,7 +15,7 @@ import {
 } from "@/lib/data-classification-model"
 
 /**
- * SPEC 69 — Phase 4. Classification only earns its keep if the enforcement
+ * Phase 4. Classification only earns its keep if the enforcement
  * decisions it drives (access, export, retention) are deterministic and
  * fail-safe. These pin the pure model so a change can never silently let an
  * under-cleared role read/export sensitive data or auto-delete protected records.

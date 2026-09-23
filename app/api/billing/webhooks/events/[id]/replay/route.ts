@@ -6,7 +6,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * SPEC 22 — Manual replay of a stored webhook event (admin-only). Used to
+ * Manual replay of a stored webhook event (admin-only). Used to
  * recover a failed event after fixing the underlying cause, without waiting for
  * the provider to redeliver. Replaying is idempotent: an already-settled event
  * is a safe no-op.

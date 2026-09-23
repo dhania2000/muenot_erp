@@ -1,21 +1,21 @@
 /**
- * SPEC 72 — Legal Hold (pure, testable model).
+ * Legal Hold (pure, testable model).
  * ---------------------------------------------------------------------------
  * A legal hold is a named, auditable directive that PROTECTS a set of records
  * or files from destruction while a matter (litigation, audit, regulatory
  * inquiry) is open. While a hold is ACTIVE the covered data must never be
- * removed by an automated retention job (SPEC 71 record retention, SPEC 36
+ * removed by an automated retention job ( record retention,
  * storage retention) — the hold always wins over any retention policy.
  *
  * A hold owns one or more ITEMS. Each item declares WHAT it covers via a scope:
  *
  *   - module      — every record type in a business module (broadest ERP scope)
- *   - record_type — one record type (bound to a SPEC 71 catalog key, or a
+ * - record_type — one record type (bound to a catalog key, or a
  *                   module + record-type label for custom types)
  *   - record      — a single record (a record-type target + a record id)
  *   - criteria    — every record of a record-type target whose `matchField`
  *                   equals `matchValue`
- *   - file        — a single storage file (SPEC 32 `file_objects.id`)
+ * - file — a single storage file ( `file_objects.id`)
  *
  * This module is the DB-free core: scope/status normalization, item-input
  * validation, and the pure predicates the enforcement layer and the settings UI

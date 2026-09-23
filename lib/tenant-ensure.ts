@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 2 — Runtime self-heal for tenant data isolation.
+ * Runtime self-heal for tenant data isolation.
  * ---------------------------------------------------------------------------
  * Mirrors database/migrations/2026-11-07-tenant-data-isolation.sql so existing
  * databases converge on the isolated schema without a manual migration step

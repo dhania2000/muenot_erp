@@ -1,12 +1,12 @@
 /**
- * SPEC 70 — Field-Level Security (pure model).
+ * Field-Level Security (pure model).
  * ---------------------------------------------------------------------------
  * The deterministic, dependency-free core of field-level security. It answers
  * one question with no I/O: "given the policies that touch a field and the
  * actor asking for it, what should happen to that field's value?"
  *
- * Where SPEC 69 (Data Classification) is a CLEARANCE model — a field carries a
- * sensitivity level and a role must be cleared to that level to see it — SPEC 70
+ * Where (Data Classification) is a CLEARANCE model — a field carries a
+ * sensitivity level and a role must be cleared to that level to see it —
  * is a targeted RESTRICTION model layered on top: named policies mask/hide/lock
  * individual sensitive fields (salary, bank account, PAN, Aadhaar, tax, personal
  * identifiers, internal financials) for a defined audience (a role and below, a

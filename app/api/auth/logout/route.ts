@@ -3,7 +3,7 @@ import { clearSessionCookie, getSession } from "@/lib/auth"
 import { revokeSession } from "@/lib/session-store"
 
 export async function POST() {
-  // SPEC 61 — revoke the server-side session record (not just the cookie) so
+  // revoke the server-side session record (not just the cookie) so
   // it disappears from Session management and the sid can never be replayed
   // even if the JWT cookie were somehow retained.
   try {

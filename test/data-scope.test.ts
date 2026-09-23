@@ -9,7 +9,7 @@ import {
 } from "@/lib/data-scope-model"
 
 /**
- * SPEC 10 — Phase 4: unauthorized record access.
+ * Phase 4: unauthorized record access.
  * ---------------------------------------------------------------------------
  * The whole point of data-level permissions is that a record OUTSIDE a user's
  * scope is invisible — both in list queries (the SQL predicate must exclude it)

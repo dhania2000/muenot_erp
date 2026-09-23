@@ -5,7 +5,7 @@ import { PlansManager } from "@/components/platform/plans-manager"
 export const dynamic = "force-dynamic"
 
 /**
- * SPEC 17 — Super Admin plan manager. The entitlement contract for every plan:
+ * Super Admin plan manager. The entitlement contract for every plan:
  * modules, quotas (users, employees, storage, API, automation, jobs, AI),
  * integrations, reports, support level and feature flags. Editing is
  * super-admin only; staff can view.

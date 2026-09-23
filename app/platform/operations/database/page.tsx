@@ -10,7 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
-// SPEC 79 — Database Monitoring (UI). Structural/connection facts the app
+// Database Monitoring (UI). Structural/connection facts the app
 // can know without a live metrics pipeline; query-level performance metrics
 // are marked as requiring the database provider's own monitoring.
 const FACTS = [

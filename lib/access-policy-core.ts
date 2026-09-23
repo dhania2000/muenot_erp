@@ -1,5 +1,5 @@
 // =============================================================
-// SPEC 63 — Conditional access policy engine (pure, testable core)
+// Conditional access policy engine (pure, testable core)
 // -------------------------------------------------------------
 // Tenant admins define policies in the builder (components/security/
 // access-policy-builder.tsx). Each policy is a set of conditions combined with

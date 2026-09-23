@@ -778,7 +778,7 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
   const [editing, setEditing] = useState<ClientRow | null>(null)
   const [viewing, setViewing] = useState<ClientRow | null>(null)
 
-  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  // open the create dialog when the command palette deep-links here.
   useNewRecordParam(() => {
     setEditing(null)
     setDialogOpen(true)

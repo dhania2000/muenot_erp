@@ -1,5 +1,5 @@
 /**
- * SPEC 31 — CDN / media delivery abstraction.
+ * CDN / media delivery abstraction.
  * ---------------------------------------------------------------------------
  * A pure, dependency-free policy layer that decides HOW an object is delivered
  * over HTTP so the response is correct AND cache/CDN-friendly:

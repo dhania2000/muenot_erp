@@ -2,7 +2,7 @@
 
 This is a conservative implementation audit, not a certification. A route,
 table, or UI page alone is not proof of a complete specification. The existing
-`spec-01-49-ui-audit.md` primarily maps UI routes. This pass inspected the
+`-ui-audit.md` primarily maps UI routes. This pass inspected the
 current codebase and completed the bounded, tested security work listed below;
 it did not finish all 23 end-to-end specifications.
 
@@ -40,15 +40,15 @@ request, not reasserted as fact.
 
 ## Changed in this pass
 
-- SPEC 9: `lib/abac-enforce.ts` and `test/abac-fail-closed.test.ts`.
-- SPEC 53: `lib/api-platform/rate-limit-store.ts`, `rate-limit-policies.ts`,
+- : `lib/abac-enforce.ts` and `test/abac-fail-closed.test.ts`.
+- : `lib/api-platform/rate-limit-store.ts`, `rate-limit-policies.ts`,
   `handler.ts`, rate-limit admin routes/UI, cleanup cron/scheduler, tenant table
   registry, `database/migrations/2026-09-23-api-rate-limit-counters.sql`, and
   `test/api-shared-rate-limit.test.ts` / `test/api-rate-policy-routes.test.ts`.
 - SPECS 56/58: `lib/sso-origin.ts`, `sso-state.ts`, `sso-saml.ts`, SSO login,
   callback, ACS and metadata routes, SSO admin page, and
   `test/sso-security-hardening.test.ts`.
-- SPEC 59: `lib/mfa.ts`, `lib/user-lifecycle.ts`, `app/api/auth/login/route.ts`,
+- : `lib/mfa.ts`, `lib/user-lifecycle.ts`, `app/api/auth/login/route.ts`,
   `database/migrations/2026-09-23-mfa-secret-hardening.sql`, and
   `test/mfa-replay-hardening.test.ts` / `test/mfa-challenge-storage.test.ts` /
   `test/mfa-login-lockout.test.ts`.

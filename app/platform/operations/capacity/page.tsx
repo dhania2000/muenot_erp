@@ -2,7 +2,7 @@ import { Gauge } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 
-// SPEC 78 — Capacity Planning (UI). Links out to the real Usage & Storage
+// Capacity Planning (UI). Links out to the real Usage & Storage
 // data already collected instead of duplicating it, and only estimates
 // growth trend where enough history actually exists.
 const METRICS = [

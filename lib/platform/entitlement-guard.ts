@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 17 — Phase 4. Entitlement ENFORCEMENT.
+ * Phase 4. Entitlement ENFORCEMENT.
  * ---------------------------------------------------------------------------
  * Phase 1 defined the contract (lib/platform/entitlements.ts), Phases 2/3 store
  * and edit it (lib/platform-console.ts + the Super Admin plan manager). This
@@ -43,13 +43,13 @@ import {
 /**
  * The entitlement contract in force for a tenant right now. Resolution order:
  *   1. The tenant's subscription plan_code → that plan's stored entitlements.
- *   2. If the plan row predates SPEC 17 (NULL entitlements) → the tier preset.
+ * 2. If the plan row predates (NULL entitlements) → the tier preset.
  *   3. If the tenant has no subscription yet → the "starter" preset floor.
  * A canceled subscription grants nothing beyond the plan's own contract here;
  * status-based lockout is a separate concern (subscription lifecycle).
  */
 export async function getTenantEntitlements(tenantId: number): Promise<PlanEntitlements> {
-  // SPEC 80 — this resolves on every feature/quota gate, so cache it per OWNING
+  // this resolves on every feature/quota gate, so cache it per OWNING
   // tenant. Subscription and plan writes (lib/platform-console.ts) evict it;
   // the short TTL bounds staleness for anything not explicitly invalidated.
   return cachedForTenant("entitlements", tenantId, "plan", async () => {

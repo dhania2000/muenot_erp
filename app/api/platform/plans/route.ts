@@ -4,7 +4,7 @@ import { upsertPlan, setPlanActive } from "@/lib/platform-console"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 4 — Plan catalog management. Creating/editing plans and (de)activating
+ * Plan catalog management. Creating/editing plans and (de)activating
  * them shapes what every tenant can be billed, so it is super-admin only.
  */
 export async function POST(req: NextRequest) {

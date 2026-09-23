@@ -9,7 +9,7 @@ function csvCell(value: string | number | null): string {
 }
 
 /**
- * SPEC 19 — Export the current tenant's usage report as CSV for the active
+ * Export the current tenant's usage report as CSV for the active
  * period. Admin-only; tenant is derived from session context.
  */
 export async function GET() {

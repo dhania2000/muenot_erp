@@ -19,7 +19,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const { id } = await params
   const lead = await getLead(Number(id))
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 })
-  // SPEC 10 — the record must fall within the user's data-level scope.
+  // the record must fall within the user's data-level scope.
   if (!(await canAccessRecord(session, "sales.leads", lead))) {
     return NextResponse.json({ error: "This lead is outside your data access scope" }, { status: 403 })
   }
@@ -32,7 +32,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const { id } = await params
 
-  // SPEC 10 — gate the update on data-level scope before mutating.
+  // gate the update on data-level scope before mutating.
   const existing = await getLead(Number(id))
   if (!existing) return NextResponse.json({ error: "Lead not found" }, { status: 404 })
   if (!(await canAccessRecord(session, "sales.leads", existing))) {
@@ -66,7 +66,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
 
   const { id } = await params
 
-  // SPEC 10 — gate the delete on data-level scope.
+  // gate the delete on data-level scope.
   const existing = await getLead(Number(id))
   if (!existing) return NextResponse.json({ error: "Lead not found" }, { status: 404 })
   if (!(await canAccessRecord(session, "sales.leads", existing))) {

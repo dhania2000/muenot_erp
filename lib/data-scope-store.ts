@@ -9,7 +9,7 @@ import {
 } from "./data-scope-model"
 
 /**
- * SPEC 10 — data-scope persistence + context resolution (tenant-scoped).
+ * data-scope persistence + context resolution (tenant-scoped).
  * ---------------------------------------------------------------------------
  * Two tenant-scoped tables:
  *   - user_data_scope_grants   : which scope kind a user has per data domain

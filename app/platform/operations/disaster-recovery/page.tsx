@@ -3,7 +3,7 @@ import { DisasterRecoveryConsole } from "@/components/platform/disaster-recovery
 
 export const dynamic = "force-dynamic"
 
-// SPEC 76 — Disaster Recovery. Readiness is DERIVED from the live SPEC 75 backup
+// Disaster Recovery. Readiness is DERIVED from the live backup
 // engine (recovery-point recency, restore verification) and real drill history —
 // never asserted. Platform staff can view; super admins can edit objectives,
 // run drills and drive the incident workflow.

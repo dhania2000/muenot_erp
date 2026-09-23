@@ -4,7 +4,7 @@ import { upsertFeatureFlag, setFeatureFlagEnabled } from "@/lib/platform-console
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 4 — Feature flag management. POST upserts a flag (key/name/rollout),
+ * Feature flag management. POST upserts a flag (key/name/rollout),
  * PATCH toggles an existing flag on/off. Platform-staff surface; audited.
  */
 export async function POST(req: NextRequest) {

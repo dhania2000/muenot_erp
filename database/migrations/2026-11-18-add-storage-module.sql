@@ -1,5 +1,5 @@
 -- =============================================================
--- Storage Module — SPEC 26–36
+-- Storage Module — –36
 -- =============================================================
 -- Consolidated schema for the customer-owned storage module. Every table here
 -- is otherwise self-healed at runtime by the lib/storage/* `ensure*Schema()`
@@ -17,7 +17,7 @@ SET NAMES utf8mb4;
 SET time_zone = '+00:00';
 
 -- -------------------------------------------------------------
--- SPEC 26 / 27 — Customer storage connections + secure config + audit
+-- Customer storage connections + secure config + audit
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS tenant_storage_connections (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -73,8 +73,8 @@ CREATE TABLE IF NOT EXISTS tenant_storage_migrations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------
--- SPEC 32 — Centralized file metadata (normalized per-object model)
--- SPEC 36 — retention_override column lives on this table
+-- Centralized file metadata (normalized per-object model)
+-- retention_override column lives on this table
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS file_objects (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS file_objects (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------
--- SPEC 33 — File / document version audit trail
+-- File / document version audit trail
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS file_version_audit (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS file_version_audit (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------
--- SPEC 34 — Malware / file-security scanning
+-- Malware / file-security scanning
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS file_security_scans (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS file_security_scans (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------
--- SPEC 30 — Large / resumable multipart upload sessions + parts
+-- Large / resumable multipart upload sessions + parts
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS storage_upload_sessions (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS storage_upload_parts (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------
--- SPEC 35 — Tenant storage quota settings
+-- Tenant storage quota settings
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS storage_quota_settings (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS storage_quota_settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------
--- SPEC 36 — Configurable retention: default settings + per-module rules
+-- Configurable retention: default settings + per-module rules
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS storage_retention_settings (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,

@@ -46,7 +46,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 /**
- * SPEC 32 — File Detail drawer. Overview / Versions / Security / Retention /
+ * File Detail drawer. Overview / Versions / Security / Retention /
  * Activity tabs over the real, already-implemented centralized file metadata,
  * versioning, and security-scan models.
  */

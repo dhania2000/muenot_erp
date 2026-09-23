@@ -51,7 +51,7 @@ export async function validateUpload(file: File): Promise<string | null> {
 }
 
 /**
- * SPEC 30 — Validate an upload from its metadata alone (name/size/type),
+ * Validate an upload from its metadata alone (name/size/type),
  * without needing the bytes in memory. This is what the multipart "create
  * session" step uses: a huge video/ZIP is never buffered server-side, so we
  * must be able to accept or reject it before the first chunk arrives.
@@ -73,7 +73,7 @@ export async function validateUploadMeta(meta: {
 }
 
 /**
- * SPEC 30 — Large-file limits for resumable multipart uploads. These files
+ * Large-file limits for resumable multipart uploads. These files
  * (videos, ZIPs, training/employee bundles) are far bigger than the ordinary
  * single-request cap, so they get their own, higher ceiling and are NOT bound
  * by the `allowed_types` list (which targets small inline documents/images).

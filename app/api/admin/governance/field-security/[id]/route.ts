@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { deleteFieldSecurityPolicy, updateFieldSecurityPolicy } from "@/lib/field-security"
 
-// SPEC 70 — update / delete a single field-security policy. Tenant-admin only,
+// update / delete a single field-security policy. Tenant-admin only,
 // tenant-scoped (a foreign id resolves to null → 404), and audited.
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { releaseHold } from "@/lib/legal-hold-store"
 
-// SPEC 72 — release a legal hold. Recording a reason is mandatory; the release
+// release a legal hold. Recording a reason is mandatory; the release
 // (with actor + reason) is written to the immutable audit log. Once released,
 // the covered records/files resume following their retention policies.
 

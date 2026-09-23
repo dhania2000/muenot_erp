@@ -9,7 +9,7 @@ import { postLines, type PostingLine } from "@/lib/finance-posting"
  * GST filing engine (server-only) — Phase 3.
  *
  * GST returns are DERIVED from the posted sales-invoice ledger, never typed by
- * hand (spec 120–125). For a tax period (a calendar month, GST's return unit)
+ * hand (–125). For a tax period (a calendar month, GST's return unit)
  * this builds a GSTR-1-style outward-supply summary:
  *
  *   - document totals (taxable / CGST / SGST / IGST / cess), with credit notes
@@ -18,8 +18,8 @@ import { postLines, type PostingLine } from "@/lib/finance-posting"
  *   - an intra- vs inter-state split.
  *
  * Only Issued / Sent / Posted tax documents are included; Proforma invoices are
- * excluded (spec 220). A filing can be locked for a period, and a locked period
- * cannot be filed twice (duplicate prevention, spec 122).
+ * excluded. A filing can be locked for a period, and a locked period
+ * cannot be filed twice (duplicate prevention, ).
  *
  * Schema is self-creating + idempotent. The engine owns a DEDICATED
  * `gst_return_filings` table. It must NOT reuse the name `gst_filings`: the

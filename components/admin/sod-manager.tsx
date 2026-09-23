@@ -39,7 +39,7 @@ import { Loader2, Plus, RefreshCw, ShieldAlert, ShieldCheck, ShieldOff, Trash2 }
 import { toast } from "sonner"
 
 // -----------------------------------------------------------------------------
-// SPEC 13 — Segregation of Duties admin console.
+// Segregation of Duties admin console.
 //   - Conflicts tab : the configurable conflict matrix (enable/disable,
 //                     enforcement, severity) plus custom conflict authoring.
 //   - Violations tab: users who currently hold an incompatible pair of duties.

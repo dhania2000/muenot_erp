@@ -19,7 +19,7 @@ import {
 } from "@/lib/backup/model"
 
 /**
- * SPEC 75 — Phase 4. Pure, DB-free validation of the backup model: scope /
+ * Phase 4. Pure, DB-free validation of the backup model: scope /
  * frequency normalization, deterministic scheduling and retention math, the
  * artifact envelope round-trip + shape validation, and byte formatting. Fixed
  * clocks keep every time-based assertion deterministic.

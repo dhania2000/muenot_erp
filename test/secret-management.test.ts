@@ -19,7 +19,7 @@ import {
 import { decryptSecret, encryptSecret, isEncryptionConfigured, keyFingerprint } from "@/lib/secrets/crypto"
 
 /**
- * SPEC 38 — Phase 4. Security testing.
+ * Phase 4. Security testing.
  *
  * The secret manager is only trustworthy if four invariants hold:
  *   (1) the inventory is well-formed and covers every secret class;

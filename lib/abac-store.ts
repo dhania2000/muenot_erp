@@ -10,7 +10,7 @@ import {
 } from "./abac-model"
 
 /**
- * SPEC 9 — ABAC persistence (tenant-scoped) + attribute resolution.
+ * ABAC persistence (tenant-scoped) + attribute resolution.
  * ---------------------------------------------------------------------------
  * Policies live in one table per tenant with their conditions / module / action
  * scoping serialized as JSON, because a policy is always read and written as a

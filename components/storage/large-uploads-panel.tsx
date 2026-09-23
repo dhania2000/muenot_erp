@@ -26,7 +26,7 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * SPEC 30 — Storage-module panel that hosts the resumable large uploader and
+ * Storage-module panel that hosts the resumable large uploader and
  * lists any in-progress sessions that can still be resumed.
  */
 export function LargeUploadsPanel() {

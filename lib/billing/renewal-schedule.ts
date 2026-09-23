@@ -1,5 +1,5 @@
 /**
- * SPEC 24 — Renewal management scheduling core (pure, dependency-free).
+ * Renewal management scheduling core (pure, dependency-free).
  * ---------------------------------------------------------------------------
  * Phase 1 of renewal management: the deterministic rules that decide, for a
  * given subscription at a given moment, WHICH renewal reminder is due and WHEN
@@ -11,7 +11,7 @@
  * with tenant-scoped persistence, email delivery and the subscription/billing
  * engines to run a full renewal cycle.
  *
- * It builds on the SPEC 16 lifecycle primitives (dunning ladder, date math) so
+ * It builds on the lifecycle primitives (dunning ladder, date math) so
  * reminders and retries stay aligned with how the lifecycle itself transitions.
  */
 

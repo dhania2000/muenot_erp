@@ -6,7 +6,7 @@ const request = {
   subject: "Welcome", html: "<p>Hello</p>", trackingConsent: false,
 }
 
-describe("SPEC 50 email engine contracts", () => {
+describe(" email engine contracts", () => {
   it("uses a fixed module allowlist", () => expect(EMAIL_MODULES).toContain("system"))
   it("normalizes recipient identity and keeps tracking opt-in", () => {
     expect(validateEmailRequest(request)).toMatchObject({ to: "customer@example.com", trackingConsent: false })

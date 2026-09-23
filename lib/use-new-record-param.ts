@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react"
 
 /**
- * SPEC 82 — deep-link support for the global command palette's "Create <record>"
+ * deep-link support for the global command palette's "Create <record>"
  * actions.
  *
  * A create command navigates to a module list page with `?new=1`. On arrival

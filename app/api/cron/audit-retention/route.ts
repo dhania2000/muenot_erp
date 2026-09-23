@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
 /**
- * SPEC 68 — Phase 2. Automatic audit-log retention lifecycle.
+ * Phase 2. Automatic audit-log retention lifecycle.
  *
  * Runs unattended via the central scheduler (registered in lib/cron-jobs.ts)
  * authenticated with the shared CRON_SECRET Bearer token, and is also runnable

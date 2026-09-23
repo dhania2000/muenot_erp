@@ -1,6 +1,6 @@
 "use client"
 
-// SPEC 68 — Platform-wide audit retention policy. Sets the DEFAULT retention
+// Platform-wide audit retention policy. Sets the DEFAULT retention
 // window applied to tenants without an override, and the compliance FLOOR no
 // tenant may drop below. Also governs the platform-wide audit rows.
 import { useState } from "react"

@@ -8,7 +8,7 @@ import {
 } from "@/lib/data-classification"
 import { normalizeClearanceMatrix } from "@/lib/data-classification-model"
 
-// SPEC 69 — Data Classification admin API. Tenant-admin only, tenant-scoped,
+// Data Classification admin API. Tenant-admin only, tenant-scoped,
 // and audited (the store records every mutation to the immutable audit log).
 
 export async function GET() {

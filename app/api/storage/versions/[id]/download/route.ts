@@ -6,7 +6,7 @@ import { getVersionDownloadUrl } from "@/lib/storage"
 export const runtime = "nodejs"
 
 /**
- * SPEC 33 — Issue a short-lived signed URL to download a specific historical
+ * Issue a short-lived signed URL to download a specific historical
  * version, and record a "downloaded" audit entry. Returns JSON so the client
  * can open it in a new tab (works whether the app is framed or not).
  */

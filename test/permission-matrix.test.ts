@@ -24,7 +24,7 @@ import {
 } from "@/lib/permission-model"
 
 /**
- * SPEC 8 — Phase 4. The permission matrix is the enforcement contract for
+ * Phase 4. The permission matrix is the enforcement contract for
  * enterprise RBAC: custom roles compose additively, per-user overrides layer on
  * top, and every module's bespoke high-risk verb must map onto ONE normalized
  * capability category (view/create/edit/delete, approve/reject, export, import,

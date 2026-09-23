@@ -40,7 +40,7 @@ DB_USER=muenot_erp
 DB_PASSWORD=your-db-password
 DB_NAME=muenot_erp
 
-# ---- Connection pool tuning (SPEC 78 — Scalability)  [OPTIONAL] ----
+# ---- Connection pool tuning (Scalability) [OPTIONAL] ----
 # All optional; the defaults reproduce the previous behavior. Tune these when
 # scaling horizontally. IMPORTANT: (number of app nodes x DB_POOL_SIZE) must
 # stay within your MySQL server's max_connections.

@@ -435,7 +435,7 @@ async function completeCase(caseId: number, caseRow: any, body: any, session: an
     "UPDATE hr_employees SET employment_status = 'Ex-Employee', exit_status = 'Exited', exit_date = ?, status_changed_at = NOW() WHERE id = ?",
     [finalLwd || null, caseRow.employee_id],
   )
-  // SPEC 15 — Re-derive the linked login's access status from employment. This
+  // Re-derive the linked login's access status from employment. This
   // deactivates the login when the employee has no remaining active employment,
   // but preserves access when the same person is still active in another entity.
   try {
@@ -503,7 +503,7 @@ async function cancelCase(caseId: number, caseRow: any, body: any, session: any,
     restore,
     caseRow.employee_id,
   ])
-  // SPEC 15 — Reactivate the linked login now that employment is restored (only
+  // Reactivate the linked login now that employment is restored (only
   // if it was auto-deactivated; manual suspensions are left to the lifecycle console).
   try {
     await syncAccessStatusForEmployee(Number(caseRow.employee_id))

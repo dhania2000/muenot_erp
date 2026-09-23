@@ -1,5 +1,5 @@
 /**
- * SPEC 26 — Tenant-isolated object keys.
+ * Tenant-isolated object keys.
  * ---------------------------------------------------------------------------
  * Every object a tenant stores lives under a `t/<tenantId>/` prefix regardless
  * of provider. This gives us hard, structural isolation inside a customer's own

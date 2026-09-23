@@ -8,7 +8,7 @@ import {
 import { invalidateTenantTarget } from "./tenant-cache"
 
 /**
- * SPEC 8 — Custom roles.
+ * Custom roles.
  * ---------------------------------------------------------------------------
  * Reusable, tenant-scoped named roles that carry a permission matrix (the same
  * Add/View/Update/Delete + extended-action model used per-user). A user can be
@@ -188,7 +188,7 @@ export async function deleteRole(tenantId: number, roleId: number): Promise<void
   await query(`DELETE FROM role_module_action_permissions WHERE role_id = ?`, [roleId])
   await query(`DELETE FROM user_custom_roles WHERE role_id = ?`, [roleId])
   await query(`DELETE FROM custom_roles WHERE tenant_id = ? AND id = ?`, [tenantId, roleId])
-  // SPEC 80 — role membership/permissions feed every assignee's effective
+  // role membership/permissions feed every assignee's effective
   // matrix within this tenant; evict the tenant's permissions cache.
   invalidateTenantTarget("permissions", tenantId)
 }
@@ -275,7 +275,7 @@ export async function setRoleMatrix(tenantId: number, roleId: number, matrix: Pe
     )
   }
 
-  // SPEC 80 — the role's matrix changed; every assignee's effective matrix in
+  // the role's matrix changed; every assignee's effective matrix in
   // this tenant is now stale. Evict the tenant's permissions cache.
   invalidateTenantTarget("permissions", tenantId)
 }
@@ -321,7 +321,7 @@ export async function setUserRoles(
     )
   }
 
-  // SPEC 80 — the user's role assignments changed; their effective matrix in
+  // the user's role assignments changed; their effective matrix in
   // this tenant is stale. Evict the tenant's permissions cache.
   invalidateTenantTarget("permissions", tenantId)
 }

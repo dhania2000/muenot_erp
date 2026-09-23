@@ -1,5 +1,5 @@
 /**
- * SPEC 14 — TOTP multi-factor authentication (RFC 4226 HOTP / RFC 6238 TOTP).
+ * TOTP multi-factor authentication (RFC 4226 HOTP / RFC 6238 TOTP).
  * ---------------------------------------------------------------------------
  * Implemented with node's `crypto` alone — no extra dependency — so it is fully
  * deterministic and unit-testable (see test/user-lifecycle.test.ts, which

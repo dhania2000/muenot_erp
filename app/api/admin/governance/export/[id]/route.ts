@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { getExportJobWithLink } from "@/lib/data-export-store"
 
-// SPEC 73 — single export job (poll status + obtain a fresh signed link).
+// single export job (poll status + obtain a fresh signed link).
 
 export const runtime = "nodejs"
 

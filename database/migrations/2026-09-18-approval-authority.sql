@@ -1,5 +1,5 @@
 -- =============================================================================
--- SPEC 11 — Approval Authority
+-- Approval Authority
 -- -----------------------------------------------------------------------------
 -- A configurable, tenant-scoped approval-rule engine. Rules match a request by
 -- module, legal entity, department, requester role, and amount range, and carry

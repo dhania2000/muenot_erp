@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 
 export const dynamic = "force-dynamic"
 
-// SPEC 60 — Password management. Hashing, the admin-initiated "reset now,
+// Password management. Hashing, the admin-initiated "reset now,
 // force change at next login" flow, and the configurable policy below
 // (min length, complexity, expiry, reuse history, lockout threshold, reset
 // token expiry, session invalidation on password change) are all enforced by
@@ -22,7 +22,7 @@ export default async function PasswordPage() {
 
   return (
     <div className="space-y-6">
-      <SecurityHeading title="Password management" spec="Spec 60">
+      <SecurityHeading title="Password management" spec="">
         Passwords are always stored hashed. An admin can reset any user&apos;s password now, which issues a
         one-time temporary password and forces a change at next login.
       </SecurityHeading>

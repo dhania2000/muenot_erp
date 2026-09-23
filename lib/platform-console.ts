@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 4 — Super Admin console data layer.
+ * Super Admin console data layer.
  * ---------------------------------------------------------------------------
  * Platform-level operational records the Muenot Super Admin console manages:
  * subscription PLANS, per-tenant SUBSCRIPTIONS, derived billing INVOICES,
@@ -43,7 +43,7 @@ export type Plan = {
   currency: string
   seat_limit: number | null
   features: string[]
-  /** SPEC 17 — the structured entitlement contract for this plan. */
+  /** the structured entitlement contract for this plan. */
   entitlements: PlanEntitlements
   is_active: boolean
   sort_order: number
@@ -100,7 +100,7 @@ const DEFAULT_PLANS: Omit<Plan, "is_active">[] = [
     sort_order: 0,
   },
   {
-    // SPEC 7/8 — mobile-first Shopkeeper trial. Zero price; provisioned with a
+    // mobile-first Shopkeeper trial. Zero price; provisioned with a
     // `trialing` subscription. Uses the shopkeeper entitlement preset so the
     // Android app's shopkeeper.* feature gates resolve correctly.
     code: "shopkeeper-trial",
@@ -114,7 +114,7 @@ const DEFAULT_PLANS: Omit<Plan, "is_active">[] = [
     sort_order: 1,
   },
   {
-    // SPEC 7 — the standard paid Shopkeeper plan.
+    // the standard paid Shopkeeper plan.
     code: "shopkeeper",
     name: "Shopkeeper",
     description: "The Muenot Shopkeeper mobile app for a single shop.",
@@ -227,7 +227,7 @@ async function runEnsure(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
 
-  // SPEC 17 — add the entitlements column to installs created before it existed.
+  // add the entitlements column to installs created before it existed.
   await ensureColumn("platform_plans", "entitlements", "JSON DEFAULT NULL")
 
   await query(`
@@ -414,7 +414,7 @@ function mapPlan(r: PlanRow): Plan {
       features = []
     }
   }
-  // A pre-SPEC-17 row has a NULL entitlements column: fall back to the tier
+  // A pre- row has a NULL entitlements column: fall back to the tier
   // preset so the plan still has a meaningful contract, never a bare floor.
   const entitlements =
     r.entitlements != null ? parseEntitlements(r.entitlements) : presetForCode(r.code)
@@ -488,7 +488,7 @@ export async function upsertPlan(input: {
       input.sort_order ?? 0,
     ],
   )
-  // SPEC 80 — a plan's entitlements just changed for EVERY tenant on that plan.
+  // a plan's entitlements just changed for EVERY tenant on that plan.
   // There is no per-tenant key to target, so clear the entitlements cache.
   invalidateTargetForAllTenants("entitlements")
 }
@@ -496,7 +496,7 @@ export async function upsertPlan(input: {
 export async function setPlanActive(code: string, active: boolean): Promise<void> {
   await ensurePlatformConsoleSchema()
   await query("UPDATE `platform_plans` SET `is_active` = ? WHERE `code` = ?", [active ? 1 : 0, code])
-  // SPEC 80 — activation state gates plan resolution across tenants.
+  // activation state gates plan resolution across tenants.
   invalidateTargetForAllTenants("entitlements")
 }
 
@@ -563,7 +563,7 @@ export async function changeSubscriptionPlan(tenantId: number, planCode: string)
     plan.currency,
     tenantId,
   ])
-  // SPEC 80 — this tenant's plan changed; drop its cached entitlements.
+  // this tenant's plan changed; drop its cached entitlements.
   invalidateTenantTarget("entitlements", tenantId)
 }
 
@@ -575,7 +575,7 @@ export async function setSubscriptionStatus(tenantId: number, status: Subscripti
     canceledAt,
     tenantId,
   ])
-  // SPEC 80 — subscription status feeds entitlement resolution for this tenant.
+  // subscription status feeds entitlement resolution for this tenant.
   invalidateTenantTarget("entitlements", tenantId)
 }
 

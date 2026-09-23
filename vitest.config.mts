@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config"
 import { fileURLToPath } from "node:url"
 
 /**
- * Test runner config for the tenant-isolation suite (SPEC 2, Phase 3/4).
+ * Test runner config for the tenant-isolation suite (, Phase 3/4).
  *
  * - `@/*` mirrors the tsconfig path alias so tests import app modules exactly
  *   as production code does.

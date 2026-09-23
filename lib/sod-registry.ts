@@ -1,5 +1,5 @@
 // =============================================================================
-// SPEC 13 — Segregation of Duties: conflict matrix (Phase 1).
+// Segregation of Duties: conflict matrix (Phase 1).
 // -----------------------------------------------------------------------------
 // Pure, DB-free catalog of the sensitive DUTIES a user can hold and the
 // CONFLICTS between them that a single person must never combine. This is the
@@ -13,7 +13,7 @@
 //   - permission : the user's effective permission matrix grants a capability
 //                  category (e.g. "create") on a permission module.
 //   - approval   : the user is a configured approver (directly, by role, or by
-//                  department) for an approval-authority module (SPEC 11).
+// department) for an approval-authority module.
 //
 // A CONFLICT pairs two duties that are incompatible when co-held by one user —
 // the classic maker-cannot-be-checker separation the spec enumerates:

@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * SPEC 81 (Global Search) + SPEC 82 (Command Palette).
+ * (Global Search) + (Command Palette).
  *
  * One ⌘K / Ctrl+K surface that unifies:
  *   - navigation across every workspace module the viewer can see
@@ -12,7 +12,7 @@
  *
  * There is intentionally only one global search system: the header search
  * button and the keyboard shortcut both open this component, so the two do not
- * visually compete (per SPEC 82).
+ * visually compete.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"

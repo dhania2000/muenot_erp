@@ -5,7 +5,7 @@ import { EmergencyAccessPanel } from "@/components/security/emergency-access-pan
 
 export const dynamic = "force-dynamic"
 
-// SPEC 65 — Emergency ("break-glass") access. Server-enforced and audited: a
+// Emergency ("break-glass") access. Server-enforced and audited: a
 // request creates a pending grant (lib/temporary-access-store.ts) that a
 // DIFFERENT administrator must explicitly approve. On approval the requester's
 // role is elevated for a time-boxed window (honored by every request guard),
@@ -18,7 +18,7 @@ export default async function EmergencyAccessPage() {
 
   return (
     <div className="space-y-6">
-      <SecurityHeading title="Emergency access" spec="Spec 65">
+      <SecurityHeading title="Emergency access" spec="">
         Break-glass access for incidents: request temporary elevated permissions with mandatory justification, a
         second administrator&apos;s approval, automatic time-boxed expiry, and a full audit trail.
       </SecurityHeading>

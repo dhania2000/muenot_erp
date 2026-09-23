@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * SPEC 85 — reusable bulk-action bar.
+ * reusable bulk-action bar.
  *
  * Drop-in toolbar shown while table rows are selected. It talks to the generic
  * `/api/bulk/[resource]` endpoint, so any registered resource gets the same UX:

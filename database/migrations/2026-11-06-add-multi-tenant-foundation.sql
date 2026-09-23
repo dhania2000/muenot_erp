@@ -1,5 +1,5 @@
 -- =============================================================
--- SPEC 1 — Multi-tenant SaaS foundation (additive, non-destructive)
+-- Multi-tenant SaaS foundation (additive, non-destructive)
 -- -------------------------------------------------------------
 -- Principles:
 --   * A single Muenot platform hosts multiple independent customer

@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 67 + SPEC 52 — API key platform (issuance, hashing, scoping, revocation,
+ * + API key platform (issuance, hashing, scoping, revocation,
  * environments, IP restrictions, audit trail).
  * ---------------------------------------------------------------------------
  * A key is generated once, shown to the admin exactly once, and never stored
@@ -10,7 +10,7 @@ import "server-only"
  * purely so the admin UI can show "mn_live_a1b2c3d4…" for identification
  * without ever re-deriving the secret.
  *
- * SPEC 52 adds, on top of the original SPEC 67 model:
+ * adds, on top of the original model:
  *   - `environment` — live vs test keys, surfaced in the plaintext marker
  *     (`mn_live_…` / `mn_test_…`) so a leaked key's blast radius is obvious.
  *   - `ip_restrictions` — optional comma-separated CIDR allowlist; when set, a
@@ -111,7 +111,7 @@ async function runEnsure(): Promise<void> {
       KEY \`idx_api_keys_prefix\` (\`key_prefix\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
-  // Self-heal older SPEC 67 tables that predate the SPEC 52 columns.
+  // Self-heal older tables that predate the columns.
   await addColumnIfMissing("api_keys", "environment", "`environment` ENUM('live','test') NOT NULL DEFAULT 'live'")
   await addColumnIfMissing("api_keys", "ip_restrictions", "`ip_restrictions` VARCHAR(512) NOT NULL DEFAULT ''")
 
@@ -266,7 +266,7 @@ export async function touchKeyUsage(id: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Audit trail (SPEC 52)
+// Audit trail
 // ---------------------------------------------------------------------------
 
 export async function recordApiKeyEvent(input: {

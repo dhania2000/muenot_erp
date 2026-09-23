@@ -1,4 +1,4 @@
--- SPEC 83 — Enterprise Dashboard Engine
+-- Enterprise Dashboard Engine
 -- Configurable, saved dashboards. Scopes: personal / role / tenant.
 -- The app also self-heals this table at runtime (lib/dashboards/store.ts),
 -- so applying this migration is optional but recommended for fresh installs.

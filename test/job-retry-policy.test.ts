@@ -5,7 +5,7 @@ vi.mock("@/lib/background-jobs", () => ({ ensureBackgroundJobSchema: async () =>
 import { classifyJobFailure, retryDisposition } from "@/lib/job-retry-policy"
 import { retryDeadLetter } from "@/lib/job-manual-retry"
 
-describe("SPEC 45 retry decisions", () => {
+describe(" retry decisions", () => {
   it.each([
     [{ code: "ECONNREFUSED" }, "transient"],
     [{ responseCode: 450, code: "EENVELOPE" }, "transient"],

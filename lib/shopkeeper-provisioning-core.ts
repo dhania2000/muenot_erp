@@ -207,7 +207,7 @@ export function isTrialPlan(plan: PlanLike): boolean {
  * Validate and normalize the Add Shopkeeper form body. Returns a discriminated
  * result: either the clean values to provision from, or the list of field
  * errors the UI highlights. This is the authoritative server-side validation
- * (SPEC 16); client validation is UX only.
+ *; client validation is UX only.
  */
 export function normalizeShopkeeperInput(raw: RawShopkeeperInput): NormalizeResult {
   const errors: ShopkeeperFieldError[] = []

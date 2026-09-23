@@ -27,7 +27,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     actorName: session.name,
   })
 
-  // SPEC 15 — reactivating returns the employee to the active roster; re-derive
+  // reactivating returns the employee to the active roster; re-derive
   // the linked login so a previously auto-deactivated account is restored (a
   // manual suspension / pending invite is left untouched by the sync layer).
   try {

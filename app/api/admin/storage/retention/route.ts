@@ -8,7 +8,7 @@ import { logStorageAudit } from "@/lib/storage/connection-store"
 export const runtime = "nodejs"
 
 /**
- * SPEC 36 — Phase 3. Tenant retention configuration.
+ * Phase 3. Tenant retention configuration.
  *   GET  → the full retention summary (settings, module rules, file counts).
  *   POST → save the default rule and/or the auto-cleanup switch.
  */

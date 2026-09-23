@@ -5,7 +5,7 @@ import { getAbacSettings, listEnabledPolicies, resolveSubjectAttributes } from "
 import type { SessionPayload } from "./auth"
 
 /**
- * SPEC 9 — the bridge between the pure ABAC engine and a live request.
+ * the bridge between the pure ABAC engine and a live request.
  * ---------------------------------------------------------------------------
  * ABAC is an ADDITIVE RESTRICTION layer on top of RBAC: RBAC decides whether a
  * role may perform an action on a module; ABAC can then further DENY a specific

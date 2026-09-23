@@ -1,4 +1,4 @@
-// SPEC 72 — client-facing shapes for the Legal Hold admin UI. These mirror the
+// client-facing shapes for the Legal Hold admin UI. These mirror the
 // server types in lib/legal-hold-store.ts but stay import-light for the client.
 
 export type LegalHoldScope = "module" | "record_type" | "record" | "criteria" | "file"

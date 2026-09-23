@@ -6,7 +6,7 @@ import { runRenewalCycle } from "@/lib/billing/renewal-engine"
 export const runtime = "nodejs"
 
 /**
- * SPEC 20 + SPEC 24 — Run a scheduled billing cycle: generate an invoice for
+ * + Run a scheduled billing cycle: generate an invoice for
  * every active subscription whose current period is not yet invoiced, then run
  * one renewal-management pass (reconcile lifecycle, send due reminders, retry
  * failed renewal payments, escalate to suspension when exhausted). Both stages

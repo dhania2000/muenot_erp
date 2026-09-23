@@ -1,5 +1,5 @@
 -- =============================================================
--- SPEC 67-70 — API Key platform + Webhook delivery engine.
+-- — API Key platform + Webhook delivery engine.
 -- Self-created at runtime by lib/api-keys-store.ts / lib/webhooks-store.ts
 -- (ensureApiKeysSchema / ensureWebhooksSchema). This file documents the
 -- shape for manual phpMyAdmin imports on installs that prefer to run

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { createExportSchedule, listExportSchedules } from "@/lib/data-export-store"
 
-// SPEC 73 — scheduled (recurring) tenant exports. Tenant-admin only.
+// scheduled (recurring) tenant exports. Tenant-admin only.
 
 export const runtime = "nodejs"
 

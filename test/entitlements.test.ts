@@ -18,7 +18,7 @@ import {
 } from "@/lib/platform/entitlements"
 
 /**
- * SPEC 17 — Phase 4. Pure, DB-free validation of the entitlement model and the
+ * Phase 4. Pure, DB-free validation of the entitlement model and the
  * enforcement primitives every gate is built on: quota normalization, the
  * unlimited sentinel, capacity checks, and module/flag/report gating.
  */

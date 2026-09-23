@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 /**
- * SPEC 2 — Phase 3/4: automated + penetration-style validation of the
+ * Phase 3/4: automated + penetration-style validation of the
  * tenant-scoped data-access helpers. We mock the DB layer to capture the exact
  * SQL + params each helper emits, proving that:
  *   - every read/write is constrained by tenant_id,

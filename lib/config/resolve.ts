@@ -1,5 +1,5 @@
 /**
- * SPEC 37 — Environment / Configuration management.
+ * Environment / Configuration management.
  * ---------------------------------------------------------------------------
  * Phase 2 (the service), pure core. This module answers the two questions that
  * make configuration management safe:

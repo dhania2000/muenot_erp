@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth"
 import { getBulkRun } from "@/lib/bulk-actions/runs-store"
 
 /**
- * SPEC 85 — bulk run progress + partial-failure report. Polled by the client
+ * bulk run progress + partial-failure report. Polled by the client
  * after a large batch is queued. A run is only visible to the tenant that owns
  * it, so a leaked run id from another tenant reads as not found.
  */

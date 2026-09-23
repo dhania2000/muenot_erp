@@ -14,9 +14,9 @@ export type ResolvedConnection = {
   forcePathStyle: boolean
   /** Optional CDN/public base URL used to build direct links for public buckets. */
   publicBaseUrl: string | null
-  /** SPEC 27 — object key prefix inside the bucket (e.g. "erp/prod"). */
+  /** object key prefix inside the bucket (e.g. "erp/prod"). */
   pathPrefix: string | null
-  /** SPEC 27 — server-side encryption mode applied to uploaded objects. */
+  /** server-side encryption mode applied to uploaded objects. */
   serverSideEncryption: ServerSideEncryptionMode
   isActive: boolean
 }
@@ -39,7 +39,7 @@ export type StorageObjectMeta = {
 }
 
 /**
- * SPEC 30 — One uploaded chunk of a multipart upload. `etag` is the provider's
+ * One uploaded chunk of a multipart upload. `etag` is the provider's
  * opaque part identifier (S3 ETag / Blob part etag) that MUST be replayed back
  * at completion time, so it is persisted in the upload session.
  */
@@ -49,7 +49,7 @@ export type MultipartPart = {
 }
 
 /**
- * SPEC 30 — Opaque handle for an in-progress multipart upload. `uploadId` is
+ * Opaque handle for an in-progress multipart upload. `uploadId` is
  * whatever the backend needs to resume the upload across separate, stateless
  * requests (for Vercel Blob it also encodes the blob key), so callers persist
  * it verbatim and never interpret it.
@@ -59,7 +59,7 @@ export type MultipartHandle = {
 }
 
 /**
- * SPEC 31 — Options for a download. `range` is a raw HTTP `Range` header value
+ * Options for a download. `range` is a raw HTTP `Range` header value
  * (e.g. "bytes=0-1023"); providers that support it stream only the requested
  * slice so video/audio can be seeked and CDNs can do partial fetches.
  */
@@ -71,7 +71,7 @@ export type DownloadResult = {
   body: ReadableStream<Uint8Array> | Buffer
   contentType: string | null
   size: number | null
-  /** SPEC 31 — validators/metadata used for CDN caching and Range delivery. */
+  /** validators/metadata used for CDN caching and Range delivery. */
   /** Total size of the underlying object (even for a partial response). */
   totalSize?: number | null
   /** Entity tag for conditional requests / cache validation, if known. */
@@ -85,7 +85,7 @@ export type DownloadResult = {
 }
 
 /**
- * SPEC 28 — Storage provider health check.
+ * Storage provider health check.
  * ---------------------------------------------------------------------------
  * The "Test connection" action runs a battery of individual probes instead of
  * one opaque call, so an admin can see exactly which capability is broken.
@@ -128,7 +128,7 @@ export interface StorageProvider {
   /** Upload bytes at `key`. `public` hints whether a direct URL is desired. */
   upload(key: string, data: Buffer, contentType: string, opts?: { public?: boolean }): Promise<UploadResult>
   /**
-   * Fetch an object for streaming back to the client. SPEC 31 — when `opts.range`
+   * Fetch an object for streaming back to the client. when `opts.range`
    * is provided the provider SHOULD return only that byte slice (with
    * `isPartial`/`contentRange` set); providers that cannot serve a range simply
    * ignore it and return the full object.
@@ -139,7 +139,7 @@ export interface StorageProvider {
   /** Delete a single object. Idempotent. */
   delete(key: string): Promise<void>
   /**
-   * SPEC 29 — Issue a short-lived, presigned URL that grants read access to a
+   * Issue a short-lived, presigned URL that grants read access to a
    * single object without exposing it publicly. S3-compatible backends return
    * a NATIVE presigned URL; the managed proxy backend returns an HMAC-signed
    * proxy path. Callers MUST validate session + tenant ownership of `key`
@@ -147,29 +147,29 @@ export interface StorageProvider {
    */
   presign(key: string, opts?: { expiresIn?: number }): Promise<string>
   /**
-   * SPEC 30 — Begin a resumable, chunked (multipart) upload for large files
+   * Begin a resumable, chunked (multipart) upload for large files
    * (videos, ZIPs, training/employee bundles) that cannot be sent in a single
    * request. Returns an opaque handle the caller persists in an upload session.
    */
   createMultipart(key: string, contentType: string, opts?: { public?: boolean }): Promise<MultipartHandle>
   /**
-   * SPEC 30 — Upload a single 1-based part. Returns the part's identifier which
+   * Upload a single 1-based part. Returns the part's identifier which
    * MUST be stored and replayed at completion. Re-uploading the same
    * `partNumber` is safe (it overwrites), which is what powers failed-chunk
    * retry and resume.
    */
   uploadPart(key: string, uploadId: string, partNumber: number, data: Buffer): Promise<MultipartPart>
   /**
-   * SPEC 30 — Assemble all previously-uploaded parts into the final object.
+   * Assemble all previously-uploaded parts into the final object.
    * Parts may be passed in any order; implementations sort by `partNumber`.
    */
   completeMultipart(key: string, uploadId: string, parts: MultipartPart[]): Promise<UploadResult>
-  /** SPEC 30 — Abort an in-progress multipart upload and release its parts. */
+  /** Abort an in-progress multipart upload and release its parts. */
   abortMultipart(key: string, uploadId: string): Promise<void>
   /** Lightweight connectivity/permission check (throws on failure). */
   healthCheck(): Promise<void>
   /**
-   * SPEC 28 — Full diagnostic run for the "Test connection" action. Never
+   * Full diagnostic run for the "Test connection" action. Never
    * throws for expected failures; every probe is reported as pass/fail/skip.
    */
   diagnose(): Promise<HealthReport>

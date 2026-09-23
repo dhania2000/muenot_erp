@@ -5,8 +5,8 @@ import { getRenewalOverview } from "@/lib/billing/renewal-engine"
 export const runtime = "nodejs"
 
 /**
- * SPEC 24 — Renewal management overview: the enriched subscription views and
- * lifecycle summary (SPEC 16), plus the recent renewal reminders and
+ * Renewal management overview: the enriched subscription views and
+ * lifecycle summary, plus the recent renewal reminders and
  * failed-payment retry attempts recorded by the renewal cycle. Tenant-scoped
  * via billingGuard + the tenant-scope data layer.
  */

@@ -245,7 +245,7 @@ export function AccessPolicyBuilder() {
         <div>
           <CardTitle className="text-base">Conditional access policies</CardTitle>
           <CardDescription>
-            Spec 63 — evaluated in priority order at sign-in. Allow/Deny and MFA/re-authentication obligations are
+            Evaluated in priority order at sign-in. Allow/Deny and MFA/re-authentication obligations are
             enforced by the login flow.
           </CardDescription>
         </div>

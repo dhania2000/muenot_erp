@@ -6,7 +6,7 @@ import { EnvironmentOverview } from "@/components/platform/environment-overview"
 export const dynamic = "force-dynamic"
 
 /**
- * SPEC 37 — Environment & configuration overview.
+ * Environment & configuration overview.
  * A read-only diagnostic of the EFFECTIVE configuration across all eight
  * categories, showing each value's source (env / store / default) with secrets
  * masked. Platform-staff surface; editing lives in the audited Configuration

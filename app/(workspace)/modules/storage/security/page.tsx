@@ -1,7 +1,7 @@
 import { billingGuard } from "@/lib/billing-guard"
 import { StorageSecurityDashboard } from "@/components/storage/storage-security-dashboard"
 
-// SPEC 34 — Storage → Security. Malware scan / quarantine dashboard.
+// Storage → Security. Malware scan / quarantine dashboard.
 export default async function Page() {
   await billingGuard()
   return (

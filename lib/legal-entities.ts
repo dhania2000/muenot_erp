@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 7 — Multi-entity support.
+ * Multi-entity support.
  * ---------------------------------------------------------------------------
  * Lets a SINGLE tenant operate multiple legal / business entities, each with
  * its own tax identity (GST/VAT), bank accounts, accounting book, and address,
@@ -8,7 +8,7 @@ import "server-only"
  *
  * Model:
  *   - `legal_entities`            : the entity master (tax ids, address, book,
- *                                   base currency, optional link to a SPEC 6
+ * base currency, optional link to a
  *                                   `org_units` legal_entity node).
  *   - `legal_entity_bank_accounts`: per-entity bank/cash identities.
  *   - `intercompany_transactions` : transfers between two of the tenant's own
@@ -296,7 +296,7 @@ export async function listEntities(
 ): Promise<Array<LegalEntity & { bank_account_count: number; org_unit_name: string | null }>> {
   await ensureEntitySchema()
   const tenantId = currentTenantId()
-  // SPEC 10 — optional data-level scope predicate (finance.entities). ANDed
+  // optional data-level scope predicate (finance.entities). ANDed
   // into the tenant filter so a Finance user only sees their assigned entities.
   // The predicate is built with the "e" alias by the caller (dataScopeWhere).
   const scopeSql = scope ? ` AND ${scope.sql}` : ""

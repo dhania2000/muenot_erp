@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 74 — Enterprise Data Import store (server).
+ * Enterprise Data Import store (server).
  * ---------------------------------------------------------------------------
  * Runs the import pipeline against the live database, tenant-scoped and
  * audited:

@@ -1,5 +1,5 @@
 /**
- * SPEC 20 — Billing engine (pure, dependency-free financial core).
+ * Billing engine (pure, dependency-free financial core).
  * ---------------------------------------------------------------------------
  * Every money calculation in the billing engine lives here as pure, total
  * functions so the "financial edge cases" phase can be unit-tested without a

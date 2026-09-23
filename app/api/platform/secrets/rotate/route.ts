@@ -4,7 +4,7 @@ import { rotateSecret } from "@/lib/secrets/store"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 38 — Secret rotation. Super-admin only. A rotation appends a new
+ * Secret rotation. Super-admin only. A rotation appends a new
  * encrypted version, retires the previous one, and advances the rotation clock.
  * The new value is provided by the operator (the platform never fabricates key
  * material); the response only confirms the resulting version.

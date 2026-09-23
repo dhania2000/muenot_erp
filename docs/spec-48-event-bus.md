@@ -1,4 +1,4 @@
-# SPEC 48 — Central business events
+# Central business events
 
 ## Inventory
 
@@ -30,7 +30,7 @@ Each delivery is row-locked; its database effect and terminal status commit toge
 
 Handlers never perform network calls inside delivery transactions:
 
-1. **In-app notification** enqueues one SPEC 49 notification delivery for a validated active tenant member. Subscriber success means queued; the notification worker subsequently creates the existing bell record after rechecking preferences and membership.
+1. **In-app notification** enqueues one notification delivery for a validated active tenant member. Subscriber success means queued; the notification worker subsequently creates the existing bell record after rechecking preferences and membership.
 2. **Start Sales workflow** accepts `deal.won` only, snapshots a manual Sales workflow at subscription creation, and atomically enqueues a run with its business-event history entry. The existing workflow worker executes it later. Conditions evaluate against current record state when the workflow runs, not historical event-time field values. Delivery success means “run enqueued”, not “workflow completed”.
 
 Subscriber owner authority is checked again on delivery. Revoked owners, moved recipients, missing source records and disabled/deleted workflows fail closed. Subscriptions cannot invoke arbitrary handlers, SQL, URLs or commands. HTTP clients cannot publish business events.
@@ -45,9 +45,9 @@ Subscriber owner authority is checked again on delivery. Revoked owners, moved r
 
 Open `/admin/automation/events` for the bus inventory, subscriber configuration, events, per-subscriber delivery status, retries and history. The former workflow-run monitor is retained in a separate expandable section. Automation overview's event counts now refer to actual business events (last 24 hours) and failed deliveries, not workflow runs.
 
-Apply `database/migrations/2026-09-20-spec48-event-bus.sql` before rollout; runtime also ensures the additive tables. Existing notification and workflow schemas remain prerequisites. Enable the new `business_events` scheduler job and set `CRON_SECRET`; its endpoint fails closed without the secret even in development. The worker processes at most 30 due deliveries per tick.
+Apply `database/migrations/2026-09-20--event-bus.sql` before rollout; runtime also ensures the additive tables. Existing notification and workflow schemas remain prerequisites. Enable the new `business_events` scheduler job and set `CRON_SECRET`; its endpoint fails closed without the secret even in development. The worker processes at most 30 due deliveries per tick.
 
-Local SPEC 47 commit `ac87d9c` remains on the prior local main branch. SPEC 48 is based on GitHub `1a293e4`, preserving that version's workflow builder, Automation Center and security changes.
+Local commit `ac87d9c` remains on the prior local main branch. is based on GitHub `1a293e4`, preserving that version's workflow builder, Automation Center and security changes.
 
 ## Verification
 

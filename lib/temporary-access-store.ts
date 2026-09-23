@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 64 — Temporary access & SPEC 65 — Break-glass (emergency) access.
+ * Temporary access & Break-glass (emergency) access.
  * ---------------------------------------------------------------------------
  * A single, server-enforced, audited engine for time-boxed access grants:
  *
@@ -332,7 +332,7 @@ export type CreateTemporaryInput = {
 }
 
 /**
- * SPEC 64 — grant a temporary access window and/or role elevation to a user.
+ * grant a temporary access window and/or role elevation to a user.
  * If the start time has already passed the grant activates immediately;
  * otherwise it is scheduled and the cron scheduler activates it when due.
  */
@@ -429,7 +429,7 @@ export type CreateBreakGlassInput = {
 }
 
 /**
- * SPEC 65 — a user requests emergency (break-glass) elevated access for
+ * a user requests emergency (break-glass) elevated access for
  * themselves. Always created in `pending`: a DIFFERENT admin must explicitly
  * approve it before any elevation is applied. A mandatory reason is enforced.
  */
@@ -503,7 +503,7 @@ export async function createBreakGlassRequest(
 // Approve / reject / revoke
 // ---------------------------------------------------------------------------
 
-/** SPEC 65 — approve a pending break-glass request and activate the elevation. */
+/** approve a pending break-glass request and activate the elevation. */
 export async function approveGrant(tenantId: number, id: number, actor: Actor): Promise<AccessGrant> {
   const grant = await requireGrant(tenantId, id)
   if (grant.status !== "pending") throw new TemporaryAccessError("Only a pending request can be approved", 409)

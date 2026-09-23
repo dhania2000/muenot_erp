@@ -243,7 +243,7 @@ export async function canActOnRecord(
 
   const scope = await getScope(session.userId, session.role, permissionKey, action)
 
-  // RBAC decision first, then the ABAC restriction layer (SPEC 9). ABAC can
+  // RBAC decision first, then the ABAC restriction layer. ABAC can
   // only further DENY an access RBAC already allowed; it never grants.
   let rbacAllowed: boolean
   if (scope === "all") rbacAllowed = true
@@ -326,7 +326,7 @@ export async function canActOnRecordAction(
   }
   if (!rbacAllowed) return false
 
-  // ABAC restriction layer (SPEC 9): resolve the extended action onto the ABAC
+  // ABAC restriction layer: resolve the extended action onto the ABAC
   // action vocabulary and let attribute policies further deny.
   return !(await abacDenies(session, permissionKey, actionKey, row))
 }

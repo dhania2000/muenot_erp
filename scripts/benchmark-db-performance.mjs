@@ -1,5 +1,5 @@
 /**
- * SPEC 79 — Database performance: benchmark + index verification.
+ * Database performance: benchmark + index verification.
  * ---------------------------------------------------------------------------
  * Phase 4 harness. For each hot tenant-scoped access pattern this runs
  * `EXPLAIN` and asserts the planner:

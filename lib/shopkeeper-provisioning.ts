@@ -1,7 +1,7 @@
 import "server-only"
 import type { PoolConnection } from "mysql2/promise"
 /**
- * SPEC 1-19 (Shopkeeper provisioning) — the DB/orchestration layer.
+ * (Shopkeeper provisioning) — the DB/orchestration layer.
  * ---------------------------------------------------------------------------
  * The single server-side place that turns an operator's "Add Shopkeeper" action
  * into a real, sign-in-ready SHOPKEEPER customer. It REUSES the existing
@@ -19,13 +19,13 @@ import type { PoolConnection } from "mysql2/promise"
  * The created credentials authenticate directly through the EXISTING mobile API
  * (POST /api/mobile/v1/auth/login) — there is no parallel Shopkeeper auth path.
  *
- * ATOMICITY (SPEC 3): all schema DDL self-heals FIRST (MySQL auto-commits DDL,
+ * ATOMICITY: all schema DDL self-heals FIRST (MySQL auto-commits DDL,
  * so it must live outside the transaction), then the tenant, shopkeeper
  * profile, owner user and subscription are written inside ONE transaction. Any
  * failure rolls everything back, so a tenant without an owner (or vice versa)
  * can never exist.
  *
- * SECURITY (SPEC 4/19): tenant_type is ALWAYS forced to SHOPKEEPER here — never
+ * SECURITY: tenant_type is ALWAYS forced to SHOPKEEPER here — never
  * taken from client input. Plaintext passwords are only ever hashed, returned
  * once in the provisioning response, and never stored or logged.
  */
@@ -168,7 +168,7 @@ export async function listShopkeeperPlans(): Promise<Plan[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Provisioning (SPEC 2/3/4/5/7/8/9)
+// Provisioning
 // ---------------------------------------------------------------------------
 
 export type ProvisionResult = {
@@ -245,10 +245,10 @@ export async function provisionShopkeeper(raw: RawShopkeeperInput, actor: Provis
 
   await ensureShopkeeperProvisioningSchema()
 
-  // Plan + trial resolution (backend authoritative — SPEC 7/8).
+  // Plan + trial resolution (backend authoritative — ).
   const plan = await requireShopkeeperPlan(input.planCode)
 
-  // Duplicate email — email is globally unique across the users table (SPEC 17).
+  // Duplicate email — email is globally unique across the users table.
   const existing = await query<{ id: number }[]>("SELECT id FROM users WHERE email = ? LIMIT 1", [input.ownerEmail])
   if (existing[0]) {
     throw new ShopkeeperProvisioningError("An account with this email already exists.", 409, [
@@ -260,7 +260,7 @@ export async function provisionShopkeeper(raw: RawShopkeeperInput, actor: Provis
   const plaintext = passwordGenerated ? generateSecurePassword(14) : input.password!
   const passwordHash = await hashPassword(plaintext)
 
-  // --- ONE transaction: tenant + profile + owner + subscription (SPEC 3) ---
+  // --- ONE transaction: tenant + profile + owner + subscription ---
   const conn = await pool.getConnection()
   let created: Awaited<ReturnType<typeof insertShopkeeperRecords>>
   try {
@@ -315,7 +315,7 @@ export async function provisionShopkeeper(raw: RawShopkeeperInput, actor: Provis
 }
 
 // ---------------------------------------------------------------------------
-// Guard: an [id] route only operates on real SHOPKEEPER tenants (SPEC 4/19).
+// Guard: an [id] route only operates on real SHOPKEEPER tenants.
 // ---------------------------------------------------------------------------
 
 async function requireShopkeeperTenant(id: number): Promise<Tenant> {
@@ -340,7 +340,7 @@ async function getOwnerUser(tenantId: number): Promise<{ id: number; name: strin
 }
 
 // ---------------------------------------------------------------------------
-// Listing (SPEC 1)
+// Listing
 // ---------------------------------------------------------------------------
 
 export type ShopkeeperListRow = {
@@ -444,7 +444,7 @@ async function lastLoginMap(tenantIds: number[]): Promise<Map<number, string>> {
 }
 
 // ---------------------------------------------------------------------------
-// Detail / 360 (SPEC 11)
+// Detail / 360
 // ---------------------------------------------------------------------------
 
 export type ShopkeeperDetail = {
@@ -583,7 +583,7 @@ function parseJson(v: unknown): Record<string, unknown> | null {
 }
 
 // ---------------------------------------------------------------------------
-// Edit (SPEC 14)
+// Edit
 // ---------------------------------------------------------------------------
 
 export type UpdateShopkeeperPatch = {
@@ -664,7 +664,7 @@ export async function updateShopkeeper(id: number, patch: UpdateShopkeeperPatch,
       changed.ownerMobile = mobile
     }
     // Email is an authentication identifier — change carefully with a global
-    // uniqueness check (SPEC 14/17).
+    // uniqueness check.
     if (typeof patch.ownerEmail === "string" && patch.ownerEmail.trim().toLowerCase() !== owner.email) {
       const email = patch.ownerEmail.trim().toLowerCase()
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -693,13 +693,13 @@ export async function updateShopkeeper(id: number, patch: UpdateShopkeeperPatch,
 }
 
 // ---------------------------------------------------------------------------
-// Account status (SPEC 12)
+// Account status
 // ---------------------------------------------------------------------------
 
 /**
  * Suspend / reactivate / deactivate a shopkeeper. Enforcement is server-side:
  * a suspended (non-active) tenant is rejected by the mobile auth layer on every
- * request — the Android app cannot bypass it (SPEC 6/12). Reuses the existing
+ * request — the Android app cannot bypass it. Reuses the existing
  * tenant lifecycle primitive.
  */
 export async function setShopkeeperStatus(id: number, status: TenantStatus, actor: ProvisionActor): Promise<Tenant> {
@@ -739,7 +739,7 @@ export async function setShopkeeperStatus(id: number, status: TenantStatus, acto
 }
 
 // ---------------------------------------------------------------------------
-// Subscription / plan (SPEC 7)
+// Subscription / plan
 // ---------------------------------------------------------------------------
 
 export async function changeShopkeeperPlan(id: number, planCode: string, actor: ProvisionActor): Promise<void> {
@@ -759,7 +759,7 @@ export async function changeShopkeeperPlan(id: number, planCode: string, actor: 
 }
 
 // ---------------------------------------------------------------------------
-// Password reset (SPEC 13)
+// Password reset
 // ---------------------------------------------------------------------------
 
 export type ResetPasswordResult = {
@@ -799,7 +799,7 @@ export async function resetShopkeeperOwnerPassword(
   ])
 
   // A credential change immediately invalidates every signed-in device
-  // (existing security policy — SPEC 13/19).
+  // (existing security policy — ).
   const revoked = await revokeAllMobileSessionsForUser(owner.id, "password_reset")
 
   await recordPlatformAudit({

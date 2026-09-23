@@ -77,7 +77,7 @@ function ScopeSelect({
 
 /**
  * Reusable permission-matrix table (set-all bar + module/action grid).
- * Shared by the per-employee editor and the SPEC 8 custom-role editor so both
+ * Shared by the per-employee editor and the custom-role editor so both
  * present an identical grid. Callers own the matrix state and persistence.
  */
 export function MatrixTable({

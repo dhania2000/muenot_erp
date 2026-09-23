@@ -1,5 +1,5 @@
 // =============================================================================
-// SPEC 11 — Approval Authority: pure rule-engine core.
+// Approval Authority: pure rule-engine core.
 // -----------------------------------------------------------------------------
 // This module is DB-free and framework-free on purpose. Every decision the
 // approval engine makes — which rule applies to a request, how a multi-level

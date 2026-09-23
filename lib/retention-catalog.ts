@@ -1,5 +1,5 @@
 /**
- * SPEC 71 — Retention module catalog (Phase 3: module integration).
+ * Retention module catalog (Phase 3: module integration).
  * ---------------------------------------------------------------------------
  * The generalized engine acts on ANY ERP record type. This catalog is the
  * curated bridge between a business "record type" and the physical table the

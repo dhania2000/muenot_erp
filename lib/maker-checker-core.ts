@@ -1,5 +1,5 @@
 /**
- * SPEC 12 — Maker-Checker · pure decision core.
+ * Maker-Checker · pure decision core.
  *
  * DB-free predicates that encode the two guarantees the framework must never
  * get wrong:
@@ -11,7 +11,7 @@
  *
  * Keeping these here (separate from the orchestration in `maker-checker.ts`)
  * means the security-critical logic is exhaustively unit-testable without a
- * database, mirroring how SPEC 11 splits `approval-authority-core.ts`.
+ * database, mirroring how splits `approval-authority-core.ts`.
  */
 
 /** Actions a user can take on an approval request. */

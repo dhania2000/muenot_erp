@@ -1,4 +1,4 @@
--- SPEC 53: shared, atomic API rate counters for deployments with multiple Node workers.
+-- : shared, atomic API rate counters for deployments with multiple Node workers.
 CREATE TABLE IF NOT EXISTS api_rate_limit_counters (
   tenant_id INT UNSIGNED NOT NULL,
   scope_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

@@ -1,4 +1,4 @@
--- SPEC 42 — durable background job queue. Job types are validated in code;
+-- durable background job queue. Job types are validated in code;
 -- this table stores data and operational state, never executable commands.
 SET NAMES utf8mb4;
 

@@ -12,7 +12,7 @@ import {
 } from "@/lib/employee-user-link-core"
 
 /**
- * SPEC 15 — Phase 4. DB-free proof of the employee ⇄ user mapping model against
+ * Phase 4. DB-free proof of the employee ⇄ user mapping model against
  * the six required behaviors:
  *
  *   1. One employee → one user, and user → many employees (multi-entity).

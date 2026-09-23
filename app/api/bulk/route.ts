@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth"
 import { listResources } from "@/lib/bulk-actions/registry"
 
 /**
- * SPEC 85 — bulk-action catalog. Lists every registered resource and its
+ * bulk-action catalog. Lists every registered resource and its
  * supported actions so a client can render the action menu generically. Gated
  * on an authenticated session only; per-resource feature gates are enforced at
  * submission time.

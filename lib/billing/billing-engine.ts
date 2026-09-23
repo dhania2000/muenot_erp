@@ -31,12 +31,12 @@ import {
 import { isBillingTerm, type BillingTerm } from "@/lib/billing/subscription-lifecycle"
 
 /**
- * SPEC 20 — Billing engine (data + service layer).
+ * Billing engine (data + service layer).
  * ---------------------------------------------------------------------------
  * Owns the money side of the SaaS business: invoices and their line items,
  * coupons, the account credit ledger (credits + adjustments), payments,
  * refunds and gateway reconciliation. It composes the pure financial core
- * (lib/billing/billing-math.ts) with tenant-scoped persistence (SPEC 2),
+ * (lib/billing/billing-math.ts) with tenant-scoped persistence,
  * validation, authorization (via callers) and an audit trail through each
  * invoice's line/payment/refund children.
  *
@@ -1360,7 +1360,7 @@ export async function applyPlanChangeProration(
 }
 
 /**
- * SPEC 25 — Change a subscription's plan and settle the money.
+ * Change a subscription's plan and settle the money.
  * ---------------------------------------------------------------------------
  * Computes the new plan amount for the requested term, applies proration
  * (immediate prorated invoice on upgrade, account credit on downgrade), then
@@ -1395,7 +1395,7 @@ export async function changeSubscriptionPlan(
 }
 
 /**
- * SPEC 25 — Tenant-wide payment history across all invoices (newest first).
+ * Tenant-wide payment history across all invoices (newest first).
  * Joins each payment to its invoice number for portal display.
  */
 export type PaymentHistoryEntry = Payment & { invoice_no: string | null }

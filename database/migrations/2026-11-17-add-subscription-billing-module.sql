@@ -1,5 +1,5 @@
 -- ============================================================================
--- Subscription & Billing module — SPEC 16 → SPEC 25
+-- Subscription & Billing module — →
 -- ----------------------------------------------------------------------------
 -- This is the persisted, canonical schema for the entire Subscription & Billing
 -- module (the "Subscription & Billing" nav group: Subscription Management, Plan
@@ -20,7 +20,7 @@
 
 
 -- ============================================================================
--- SPEC 16 — SUBSCRIPTION MANAGEMENT   (lib/billing/subscription-engine.ts)
+-- SUBSCRIPTION MANAGEMENT (lib/billing/subscription-engine.ts)
 -- Monthly / yearly / 2-year / 5-year terms; trial → active → past_due →
 -- grace → suspended → cancelled → expired lifecycle, plus renewals.
 -- ============================================================================
@@ -121,20 +121,20 @@ ON DUPLICATE KEY UPDATE plan_code = plan_code;
 
 
 -- ============================================================================
--- SPEC 17 — PLAN MANAGEMENT      (entitlements: lib/platform/entitlements.ts)
--- SPEC 18 — FEATURE ENTITLEMENTS (feature map: lib/platform/feature-entitlements.ts)
+-- PLAN MANAGEMENT (entitlements: lib/platform/entitlements.ts)
+-- FEATURE ENTITLEMENTS (feature map: lib/platform/feature-entitlements.ts)
 -- ----------------------------------------------------------------------------
 -- The plan ENTITLEMENT contract (modules, users, employees, storage, API /
 -- automation / job limits, reports, AI usage, integrations, support level,
 -- feature flags) is stored as a JSON document on the platform plan catalogue
 -- (`platform_plans.entitlements`), created by the platform-console migrations
 -- and self-healed by lib/platform-console.ts. Feature-level states
--- (enabled / disabled / limited / metered) in SPEC 18 are DERIVED at runtime
+-- (enabled / disabled / limited / metered) in are DERIVED at runtime
 -- from that JSON by lib/platform/feature-entitlements.ts and enforced
 -- server-side by lib/platform/feature-guard.ts + entitlement-guard.ts — they
 -- need no table of their own.
 --
--- Guarded here so an install predating SPEC 17 gains the column. MySQL has no
+-- Guarded here so an install predating gains the column. MySQL has no
 -- "ADD COLUMN IF NOT EXISTS", so we add it only when absent.
 SET @has_platform_plans := (
   SELECT COUNT(*) FROM information_schema.tables
@@ -151,7 +151,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 
 -- ============================================================================
--- SPEC 19 — USAGE METERING       (lib/billing/usage-metering.ts)
+-- USAGE METERING (lib/billing/usage-metering.ts)
 -- Per-tenant meters: active users, employees, storage, API requests, emails,
 -- notifications, automation runs, jobs, AI usage, documents, bandwidth, etc.
 -- ============================================================================
@@ -201,8 +201,8 @@ CREATE TABLE IF NOT EXISTS usage_limits (
 
 
 -- ============================================================================
--- SPEC 20 — BILLING ENGINE   (lib/billing/billing-engine.ts)
--- SPEC 23 — INVOICING        (invoices + bill_to_* details + credit notes)
+-- BILLING ENGINE (lib/billing/billing-engine.ts)
+-- INVOICING (invoices + bill_to_* details + credit notes)
 -- Recurring & one-time charges, discounts, coupons, taxes, credits,
 -- adjustments, refunds, proration, up/downgrade, renewal, invoice generation
 -- and payment reconciliation.
@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS billing_coupons (
   KEY idx_billing_coupons_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- SPEC 23 invoice header. The bill_to_* / credit_note_of / last_sent_* columns
+-- invoice header. The bill_to_* / credit_note_of / last_sent_* columns
 -- are declared inline here; the engine adds them idempotently on older installs.
 CREATE TABLE IF NOT EXISTS billing_invoices (
   id               INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -377,20 +377,20 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation (
 
 
 -- ============================================================================
--- SPEC 21 — PAYMENT GATEWAY ABSTRACTION  (lib/billing/gateways/*)
+-- PAYMENT GATEWAY ABSTRACTION (lib/billing/gateways/*)
 -- ----------------------------------------------------------------------------
 -- The provider abstraction (Razorpay, Stripe, future providers) is a code-level
 -- adapter layer — a PaymentGateway interface, per-provider adapters and a
 -- registry configured from environment variables (configureGatewaysFromEnv).
 -- It deliberately holds NO business data of its own: a payment's chosen
 -- provider is recorded on billing_payments.gateway / billing_reconciliation.gateway
--- and its inbound events on billing_gateway_events (SPEC 22 below). No table is
+-- and its inbound events on billing_gateway_events ( below). No table is
 -- required for this spec.
 -- ============================================================================
 
 
 -- ============================================================================
--- SPEC 22 — PAYMENT WEBHOOKS  (lib/billing/gateways/webhook-service.ts)
+-- PAYMENT WEBHOOKS (lib/billing/gateways/webhook-service.ts)
 -- Signature verification, idempotency, event storage, retry handling,
 -- duplicate-event prevention, failed-event monitoring and reconciliation.
 -- The UNIQUE (tenant_id, gateway, event_id) key is what enforces idempotency /
@@ -423,7 +423,7 @@ CREATE TABLE IF NOT EXISTS billing_gateway_events (
 
 
 -- ============================================================================
--- SPEC 24 — RENEWAL MANAGEMENT  (lib/billing/renewal-engine.ts)
+-- RENEWAL MANAGEMENT (lib/billing/renewal-engine.ts)
 -- Auto-renew, renewal reminders, failed-payment retries, grace periods,
 -- suspension, expiry, manual renewal and renewal invoices.
 -- ============================================================================
@@ -472,7 +472,7 @@ CREATE TABLE IF NOT EXISTS saas_renewal_attempts (
 
 
 -- ============================================================================
--- SPEC 25 — CUSTOMER BILLING PORTAL  (app/api/billing/portal + components/billing/customer-portal-console.tsx)
+-- CUSTOMER BILLING PORTAL (app/api/billing/portal + components/billing/customer-portal-console.tsx)
 -- ----------------------------------------------------------------------------
 -- The tenant-admin portal (current plan, usage, billing cycle, invoices,
 -- payment methods, payment history, renewal date, upgrade/downgrade,
@@ -481,6 +481,6 @@ CREATE TABLE IF NOT EXISTS saas_renewal_attempts (
 --   • usage                  → usage_daily / usage_events / usage_limits
 --   • invoices / payments    → billing_invoices / billing_payments
 --   • credits                → billing_credits
---   • payment methods        → provider-held (gateway abstraction, SPEC 21)
+-- • payment methods → provider-held (gateway abstraction, )
 -- It introduces no tables of its own; all reads are tenant-scoped via billingGuard.
 -- ============================================================================

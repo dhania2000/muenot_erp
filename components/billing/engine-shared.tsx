@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * SPEC 20 — Shared client types and presentation helpers for the billing
+ * Shared client types and presentation helpers for the billing
  * engine UI (invoices, coupons, credits, refunds, reconciliation, run). Mirrors
  * the server types in lib/billing/billing-engine.ts. Money formatting is reused
  * from the subscription UI helpers so both surfaces render consistently.

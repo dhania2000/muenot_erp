@@ -1,9 +1,9 @@
 /**
- * SPEC 73 — Tenant Data Export (pure, testable model).
+ * Tenant Data Export (pure, testable model).
  * ---------------------------------------------------------------------------
  * A data export takes a SCOPE (a single module dataset, or the whole tenant)
  * and renders it in a FORMAT (CSV / Excel / JSON / PDF), respecting the acting
- * role's permissions and the SPEC 69 data-classification export rules.
+ * role's permissions and the data-classification export rules.
  *
  * This module is the DB-free core: format/status/frequency normalization, the
  * row serializers that don't need a third-party library (CSV + JSON), the

@@ -5,7 +5,7 @@ import { getInvoice, listPayments, listRefunds } from "@/lib/billing/billing-eng
 export const runtime = "nodejs"
 
 /**
- * SPEC 20 — Single invoice with its payments and refunds. The id is resolved
+ * Single invoice with its payments and refunds. The id is resolved
  * through the tenant-scoped data layer, so a client can never read another
  * tenant's invoice (IDOR-safe).
  */

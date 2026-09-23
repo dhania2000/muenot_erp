@@ -13,7 +13,7 @@ import {
 } from "@/lib/config/resolve"
 
 /**
- * SPEC 37 — Phase 4. Secret exposure and precedence.
+ * Phase 4. Secret exposure and precedence.
  *
  * The configuration service is only as trustworthy as two invariants:
  *   (1) a deployment env value overrides a stored value overrides a default;
@@ -45,7 +45,7 @@ describe("registry integrity", () => {
     expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it("all eight SPEC 37 categories are represented", () => {
+  it("all eight categories are represented", () => {
     const present = new Set(CONFIG_REGISTRY.map((d) => d.category))
     for (const c of CONFIG_CATEGORIES) expect(present.has(c)).toBe(true)
   })

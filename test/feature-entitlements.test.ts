@@ -10,7 +10,7 @@ import {
 } from "@/lib/platform/feature-entitlements"
 
 /**
- * SPEC 18 — Phase 4. Bypass-resistance of the feature entitlement layer.
+ * Phase 4. Bypass-resistance of the feature entitlement layer.
  *
  * These are pure resolver tests, but every case is framed as an attempted
  * BYPASS: a client that ignores hidden UI and asks for a feature/quantity it is

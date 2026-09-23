@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { inviteUser, listLifecycleUsers, listLifecycleEvents, LifecycleError } from "@/lib/user-lifecycle"
 
 /**
- * SPEC 14 — Tenant user directory + invitation entry point.
+ * Tenant user directory + invitation entry point.
  *
  * GET  → the full lifecycle directory for the caller's tenant, plus the most
  *        recent lifecycle audit events (for the console's activity tab).

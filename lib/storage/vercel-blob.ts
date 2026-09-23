@@ -30,14 +30,14 @@ export class VercelBlobProvider implements StorageProvider {
       addRandomSuffix: false,
       contentType: contentType || undefined,
     })
-    // SPEC 29 — Do NOT persist/expose the raw public blob URL. Callers store the
+    // Do NOT persist/expose the raw public blob URL. Callers store the
     // access-controlled proxy path so every read is authenticated + tenant- and
     // object-scoped, and no sensitive file is reachable by URL alone.
     return { url: proxyUrl(key), key, provider: this.id, size: data.length, contentType: contentType || null }
   }
 
   async download(key: string, opts: DownloadOptions = {}): Promise<DownloadResult> {
-    // Resolve the blob's public URL from its pathname, then stream it. SPEC 31 —
+    // Resolve the blob's public URL from its pathname, then stream it. —
     // forward a Range header so the blob store answers with a 206 byte slice,
     // which is what makes <video>/<audio> seeking and CDN partial fetches work.
     const meta = await head(key).catch(() => null)
@@ -82,7 +82,7 @@ export class VercelBlobProvider implements StorageProvider {
   }
 
   /**
-   * SPEC 29 — Vercel Blob has no native private-presign, so we hand back a
+   * Vercel Blob has no native private-presign, so we hand back a
    * short-lived HMAC-signed URL to the app's access-controlled proxy instead of
    * the raw (public) blob URL. The signed token binds the URL to this exact
    * object and to the tenant encoded in its key, and expires quickly.
@@ -92,7 +92,7 @@ export class VercelBlobProvider implements StorageProvider {
   }
 
   /**
-   * SPEC 30 — Multipart upload for the managed platform storage. Blob's manual
+   * Multipart upload for the managed platform storage. Blob's manual
    * multipart API needs BOTH an `uploadId` and an opaque `key` on every part
    * and at completion, so we pack both into the single `uploadId` handle the
    * caller persists (they never interpret it). The pathname stays the
@@ -130,7 +130,7 @@ export class VercelBlobProvider implements StorageProvider {
   }
 
   /**
-   * SPEC 30 — Vercel Blob has no explicit multipart-abort in the manual API;
+   * Vercel Blob has no explicit multipart-abort in the manual API;
    * incomplete multipart uploads are garbage-collected automatically, so
    * dropping the session is enough. Kept as a no-op to satisfy the interface.
    */
@@ -142,7 +142,7 @@ export class VercelBlobProvider implements StorageProvider {
   }
 
   /**
-   * SPEC 28 — Full diagnostic run for the managed platform storage. A single
+   * Full diagnostic run for the managed platform storage. A single
    * list call establishes connectivity + a valid token; there is no
    * customer-owned bucket to probe, so that stage is reported as not
    * applicable. Write/read/delete use a throwaway object, and multipart is
@@ -224,7 +224,7 @@ export class VercelBlobProvider implements StorageProvider {
 }
 
 /**
- * SPEC 30 — Pack Blob's two multipart identifiers (uploadId + opaque key) into
+ * Pack Blob's two multipart identifiers (uploadId + opaque key) into
  * the single handle string the caller persists, and unpack them for each part.
  */
 function packHandle(uploadId: string, blobKey: string): string {

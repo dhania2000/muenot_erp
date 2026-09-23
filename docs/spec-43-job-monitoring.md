@@ -1,4 +1,4 @@
-# SPEC 43 — Job monitoring
+# Job monitoring
 
 Super Admin: /platform/job-monitoring and /api/platform/job-monitoring.
 Tenant administrator: /admin/job-monitoring and /api/admin/job-monitoring.
@@ -25,5 +25,5 @@ Responses use explicit metadata projections and safe error classifications,
 never email bodies, credentials, reset URLs, idempotency keys or raw provider errors.
 Existing queue list/cancellation responses are also sanitized.
 
-Apply the SPEC 42 migration before the SPEC 43 migration. Runtime initialization
+Apply the migration before the migration. Runtime initialization
 also adds the trigger-source column idempotently for existing installations.

@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 56-58 — SSO identity provider store (OIDC + SAML).
+ * — SSO identity provider store (OIDC + SAML).
  * ---------------------------------------------------------------------------
  * Owns CRUD for tenant identity providers and the client-secret encryption
  * boundary. Secrets are stored ONLY as the AES-256-GCM envelope from

@@ -1,5 +1,5 @@
 /**
- * SPEC 37 — Environment / Configuration management.
+ * Environment / Configuration management.
  * ---------------------------------------------------------------------------
  * Phase 1 (inventory) codified as data. This registry is the single, reviewed
  * catalogue of every configuration value the platform understands. Nothing here
@@ -45,7 +45,7 @@ export const CATEGORY_LABELS: Record<ConfigCategory, string> = {
 }
 
 /**
- * The ownership axis. This is the platform/tenant separation SPEC 37 requires:
+ * The ownership axis. This is the platform/tenant separation requires:
  * a platform-scoped value describes the business of running Muenot itself and is
  * resolved from platform stores + deployment env only; a tenant-scoped value is
  * per-workspace and is resolved from that tenant's own settings.

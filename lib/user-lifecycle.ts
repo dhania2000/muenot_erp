@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 14 — User lifecycle: the DB layer.
+ * User lifecycle: the DB layer.
  * ---------------------------------------------------------------------------
  * Drives the pure state model (lib/user-lifecycle-core.ts) against the `users`
  * table plus a handful of supporting tables. Follows the house pattern used by

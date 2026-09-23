@@ -1,4 +1,4 @@
-# SPEC 58 — SAML 2.0
+# SAML 2.0
 
 SAML providers use the existing tenant-scoped Entity ID, SSO URL, X.509 certificate and attribute-mapping fields. The new ACS uses `@node-saml/node-saml` to enforce signed response/assertion validation, IdP issuer, SP audience, assertion timestamps and durable `InResponseTo` correlation. Metadata is available per provider at `/api/auth/sso/:providerId/saml/metadata`.
 

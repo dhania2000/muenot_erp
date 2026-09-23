@@ -1,5 +1,5 @@
 /**
- * SPEC 75 — Backup architecture (pure, testable model).
+ * Backup architecture (pure, testable model).
  * ---------------------------------------------------------------------------
  * A backup binds a SCOPE (a tenant's database, its stored-file manifest, or its
  * configuration) to a POLICY (schedule, retention, encryption, verification and

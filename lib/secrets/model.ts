@@ -1,5 +1,5 @@
 /**
- * SPEC 38 — Secret management. Pure domain core.
+ * Secret management. Pure domain core.
  * ---------------------------------------------------------------------------
  * The three rules a secret manager lives or dies by, all pure and dependency
  * free (no DB, no process.env, no `server-only`) so Phase 4 exercises them

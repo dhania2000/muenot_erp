@@ -12,7 +12,7 @@ import {
 import { setCurrentTenant } from "@/lib/tenant-context"
 
 /**
- * SPEC 80 — Phase 4. Safety validation for the tenant-safe caching layer.
+ * Phase 4. Safety validation for the tenant-safe caching layer.
  *
  * The whole point of this layer is that a cache can NEVER become a
  * cross-tenant leak, and that a write is never masked by a stale entry. Every

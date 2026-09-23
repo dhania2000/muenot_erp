@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 85 — bulk-action orchestration.
+ * bulk-action orchestration.
  *
  * Ties the pure engine to the platform: resolves the resource from the
  * registry, enforces the feature gate, records a durable run (with idempotent

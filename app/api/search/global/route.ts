@@ -8,7 +8,7 @@ import type { SessionPayload } from "@/lib/auth"
 export const runtime = "nodejs"
 
 /**
- * SPEC 81 — Tenant-wide global search.
+ * Tenant-wide global search.
  *
  * A single read-only entry point that fans one query out across the primary
  * record tables every workspace module already owns and returns grouped hits.
@@ -249,7 +249,7 @@ async function searchEntity(session: SessionPayload, def: EntityDef, q: string, 
 
 /**
  * Documents live in the unified, genuinely per-row multi-tenant `file_objects`
- * store (SPEC 32) rather than in a permission-catalog module, so they get their
+ * store rather than in a permission-catalog module, so they get their
  * own scoped query instead of going through `scopeWhereForModule`:
  *   - MANDATORY tenant predicate (tenant_id = the verified session tenant) so a
  *     viewer can never see another tenant's files. This is the fix for the

@@ -61,7 +61,7 @@ export async function requireTenant() {
 }
 
 /**
- * SPEC 67 — Bearer API-key authentication for the public `/api/v1/*` surface.
+ * Bearer API-key authentication for the public `/api/v1/*` surface.
  * ---------------------------------------------------------------------------
  * Distinct from lib/auth.ts (browser session cookies for the admin app):
  * this is for server-to-server callers presenting `Authorization: Bearer
@@ -114,7 +114,7 @@ export async function authenticateApiKeyResult(request: Request): Promise<ApiKey
   }
 }
 
-/** Back-compat helper (SPEC 67 shape): returns the auth or null on any failure. */
+/** Back-compat helper ( shape): returns the auth or null on any failure. */
 export async function authenticateApiKey(request: Request): Promise<ApiKeyAuth | null> {
   const result = await authenticateApiKeyResult(request)
   return result.ok ? result.auth : null

@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth"
 import { deleteBankAccount } from "@/lib/legal-entities"
 
 /**
- * SPEC 7 — delete a single per-entity bank account. Ownership is enforced in
+ * delete a single per-entity bank account. Ownership is enforced in
  * the service via requireOwnedRow (IDOR guard) so a foreign id 404s/denies.
  */
 export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ bankId: string }> }) {

@@ -1,5 +1,5 @@
 /**
- * SPEC 74 — Enterprise Data Import catalog.
+ * Enterprise Data Import catalog.
  * ---------------------------------------------------------------------------
  * The registry of what a tenant admin may import. Rather than restate every
  * table + column, this DERIVES the importable datasets from the existing

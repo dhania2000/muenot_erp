@@ -89,7 +89,7 @@ const ACTION_LABELS: Record<string, string> = {
 }
 
 /**
- * SPEC 33 — Document versioning UI. Pick a versioned file, review its full
+ * Document versioning UI. Pick a versioned file, review its full
  * version history (number, uploader, timestamp, current flag), restore any
  * historical version, download a specific version, and read the audit trail.
  */

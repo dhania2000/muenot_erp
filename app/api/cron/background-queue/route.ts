@@ -11,7 +11,7 @@ function authorized(request: Request): boolean {
   return request.headers.get("authorization") === `Bearer ${secret}`
 }
 
-/** Invoked by the SPEC 41 scheduler; never accepts arbitrary jobs from HTTP. */
+/** Invoked by the scheduler; never accepts arbitrary jobs from HTTP. */
 export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   try {

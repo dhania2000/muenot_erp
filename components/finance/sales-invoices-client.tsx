@@ -128,7 +128,7 @@ export function SalesInvoicesClient() {
     setDialogOpen(true)
   }
 
-  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  // open the create dialog when the command palette deep-links here.
   useNewRecordParam(openNew)
   function openEdit(row: InvoiceRow) {
     setEditing(row)

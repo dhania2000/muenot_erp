@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react"
 
 /**
- * SPEC 30 — Client-side driver for resumable, chunked large-file uploads.
+ * Client-side driver for resumable, chunked large-file uploads.
  * ---------------------------------------------------------------------------
  * Orchestrates the multipart API:
  *   1. POST /api/storage/uploads            → open a session (get part size).

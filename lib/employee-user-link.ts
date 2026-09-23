@@ -13,7 +13,7 @@ import {
 } from "@/lib/employee-user-link-core"
 
 /**
- * SPEC 15 — Employee ⇄ User link: DB layer.
+ * Employee ⇄ User link: DB layer.
  *
  * Builds on the pure model in `employee-user-link-core.ts`. Responsibilities:
  *   - self-heal the schema (account_type / user_id / entity_id / audit table),
@@ -534,7 +534,7 @@ export async function syncAccessStatusForUser(tenantId: number, userId: number):
 }
 
 /**
- * Persist the derived access status. Keeps the SPEC 14 lifecycle_state (when
+ * Persist the derived access status. Keeps the lifecycle_state (when
  * present) in step WITHOUT trampling a manual suspension or a pending
  * invitation: employment ending deactivates an otherwise-active login, and an
  * employment reactivation only rehires a login that was previously

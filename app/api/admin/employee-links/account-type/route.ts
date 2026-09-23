@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { LinkError, setUserAccountType } from "@/lib/employee-user-link"
 
 /**
- * SPEC 15 — Flag a login as a `service` account (intentionally employee-less)
+ * Flag a login as a `service` account (intentionally employee-less)
  * or back to a `person`. Marking a login with linked employees as a service
  * account is rejected by the DB layer.
  */

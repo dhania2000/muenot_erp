@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 3 — Platform/tenant role persistence, resolution and audit.
+ * Platform/tenant role persistence, resolution and audit.
  * ---------------------------------------------------------------------------
  * Server-side source of truth for the two role axes defined in
  * lib/role-model.ts. Mirrors database/migrations/2026-11-08-platform-tenant-roles.sql
@@ -10,7 +10,7 @@ import "server-only"
  * The pure boundary rules live in lib/role-model.ts; this module only loads the
  * stored roles, resolves a RoleContext for a session, and performs role changes
  * / impersonation transitions with the escalation checks and audit logging that
- * SPEC 3 Phase 4 needs as evidence.
+ * Phase 4 needs as evidence.
  */
 import { query } from "@/lib/db"
 import {

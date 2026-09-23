@@ -4,7 +4,7 @@ import { changeSubscriptionPlan, setSubscriptionStatus, type SubscriptionStatus 
 import { recordPlatformAudit } from "@/lib/platform-roles"
 
 /**
- * SPEC 4 — Change a tenant's subscription: switch plan and/or set status.
+ * Change a tenant's subscription: switch plan and/or set status.
  * Platform-staff surface; audited. Plan/price is resolved server-side from the
  * plan record so the MRR can never be spoofed by the client.
  */

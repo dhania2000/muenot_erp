@@ -6,7 +6,7 @@ import { getTenantById } from "@/lib/tenant-service"
 import { getNum } from "@/lib/settings/server"
 
 /**
- * SPEC 3 — Tenant impersonation (the ONLY audited path by which a Muenot
+ * Tenant impersonation (the ONLY audited path by which a Muenot
  * platform operator may act on a customer tenant's data).
  *
  * Design invariants that keep the platform/tenant boundary intact:

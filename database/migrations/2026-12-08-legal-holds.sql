@@ -1,10 +1,10 @@
--- SPEC 72 — Legal Hold.
+-- Legal Hold.
 --
 -- A legal hold is a named, auditable directive that PROTECTS a set of records
 -- or files from destruction while a matter (litigation, audit, regulatory
 -- inquiry) is open. While a hold is ACTIVE the covered data is never removed by
--- an automated retention job — the SPEC 71 record-retention engine
--- (lib/retention-engine.ts) and the SPEC 36 storage-retention sweep
+-- an automated retention job — the record-retention engine
+-- (lib/retention-engine.ts) and the storage-retention sweep
 -- (lib/storage/retention.ts) both consult these tables before deleting.
 --
 -- A hold owns one or more ITEMS, each declaring WHAT it covers via a scope:

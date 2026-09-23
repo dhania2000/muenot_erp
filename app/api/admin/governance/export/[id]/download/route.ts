@@ -3,7 +3,7 @@ import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { resolveExportDownload } from "@/lib/data-export-store"
 import { recordAuditLog } from "@/lib/audit-log-store"
 
-// SPEC 73 — secure export download. Access is permission-checked AT ACCESS TIME
+// secure export download. Access is permission-checked AT ACCESS TIME
 // on TWO independent layers:
 //   1. a live tenant-admin SESSION scoped to the owning tenant, and
 //   2. an HMAC token bound to the job + tenant + a per-job salt + an expiry.

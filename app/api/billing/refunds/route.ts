@@ -5,7 +5,7 @@ import { listRefunds, refundInvoice, BillingError } from "@/lib/billing/billing-
 export const runtime = "nodejs"
 
 /**
- * SPEC 20 — Refunds. GET lists every refund enriched with its invoice/customer.
+ * Refunds. GET lists every refund enriched with its invoice/customer.
  * POST issues a refund against a specific invoice (body: invoice_id, amount,
  * reason, as_credit) reusing the same validated engine path as the invoice
  * refund action.

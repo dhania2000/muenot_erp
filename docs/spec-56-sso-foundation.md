@@ -1,4 +1,4 @@
-# SPEC 56 — SSO Foundation
+# SSO Foundation
 
 ## Audit and reuse
 

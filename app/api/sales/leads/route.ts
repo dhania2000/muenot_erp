@@ -18,7 +18,7 @@ export async function GET() {
   const scoped = await scopeWhereForModule(session, "sales.leads", "view", "sales_leads", "l")
   const base = mergeScopeIntoWhere("WHERE l.archived_at IS NULL", [], scoped)
 
-  // SPEC 10 — data-level scope (self / team / entity / branch / all). ANDed on
+  // data-level scope (self / team / entity / branch / all). ANDed on
   // top of the RBAC record scope: a rep sees only their own / their team's /
   // their assigned entity's leads. Unconfigured users / admins are unaffected.
   const dataScope = await dataScopeWhere(session, "sales.leads", "l")

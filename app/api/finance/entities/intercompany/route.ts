@@ -4,7 +4,7 @@ import { canCreateInModule } from "@/lib/permission-enforce"
 import { listIntercompany, createIntercompany, EntityValidationError } from "@/lib/legal-entities"
 
 /**
- * SPEC 7 — inter-company transactions (transfers between two of the tenant's
+ * inter-company transactions (transfers between two of the tenant's
  * own entities). These are eliminated on consolidation so the group is not
  * double-counted.
  * GET  : list transactions (with resolved from/to entity names).

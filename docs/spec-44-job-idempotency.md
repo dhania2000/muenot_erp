@@ -1,4 +1,4 @@
-# SPEC 44 — Job idempotency
+# Job idempotency
 
 Inventory and protections:
 

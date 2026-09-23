@@ -1,7 +1,7 @@
 import { GovernanceTabs } from "@/components/governance/governance-tabs"
 import { LegalHoldEditor } from "@/components/governance/legal-hold-editor"
 
-// SPEC 72 — Generic Legal Hold (UI). Extends legal hold beyond files to
+// Generic Legal Hold (UI). Extends legal hold beyond files to
 // Documents, HR, Finance, CRM, Projects, and other ERP record types.
 // Retention/deletion jobs must always check active holds before acting.
 

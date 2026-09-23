@@ -1,7 +1,7 @@
 import { billingGuard } from "@/lib/billing-guard"
 import { StorageUsageDashboard } from "@/components/storage/storage-usage-dashboard"
 
-// SPEC 35 — Storage → Usage & Quotas.
+// Storage → Usage & Quotas.
 export default async function Page() {
   await billingGuard()
   return (

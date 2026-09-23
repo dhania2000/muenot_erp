@@ -1,11 +1,11 @@
 import "server-only"
 
 /**
- * SPEC 76 — Disaster Recovery store (server).
+ * Disaster Recovery store (server).
  * ---------------------------------------------------------------------------
  * Persists the DR plan (objectives + recovery mechanism per service), drill
  * history and the incident workflow, and DERIVES readiness from the real
- * SPEC 75 backup engine rather than storing a fabricated status. Self-heals its
+ * backup engine rather than storing a fabricated status. Self-heals its
  * schema at runtime (same pattern as the backup / cron stores) so existing
  * databases converge with no manual migration.
  */
@@ -482,7 +482,7 @@ async function insertDrill(input: {
 /**
  * Execute a recovery drill for a service.
  *  - restore  : find the newest completed backup for the scope and run a REAL
- *               non-destructive restore test through the SPEC 75 engine.
+ * non-destructive restore test through the engine.
  *  - failover : simulate the documented failover, timing the exercise for RTO.
  *  - tabletop : record a walkthrough with no automated verification.
  * The drill's measured RTO and recovery-point age are captured from real data.

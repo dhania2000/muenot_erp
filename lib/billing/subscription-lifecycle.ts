@@ -1,5 +1,5 @@
 /**
- * SPEC 16 — SaaS subscription lifecycle (pure, dependency-free core).
+ * SaaS subscription lifecycle (pure, dependency-free core).
  * ---------------------------------------------------------------------------
  * All date math and state-machine logic for the subscription engine lives here
  * as pure functions so it can be unit-tested without a database or a request

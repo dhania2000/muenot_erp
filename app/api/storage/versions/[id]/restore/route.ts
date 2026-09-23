@@ -6,7 +6,7 @@ import { restoreFileVersion } from "@/lib/storage"
 export const runtime = "nodejs"
 
 /**
- * SPEC 33 — Restore a historical version. The version's stored bytes are copied
+ * Restore a historical version. The version's stored bytes are copied
  * to a fresh key and recorded as a new current version (nothing is overwritten).
  * Permission (admin, or the file's own uploader) is enforced in the service.
  */

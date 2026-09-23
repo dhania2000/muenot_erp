@@ -1,5 +1,5 @@
--- SPEC 63 — Conditional access policies, and the shared security audit trail
--- used by both SPEC 62 (IP allowlist) and SPEC 63.
+-- Conditional access policies, and the shared security audit trail
+-- used by both (IP allowlist) and.
 --
 -- Both tables are also self-healed at runtime by their stores
 -- (lib/access-policy-store.ts and lib/security-audit-store.ts, same pattern as

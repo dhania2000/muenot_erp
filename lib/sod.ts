@@ -1,5 +1,5 @@
 // =============================================================================
-// SPEC 13 — Segregation of Duties: DB persistence + orchestration.
+// Segregation of Duties: DB persistence + orchestration.
 // -----------------------------------------------------------------------------
 // The server-side half of the SoD control. It:
 //   - owns the per-tenant conflict configuration (enable/disable, enforcement

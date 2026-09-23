@@ -22,7 +22,7 @@ const parse = (v: unknown) => {
 }
 
 // Legacy workflow-run monitor DTO. Retained for compatibility; actual business
-// events and subscriber deliveries live in the SPEC 48 event bus.
+// events and subscriber deliveries live in the event bus.
 export type AutomationEvent = {
   id: number
   workflowId: number

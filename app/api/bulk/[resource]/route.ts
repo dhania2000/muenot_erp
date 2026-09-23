@@ -6,7 +6,7 @@ import { submitBulkAction } from "@/lib/bulk-actions/service"
 import type { BulkActionKind } from "@/lib/bulk-actions/types"
 
 /**
- * SPEC 85 — generic bulk-action submission. A single route dispatches every
+ * generic bulk-action submission. A single route dispatches every
  * registered resource by key. It validates + records a durable run, then either
  * runs the batch inline (small batches / exports) and returns the report, or
  * enqueues a background job and returns the run id for progress polling.

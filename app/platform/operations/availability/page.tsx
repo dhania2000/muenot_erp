@@ -10,7 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
-// SPEC 77 — High Availability status (UI). Shows real deployment topology
+// High Availability status (UI). Shows real deployment topology
 // facts only; does not fabricate multi-region or failover claims that the
 // platform does not actually implement.
 const COMPONENTS = [

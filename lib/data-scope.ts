@@ -15,7 +15,7 @@ import {
 import type { SessionPayload } from "./auth"
 
 /**
- * SPEC 10 — the bridge between the pure data-scope engine and a live request.
+ * the bridge between the pure data-scope engine and a live request.
  * ---------------------------------------------------------------------------
  * A route/report calls `dataScopeWhere(session, "hr.employees", alias)` to get
  * a SQL predicate to AND into its query, and `canAccessRecord(...)` to gate a

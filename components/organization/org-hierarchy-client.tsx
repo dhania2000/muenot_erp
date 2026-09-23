@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * SPEC 6 — Organization hierarchy UI.
+ * Organization hierarchy UI.
  * ---------------------------------------------------------------------------
  * Client surface for the org-hierarchy backend (lib/org-hierarchy.ts + the
  * /api/org/* routes). Renders the enterprise structure as an expandable tree

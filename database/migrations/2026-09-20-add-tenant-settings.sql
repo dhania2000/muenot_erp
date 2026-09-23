@@ -1,5 +1,5 @@
 -- ============================================================================
--- SPEC 39 — Canonical tenant configuration (additive and idempotent)
+-- Canonical tenant configuration (additive and idempotent)
 --
 -- `company_settings` remains an inherited legacy/platform baseline. Runtime
 -- writes use `tenant_settings`, so every customer can override the same key

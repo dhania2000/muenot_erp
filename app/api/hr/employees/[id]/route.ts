@@ -38,7 +38,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "You do not have permission to update this employee." }, { status: 403 })
   }
 
-  // SPEC 10 — data-level scope: the row must also fall within the user's
+  // data-level scope: the row must also fall within the user's
   // self/team/entity/branch visibility. Unconfigured users / admins pass.
   if (!(await canAccessRecord(session, "hr.employees", existing))) {
     return NextResponse.json({ error: "This employee is outside your data access scope." }, { status: 403 })
@@ -81,7 +81,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
   }
 
-  // SPEC 15 — when this edit touched an access-governing field (employment or
+  // when this edit touched an access-governing field (employment or
   // exit status), re-derive the linked login's access. Best-effort so the edit
   // itself is never blocked by a sync failure.
   if (changes.some((c) => c.field === "employment_status" || c.field === "exit_status")) {

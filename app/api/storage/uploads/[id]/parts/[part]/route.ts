@@ -7,7 +7,7 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * SPEC 30 — Upload a single chunk. The raw request body IS the chunk bytes.
+ * Upload a single chunk. The raw request body IS the chunk bytes.
  * Idempotent per (session, part): a retried chunk simply overwrites, so a
  * failed chunk can be re-sent without restarting the whole upload.
  */

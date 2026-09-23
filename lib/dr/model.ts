@@ -1,12 +1,12 @@
 import type { BackupScope } from "@/lib/backup/model"
 
 /**
- * SPEC 76 — Disaster Recovery model (pure, DB-free).
+ * Disaster Recovery model (pure, DB-free).
  * ---------------------------------------------------------------------------
  * The disaster-recovery plan is expressed as a small, reviewed catalog of
  * critical services (Phase 1). Each service carries recovery objectives — RPO
  * and RTO (Phase 2) — and a recovery mechanism that, where the service holds
- * state, is anchored to a real SPEC 75 backup scope (Phase 3). Readiness is
+ * state, is anchored to a real backup scope (Phase 3). Readiness is
  * NEVER asserted; it is derived from real backup recency, restore-test outcome
  * and drill history (Phase 4). This module owns only the pure math and the
  * catalog so it can be unit-tested without a database.

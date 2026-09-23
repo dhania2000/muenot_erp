@@ -1,5 +1,5 @@
 // =============================================================
-// SPEC 69 — Data Classification (pure, testable model)
+// Data Classification (pure, testable model)
 // -------------------------------------------------------------
 // A tenant can classify any module / entity / field with one of five standard
 // sensitivity levels. A classification, when its enforcement flags are turned

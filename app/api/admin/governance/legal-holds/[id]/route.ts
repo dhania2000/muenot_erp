@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { deleteHold, getHold } from "@/lib/legal-hold-store"
 
-// SPEC 72 — read / delete a single legal hold. Tenant-admin only, tenant-scoped
+// read / delete a single legal hold. Tenant-admin only, tenant-scoped
 // (a foreign id resolves to null → 404), and audited. Active holds can never be
 // deleted — they must be released first.
 

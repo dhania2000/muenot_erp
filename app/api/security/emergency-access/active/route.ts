@@ -5,7 +5,7 @@ import { listActiveBreakGlassForUser } from "@/lib/temporary-access-store"
 export const dynamic = "force-dynamic"
 
 /**
- * SPEC 65 — "no silent usage": the signed-in user's own currently-active
+ * "no silent usage": the signed-in user's own currently-active
  * break-glass grants, powering the persistent, app-wide banner. Scoped to the
  * caller so it never leaks another user's elevation.
  */

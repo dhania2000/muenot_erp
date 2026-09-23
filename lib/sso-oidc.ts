@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 56-57 — OIDC protocol handshake.
+ * — OIDC protocol handshake.
  * ---------------------------------------------------------------------------
  * Implements the authorization-code flow against a generic OIDC provider
  * (Google Workspace, Microsoft Entra ID, Okta, or "Generic OIDC" all speak

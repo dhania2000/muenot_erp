@@ -1,6 +1,6 @@
 import "server-only"
 /**
- * SPEC 71 — General ERP Data Retention Engine (server store + lifecycle).
+ * General ERP Data Retention Engine (server store + lifecycle).
  * ---------------------------------------------------------------------------
  * Replaces the frontend-only localStorage placeholder (lib/governance-store.ts)
  * for retention with a real, tenant-scoped, audited, DB-backed engine that
@@ -13,7 +13,7 @@ import "server-only"
  *   1. Skips the policy when it is PAUSED or under a LEGAL HOLD.
  *   2. Resolves the physical table + columns for the record type against the
  *      live schema, skipping gracefully when the target does not exist here.
- *   3. For a DELETE action, consults SPEC 69 data classification — a record
+ * 3. For a DELETE action, consults data classification — a record
  *      type classified at a level that forbids auto-delete is never purged.
  *   4. Selects records older than the retention cutoff, minus any that match a
  *      policy EXCEPTION (a specific record, or a field/value criteria).
@@ -731,7 +731,7 @@ function buildExceptionClauses(
 
 /**
  * Build the WHERE fragments that carve out records held under an ACTIVE legal
- * hold (SPEC 72). Record-scoped holds exclude specific primary keys;
+ * hold. Record-scoped holds exclude specific primary keys;
  * criteria-scoped holds exclude field/value matches (validated identifiers
  * only). Mirrors buildExceptionClauses so held rows survive the sweep exactly
  * like an exception does.
@@ -810,7 +810,7 @@ export async function runPolicy(
   }
   const target = resolved.target
 
-  // 2b. Legal-hold gate (SPEC 72). A module- or record-type-scoped hold covers
+  // 2b. Legal-hold gate. A module- or record-type-scoped hold covers
   //     the ENTIRE policy, so the sweep is skipped; record/criteria-scoped holds
   //     carve out the individual held rows in step 4. The hold always wins.
   const holdCoverage = await getPolicyHoldCoverage(tenantId, {
@@ -823,7 +823,7 @@ export async function runPolicy(
     return finalize(skip(policy.action, `Skipped — under an active legal hold${names}`))
   }
 
-  // 3. Classification gate for destructive deletes (SPEC 69 integration).
+  // 3. Classification gate for destructive deletes ( integration).
   if (policy.action === "delete") {
     const block = await isAutoDeleteBlockedByClassification(tenantId, entry.module, target.entity)
     if (block.blocked) {

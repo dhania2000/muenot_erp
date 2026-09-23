@@ -1,10 +1,10 @@
 import "server-only"
 /**
- * SPEC 62 / 63 — Security audit trail.
+ * Security audit trail.
  * ---------------------------------------------------------------------------
  * A single, forensic log of security-relevant events: IP allowlist changes and
- * enforcement outcomes (SPEC 62), emergency super-admin bypasses (SPEC 62), and
- * access-policy changes and enforcement decisions (SPEC 63). Writes are
+ * enforcement outcomes, emergency super-admin bypasses, and
+ * access-policy changes and enforcement decisions. Writes are
  * best-effort — recording an event must never change or block the request's
  * own outcome (a sign-in decision, a settings save). Reads power the audit
  * panels shown on the security pages.

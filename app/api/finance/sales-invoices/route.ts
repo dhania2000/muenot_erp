@@ -31,7 +31,7 @@ const NON_POSTING_TYPES = new Set(["Proforma Invoice"])
 const isCreditNote = (t?: string | null) => String(t || "") === "Credit Note"
 const isNoteType = (t?: string | null) => t === "Credit Note" || t === "Debit Note"
 
-/** Source of the invoice (spec 32–33), derived from the strongest link present. */
+/** Source of the invoice (–33), derived from the strongest link present. */
 function deriveSourceType(body: Record<string, any>): string {
   if (body.source_type && body.source_type !== "Manual") return body.source_type
   if (isNoteType(body.invoice_type)) return "Other"
@@ -133,12 +133,12 @@ async function businessRuleError(
   invoiceTotal: number,
   excludeInvoicePk?: number,
 ): Promise<NextResponse | null> {
-  // Billing period sanity (spec 24).
+  // Billing period sanity.
   if (body.billing_period_from && body.billing_period_to && body.billing_period_to < body.billing_period_from) {
     return NextResponse.json({ error: "Billing period end must be on or after the start date." }, { status: 400 })
   }
 
-  // Credit / Debit notes must reference a real original invoice (spec 36–37).
+  // Credit / Debit notes must reference a real original invoice (–37).
   if (isNoteType(body.invoice_type)) {
     if (!body.original_invoice_id) {
       return NextResponse.json({ error: `${body.invoice_type} must reference the original invoice.` }, { status: 400 })
@@ -165,11 +165,11 @@ async function businessRuleError(
     excludeInvoicePk,
   })
 
-  // Consistency mismatches always block (spec 29–31).
+  // Consistency mismatches always block (–31).
   if (checks.consistency) {
     return NextResponse.json({ error: checks.consistency, check: checks }, { status: 409 })
   }
-  // Over-billing blocks unless explicitly overridden (spec 20).
+  // Over-billing blocks unless explicitly overridden.
   if (checks.overbilling && !body.allow_overbilling) {
     const o = checks.overbilling
     return NextResponse.json(
@@ -181,7 +181,7 @@ async function businessRuleError(
       { status: 409 },
     )
   }
-  // Duplicate billing period blocks unless overridden (spec 25–26).
+  // Duplicate billing period blocks unless overridden (–26).
   if (checks.duplicate && !body.allow_duplicate) {
     return NextResponse.json(
       {
@@ -195,7 +195,7 @@ async function businessRuleError(
   return null
 }
 
-/** Resolve stored source ids into human codes for the "why was this invoiced" chain (spec 32). */
+/** Resolve stored source ids into human codes for the "why was this invoiced" chain. */
 async function resolveSourceChain(inv: Record<string, any>) {
   const chain: {
     source_type: string
@@ -398,7 +398,7 @@ export async function POST(req: NextRequest) {
     payment_status: body.payment_status,
   })
 
-  // Proforma invoices are non-posting by definition (spec 35).
+  // Proforma invoices are non-posting by definition.
   if (NON_POSTING_TYPES.has(body.invoice_type) && body.invoice_status === "Posted") {
     return NextResponse.json({ error: "Proforma invoices cannot be posted to the ledger." }, { status: 409 })
   }
@@ -499,9 +499,9 @@ export async function POST(req: NextRequest) {
  */
 async function postAndRecord(inv: Record<string, any>, actorId?: number | null) {
   if (inv.journal_entry_id) return
-  // Proforma never posts (spec 35). A Credit Note reverses the AR/revenue that
+  // Proforma never posts. A Credit Note reverses the AR/revenue that
   // the original invoice created; a Debit Note posts an additional charge in the
-  // normal direction (spec 38).
+  // normal direction.
   if (NON_POSTING_TYPES.has(inv.invoice_type)) {
     throw new Error("Proforma invoices cannot be posted to the ledger.")
   }
@@ -549,7 +549,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Cancelled invoices cannot be edited." }, { status: 409 })
   }
 
-  // ---- Cancellation (spec 140–144) -------------------------------------------
+  // ---- Cancellation (–144) -------------------------------------------
   // Cancelling a non-Draft invoice is a dedicated action: a Posted invoice must
   // reverse its ledger voucher, and any invoice with an active payment must be
   // settled/reversed first. A cancel reason is mandatory for the audit trail.

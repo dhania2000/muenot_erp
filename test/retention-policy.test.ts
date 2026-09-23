@@ -17,7 +17,7 @@ import {
 } from "@/lib/storage/retention-policy"
 
 /**
- * SPEC 36 — Phase 4. Pure, DB-free validation of the configurable retention
+ * Phase 4. Pure, DB-free validation of the configurable retention
  * model: rule normalization, calendar-accurate expiry arithmetic, the
  * default → module → override → legal-hold resolution precedence, and the
  * single guarantee that legal-hold files are NEVER purged. Fixed clocks keep

@@ -5,7 +5,7 @@ import { listPlans, createPlan, SubscriptionError } from "@/lib/billing/subscrip
 export const runtime = "nodejs"
 
 /**
- * SPEC 16 — SaaS plan catalogue. Plans are a global catalogue configured by
+ * SaaS plan catalogue. Plans are a global catalogue configured by
  * platform admins; every tenant subscribes against them. billingGuard enforces
  * an authenticated admin session (mirrors the rest of the billing module).
  */

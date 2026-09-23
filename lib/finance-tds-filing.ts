@@ -10,7 +10,7 @@ import { normalizePan, panStatus, requiresNoPanRate } from "@/lib/pan"
  * TDS has two directions and they must never be mixed in one return:
  *  - "receivable": tax the CUSTOMER deducts from what they owe us, captured per
  *    sales invoice as `tds_amount` against a `tds_section`. This is a credit we
- *    reconcile against Form 26AS (spec 64–70, 214).
+ * reconcile against Form 26AS (–70, 214).
  *  - "payable": tax WE deduct from vendor bills and must deposit with the
  *    government, captured per purchase bill. This is the deductor-side 26Q
  *    return.

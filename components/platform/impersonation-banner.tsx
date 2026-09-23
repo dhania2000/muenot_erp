@@ -5,7 +5,7 @@ import { getTenantById } from "@/lib/tenant-service"
 import { ExitImpersonationButton } from "./exit-impersonation-button"
 
 /**
- * SPEC 3 — Persistent, high-visibility warning shown whenever a platform
+ * Persistent, high-visibility warning shown whenever a platform
  * operator is actively impersonating a customer tenant. It exists to satisfy
  * the core requirement that "platform administrators must not accidentally
  * operate with tenant-level permissions": while impersonating, every workspace

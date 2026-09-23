@@ -8,9 +8,9 @@ import { listScans } from "@/lib/storage/file-scanning"
 export const runtime = "nodejs"
 
 /**
- * SPEC 32 — File browsing. Enriches the tenant's centralized file metadata
+ * File browsing. Enriches the tenant's centralized file metadata
  * (lib/storage/file-metadata.ts, already real) with owner display names and
- * the SPEC 34 scan safety verdict so the Storage → Files table can show one
+ * the scan safety verdict so the Storage → Files table can show one
  * row per file without the client stitching multiple calls together.
  */
 export async function GET(req: NextRequest) {

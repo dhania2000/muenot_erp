@@ -105,11 +105,23 @@ CREATE TRIGGER `audit_archive_no_delete` BEFORE DELETE ON `audit_log_archive_bat
 -- Upgrade SPEC 67's delete guard so the ONLY permitted deletion path is the
 -- authorized retention purge (which sets @audit_retention_purge = 1 on its own
 -- connection first). UPDATEs stay rejected unconditionally.
-DROP TRIGGER IF EXISTS `audit_log_no_delete`;
+--
+-- NOTE: this trigger has a compound BEGIN ... END body, so its inner statements
+-- are terminated with `;`. When applying this file with a client that splits on
+-- `;` (phpMyAdmin, the mysql CLI), the DELIMITER switch below is REQUIRED so the
+-- whole CREATE TRIGGER is sent as one statement instead of being cut off at the
+-- first inner semicolon. Runtime self-heal (lib/audit-log-store.ts) sends the
+-- statement whole through the driver and needs no delimiter change.
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS `audit_log_no_delete`$$
+
 CREATE TRIGGER `audit_log_no_delete` BEFORE DELETE ON `audit_log_entries`
   FOR EACH ROW
   BEGIN
     IF @audit_retention_purge IS NULL OR @audit_retention_purge <> 1 THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log_entries is append-only; deletion is only permitted via authorized retention purge';
     END IF;
-  END;
+  END$$
+
+DELIMITER ;

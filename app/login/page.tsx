@@ -1,6 +1,6 @@
-import Image from "next/image"
 import Link from "next/link"
 import { LoginForm, type SocialProviders } from "@/components/login-form"
+import { BrandMark } from "@/components/login/brand-mark"
 import { LanguageWidget } from "@/components/providers/language-widget"
 import { getPublicSettings } from "@/lib/settings/server"
 import { listEnabledProvidersForLogin } from "@/lib/sso-store"
@@ -50,15 +50,6 @@ export default async function LoginPage({
     linkedin: enabled(settings["social.linkedin_enabled"]),
     facebook: enabled(settings["social.facebook_enabled"]),
   }
-
-  // Company logo can be any host, so use a plain <img>; fall back to the bundled mark.
-  const BrandMark = ({ className }: { className?: string }) =>
-    logo ? (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img src={logo || "/placeholder.svg"} alt={brandName} className={className} />
-    ) : (
-      <Image src="/muenot-logo-transparent.png" alt={brandName} width={132} height={30} className={className} priority />
-    )
 
   return (
     <main className="relative flex min-h-svh flex-col lg:flex-row">
@@ -120,8 +111,8 @@ export default async function LoginPage({
           <div className="mt-8 flex flex-col gap-2 border-t border-border pt-6 text-center">
             <p className="text-sm text-muted-foreground">
               Setting up {brandName} for your company?{" "}
-              <Link href="/signup" className="font-medium text-primary hover:underline">
-                Create a business account
+          <Link href="/signup" className="whitespace-nowrap font-medium text-primary hover:underline">
+            Create a business account
               </Link>
             </p>
             <p className="text-xs text-muted-foreground">

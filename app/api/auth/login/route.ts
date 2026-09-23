@@ -15,6 +15,7 @@ import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/pa
 import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 import { recordSecurityEvent } from "@/lib/security-audit-store"
 import { evaluateAccessPolicies } from "@/lib/access-policy-store"
+import { recordAuditLog, AUDIT_ACTIONS, type AuditContext } from "@/lib/audit-log-store"
 
 type UserRow = {
   id: number
@@ -43,6 +44,20 @@ export async function POST(request: Request) {
     const forwardedFor = request.headers.get("x-forwarded-for")
     const requestIp = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
     const requestCountry = request.headers.get("x-vercel-ip-country")
+
+    // SPEC 67 — base audit context for this sign-in attempt. The acting user is
+    // resolved once the account is loaded; each call overrides actor fields.
+    const auditBase: AuditContext = {
+      requestId: request.headers.get("x-request-id")?.trim() || crypto.randomUUID(),
+      tenantId: null,
+      actorUserId: null,
+      actorName: null,
+      actorEmail: null,
+      actorRole: null,
+      sessionId: null,
+      ipAddress: requestIp,
+      userAgent: request.headers.get("user-agent"),
+    }
 
     if (!isDbConfigured()) {
       console.error(
@@ -125,6 +140,18 @@ export async function POST(request: Request) {
     const valid = await verifyPassword(password, user.password_hash)
     if (!valid) {
       await recordFailedLogin(user.id)
+      void recordAuditLog(
+        {
+          action: AUDIT_ACTIONS.authLoginDenied,
+          result: "failure",
+          entityType: "user",
+          entityId: user.id,
+          entityLabel: user.email,
+          metadata: { reason: "invalid_password" },
+          context: { actorUserId: user.id, actorName: user.name, actorEmail: user.email, actorRole: user.role },
+        },
+        auditBase,
+      )
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
 
@@ -266,6 +293,27 @@ export async function POST(request: Request) {
     } catch (err) {
       console.error("[v0] session store write failed (login still succeeds):", err)
     }
+
+    // SPEC 67 — enterprise audit trail of the successful sign-in.
+    void recordAuditLog(
+      {
+        action: AUDIT_ACTIONS.authLogin,
+        result: "success",
+        entityType: "user",
+        entityId: user.id,
+        entityLabel: user.email,
+        metadata: { loginMethod: "password" },
+        context: {
+          tenantId: tenantId ?? null,
+          actorUserId: user.id,
+          actorName: user.name,
+          actorEmail: user.email,
+          actorRole: user.role,
+          sessionId: sid,
+        },
+      },
+      auditBase,
+    )
 
     // Notify full-access users (admins) that this account signed in.
     void recordActivity({

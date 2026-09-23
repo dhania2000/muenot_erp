@@ -49,6 +49,7 @@ import {
   type NormalizedPolicyInput,
 } from "@/lib/retention-model"
 import { getCatalogEntry, resolveTargetColumns } from "@/lib/retention-catalog"
+import { getPolicyHoldCoverage, type PolicyHoldCoverage } from "@/lib/legal-hold-store"
 
 /** Safety cap on how many rows a single policy run will act on. */
 const MAX_ROWS_PER_RUN = 2000
@@ -729,6 +730,36 @@ function buildExceptionClauses(
 }
 
 /**
+ * Build the WHERE fragments that carve out records held under an ACTIVE legal
+ * hold (SPEC 72). Record-scoped holds exclude specific primary keys;
+ * criteria-scoped holds exclude field/value matches (validated identifiers
+ * only). Mirrors buildExceptionClauses so held rows survive the sweep exactly
+ * like an exception does.
+ */
+function buildHoldClauses(
+  coverage: PolicyHoldCoverage,
+  primaryKey: string,
+  existingColumns: Set<string>,
+): { sql: string; params: unknown[]; ruleCount: number } {
+  const clauses: string[] = []
+  const params: unknown[] = []
+  let ruleCount = 0
+  if (coverage.recordRefs.length > 0) {
+    clauses.push(`\`${primaryKey}\` NOT IN (${coverage.recordRefs.map(() => "?").join(", ")})`)
+    params.push(...coverage.recordRefs)
+    ruleCount += coverage.recordRefs.length
+  }
+  for (const c of coverage.criteria) {
+    // Never interpolate an unvalidated identifier into SQL.
+    if (!existingColumns.has(c.field)) continue
+    clauses.push(`NOT (\`${c.field}\` <=> ?)`)
+    params.push(c.value)
+    ruleCount++
+  }
+  return { sql: clauses.length ? ` AND ${clauses.join(" AND ")}` : "", params, ruleCount }
+}
+
+/**
  * Execute one policy. When `dryRun` is true it only counts eligible records and
  * records nothing. Returns a structured outcome; never throws for an
  * expected-skip condition (paused / held / target missing / classification
@@ -779,6 +810,19 @@ export async function runPolicy(
   }
   const target = resolved.target
 
+  // 2b. Legal-hold gate (SPEC 72). A module- or record-type-scoped hold covers
+  //     the ENTIRE policy, so the sweep is skipped; record/criteria-scoped holds
+  //     carve out the individual held rows in step 4. The hold always wins.
+  const holdCoverage = await getPolicyHoldCoverage(tenantId, {
+    module: policy.module,
+    catalogKey: policy.catalogKey,
+    recordType: policy.recordType,
+  })
+  if (holdCoverage.fullyHeld) {
+    const names = holdCoverage.holdNames.length ? ` (${holdCoverage.holdNames.join(", ")})` : ""
+    return finalize(skip(policy.action, `Skipped — under an active legal hold${names}`))
+  }
+
   // 3. Classification gate for destructive deletes (SPEC 69 integration).
   if (policy.action === "delete") {
     const block = await isAutoDeleteBlockedByClassification(tenantId, entry.module, target.entity)
@@ -797,6 +841,8 @@ export async function runPolicy(
     tenantId,
   ])) as ExceptionRow[]
   const exc = buildExceptionClauses(excRows, target.primaryKey, columns)
+  const hold = buildHoldClauses(holdCoverage, target.primaryKey, columns)
+  const exemptRuleCount = excRows.length + hold.ruleCount
 
   const whereParts: string[] = [`\`${target.tenantColumn}\` = ?`, `\`${target.dateColumn}\` <= ?`]
   const whereParams: unknown[] = [tenantId, cutoffStr]
@@ -804,8 +850,8 @@ export async function runPolicy(
     whereParts.push(`\`${target.statusFilter.column}\` IN (${target.statusFilter.equals.map(() => "?").join(", ")})`)
     whereParams.push(...target.statusFilter.equals)
   }
-  const whereSql = `WHERE ${whereParts.join(" AND ")}${exc.sql}`
-  const allParams = [...whereParams, ...exc.params]
+  const whereSql = `WHERE ${whereParts.join(" AND ")}${exc.sql}${hold.sql}`
+  const allParams = [...whereParams, ...exc.params, ...hold.params]
 
   const idRows = (await query(
     `SELECT \`${target.primaryKey}\` AS __id FROM \`${target.table}\` ${whereSql}
@@ -848,7 +894,7 @@ export async function runPolicy(
         evaluated: ids.length,
         archived,
         deleted,
-        skippedExempt: excRows.length,
+        skippedExempt: exemptRuleCount,
         reason: policy.purgeAfterArchive ? "Archived and purged from hot table" : "Archived (originals retained)",
       })
     }
@@ -865,7 +911,7 @@ export async function runPolicy(
       evaluated: ids.length,
       archived: 0,
       deleted,
-      skippedExempt: excRows.length,
+      skippedExempt: exemptRuleCount,
       reason: "Permanently deleted",
     })
   } catch (err) {
@@ -875,7 +921,7 @@ export async function runPolicy(
       evaluated: ids.length,
       archived,
       deleted,
-      skippedExempt: excRows.length,
+      skippedExempt: exemptRuleCount,
       reason: (err as Error).message.slice(0, 480),
     })
   }

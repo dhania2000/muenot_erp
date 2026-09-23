@@ -9,6 +9,7 @@ import { AppShell } from "@/components/app-shell"
 import { ImpersonationBanner } from "@/components/platform/impersonation-banner"
 import { EmergencyAccessBanner } from "@/components/security/emergency-access-banner"
 import { buildWorkspaceNav } from "@/lib/workspace-nav"
+import { buildWorkspaceCommands } from "@/lib/workspace-commands"
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession()
@@ -22,12 +23,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const callPerms = await callPermissions(session)
 
   const navItems = await buildWorkspaceNav(session, settings)
+  const quickCommands = await buildWorkspaceCommands(session)
 
   return (
     <SettingsProvider initial={settings}>
       <SettingsBranding />
       <CallProvider currentUserId={session.userId} permissions={callPerms}>
-        <AppShell navItems={navItems} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
+        <AppShell navItems={navItems} quickCommands={quickCommands} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
           <ImpersonationBanner />
           {children}
         </AppShell>

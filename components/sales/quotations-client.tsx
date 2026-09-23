@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
+import { useNewRecordParam } from "@/lib/use-new-record-param"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -95,6 +96,12 @@ export function QuotationsClient({ canManage }: { canManage: boolean }) {
   const [search, setSearch] = useState("")
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<QuotationRow | null>(null)
+
+  // SPEC 82 — open the create dialog when the command palette deep-links here.
+  useNewRecordParam(() => {
+    setEditing(null)
+    setDialogOpen(true)
+  }, canManage)
   const [detailId, setDetailId] = useState<number | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
 

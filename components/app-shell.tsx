@@ -11,7 +11,7 @@ import { Bell, ChevronDown, Clock3, FileText, Loader2, LogOut, MapPin, MessageSq
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
 import { NotesPanel } from "@/components/notes-panel"
-import { CommandPalette } from "@/components/shared/command-palette"
+import { CommandPalette, type QuickCommand } from "@/components/shared/command-palette"
 import { ScreenMonitorProvider, useScreenMonitor } from "@/components/hr/screen-monitor-provider"
 import { AttendanceIdleTracker, clearAttendanceIdleTracking, flushAttendanceIdleBeforeClockOut } from "@/components/hr/attendance-idle-tracker"
 import type { IdleStatus } from "@/lib/attendance-idle-config"
@@ -537,12 +537,15 @@ function NavGroup({
 
 export function AppShell({
   navItems,
+  quickCommands,
   user,
   children,
   brandName,
   logoUrl,
 }: {
   navItems: NavItem[]
+  /** SPEC 82 — permission-gated create/action commands, built server-side. */
+  quickCommands: QuickCommand[]
   user: { name: string; email: string; role: "admin" | "employee" }
   children: React.ReactNode
   brandName?: string
@@ -615,23 +618,6 @@ export function AppShell({
       ? flattenChildren(item.label, item.children)
       : [{ label: item.label, href: item.href }],
   )
-
-  // SPEC 82 — permission-aware quick actions. Every href here is a page the
-  // sidebar already grants; admin-only destinations are gated on role so the
-  // palette never advertises a screen the viewer cannot open.
-  const isAdmin = user.role === "admin"
-  const quickCommands = [
-    ...(isAdmin
-      ? [
-          { label: "Manage users", href: "/admin/users", hint: "Administration" },
-          { label: "Roles & permissions", href: "/admin/roles", hint: "Administration" },
-          { label: "Workspace settings", href: "/admin/settings", hint: "Administration" },
-          { label: "Platform console", href: "/platform", hint: "Platform" },
-        ]
-      : []),
-    { label: "My profile", href: "/profile", hint: "Account" },
-    { label: "Messages", href: "/modules/messages", hint: "Communication" },
-  ]
 
   // SPEC 82 — global ⌘K / Ctrl+K shortcut to open the command palette.
   useEffect(() => {

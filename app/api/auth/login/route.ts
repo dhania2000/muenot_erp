@@ -9,10 +9,12 @@ import { getStoredRoles } from "@/lib/platform-roles"
 import { getPublicSettings } from "@/lib/settings/server"
 import { evaluateLogin } from "@/lib/user-lifecycle-core"
 import { consumeMfaChallenge, getLoginSnapshot } from "@/lib/user-lifecycle"
-import { createSession, newSessionId } from "@/lib/session-store"
+import { createSession, newSessionId, isKnownDevice } from "@/lib/session-store"
 import { requiresMfaByPolicy } from "@/lib/mfa-policy"
 import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/password-policy"
 import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
+import { recordSecurityEvent } from "@/lib/security-audit-store"
+import { evaluateAccessPolicies } from "@/lib/access-policy-store"
 
 type UserRow = {
   id: number
@@ -35,6 +37,12 @@ export async function POST(request: Request) {
     if (!email || !password) {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
     }
+
+    // Source IP (first hop of X-Forwarded-For, else X-Real-IP) and geo hint,
+    // used by SPEC 62 (IP allowlist) and SPEC 63 (access policy) enforcement.
+    const forwardedFor = request.headers.get("x-forwarded-for")
+    const requestIp = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
+    const requestCountry = request.headers.get("x-vercel-ip-country")
 
     if (!isDbConfigured()) {
       console.error(
@@ -61,14 +69,43 @@ export async function POST(request: Request) {
     const requireIpAllowlist = await getBool("security.ip_allowlist_enabled", false)
     if (requireIpAllowlist) {
       const tenantIdForIp = await resolveTenantIdForUser(user.id)
-      const forwardedFor = request.headers.get("x-forwarded-for")
-      const ipAddress = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
-      const ipCheck = await checkIpAllowlist(tenantIdForIp, ipAddress, user.role === "admin" ? "admin" : "all")
+      const ipCheck = await checkIpAllowlist(tenantIdForIp, requestIp, user.role === "admin" ? "admin" : "all")
       if (!ipCheck.allowed) {
-        return NextResponse.json(
-          { error: "Sign-in is not allowed from this network. Contact your administrator.", code: "IP_BLOCKED" },
-          { status: 403 },
-        )
+        // Emergency break-glass: an authorized platform Super Admin can sign in
+        // from a blocked network when the tenant has explicitly enabled it, so
+        // a misconfigured allowlist can never permanently lock out the
+        // operator who has to fix it. Every bypass is audited.
+        const emergencyBypass = await getBool("security.ip_allowlist_emergency_bypass", false)
+        const roles = emergencyBypass ? await getStoredRoles(user.id) : null
+        if (emergencyBypass && roles?.platformRole === "platform_super_admin") {
+          await recordSecurityEvent({
+            tenantId: tenantIdForIp,
+            category: "emergency_bypass",
+            action: "ip_allowlist_bypass",
+            outcome: "bypassed",
+            actorUserId: user.id,
+            actorName: user.name,
+            subjectEmail: user.email,
+            ipAddress: requestIp,
+            detail: { scope: user.role === "admin" ? "admin" : "all" },
+          })
+        } else {
+          await recordSecurityEvent({
+            tenantId: tenantIdForIp,
+            category: "ip_allowlist",
+            action: "sign_in_blocked",
+            outcome: "blocked",
+            actorUserId: user.id,
+            actorName: user.name,
+            subjectEmail: user.email,
+            ipAddress: requestIp,
+            detail: { matchedEntryId: ipCheck.matchedEntryId ?? null },
+          })
+          return NextResponse.json(
+            { error: "Sign-in is not allowed from this network. Contact your administrator.", code: "IP_BLOCKED" },
+            { status: 403 },
+          )
+        }
       }
     }
 
@@ -110,14 +147,56 @@ export async function POST(request: Request) {
       if (!decision.allowed) {
         return NextResponse.json({ error: decision.reason, code: decision.code }, { status: 403 })
       }
+
+      // SPEC 63 — conditional access policies. Evaluated after the password +
+      // lifecycle gates so a wrong password never reveals policy state. A
+      // matching Deny blocks sign-in outright; a matching "Require MFA"
+      // obligation forces the MFA challenge below even when org policy would
+      // not; "Require re-authentication" is inherently satisfied by this fresh
+      // sign-in.
+      const policyRoles = await getStoredRoles(user.id)
+      const policyTenantId = await resolveTenantIdForUser(user.id)
+      const deviceTrusted = await isKnownDevice(user.id, request.headers.get("user-agent"))
+      const policyDecision = await evaluateAccessPolicies(policyTenantId, {
+        userId: user.id,
+        email: user.email,
+        tenantRole: policyRoles?.tenantRole ?? (user.role === "admin" ? "tenant_admin" : "employee"),
+        ip: requestIp,
+        country: requestCountry,
+        mfaEnabled: snapshot.mfaEnabled,
+        deviceTrusted,
+      })
+      if (policyDecision.denied) {
+        await recordSecurityEvent({
+          tenantId: policyTenantId,
+          category: "access_policy",
+          action: "sign_in_denied",
+          outcome: "blocked",
+          actorUserId: user.id,
+          actorName: user.name,
+          subjectEmail: user.email,
+          ipAddress: requestIp,
+          detail: { policy: policyDecision.deniedByPolicy },
+        })
+        return NextResponse.json(
+          {
+            error: "Sign-in is blocked by an access policy. Contact your administrator.",
+            code: "ACCESS_POLICY_DENIED",
+          },
+          { status: 403 },
+        )
+      }
+
       // SPEC 14 — MFA challenge. When enabled, the password step alone is not
       // enough: without a code we ask the client to collect one (no session is
       // issued); with a code we verify a live TOTP or a one-time backup code.
-      const policyRequiresMfa = requiresMfaByPolicy({ role: user.role, mfaEnabled: snapshot.mfaEnabled, settings })
+      const policyRequiresMfa =
+        requiresMfaByPolicy({ role: user.role, mfaEnabled: snapshot.mfaEnabled, settings }) ||
+        policyDecision.requireMfa
       if (policyRequiresMfa && !snapshot.mfaEnabled) {
         return NextResponse.json({ error: "Your organization requires MFA enrollment before access is granted", code: "MFA_ENROLLMENT_REQUIRED" }, { status: 403 })
       }
-      if (decision.requiresMfa) {
+      if (decision.requiresMfa || policyDecision.requireMfa) {
         if (!mfaCode) {
           return NextResponse.json({ mfaRequired: true }, { status: 200 })
         }
@@ -174,13 +253,11 @@ export async function POST(request: Request) {
     // failure never blocks sign-in, since the JWT cookie alone still works.
     try {
       const concurrentLimit = await getNum("security.concurrent_session_limit", 0)
-      const forwardedFor = request.headers.get("x-forwarded-for")
-      const ipAddress = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
       await createSession({
         sessionId: sid,
         userId: user.id,
         tenantId: tenantId ?? null,
-        ipAddress,
+        ipAddress: requestIp,
         userAgent: request.headers.get("user-agent"),
         loginMethod: "password",
         expiresAt: new Date(Date.now() + durationSeconds * 1000),

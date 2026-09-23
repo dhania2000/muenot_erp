@@ -1,7 +1,9 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import useSWR from "swr"
 import { Copy, Pencil, Plus, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -67,6 +69,9 @@ type Policy = {
   enabled: boolean
 }
 
+const API = "/api/admin/security/access-policies"
+const fetcher = (url: string) => fetch(url).then((r) => r.json())
+
 function newCondition(): Condition {
   return { id: crypto.randomUUID(), field: CONDITION_FIELDS[0], operator: OPERATORS[0], value: "" }
 }
@@ -95,6 +100,18 @@ function effectBadgeClass(effect: Effect) {
   }
 }
 
+function toPayload(policy: Policy) {
+  return {
+    name: policy.name,
+    priority: policy.priority,
+    scope: policy.scope,
+    combinator: policy.combinator,
+    effect: policy.effect,
+    enabled: policy.enabled,
+    conditions: policy.conditions,
+  }
+}
+
 function PolicyPreview({ policy }: { policy: Policy }) {
   const conditionText = policy.conditions
     .filter((c) => c.value.trim() !== "" || c.field)
@@ -119,11 +136,15 @@ function PolicyPreview({ policy }: { policy: Policy }) {
 }
 
 export function AccessPolicyBuilder() {
-  const [policies, setPolicies] = useState<Policy[]>([])
+  const { data, isLoading, mutate } = useSWR<{ policies: Policy[] }>(API, fetcher)
   const [editing, setEditing] = useState<Policy | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
 
+  const policies = data?.policies ?? []
   const sorted = useMemo(() => [...policies].sort((a, b) => a.priority - b.priority), [policies])
+  const isPersisted = (id: string) => policies.some((p) => p.id === id)
 
   function openNew() {
     setEditing(emptyPolicy())
@@ -133,29 +154,81 @@ export function AccessPolicyBuilder() {
     setEditing({ ...p, conditions: p.conditions.map((c) => ({ ...c })) })
   }
 
-  function duplicate(p: Policy) {
-    setPolicies((all) => [
-      ...all,
-      { ...p, id: crypto.randomUUID(), name: `${p.name} (copy)`, conditions: p.conditions.map((c) => ({ ...c })) },
-    ])
+  async function duplicate(p: Policy) {
+    setBusyId(p.id)
+    try {
+      const res = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(toPayload({ ...p, name: `${p.name} (copy)` })),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to duplicate")
+      toast.success("Policy duplicated")
+      mutate()
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setBusyId(null)
+    }
   }
 
-  function toggleEnabled(id: string) {
-    setPolicies((all) => all.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)))
+  async function toggleEnabled(p: Policy) {
+    setBusyId(p.id)
+    // Optimistic update while the request is in flight.
+    mutate(
+      { policies: policies.map((x) => (x.id === p.id ? { ...x, enabled: !x.enabled } : x)) },
+      { revalidate: false },
+    )
+    try {
+      const res = await fetch(`${API}/${p.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(toPayload({ ...p, enabled: !p.enabled })),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to update")
+      mutate()
+    } catch (err) {
+      toast.error((err as Error).message)
+      mutate()
+    } finally {
+      setBusyId(null)
+    }
   }
 
-  function remove(id: string) {
-    setPolicies((all) => all.filter((p) => p.id !== id))
-    setDeletingId(null)
+  async function remove(id: string) {
+    setBusyId(id)
+    try {
+      const res = await fetch(`${API}/${id}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("Failed to delete")
+      toast.success("Policy deleted")
+      mutate()
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setBusyId(null)
+      setDeletingId(null)
+    }
   }
 
-  function save() {
+  async function save() {
     if (!editing) return
-    setPolicies((all) => {
-      const exists = all.some((p) => p.id === editing.id)
-      return exists ? all.map((p) => (p.id === editing.id ? editing : p)) : [...all, editing]
-    })
-    setEditing(null)
+    setSaving(true)
+    try {
+      const persisted = isPersisted(editing.id)
+      const res = await fetch(persisted ? `${API}/${editing.id}` : API, {
+        method: persisted ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(toPayload(editing)),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || "Failed to save policy")
+      toast.success(persisted ? "Policy updated" : "Policy created")
+      setEditing(null)
+      mutate()
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   function updateCondition(id: string, patch: Partial<Condition>) {
@@ -171,14 +244,19 @@ export function AccessPolicyBuilder() {
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
         <div>
           <CardTitle className="text-base">Conditional access policies</CardTitle>
-          <CardDescription>Spec 63 — evaluated in priority order. Codex will wire enforcement.</CardDescription>
+          <CardDescription>
+            Spec 63 — evaluated in priority order at sign-in. Allow/Deny and MFA/re-authentication obligations are
+            enforced by the login flow.
+          </CardDescription>
         </div>
         <Button size="sm" onClick={openNew} className="gap-1.5">
           <Plus className="size-3.5" /> New policy
         </Button>
       </CardHeader>
       <CardContent className="p-0">
-        {sorted.length === 0 ? (
+        {isLoading ? (
+          <div className="p-6 text-center text-sm text-muted-foreground">Loading…</div>
+        ) : sorted.length === 0 ? (
           <div className="p-6">
             <EmptyState icon={<Plus className="size-5" />} title="No conditional access policies yet">
               Create a policy to allow, deny, or require MFA/re-authentication based on role, location, device
@@ -223,13 +301,15 @@ export function AccessPolicyBuilder() {
                           variant="ghost"
                           size="icon"
                           aria-label={`Duplicate ${p.name}`}
+                          disabled={busyId === p.id}
                           onClick={() => duplicate(p)}
                         >
                           <Copy className="size-4" />
                         </Button>
                         <Switch
                           checked={p.enabled}
-                          onCheckedChange={() => toggleEnabled(p.id)}
+                          disabled={busyId === p.id}
+                          onCheckedChange={() => toggleEnabled(p)}
                           aria-label={`${p.enabled ? "Disable" : "Enable"} ${p.name}`}
                         />
                         <Button
@@ -253,7 +333,7 @@ export function AccessPolicyBuilder() {
       <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editing && policies.some((p) => p.id === editing.id) ? "Edit policy" : "New policy"}</DialogTitle>
+            <DialogTitle>{editing && isPersisted(editing.id) ? "Edit policy" : "New policy"}</DialogTitle>
             <DialogDescription>Define when this policy applies and what it does.</DialogDescription>
           </DialogHeader>
           {editing && (
@@ -324,7 +404,7 @@ export function AccessPolicyBuilder() {
                   </div>
                 </div>
 
-                {editing.conditions.map((c, i) => (
+                {editing.conditions.map((c) => (
                   <div key={c.id} className="flex flex-wrap items-end gap-2 rounded-md border p-2.5">
                     <div className="grid gap-1">
                       <Label htmlFor={`cond-field-${c.id}`} className="text-xs">
@@ -420,8 +500,8 @@ export function AccessPolicyBuilder() {
             <Button variant="outline" onClick={() => setEditing(null)}>
               Cancel
             </Button>
-            <Button onClick={save} disabled={!editing?.name.trim()}>
-              Save policy
+            <Button onClick={save} disabled={saving || !editing?.name.trim()}>
+              {saving ? "Saving…" : "Save policy"}
             </Button>
           </DialogFooter>
         </DialogContent>

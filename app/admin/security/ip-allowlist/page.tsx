@@ -36,10 +36,11 @@ const fetcher = (url: string) => fetch(url).then((r) => r.json())
 // SPEC 62 — IP allowlisting. Enforcement runs in app/api/auth/login before the
 // password check once security.ip_allowlist_enabled is on for the tenant.
 export default function IpAllowlistPage() {
-  const { data, isLoading, mutate } = useSWR<{ entries: IpAllowlistEntry[]; enabled: boolean }>(
-    "/api/admin/security/ip-allowlist",
-    fetcher,
-  )
+  const { data, isLoading, mutate } = useSWR<{
+    entries: IpAllowlistEntry[]
+    enabled: boolean
+    emergencyBypass: boolean
+  }>("/api/admin/security/ip-allowlist", fetcher)
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [label, setLabel] = useState("")

@@ -380,6 +380,8 @@ export type DocumentFilter = {
   status?: DocStatus
   search?: string
   sourceModule?: string
+  sourceEntityType?: string
+  sourceEntityId?: string
   ownerId?: number
   limit?: number
 }
@@ -406,6 +408,14 @@ export async function listDocuments(filter: DocumentFilter = {}): Promise<DmsDoc
   if (filter.sourceModule) {
     clauses.push("d.source_module = ?")
     extra.push(filter.sourceModule)
+  }
+  if (filter.sourceEntityType) {
+    clauses.push("d.source_entity_type = ?")
+    extra.push(filter.sourceEntityType)
+  }
+  if (filter.sourceEntityId) {
+    clauses.push("d.source_entity_id = ?")
+    extra.push(filter.sourceEntityId)
   }
   if (filter.ownerId != null) {
     clauses.push("d.owner_id = ?")

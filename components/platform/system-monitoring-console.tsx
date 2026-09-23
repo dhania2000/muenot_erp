@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
 const BASE = "/api/platform/system-monitoring"
 const VIEWS = ["dashboard", "logs", "incidents", "health", "alerts", "settings"] as const
@@ -12,6 +13,18 @@ const stamp = (value: unknown) => {
   const utc = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/.test(raw) ? `${raw.replace(" ", "T")}Z` : raw
   const date = new Date(utc)
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString()
+}
+
+function chartTrend(rows: Json[]) {
+  const buckets = new Map<string, { bucket: string; ERROR: number; CRITICAL: number; WARNING: number }>()
+  for (const row of rows) {
+    const bucket = String(row.bucket)
+    const item = buckets.get(bucket) || { bucket, ERROR: 0, CRITICAL: 0, WARNING: 0 }
+    const severity = String(row.severity)
+    if (severity === "ERROR" || severity === "CRITICAL" || severity === "WARNING") item[severity] += Number(row.count) || 0
+    buckets.set(bucket, item)
+  }
+  return [...buckets.values()].sort((a, b) => a.bucket.localeCompare(b.bucket))
 }
 
 export function SystemMonitoringConsole() {
@@ -65,7 +78,12 @@ export function SystemMonitoringConsole() {
     {!loading && view === "dashboard" && data && <>
       <div className="flex items-center gap-3"><label htmlFor="monitor-range">Range</label><select id="monitor-range" className="rounded border bg-background p-2" value={hours} onChange={(e) => setHours(Number(e.target.value))}>{[1, 6, 24, 168, 720].map((h) => <option key={h} value={h}>{h < 24 ? `${h} hour${h > 1 ? "s" : ""}` : `${h / 24} day${h > 24 ? "s" : ""}`}</option>)}</select><span className="text-sm text-muted-foreground">Environment: {data.environment} · System: {data.systemStatus}</span></div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{[["Open incidents", "openIncidents"], ["Critical incidents", "criticalIncidents"], ["Errors", "errors"], ["Warnings", "warnings"], ["Database errors", "databaseErrors"], ["WhatsApp errors", "whatsappErrors"], ["Failed APIs", "failedApiRequests"], ["Webhook failures", "webhookFailures"], ["Failed jobs", "failedJobs"]].map(([label, key]) => <div key={key} className="rounded-xl border bg-card p-4"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-2 text-3xl font-semibold">{Number(data.totals?.[key] || 0)}</p></div>)}</div>
-      <div className="grid gap-4 lg:grid-cols-2"><section className="rounded-xl border p-4"><h2 className="font-semibold">Errors over time</h2>{data.trend?.length ? data.trend.map((r: any, i: number) => <div key={i} className="flex justify-between border-b py-2 text-sm"><span>{r.bucket} · {r.severity}</span><span>{r.count}</span></div>) : <p className="py-4 text-muted-foreground">No events in this range.</p>}</section><section className="rounded-xl border p-4"><h2 className="font-semibold">By service</h2>{data.services?.length ? data.services.map((r: any) => <div key={r.service} className="flex justify-between border-b py-2 text-sm"><span>{r.service}</span><span>{r.count}</span></div>) : <p className="py-4 text-muted-foreground">No service errors in this range.</p>}</section></div>
+      <div className="grid gap-4 lg:grid-cols-2"><section className="rounded-xl border p-4"><h2 className="font-semibold">Events over time</h2>{data.trend?.length ? <div className="h-72 w-full" role="img" aria-label="Warning, error and critical events by hour"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartTrend(data.trend)}><CartesianGrid strokeDasharray="3 3" opacity={0.2} /><XAxis dataKey="bucket" hide /><YAxis allowDecimals={false} /><Tooltip /><Bar dataKey="WARNING" stackId="events" fill="#d97706" /><Bar dataKey="ERROR" stackId="events" fill="#dc2626" /><Bar dataKey="CRITICAL" stackId="events" fill="#7c2d12" /></BarChart></ResponsiveContainer></div> : <p className="py-4 text-muted-foreground">No events in this range.</p>}</section><section className="rounded-xl border p-4"><h2 className="font-semibold">Events by service</h2>{data.services?.length ? <div className="h-72 w-full" role="img" aria-label="Event counts by service"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.services}><CartesianGrid strokeDasharray="3 3" opacity={0.2} /><XAxis dataKey="service" /><YAxis allowDecimals={false} /><Tooltip /><Bar dataKey="count" fill="#7c3aed" /></BarChart></ResponsiveContainer></div> : <p className="py-4 text-muted-foreground">No service errors in this range.</p>}</section></div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <section className="rounded-xl border p-4"><h2 className="font-semibold">Top error codes</h2>{data.errorCodes?.length ? data.errorCodes.map((item: any) => <div key={item.code} className="flex justify-between gap-3 border-b py-2 text-sm"><span>{item.code}</span><span>{item.count}</span></div>) : <p className="py-4 text-muted-foreground">No error codes.</p>}</section>
+        <section className="rounded-xl border p-4"><h2 className="font-semibold">Affected tenants</h2>{data.tenants?.length ? data.tenants.map((item: any) => <div key={item.tenantId} className="flex justify-between gap-3 border-b py-2 text-sm"><span>Tenant #{item.tenantId}</span><span>{item.count} events</span></div>) : <p className="py-4 text-muted-foreground">No tenant-linked events.</p>}</section>
+        <section className="rounded-xl border p-4"><h2 className="font-semibold">Failed API requests</h2>{data.apiFailures?.length ? <div className="h-64 w-full" role="img" aria-label="Failed API requests over time"><ResponsiveContainer width="100%" height="100%"><BarChart data={[...data.apiFailures].reverse()}><CartesianGrid strokeDasharray="3 3" opacity={0.2} /><XAxis dataKey="bucket" hide /><YAxis allowDecimals={false} /><Tooltip /><Bar dataKey="count" fill="#ef4444" /></BarChart></ResponsiveContainer></div> : <p className="py-4 text-muted-foreground">No failed API requests.</p>}</section>
+      </div>
     </>}
     {!loading && view === "logs" && data && <>
       <div className="flex flex-wrap gap-2">{(["search", "service", "tenantId", "requestId"] as const).map((key) => <input key={key} aria-label={key} placeholder={key} className="rounded border bg-background p-2" value={filters[key]} onChange={(e) => setFilters({ ...filters, [key]: e.target.value })} />)}<select aria-label="Severity" className="rounded border bg-background p-2" value={filters.severity} onChange={(e) => setFilters({ ...filters, severity: e.target.value })}><option value="">All severities</option>{["WARNING", "ERROR", "CRITICAL", "INFO", "DEBUG"].map((s) => <option key={s}>{s}</option>)}</select><button className="rounded bg-primary px-3 py-2 text-primary-foreground" onClick={() => { setCursor(null); setQueryFilters(filters) }}>Apply filters</button><a className="rounded border px-3 py-2" href={`${BASE}/export?${new URLSearchParams({ hours: String(hours), ...Object.fromEntries(Object.entries(queryFilters).filter(([, value]) => Boolean(value))) })}`}>Export CSV (max 100)</a></div>

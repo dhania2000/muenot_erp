@@ -84,10 +84,14 @@ export async function dashboard(hours: number) {
      FROM system_logs WHERE environment = ? AND created_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR)`, [env, hours],
   )
   const [incidentRows] = await pool.query<any[]>("SELECT COUNT(*) AS openIncidents, SUM(severity = 'CRITICAL') AS criticalIncidents FROM system_incidents WHERE environment = ? AND status IN ('OPEN','ACKNOWLEDGED','INVESTIGATING')", [env])
-  const [trend] = await pool.query<any[]>(`SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:00') AS bucket, severity, COUNT(*) AS count FROM system_logs WHERE environment = ? AND created_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR) GROUP BY bucket, severity ORDER BY bucket DESC LIMIT 200`, [env, hours])
+  const bucketFormat = hours <= 24 ? "%Y-%m-%d %H:00" : "%Y-%m-%d"
+  const [trend] = await pool.query<any[]>(`SELECT DATE_FORMAT(created_at, '${bucketFormat}') AS bucket, severity, COUNT(*) AS count FROM system_logs WHERE environment = ? AND created_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR) GROUP BY bucket, severity ORDER BY bucket DESC LIMIT 200`, [env, hours])
   const [services] = await pool.query<any[]>(`SELECT service, COUNT(*) AS count FROM system_logs WHERE environment = ? AND created_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR) GROUP BY service ORDER BY count DESC LIMIT 20`, [env, hours])
+  const [errorCodes] = await pool.query<any[]>(`SELECT error_code AS code, COUNT(*) AS count FROM system_logs WHERE environment = ? AND error_code IS NOT NULL AND created_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR) GROUP BY error_code ORDER BY count DESC LIMIT 10`, [env, hours])
+  const [tenants] = await pool.query<any[]>(`SELECT tenant_id AS tenantId, COUNT(*) AS count FROM system_logs WHERE environment = ? AND tenant_id IS NOT NULL AND created_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR) GROUP BY tenant_id ORDER BY count DESC LIMIT 10`, [env, hours])
+  const [apiFailures] = await pool.query<any[]>(`SELECT DATE_FORMAT(created_at, '${bucketFormat}') AS bucket, COUNT(*) AS count FROM system_logs WHERE environment = ? AND route IS NOT NULL AND http_status >= 500 AND created_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR) GROUP BY bucket ORDER BY bucket DESC LIMIT 100`, [env, hours])
   const [failedJobs] = await pool.query<any[]>("SELECT COUNT(*) AS n FROM platform_cron_runs WHERE status = 'failed' AND started_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? HOUR)", [hours]).catch(() => [[{ n: 0 }]] as any)
-  return { environment: env, hours, systemStatus: system.overall, totals: { ...totals[0], ...incidentRows[0], failedJobs: failedJobs[0]?.n || 0 }, trend, services }
+  return { environment: env, hours, systemStatus: system.overall, totals: { ...totals[0], ...incidentRows[0], failedJobs: failedJobs[0]?.n || 0 }, trend, services, errorCodes, tenants, apiFailures }
 }
 
 export async function health() {

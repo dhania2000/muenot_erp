@@ -51,6 +51,8 @@ Fingerprints use environment, service, component, operation, error code (or norm
 
 All `/api/platform/system-monitoring/*` routes require `platform_super_admin` server-side. Resources: `dashboard`, `logs`, `logs/:id`, `incidents`, `incidents/:id`, `incidents/:id/action`, `health`, `alerts`, `settings`, `export`. Log and incident lists use descending ID cursors and a maximum page size of 100. CSV export is capped at 100 rows per call and audited. Incident status changes, settings changes, and rule creation are audited. No tenant-facing monitoring API exists.
 
+The dashboard charts query persisted events for 1h, 6h, 24h, 7d or 30d. Short ranges aggregate by hour; 7d/30d aggregate by day so the visual is not silently truncated by the result cap. Counts cover captured application events, not every request processed by the ERP.
+
 The health view combines the existing real database/auth/runtime checks with configuration-presence checks for WhatsApp, SMTP, FCM, and cron. A missing optional integration is UNKNOWN, not a fabricated failure. It does not verify an external provider's actual availability. The existing job-monitoring and scheduler screens continue to present authoritative job-run detail.
 
 ## Retention and troubleshooting

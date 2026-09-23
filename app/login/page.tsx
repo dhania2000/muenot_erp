@@ -120,8 +120,8 @@ export default async function LoginPage({
           <div className="mt-8 flex flex-col gap-2 border-t border-border pt-6 text-center">
             <p className="text-sm text-muted-foreground">
               Setting up {brandName} for your company?{" "}
-              <Link href="/signup" className="font-medium text-primary hover:underline">
-                Create a business account
+          <Link href="/signup" className="whitespace-nowrap font-medium text-primary hover:underline">
+            Create a business account
               </Link>
             </p>
             <p className="text-xs text-muted-foreground">

@@ -20,7 +20,6 @@ export type SecurityEventCategory =
   | "emergency_bypass"
   | "temporary_access"
   | "break_glass"
-  | "access_review"
 
 export type SecurityEventOutcome =
   | "allowed"
@@ -36,8 +35,6 @@ export type SecurityEventOutcome =
   | "revoked"
   | "expired"
   | "activated"
-  | "success"
-  | "warning"
 
 export type SecurityAuditEvent = {
   id: number

@@ -4,7 +4,7 @@ import { ApplicationError, getRegistrationStatus } from "@/lib/shopkeeper-applic
 
 export const runtime = "nodejs"
 export async function GET(request: Request) {
-  const limit = checkRateLimit(`shopkeeper-registration-status:${getClientIp(request)}`, { max: 60, windowMs: 15 * 60_000 })
+  const limit = await checkRateLimit(`shopkeeper-registration-status:${getClientIp(request)}`, { max: 60, windowMs: 15 * 60_000 })
   if (!limit.allowed) return mobileJson({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(limit.retryAfter) } })
   const token = /^Registration ([A-Za-z0-9_-]+)$/.exec(request.headers.get("authorization") || "")?.[1] ?? ""
   try { return mobileJson(await getRegistrationStatus(token)) }

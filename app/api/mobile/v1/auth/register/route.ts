@@ -5,7 +5,7 @@ import { ApplicationError, registerShopkeeper, type PublicRegistration } from "@
 export const runtime = "nodejs"
 export async function POST(request: Request) {
   const ip = getClientIp(request)
-  const limit = checkRateLimit(`shopkeeper-register:${ip}`, { max: 5, windowMs: 60 * 60_000 })
+  const limit = await checkRateLimit(`shopkeeper-register:${ip}`, { max: 5, windowMs: 60 * 60_000 })
   if (!limit.allowed) return mobileJson({ error: "Too many registration attempts.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(limit.retryAfter) } })
   const raw = await request.text().catch(() => "")
   if (raw.length > 8192) return mobileJson({ error: "Request is too large.", code: "invalid_request" }, { status: 413 })

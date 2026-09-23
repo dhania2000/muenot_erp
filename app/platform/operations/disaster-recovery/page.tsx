@@ -1,80 +1,34 @@
-import { LifeBuoy } from "lucide-react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { requirePlatformStaff, requirePlatformSuperAdmin } from "@/lib/platform-guard"
+import { DisasterRecoveryConsole } from "@/components/platform/disaster-recovery-console"
 
-// SPEC 76 — Disaster Recovery (UI). Readiness is never claimed without
-// supporting data — every service reports UNKNOWN until a drill/backup
-// dependency actually exists.
-const SERVICES = [
-  { service: "Primary database", rpo: "—", rto: "—", method: "—", backupDependency: "Backups: NOT CONFIGURED", failover: "—", lastDrill: "—", lastRestoreTest: "—", readiness: "Unknown" },
-  { service: "File / object storage", rpo: "—", rto: "—", method: "—", backupDependency: "Backups: NOT CONFIGURED", failover: "—", lastDrill: "—", lastRestoreTest: "—", readiness: "Unknown" },
-  { service: "Application tier", rpo: "—", rto: "—", method: "—", backupDependency: "N/A (stateless)", failover: "—", lastDrill: "—", lastRestoreTest: "—", readiness: "Unknown" },
-]
+export const dynamic = "force-dynamic"
 
-export default function DisasterRecoveryPage() {
+// SPEC 76 — Disaster Recovery. Readiness is DERIVED from the live SPEC 75 backup
+// engine (recovery-point recency, restore verification) and real drill history —
+// never asserted. Platform staff can view; super admins can edit objectives,
+// run drills and drive the incident workflow.
+export default async function DisasterRecoveryPage() {
+  const staff = await requirePlatformStaff()
+  if (!staff.ok) {
+    return (
+      <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-sm text-destructive">
+        {staff.reason}. Platform staff privileges are required to view disaster recovery.
+      </div>
+    )
+  }
+  const manage = await requirePlatformSuperAdmin()
+
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Disaster recovery</h1>
         <p className="text-sm text-muted-foreground">
-          Recovery objectives and readiness per service. Readiness is reported honestly — it cannot show
-          &quot;ready&quot; without a completed drill and a configured backup dependency.
+          Recovery objectives (RPO/RTO), procedures and readiness per critical service. Readiness is reported
+          honestly — a service cannot show &quot;ready&quot; without a recent recovery point, a verified restore
+          and a passing drill.
         </p>
       </header>
-
-      <Card>
-        <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-2">
-            <LifeBuoy className="size-4 text-muted-foreground" />
-            Service recovery plan
-          </CardTitle>
-          <CardDescription>RPO/RTO, failover method, and last verified drill per service.</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Service</TableHead>
-                <TableHead>RPO</TableHead>
-                <TableHead>RTO</TableHead>
-                <TableHead>Recovery method</TableHead>
-                <TableHead>Backup dependency</TableHead>
-                <TableHead>Failover</TableHead>
-                <TableHead>Last drill</TableHead>
-                <TableHead>Last restore test</TableHead>
-                <TableHead className="text-right">Readiness</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {SERVICES.map((s) => (
-                <TableRow key={s.service}>
-                  <TableCell className="text-sm font-medium">{s.service}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{s.rpo}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{s.rto}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{s.method}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{s.backupDependency}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{s.failover}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{s.lastDrill}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{s.lastRestoreTest}</TableCell>
-                  <TableCell className="text-right">
-                    <Badge variant="outline" className="text-[10px]">
-                      {s.readiness}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <DisasterRecoveryConsole canManage={manage.ok} />
     </div>
   )
 }

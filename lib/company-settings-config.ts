@@ -57,6 +57,14 @@ const rawSections: Omit<SettingSection, "module" | "submodule">[] = [
       { key: "company.logo", label: "Company Logo URL", type: "url", placeholder: "https://.../logo.png", full: true },
       { key: "company.login_logo", label: "Login Screen Logo URL", type: "url", placeholder: "https://.../login-logo.png", full: true },
       { key: "company.favicon", label: "Favicon URL", type: "url", placeholder: "https://.../favicon.ico", full: true },
+      {
+        key: "company.custom_domain",
+        label: "Custom Domain",
+        type: "text",
+        placeholder: "portal.acme.com",
+        help: "Point this hostname at the app via CNAME. The login screen resolves branding from it before sign-in.",
+        full: true,
+      },
     ],
   },
   {
@@ -319,6 +327,29 @@ const rawSections: Omit<SettingSection, "module" | "submodule">[] = [
       { key: "theme.primary_color", label: "Primary Color", type: "color", default: "#6d28d9" },
       { key: "theme.sidebar_color", label: "Sidebar Color", type: "color", default: "#0f172a" },
       { key: "theme.login_background", label: "Login Background URL", type: "url", full: true },
+    ],
+  },
+  {
+    id: "email_branding",
+    label: "Email Branding",
+    icon: "Mail",
+    description: "How outbound emails look to your customers.",
+    fields: [
+      { key: "email.brand_logo", label: "Email Logo URL", type: "url", placeholder: "https://.../email-logo.png", full: true },
+      { key: "email.brand_color", label: "Email Header Color", type: "color", default: "#6d28d9" },
+      { key: "email.button_color", label: "Email Button Color", type: "color", default: "#6d28d9" },
+      { key: "email.footer_text", label: "Email Footer Text", type: "textarea", full: true, placeholder: "© Acme Pvt Ltd. All rights reserved." },
+    ],
+  },
+  {
+    id: "pdf_branding",
+    label: "Document Branding",
+    icon: "FileText",
+    description: "Branding applied to generated PDFs such as invoices.",
+    fields: [
+      { key: "pdf.brand_logo", label: "PDF Logo URL", type: "url", placeholder: "https://.../pdf-logo.png", full: true },
+      { key: "pdf.accent_color", label: "PDF Accent Color", type: "color", default: "#6d28d9" },
+      { key: "pdf.footer_text", label: "PDF Footer Text", type: "textarea", full: true, placeholder: "Thank you for your business." },
     ],
   },
   {

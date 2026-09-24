@@ -165,6 +165,7 @@ function mapAudit(r: any): DmsAuditEntry {
     action: r.action,
     detail: r.detail ?? null,
     userId: r.user_id == null ? null : Number(r.user_id),
+    shareId: r.share_id == null ? null : Number(r.share_id),
     createdAt: r.created_at ?? null,
   }
 }

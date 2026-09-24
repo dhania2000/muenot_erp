@@ -143,5 +143,7 @@ export type DmsAuditEntry = {
   action: string
   detail: string | null
   userId: number | null
+  /** SPEC 89 — set when the entry records access against a specific share link. */
+  shareId: number | null
   createdAt: string | null
 }

@@ -36,6 +36,7 @@ import {
   Send,
   Clock,
   ShieldCheck,
+  Lock,
 } from "lucide-react"
 import type {
   DmsDocument,
@@ -48,7 +49,7 @@ import type {
   DmsTag,
 } from "@/lib/dms/types"
 import type { AccessLevel, DocWorkflowType } from "@/lib/dms/model"
-import { canPerform, DOC_WORKFLOW_TYPES, workflowLabel } from "@/lib/dms/model"
+import { canPerform, DOC_WORKFLOW_TYPES, workflowLabel, recipientTypeLabel } from "@/lib/dms/model"
 
 type DetailResponse = {
   document: DmsDocument
@@ -681,8 +682,25 @@ function SharingTab({
   onChanged: () => void
 }) {
   const [access, setAccess] = useState("view")
+  const [recipientType, setRecipientType] = useState("link")
+  const [recipient, setRecipient] = useState("")
+  const [label, setLabel] = useState("")
+  const [password, setPassword] = useState("")
+  const [maxDownloads, setMaxDownloads] = useState("")
   const [expiresAt, setExpiresAt] = useState("")
   const [busy, setBusy] = useState(false)
+
+  const needsRecipient = recipientType !== "link"
+  const recipientLabel =
+    recipientType === "internal" ? "User ID" : recipientType === "team" ? "Role / team" : "Recipient email"
+
+  function reset() {
+    setRecipient("")
+    setLabel("")
+    setPassword("")
+    setMaxDownloads("")
+    setExpiresAt("")
+  }
 
   async function create() {
     setBusy(true)
@@ -690,12 +708,20 @@ function SharingTab({
       const res = await fetch(`/api/dms/documents/${docId}/shares`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ access, expiresAt: expiresAt || null }),
+        body: JSON.stringify({
+          access,
+          recipientType,
+          recipient: needsRecipient ? recipient.trim() : null,
+          label: label.trim() || null,
+          password: password || null,
+          maxDownloads: maxDownloads ? Number(maxDownloads) : null,
+          expiresAt: expiresAt || null,
+        }),
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body?.error || "Could not create link")
       toast.success("Share link created")
-      setExpiresAt("")
+      reset()
       onChanged()
     } catch (err) {
       toast.error((err as Error).message)
@@ -730,6 +756,26 @@ function SharingTab({
       <div className="grid gap-3 rounded-lg border p-3">
         <div className="grid grid-cols-2 gap-2">
           <div className="grid gap-1.5">
+            <Label className="text-xs">Share with</Label>
+            <Select
+              value={recipientType}
+              onValueChange={(v) => {
+                setRecipientType(v)
+                setRecipient("")
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="link">Anyone with link</SelectItem>
+                <SelectItem value="internal">Internal user</SelectItem>
+                <SelectItem value="team">Team / role</SelectItem>
+                <SelectItem value="external">External party</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
             <Label className="text-xs">Access</Label>
             <Select value={access} onValueChange={setAccess}>
               <SelectTrigger>
@@ -741,12 +787,68 @@ function SharingTab({
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        {needsRecipient && (
+          <div className="grid gap-1.5">
+            <Label className="text-xs">{recipientLabel}</Label>
+            <Input
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder={
+                recipientType === "external"
+                  ? "name@example.com"
+                  : recipientType === "team"
+                    ? "admin"
+                    : "42"
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {recipientType === "internal"
+                ? "Only this signed-in user can open the link."
+                : recipientType === "team"
+                  ? "Only signed-in users with this role can open the link."
+                  : "Captured for the audit trail. External parties still open via the token."}
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="grid gap-1.5">
+            <Label className="text-xs">Password (optional)</Label>
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Require a password"
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label className="text-xs">Max downloads (optional)</Label>
+            <Input
+              type="number"
+              min={1}
+              value={maxDownloads}
+              onChange={(e) => setMaxDownloads(e.target.value)}
+              placeholder="Unlimited"
+              disabled={access !== "download"}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="grid gap-1.5">
+            <Label className="text-xs">Label (optional)</Label>
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Q3 board pack" />
+          </div>
           <div className="grid gap-1.5">
             <Label className="text-xs">Expires (optional)</Label>
             <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
           </div>
         </div>
-        <Button onClick={create} disabled={busy} className="w-fit">
+
+        <Button onClick={create} disabled={busy || (needsRecipient && !recipient.trim())} className="w-fit">
           <Link2 className="mr-1.5 size-4" /> Create link
         </Button>
       </div>
@@ -758,16 +860,29 @@ function SharingTab({
           {activeShares.map((s) => (
             <div key={s.id} className="flex items-center gap-2 rounded-lg border p-3">
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline" className="capitalize">
-                    {s.access}
+                    {s.access === "download" ? "download" : "view only"}
                   </Badge>
+                  <Badge variant="secondary" className="text-xs">
+                    {recipientTypeLabel(s.recipientType)}
+                  </Badge>
+                  {s.hasPassword && (
+                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <Lock className="size-3" /> password
+                    </span>
+                  )}
                   {s.expiresAt && (
                     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                       <Clock className="size-3" /> expires {formatDate(s.expiresAt)}
                     </span>
                   )}
-                  <span className="text-xs text-muted-foreground">{s.downloadCount} opens</span>
+                </div>
+                {s.label && <div className="mt-1 text-xs font-medium">{s.label}</div>}
+                <div className="mt-0.5 text-xs text-muted-foreground">
+                  {s.viewCount} views · {s.downloadCount}
+                  {s.maxDownloads != null ? `/${s.maxDownloads}` : ""} downloads
+                  {s.recipient ? ` · ${s.recipient}` : ""}
                 </div>
                 <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{s.url}</div>
               </div>

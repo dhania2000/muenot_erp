@@ -2,18 +2,22 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { DEFAULT_LANGUAGE, getLanguage, isSupportedLanguage } from '@/lib/i18n/languages'
+import { localeForLanguage } from '@/lib/i18n/locale'
 
 const COOKIE_NAME = 'app_lang'
 const STORAGE_KEY = 'app_lang'
 
 type LanguageContextValue = {
   language: string
+  /** BCP-47 locale derived from the active language, for `Intl` formatting. */
+  locale: string
   dir: 'ltr' | 'rtl'
   setLanguage: (code: string) => void
 }
 
 const LanguageContext = createContext<LanguageContextValue>({
   language: DEFAULT_LANGUAGE,
+  locale: localeForLanguage(DEFAULT_LANGUAGE),
   dir: 'ltr',
   setLanguage: () => {},
 })

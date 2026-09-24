@@ -274,6 +274,12 @@ export const TENANT_OWNED_TABLES = [
   "vendor_portal_access",
   "vendor_portal_items",
   "vendor_portal_messages",
+  // SPEC 159 — Multi-Currency. Per-tenant exchange-rate history (QUOTE->BASE,
+  // one row per pair per date) and the FX gain/loss ledger. Each tenant
+  // maintains and converts against its own rates; a rate or gain/loss row is
+  // never visible to another tenant.
+  "currency_exchange_rates",
+  "currency_fx_gain_loss",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

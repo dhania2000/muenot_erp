@@ -4,7 +4,7 @@ import type { PoolConnection } from "mysql2/promise"
 import { query, withTransaction } from "@/lib/db"
 import { fingerprint } from "@/lib/job-idempotency"
 import { classifyJobFailure } from "@/lib/job-retry-policy"
-import { CHANNELS, defaultEnabled, renderTemplate, validateNotice, type Channel, type Notice } from "./model"
+import { CHANNELS, defaultEnabled, defaultFrequency, FREQUENCIES, PRIORITIES, renderTemplate, resolveDelivery, validateNotice, type Channel, type Frequency, type Notice } from "./model"
 import { ensureNotificationEngineSchema } from "./schema"
 import { providerFor } from "./providers"
 async function rows(c:PoolConnection,sql:string,args:unknown[]=[]):Promise<any[]>{const [r]=await c.query(sql,args);return r as any[]}
@@ -15,7 +15,7 @@ export async function enqueueNotification(c:PoolConnection,n:Notice):Promise<num
   const [user]=await rows(c,"SELECT id FROM users WHERE tenant_id=? AND id=? AND status='active'",[n.tenantId,n.userId])
   if(!user)throw new Error("Recipient is not an active member of this tenant")
   const hash=fingerprint({userId:n.userId,title:n.title,body:n.body,link:n.link??null,priority:n.priority??5,at:n.at??null,context:n.context??null})
-  await c.query("INSERT INTO notification_deliveries (tenant_id,user_id,channel,request_key,request_hash,title,body,link,priority,available_at,source_context) VALUES (?,?,?,?,?,?,?,?,?,COALESCE(?,UTC_TIMESTAMP()),?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)",[n.tenantId,n.userId,n.channel,n.key,hash,n.title,n.body,n.link??null,n.priority??5,n.at?new Date(n.at).toISOString().slice(0,19).replace("T"," "):null,n.context?JSON.stringify(n.context):null])
+  await c.query("INSERT INTO notification_deliveries (tenant_id,user_id,channel,request_key,request_hash,title,body,link,priority,mandatory,available_at,source_context) VALUES (?,?,?,?,?,?,?,?,?,?,COALESCE(?,UTC_TIMESTAMP()),?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)",[n.tenantId,n.userId,n.channel,n.key,hash,n.title,n.body,n.link??null,n.priority??5,n.mandatory?1:0,n.at?new Date(n.at).toISOString().slice(0,19).replace("T"," "):null,n.context?JSON.stringify(n.context):null])
   const [d]=await rows(c,"SELECT id,request_hash FROM notification_deliveries WHERE tenant_id=? AND channel=? AND request_key=? FOR UPDATE",[n.tenantId,n.channel,n.key])
   if(d.request_hash!==hash)throw new Error("Notification key already used with different content")
   return Number(d.id)
@@ -53,13 +53,31 @@ export async function processNotification(id:number) {
     const [due]=await rows(c,"SELECT id FROM notification_deliveries WHERE id=? AND available_at<=UTC_TIMESTAMP()",[id])
     if(!due)return null
     const [user]=await rows(c,"SELECT id,email FROM users WHERE tenant_id=? AND id=? AND status='active'",[d.tenant_id,d.user_id])
-    const [pref]=await rows(c,"SELECT enabled,destination FROM notification_preferences WHERE tenant_id=? AND user_id=? AND channel=?",[d.tenant_id,d.user_id,d.channel])
-    if(!user||!(pref?!!pref.enabled:defaultEnabled(d.channel))) {
+    if(!user) {
       await c.query("UPDATE notification_deliveries SET status='skipped',error_code='recipient_or_preference' WHERE id=?",[id]);await log(c,d,"skipped");return null
+    }
+    const context=typeof d.source_context==="string"?JSON.parse(d.source_context):d.source_context??{}
+    const moduleKey=typeof context.moduleKey==="string"?context.moduleKey:null
+    const [pref]=await rows(c,"SELECT enabled,destination,min_priority,frequency FROM notification_preferences WHERE tenant_id=? AND user_id=? AND channel=?",[d.tenant_id,d.user_id,d.channel])
+    const [modPref]=moduleKey?await rows(c,"SELECT enabled FROM notification_module_prefs WHERE tenant_id=? AND user_id=? AND module_key=?",[d.tenant_id,d.user_id,moduleKey]):[undefined]
+    const decision=resolveDelivery({
+      mandatory:!!d.mandatory,
+      priority:Number(d.priority),
+      channelEnabled:pref?!!pref.enabled:defaultEnabled(d.channel),
+      moduleEnabled:modPref?!!modPref.enabled:true,
+      minPriority:pref?Number(pref.min_priority):0,
+      frequency:(pref?.frequency as Frequency)??defaultFrequency(d.channel),
+      createdAt:new Date(d.created_at),
+      now:new Date(),
+    })
+    if(decision.action==="skip") {
+      await c.query("UPDATE notification_deliveries SET status='skipped',error_code=? WHERE id=?",[decision.reason.slice(0,80),id]);await log(c,d,"skipped");return null
+    }
+    if(decision.action==="defer") {
+      await c.query("UPDATE notification_deliveries SET available_at=? WHERE id=?",[decision.at.toISOString().slice(0,19).replace("T"," "),id]);await log(c,d,"deferred");return null
     }
     d.attempts=Number(d.attempts)+1
     if(d.channel==="in_app") {
-      const context=typeof d.source_context==="string"?JSON.parse(d.source_context):d.source_context??{}
       const [r]=await c.query<any>("INSERT INTO notifications (user_id,actor_id,actor_name,module_key,group_slug,action,title,body,link,entity_table,entity_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",[d.user_id,context.actorId??null,context.actorName?.slice(0,150)??null,context.moduleKey?.slice(0,80)??"notifications",context.groupSlug?.slice(0,40)??null,context.action?.slice(0,20)??"create",d.title,d.body.slice(0,500),d.link,context.entityTable?.slice(0,80)??"notification_deliveries",context.entityId?.slice(0,40)??String(id)])
       await c.query("UPDATE notification_deliveries SET status='delivered',attempts=?,result_id=? WHERE id=?",[d.attempts,String(r.insertId),id]);await log(c,d,"delivered");return null
     }

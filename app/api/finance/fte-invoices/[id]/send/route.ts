@@ -68,7 +68,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   const [settings, bank] = await Promise.all([getSettings(), loadBank()])
-  const company = companyFromSettings(settings)
+  const company = await companyFromSettings(settings)
   const pdf = buildFteInvoicePdf(inv, company, bank)
 
   const invoiceNo = inv.fte_invoice_id || `#${inv.id}`

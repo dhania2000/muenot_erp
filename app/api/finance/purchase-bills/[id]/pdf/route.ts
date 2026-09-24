@@ -15,7 +15,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (!bill) return NextResponse.json({ error: "Bill not found" }, { status: 404 })
 
   const settings = await getSettings()
-  const pdf = buildPurchaseBillPdf(bill, companyFromSettings(settings))
+  const pdf = buildPurchaseBillPdf(bill, await companyFromSettings(settings))
 
   const filename = `${bill.bill_id || bill.po_number || "purchase-bill"}.pdf`
   const disposition = req.nextUrl.searchParams.get("download") === "1" ? "attachment" : "inline"

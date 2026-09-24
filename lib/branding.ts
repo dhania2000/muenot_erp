@@ -96,13 +96,19 @@ function escapeHtml(s: string): string {
 export function renderBrandedEmail(
   bodyHtml: string,
   branding: TenantBranding,
-  opts: { title?: string } = {},
+  opts: { title?: string; poweredBy?: string } = {},
 ): string {
   const b = branding.email
   const title = escapeHtml(opts.title ?? branding.companyName)
   const logoBlock = b.logo
     ? `<img src="${escapeHtml(b.logo)}" alt="${escapeHtml(branding.companyName)}" height="40" style="height:40px;max-height:40px;border:0;display:block" />`
     : `<span style="color:#ffffff;font-size:20px;font-weight:700;">${escapeHtml(branding.companyName)}</span>`
+
+  // SPEC 156: vendor attribution is appended only when white-label has NOT
+  // removed it (callers pass an empty/undefined string to hide it).
+  const poweredBy = opts.poweredBy?.trim()
+    ? `<div style="margin-top:6px;color:#aeb6c4;font-size:11px;">${escapeHtml(opts.poweredBy.trim())}</div>`
+    : ""
 
   return `<!doctype html>
 <html>
@@ -113,7 +119,7 @@ export function renderBrandedEmail(
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
         <tr><td style="background:${escapeHtml(b.headerColor)};padding:20px 28px;">${logoBlock}</td></tr>
         <tr><td style="padding:28px;font-size:15px;line-height:1.6;">${bodyHtml}</td></tr>
-        <tr><td style="padding:18px 28px;border-top:1px solid #eef0f4;font-size:12px;color:#8a94a6;">${escapeHtml(b.footerText)}</td></tr>
+        <tr><td style="padding:18px 28px;border-top:1px solid #eef0f4;font-size:12px;color:#8a94a6;">${escapeHtml(b.footerText)}${poweredBy}</td></tr>
       </table>
     </td></tr>
   </table>

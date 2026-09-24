@@ -70,7 +70,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (!inv) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
 
   const [settings, bank, buyer] = await Promise.all([getSettings(), loadBank(), loadBuyer(inv)])
-  const pdf = buildSalesInvoicePdf(inv, companyFromSettings(settings), buyer, bank)
+  const pdf = buildSalesInvoicePdf(inv, await companyFromSettings(settings), buyer, bank)
 
   const filename = `${inv.invoice_id || "invoice"}.pdf`
   const disposition = req.nextUrl.searchParams.get("download") === "1" ? "attachment" : "inline"

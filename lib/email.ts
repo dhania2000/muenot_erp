@@ -8,6 +8,7 @@ import { makeUserGmailClient, scopeGrantsGmailSend } from "@/lib/google-calendar
 import { monitorLogger } from "@/lib/system-monitoring"
 import { getCurrentTenant } from "@/lib/tenant-context"
 import { getBranding, renderBrandedEmail } from "@/lib/branding"
+import { getWhiteLabel } from "@/lib/white-label"
 
 let tablesEnsured = false
 
@@ -955,8 +956,14 @@ export async function sendEmail(opts: {
   const config = smtpConfig(opts.department)
   if (opts.brand) {
     try {
-      const branding = await getBranding()
-      opts = { ...opts, html: renderBrandedEmail(opts.html, branding, { title: opts.brandTitle ?? opts.subject }) }
+      const [branding, wl] = await Promise.all([getBranding(), getWhiteLabel()])
+      opts = {
+        ...opts,
+        html: renderBrandedEmail(opts.html, branding, {
+          title: opts.brandTitle ?? opts.subject,
+          poweredBy: wl.poweredByText,
+        }),
+      }
     } catch (err) {
       // Branding is best-effort — never block an email because settings failed
       // to load. Fall through with the caller-supplied html.

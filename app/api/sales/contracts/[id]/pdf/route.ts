@@ -16,7 +16,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (!contract) return NextResponse.json({ error: "Contract not found" }, { status: 404 })
 
   const settings = await getSettings()
-  const pdf = buildContractPdf(contract as any, companyFromSettings(settings))
+  const pdf = buildContractPdf(contract as any, await companyFromSettings(settings))
 
   const filename = `${contract.contract_code || "contract"}.pdf`
   const disposition = req.nextUrl.searchParams.get("download") === "1" ? "attachment" : "inline"

@@ -20,6 +20,7 @@ const PUBLIC_PREFIXES = [
   "language.",
   "module.",
   "customlink.",
+  "whitelabel.",
   "message.",
   "notify.",
   "gdpr.enabled",

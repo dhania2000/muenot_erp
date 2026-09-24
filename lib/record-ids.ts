@@ -11,6 +11,19 @@ export async function nextRecordId(
   // built-in whitelist, so callers can opt in with allowCustom.
   if (!opts.allowCustom && !safePrefixes.has(normalized)) throw new Error("Unsupported ID prefix")
   if (!normalized) throw new Error("Empty ID prefix")
+
+  // SPEC 92 — Phase 3: route through the centralized numbering engine when the
+  // acting tenant has an ACTIVE custom rule for this entity. Returns null (and
+  // falls through to the legacy sequence below) when there is no tenant context
+  // or no configured rule, so existing id streams are never disturbed.
+  try {
+    const { tryAllocateForEntity } = await import("@/lib/numbering/engine")
+    const centralized = await tryAllocateForEntity(normalized)
+    if (centralized) return centralized
+  } catch {
+    // Never let the engine break a record id — fall back to the legacy path.
+  }
+
   const digits = Math.max(1, Math.min(10, opts.digits ?? 4))
   const connection = await pool.getConnection()
   try {

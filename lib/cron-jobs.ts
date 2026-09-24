@@ -84,6 +84,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["monitor_retention", "System log retention", "/api/cron/system-monitor-retention", "15 * * * *"],
   ["data_retention", "Data retention lifecycle", "/api/cron/data-retention", "0 3 * * *"],
   ["data_export", "Scheduled data exports", "/api/cron/data-export", "30 3 * * *"],
+  ["report_scheduler", "Scheduled report delivery", "/api/cron/report-scheduler", "* * * * *"],
   ["backups", "Tenant backup engine", "/api/cron/backups", "0 2 * * *"],
   ["background_queue", "Background queue worker", "/api/cron/background-queue", "* * * * *"],
   ["api_rate_limit_cleanup", "API rate-limit counter cleanup", "/api/cron/api-rate-limit-cleanup", "0 4 * * *"],

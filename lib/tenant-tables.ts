@@ -205,6 +205,12 @@ export const TENANT_OWNED_TABLES = [
   // isolated from every other tenant.
   "custom_field_defs",
   "custom_field_values",
+  // SPEC 95 — Custom Forms. Tenant-authored, metadata-driven data-entry forms
+  // (sections, fields, conditional rules, approval config) and the submissions
+  // captured against them. A tenant's form DEFINITIONS and the SUBMISSIONS are
+  // fully isolated from every other tenant.
+  "custom_forms",
+  "custom_form_submissions",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

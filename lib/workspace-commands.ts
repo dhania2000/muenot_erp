@@ -27,6 +27,7 @@ const CREATE_COMMANDS: { label: string; href: string; hint: string; feature: str
   { label: "Create quotation", href: "/modules/sales/quotations?new=1", hint: "Sales", feature: "sales.manage_quotations" },
   { label: "Create sales invoice", href: "/modules/finance/sales-invoices?new=1", hint: "Finance", feature: "finance.manage_sales_invoices" },
   { label: "Create client", href: "/modules/clients/clients?new=1", hint: "Clients", feature: "clients.manage_clients" },
+  { label: "Create contact", href: "/modules/clients/contacts?new=1", hint: "Clients", feature: "clients.manage_contacts" },
 ]
 
 /**

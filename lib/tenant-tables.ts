@@ -219,6 +219,12 @@ export const TENANT_OWNED_TABLES = [
   // filtered by both tenant_id and module_id.
   "custom_modules",
   "custom_module_records",
+  // SPEC 103 — Duplicate Detection. Tenant-owned review/merge workflow for the
+  // fuzzy-matching framework: detected duplicate PAIRS awaiting review and an
+  // append-only MERGE LOG. Each tenant reviews and merges only its own records;
+  // a candidate pair or merge audit row is never visible to another tenant.
+  "dup_candidates",
+  "dup_merge_log",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

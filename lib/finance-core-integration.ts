@@ -484,12 +484,13 @@ export async function getPostingExceptions(limitPerModule = 20): Promise<Posting
       continue
     }
     if (!cols.has("posting_status") || !cols.has(src.idColumn)) continue
+    const orderBy = cols.has("id") ? "id" : src.idColumn
     try {
       const rows = (await query(
         `SELECT \`${src.idColumn}\` AS reference, posting_status
            FROM \`${src.table}\`
           WHERE COALESCE(NULLIF(posting_status,''),'') = 'Unposted'
-          ORDER BY id DESC
+          ORDER BY \`${orderBy}\` DESC
           LIMIT ?`,
         [limitPerModule],
       )) as any[]

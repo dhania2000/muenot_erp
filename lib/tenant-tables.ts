@@ -199,6 +199,12 @@ export const TENANT_OWNED_TABLES = [
   // references and duplicate scope are fully isolated from every other tenant.
   "reference_configs",
   "document_references",
+  // SPEC 94 — Custom Fields. Tenant-defined, metadata-driven fields that extend
+  // any module's records without code changes, plus the per-record values they
+  // capture. Both a tenant's field DEFINITIONS and the captured VALUES are fully
+  // isolated from every other tenant.
+  "custom_field_defs",
+  "custom_field_values",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

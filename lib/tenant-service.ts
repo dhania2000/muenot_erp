@@ -1,5 +1,5 @@
 import "server-only"
-import { query } from "@/lib/db"
+import { query, withTransaction } from "@/lib/db"
 import { ensureShopkeeperSchema } from "@/lib/shopkeeper"
 
 /**
@@ -293,4 +293,89 @@ export async function setTenantStatus(id: number, status: TenantStatus): Promise
   const updated = await getTenantById(id)
   if (!updated) throw new Error("Failed to load the updated tenant")
   return updated
+}
+
+export type UpdateTenantInput = {
+  name?: string
+  plan?: string
+  deployment_model?: DeploymentModel
+}
+
+const DEPLOYMENT_MODELS: DeploymentModel[] = ["shared_database", "separate_schema", "dedicated_database"]
+
+/**
+ * Update a tenant's editable business fields (display name, plan and
+ * deployment model). Lifecycle status is intentionally handled separately by
+ * `setTenantStatus`. Slug is immutable because it is used as a routing hint.
+ */
+export async function updateTenant(id: number, input: UpdateTenantInput): Promise<Tenant> {
+  await ensureTenantSchema()
+  const tenant = await getTenantById(id)
+  if (!tenant) throw new Error("Tenant not found")
+
+  const sets: string[] = []
+  const values: any[] = []
+
+  if (input.name !== undefined) {
+    const name = input.name.trim()
+    if (!name) throw new Error("Tenant name is required")
+    sets.push("`name` = ?")
+    values.push(name)
+  }
+  if (input.plan !== undefined) {
+    const plan = input.plan.trim()
+    if (!plan) throw new Error("Plan is required")
+    sets.push("`plan` = ?")
+    values.push(plan)
+  }
+  if (input.deployment_model !== undefined) {
+    if (!DEPLOYMENT_MODELS.includes(input.deployment_model)) throw new Error("Invalid deployment model")
+    sets.push("`deployment_model` = ?")
+    values.push(input.deployment_model)
+  }
+
+  if (sets.length === 0) return tenant
+
+  values.push(id)
+  await query(`UPDATE \`tenants\` SET ${sets.join(", ")} WHERE \`id\` = ?`, values)
+  const updated = await getTenantById(id)
+  if (!updated) throw new Error("Failed to load the updated tenant")
+  return updated
+}
+
+/**
+ * Permanently delete a tenant and the rows that are not guaranteed to cascade.
+ * The platform-owner tenant can never be deleted. Much of the ERP is declared
+ * ON DELETE RESTRICT, so a tenant that already owns business data cannot be
+ * torn apart — MySQL blocks the delete and we surface a clear 409 telling the
+ * operator to deactivate the tenant instead.
+ */
+export async function deleteTenant(id: number): Promise<Tenant> {
+  await ensureTenantSchema()
+  const tenant = await getTenantById(id)
+  if (!tenant) throw new Error("Tenant not found")
+  if (tenant.is_platform_owner) throw new Error("The platform-owner tenant cannot be deleted")
+
+  try {
+    await withTransaction(async (conn) => {
+      // Rows that are not guaranteed to cascade — remove them explicitly and in
+      // dependency order before the tenant itself.
+      await conn.query("DELETE FROM `tenant_subscriptions` WHERE `tenant_id` = ?", [id])
+      await conn.query("DELETE FROM `shopkeeper_profiles` WHERE `tenant_id` = ?", [id])
+      await conn.query("DELETE FROM `users` WHERE `tenant_id` = ?", [id])
+      await conn.query("DELETE FROM `tenants` WHERE `id` = ?", [id])
+    })
+  } catch (err) {
+    const code = (err as { code?: string })?.code
+    if (code === "ER_ROW_IS_REFERENCED_2" || code === "ER_ROW_IS_REFERENCED") {
+      const e = new Error(
+        "This tenant has associated business data and cannot be deleted. Deactivate the tenant instead.",
+      ) as Error & { status?: number }
+      e.status = 409
+      throw e
+    }
+    throw err
+  }
+
+  return tenant
 }

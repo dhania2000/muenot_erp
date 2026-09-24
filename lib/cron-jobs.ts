@@ -8,6 +8,7 @@ import "server-only"
  * URLs. The dispatcher can therefore invoke only endpoints declared here.
  */
 import { query, withTransaction } from "@/lib/db"
+import { assertTimeZone, normalizeTimeZone } from "@/lib/timezone"
 
 export type CronJobDefinition = {
   key: string
@@ -142,7 +143,7 @@ export function matchesCronExpression(expression: string, at: Date, timezone: st
   let parts: Record<string, number> = {}
   try {
     const formatted = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
+      timeZone: normalizeTimeZone(timezone),
       minute: "numeric",
       hour: "numeric",
       day: "numeric",
@@ -242,8 +243,7 @@ export async function updateCronJob(key: string, input: Partial<Pick<CronJobConf
   const expression = String(input.cron_expression ?? definition.defaultExpression).trim()
   const cron = validateCronExpression(expression)
   if (!cron.ok) throw new Error(cron.error)
-  const timezone = String(input.timezone ?? definition.defaultTimezone).trim()
-  try { new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format() } catch { throw new Error("Invalid IANA timezone") }
+  const timezone = assertTimeZone(input.timezone ?? definition.defaultTimezone)
   const retry = Math.min(10, Math.max(0, Math.floor(Number(input.retry_limit ?? 2))))
   const timeout = Math.min(900, Math.max(5, Math.floor(Number(input.timeout_seconds ?? 300))))
   const concurrency = Math.min(20, Math.max(1, Math.floor(Number(input.concurrency_limit ?? 1))))

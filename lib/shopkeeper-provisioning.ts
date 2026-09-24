@@ -739,6 +739,64 @@ export async function setShopkeeperStatus(id: number, status: TenantStatus, acto
 }
 
 // ---------------------------------------------------------------------------
+// Delete
+// ---------------------------------------------------------------------------
+
+/**
+ * Permanently remove a shopkeeper: its owner login(s), profile, subscription
+ * and the tenant record itself. Mobile sessions are revoked first so the
+ * Android app is signed out immediately.
+ *
+ * Core tenant relationships (`users`, and much of the ERP) are declared
+ * ON DELETE RESTRICT, so a shopkeeper that already owns business data cannot
+ * be silently torn apart. When MySQL blocks the delete we surface a clear
+ * 409 telling the operator to deactivate the account instead.
+ */
+export async function deleteShopkeeper(id: number, actor: ProvisionActor): Promise<void> {
+  await ensureAllSchema()
+  const tenant = await requireShopkeeperTenant(id)
+  const owner = await getOwnerUser(id)
+
+  const users = await query<{ id: number }[]>("SELECT id FROM `users` WHERE `tenant_id` = ?", [id])
+  for (const user of users) {
+    try {
+      await revokeAllMobileSessionsForUser(Number(user.id), "tenant_deleted")
+    } catch {
+      /* deletion is authoritative even when session revocation is unavailable */
+    }
+  }
+
+  try {
+    await withTransaction(async (conn) => {
+      // Rows that are not guaranteed to cascade — remove them explicitly and in
+      // dependency order before the tenant itself.
+      await conn.query("DELETE FROM `tenant_subscriptions` WHERE `tenant_id` = ?", [id])
+      await conn.query("DELETE FROM `shopkeeper_profiles` WHERE `tenant_id` = ?", [id])
+      await conn.query("DELETE FROM `users` WHERE `tenant_id` = ?", [id])
+      await conn.query("DELETE FROM `tenants` WHERE `id` = ?", [id])
+    })
+  } catch (err) {
+    const code = (err as { code?: string })?.code
+    if (code === "ER_ROW_IS_REFERENCED_2" || code === "ER_ROW_IS_REFERENCED") {
+      throw new ShopkeeperProvisioningError(
+        "This shopkeeper has associated business data and cannot be deleted. Suspend or deactivate the account instead.",
+        409,
+      )
+    }
+    throw err
+  }
+
+  await recordPlatformAudit({
+    actorUserId: actor.userId,
+    actorEmail: actor.email,
+    action: "delete_shopkeeper",
+    targetTenantId: id,
+    targetUserId: owner?.id ?? null,
+    detail: { businessName: tenant.name, ownerEmail: owner?.email ?? null },
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Subscription / plan
 // ---------------------------------------------------------------------------
 

@@ -1,10 +1,13 @@
 import Link from "next/link"
+import { headers } from "next/headers"
 import { LoginForm, type SocialProviders } from "@/components/login-form"
 import { BrandMark } from "@/components/login/brand-mark"
 import { LanguageWidget } from "@/components/providers/language-widget"
 import { getPublicSettings } from "@/lib/settings/server"
 import { getWhiteLabel } from "@/lib/white-label"
 import { listEnabledProvidersForLogin } from "@/lib/sso-store"
+import { resolveTenantByHost } from "@/lib/custom-domain-store"
+import { runForTenant } from "@/lib/tenant-scope"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2 } from "lucide-react"
 
 const SSO_ERROR_MESSAGES: Record<string, string> = {
@@ -34,8 +37,20 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ sso_error?: string }>
 }) {
-  const settings = await getPublicSettings()
-  const whiteLabel = await getWhiteLabel()
+  // SPEC 157 — when reached over a tenant's ACTIVE custom domain, brand the
+  // login screen for that tenant (logo, colours, white-label) instead of the
+  // platform default. Resolution is read-only and fail-safe: an unknown host
+  // falls back to the platform branding.
+  const requestHeaders = await headers()
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? ""
+  const mappedTenant = await resolveTenantByHost(host).catch(() => null)
+
+  const [settings, whiteLabel] = mappedTenant
+    ? await runForTenant({ tenantId: mappedTenant.tenantId }, async () => {
+        return [await getPublicSettings(), await getWhiteLabel()] as const
+      })
+    : [await getPublicSettings(), await getWhiteLabel()]
+
   const params = await searchParams
   const ssoProviders = await listEnabledProvidersForLogin().catch(() => [])
   const ssoError = params.sso_error ? SSO_ERROR_MESSAGES[params.sso_error] || "Sign-in with your identity provider failed." : null

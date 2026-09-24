@@ -156,6 +156,11 @@ export const TENANT_OWNED_TABLES = [
   "user_sessions",
   "sso_providers",
   "sso_login_events",
+  // SPEC 157 — Custom Domain. Each tenant's own domains (erp.customer.com),
+  // their verification/activation state and ownership tokens. A domain belongs
+  // to exactly one tenant (hostname is globally UNIQUE) and must never be
+  // visible to, verified or activated by another.
+  "tenant_domains",
   // API key platform + webhook delivery engine.
   "api_keys",
   "api_rate_limit_policies",

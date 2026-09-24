@@ -143,8 +143,6 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Three-Way Match", href: "/modules/finance/three-way-match", feature: "" },
   { label: "Procurement Approvals", href: "/modules/finance/procurement-approvals", feature: "" },
   { label: "Budget Management", href: "/modules/finance/budgets", feature: "" },
-  { label: "Multi-Currency", href: "/modules/finance/multi-currency", feature: "" },
-  { label: "Fiscal Year", href: "/modules/finance/fiscal-year", feature: "" },
   { label: "Period Lock", href: "/modules/finance/period-lock", feature: "" },
   { label: "Core Integration", href: "/modules/finance/core-integration", feature: "" },
 ]
@@ -404,6 +402,10 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   { label: "Legal entities", href: "/modules/finance/legal-entities" },
   { label: "Employee Links", href: "/admin/employee-links" },
   { label: "Job monitoring", href: "/admin/job-monitoring" },
+  // Moved out of the Finance module — tenant-wide financial configuration that
+  // belongs under Administration alongside fiscal/legal-entity settings.
+  { label: "Multi-Currency", href: "/modules/finance/multi-currency" },
+  { label: "Fiscal Year", href: "/modules/finance/fiscal-year" },
   { label: "Settings", href: "/admin/settings" },
 ]
 

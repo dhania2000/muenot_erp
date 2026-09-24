@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react"
 import useSWR from "swr"
-import { CalendarClock, Download, Loader2, Plus, ShieldAlert, Trash2 } from "lucide-react"
+import { CalendarClock, Download, FilterX, Loader2, Plus, Search, ShieldAlert, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -101,12 +102,51 @@ export function ExportCenterPanel() {
   const [downloadingId, setDownloadingId] = useState<number | null>(null)
   const [deletingSchedule, setDeletingSchedule] = useState<ExportSchedule | null>(null)
 
+  // Export filters (client-side, over the already-fetched, tenant-scoped list).
+  const [statusFilter, setStatusFilter] = useState<ExportStatus | "all">("all")
+  const [formatFilter, setFormatFilter] = useState<ExportFormat | "all">("all")
+  const [sourceFilter, setSourceFilter] = useState<"all" | "manual" | "scheduler">("all")
+  const [ownerFilter, setOwnerFilter] = useState<string>("all")
+  const [search, setSearch] = useState("")
+
   const jobs = data?.jobs ?? []
   const schedules = data?.schedules ?? []
   const catalog = data?.catalog ?? []
   const fullTenantKey = data?.fullTenantKey ?? "__full_tenant__"
   const formats = data?.formats
   const frequencies = data?.frequencies ?? (["daily", "weekly", "monthly"] as ExportFrequency[])
+
+  // Distinct export owners present in the current job list, for the owner filter.
+  const owners = useMemo(() => {
+    const set = new Set<string>()
+    for (const j of jobs) if (j.requestedByName) set.add(j.requestedByName)
+    return [...set].sort((a, b) => a.localeCompare(b))
+  }, [jobs])
+
+  const activeFilterCount =
+    [statusFilter, formatFilter, sourceFilter, ownerFilter].filter((v) => v !== "all").length +
+    (search.trim() ? 1 : 0)
+
+  const filteredJobs = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return jobs.filter((j) => {
+      if (statusFilter !== "all" && j.status !== statusFilter) return false
+      if (formatFilter !== "all" && j.format !== formatFilter) return false
+      if (sourceFilter !== "all" && j.triggerSource !== sourceFilter) return false
+      if (ownerFilter !== "all" && (j.requestedByName ?? "") !== ownerFilter) return false
+      if (q && !j.scopeLabel.toLowerCase().includes(q) && !(j.requestedByName ?? "").toLowerCase().includes(q))
+        return false
+      return true
+    })
+  }, [jobs, statusFilter, formatFilter, sourceFilter, ownerFilter, search])
+
+  function clearFilters() {
+    setStatusFilter("all")
+    setFormatFilter("all")
+    setSourceFilter("all")
+    setOwnerFilter("all")
+    setSearch("")
+  }
 
   // Resolve the effective scope: default to the first catalog dataset once loaded.
   const effectiveScope = scope || catalog[0]?.key || ""
@@ -320,9 +360,84 @@ export function ExportCenterPanel() {
       <Card>
         <CardHeader className="border-b">
           <CardTitle className="text-sm">Export jobs</CardTitle>
-          <CardDescription>Download links expire and are permission-checked at access time.</CardDescription>
+          <CardDescription>
+            Download links expire and are permission-checked at access time.
+            {jobs.length > 0
+              ? ` Showing ${filteredJobs.length} of ${jobs.length}.`
+              : ""}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
+          <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+            <div className="relative min-w-[180px] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search scope or owner"
+                className="h-8 pl-8"
+                aria-label="Search exports by scope or owner"
+              />
+            </div>
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ExportStatus | "all")}>
+              <SelectTrigger className="h-8 w-[130px]" aria-label="Filter by status">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {(["queued", "running", "completed", "failed", "expired"] as ExportStatus[]).map((s) => (
+                  <SelectItem key={s} value={s} className="capitalize">
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={formatFilter} onValueChange={(v) => setFormatFilter(v as ExportFormat | "all")}>
+              <SelectTrigger className="h-8 w-[120px]" aria-label="Filter by format">
+                <SelectValue placeholder="Format" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All formats</SelectItem>
+                {(Object.entries(formats ?? { csv: "CSV", xlsx: "Excel", json: "JSON", pdf: "PDF" }) as [
+                  ExportFormat,
+                  string,
+                ][]).map(([f, label]) => (
+                  <SelectItem key={f} value={f}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={sourceFilter} onValueChange={(v) => setSourceFilter(v as "all" | "manual" | "scheduler")}>
+              <SelectTrigger className="h-8 w-[130px]" aria-label="Filter by trigger source">
+                <SelectValue placeholder="Source" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All sources</SelectItem>
+                <SelectItem value="manual">Manual</SelectItem>
+                <SelectItem value="scheduler">Scheduled</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={ownerFilter} onValueChange={setOwnerFilter} disabled={owners.length === 0}>
+              <SelectTrigger className="h-8 w-[150px]" aria-label="Filter by owner">
+                <SelectValue placeholder="Owner" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All owners</SelectItem>
+                {owners.map((o) => (
+                  <SelectItem key={o} value={o}>
+                    {o}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {activeFilterCount > 0 ? (
+              <Button variant="ghost" size="sm" className="h-8 gap-1.5" onClick={clearFilters}>
+                <FilterX className="size-3.5" />
+                Clear{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+              </Button>
+            ) : null}
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -350,8 +465,14 @@ export function ExportCenterPanel() {
                     No exports yet. Start one above.
                   </TableCell>
                 </TableRow>
+              ) : filteredJobs.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                    No exports match the current filters.
+                  </TableCell>
+                </TableRow>
               ) : (
-                jobs.map((j) => (
+                filteredJobs.map((j) => (
                   <TableRow key={j.id}>
                     <TableCell className="text-sm">
                       <div className="flex items-center gap-1.5">

@@ -126,6 +126,36 @@ export type SubjectType = (typeof SUBJECT_TYPES)[number]
 export const SHARE_ACCESS = ["view", "download"] as const
 export type ShareAccess = (typeof SHARE_ACCESS)[number]
 
+/**
+ * SPEC 89 — who a share link is issued to. Governs how access is gated:
+ * - `link`     anyone holding the (unguessable) token
+ * - `external` a named external party (email captured for audit); token-based
+ * - `internal` a specific authenticated internal user (userId must match)
+ * - `team`     an internal role/team (session role must match)
+ */
+export const SHARE_RECIPIENT_TYPES = ["link", "external", "internal", "team"] as const
+export type ShareRecipientType = (typeof SHARE_RECIPIENT_TYPES)[number]
+
+export function normalizeRecipientType(value: unknown): ShareRecipientType {
+  const v = String(value ?? "").toLowerCase()
+  return (SHARE_RECIPIENT_TYPES as readonly string[]).includes(v) ? (v as ShareRecipientType) : "link"
+}
+
+/** Human label for a recipient type. */
+export function recipientTypeLabel(type: ShareRecipientType): string {
+  switch (type) {
+    case "internal":
+      return "Internal user"
+    case "team":
+      return "Team / role"
+    case "external":
+      return "External party"
+    case "link":
+    default:
+      return "Anyone with link"
+  }
+}
+
 const ACCESS_RANK: Record<AccessLevel, number> = { view: 1, download: 2, edit: 3, manage: 4 }
 
 // ---------------------------------------------------------------------------
@@ -291,4 +321,119 @@ export function shareTokenValid(share: ShareLike, now: Date = new Date()): boole
   const exp = toDate(share.expiresAt)
   if (exp != null && exp.getTime() <= now.getTime()) return false
   return true
+}
+
+// ---------------------------------------------------------------------------
+// SPEC 89 — signed access decision (pure, testable)
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything the access gate needs to know about a share. Deliberately free of
+ * the password *hash* — the caller verifies the password separately (bcrypt)
+ * and passes the boolean result in as `passwordVerified`, so this stays a pure,
+ * synchronous, side-effect-free function that unit tests can exercise directly.
+ */
+export type ShareGate = {
+  access: ShareAccess
+  expiresAt: string | Date | null
+  revokedAt: string | Date | null
+  recipientType: ShareRecipientType
+  /** userId (internal), role (team) or email (external); null for `link`. */
+  recipient: string | null
+  hasPassword: boolean
+  maxDownloads: number | null
+  downloadCount: number
+}
+
+/** The authenticated viewer, when one exists (needed for internal/team gates). */
+export type ShareViewer = {
+  userId: number
+  role: string
+} | null
+
+export type ShareIntent = "view" | "download"
+
+export type ShareDenialReason =
+  | "revoked"
+  | "expired"
+  | "login_required"
+  | "forbidden"
+  | "password_required"
+  | "download_disabled"
+  | "download_limit"
+
+export type ShareDecision = { ok: true } | { ok: false; reason: ShareDenialReason }
+
+/**
+ * Decide whether a share access attempt is permitted. Checks run in order of
+ * severity so the caller always learns the *first* blocking reason:
+ *   revoked → expired → recipient scope → password → download policy.
+ */
+export function evaluateShareAccess(input: {
+  share: ShareGate
+  intent: ShareIntent
+  viewer?: ShareViewer
+  passwordVerified?: boolean
+  now?: Date
+}): ShareDecision {
+  const { share, intent } = input
+  const viewer = input.viewer ?? null
+  const now = input.now ?? new Date()
+
+  if (toDate(share.revokedAt) != null) return { ok: false, reason: "revoked" }
+
+  const exp = toDate(share.expiresAt)
+  if (exp != null && exp.getTime() <= now.getTime()) return { ok: false, reason: "expired" }
+
+  // Recipient scoping — internal/team require a matching signed-in viewer.
+  if (share.recipientType === "internal") {
+    if (!viewer) return { ok: false, reason: "login_required" }
+    if (String(viewer.userId) !== String(share.recipient ?? "")) return { ok: false, reason: "forbidden" }
+  } else if (share.recipientType === "team") {
+    if (!viewer) return { ok: false, reason: "login_required" }
+    if (String(viewer.role).toLowerCase() !== String(share.recipient ?? "").toLowerCase()) {
+      return { ok: false, reason: "forbidden" }
+    }
+  }
+
+  // Password protection applies to every recipient type when configured.
+  if (share.hasPassword && !input.passwordVerified) return { ok: false, reason: "password_required" }
+
+  // Download policy: view-only links never yield the file as an attachment, and
+  // a per-link download cap stops further downloads once reached.
+  if (intent === "download") {
+    if (share.access !== "download") return { ok: false, reason: "download_disabled" }
+    if (share.maxDownloads != null && share.downloadCount >= share.maxDownloads) {
+      return { ok: false, reason: "download_limit" }
+    }
+  }
+
+  return { ok: true }
+}
+
+/** True when the share has exhausted its download allowance. */
+export function shareDownloadExhausted(share: Pick<ShareGate, "maxDownloads" | "downloadCount">): boolean {
+  return share.maxDownloads != null && share.downloadCount >= share.maxDownloads
+}
+
+/** User-facing message for a denial reason. */
+export function shareDenialMessage(reason: ShareDenialReason): string {
+  switch (reason) {
+    case "revoked":
+      return "This link has been revoked."
+    case "expired":
+      return "This link has expired."
+    case "login_required":
+      return "Please sign in with your organization account to open this document."
+    case "forbidden":
+      return "This link is restricted to a specific recipient."
+    case "password_required":
+      return "This link is password protected."
+    case "download_disabled":
+      return "This link is view-only. Downloading is not permitted."
+    case "download_limit":
+      return "The download limit for this link has been reached."
+    default:
+      return "This link is not available."
+  }
 }

@@ -159,6 +159,15 @@ async function doEnsure(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
 
+  // SPEC 89 — secure sharing columns (added idempotently over the SPEC 86 table).
+  await addColumnIfMissing("dms_document_shares", "recipient_type", "VARCHAR(12) NOT NULL DEFAULT 'link'")
+  await addColumnIfMissing("dms_document_shares", "recipient", "VARCHAR(255) DEFAULT NULL")
+  await addColumnIfMissing("dms_document_shares", "label", "VARCHAR(200) DEFAULT NULL")
+  await addColumnIfMissing("dms_document_shares", "password_hash", "VARCHAR(255) DEFAULT NULL")
+  await addColumnIfMissing("dms_document_shares", "max_downloads", "INT DEFAULT NULL")
+  await addColumnIfMissing("dms_document_shares", "view_count", "INT NOT NULL DEFAULT 0")
+  await addColumnIfMissing("dms_document_shares", "last_accessed_at", "DATETIME DEFAULT NULL")
+
   await query(`
     CREATE TABLE IF NOT EXISTS dms_audit (
       id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -173,4 +182,7 @@ async function doEnsure(): Promise<void> {
       KEY idx_dms_audit_created (tenant_id, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+
+  // SPEC 89 — tie audit rows to a share link so per-link access history is queryable.
+  await addColumnIfMissing("dms_audit", "share_id", "BIGINT DEFAULT NULL")
 }

@@ -10,6 +10,14 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Separator } from "@/components/ui/separator"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Dialog,
   DialogContent,
@@ -17,8 +25,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Copy, KeyRound, Loader2, ShieldCheck, UserPlus } from "lucide-react"
-import { PORTAL_RESOURCE_META, PORTAL_RESOURCES, type PortalResource } from "@/lib/portal/config"
+import { Copy, FileStack, KeyRound, Loader2, Plus, ShieldCheck, Trash2, UserPlus } from "lucide-react"
+import {
+  PORTAL_ITEM_RESOURCES,
+  PORTAL_RESOURCE_META,
+  PORTAL_RESOURCES,
+  type PortalItemResource,
+  type PortalResource,
+} from "@/lib/portal/config"
 import type { ClientRow } from "@/components/clients/clients-client"
 
 type PortalUser = {
@@ -29,6 +43,36 @@ type PortalUser = {
   status: "invited" | "active" | "disabled"
   last_login_at: string | null
   client_name: string | null
+}
+
+type SharedItem = {
+  id: number
+  resource: string
+  reference: string | null
+  title: string
+  description: string | null
+  status: string | null
+  amount: number | null
+  currency: string | null
+  issue_date: string | null
+  due_date: string | null
+  file_url: string | null
+  file_name: string | null
+  created_at: string
+}
+
+const EMPTY_ITEM = {
+  resource: "invoices" as PortalItemResource,
+  title: "",
+  reference: "",
+  status: "",
+  amount: "",
+  currency: "",
+  issueDate: "",
+  dueDate: "",
+  description: "",
+  fileUrl: "",
+  fileName: "",
 }
 
 export function ClientPortalDialog({
@@ -48,6 +92,10 @@ export function ClientPortalDialog({
   )
   const usersReq = useSWR<{ users: PortalUser[] }>(
     open && clientId ? "/api/admin/portal/users" : null,
+    fetcher,
+  )
+  const itemsReq = useSWR<{ items: SharedItem[] }>(
+    open && clientId ? `/api/admin/portal/items?clientId=${clientId}` : null,
     fetcher,
   )
 
@@ -137,6 +185,62 @@ export function ClientPortalDialog({
     }
   }
 
+  // ---- Shared records (published items) ----
+  const [item, setItem] = useState({ ...EMPTY_ITEM })
+  const [publishing, setPublishing] = useState(false)
+  const sharedItems = itemsReq.data?.items ?? []
+  const setItemField = (k: keyof typeof EMPTY_ITEM, v: string) => setItem((p) => ({ ...p, [k]: v }))
+
+  async function publishItem() {
+    if (!clientId || !item.title.trim()) {
+      toast.error("A title is required to share a record")
+      return
+    }
+    setPublishing(true)
+    const res = await fetch("/api/admin/portal/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId,
+        resource: item.resource,
+        title: item.title.trim(),
+        reference: item.reference.trim() || null,
+        status: item.status.trim() || null,
+        amount: item.amount.trim() ? Number(item.amount) : null,
+        currency: item.currency.trim() || null,
+        issueDate: item.issueDate || null,
+        dueDate: item.dueDate || null,
+        description: item.description.trim() || null,
+        fileUrl: item.fileUrl.trim() || null,
+        fileName: item.fileName.trim() || null,
+      }),
+    })
+    setPublishing(false)
+    const body = await res.json().catch(() => ({}) as any)
+    if (res.ok) {
+      setItem({ ...EMPTY_ITEM, resource: item.resource })
+      itemsReq.mutate()
+      toast.success("Record shared to the portal")
+    } else {
+      toast.error(body.error || "Unable to share record")
+    }
+  }
+
+  async function removeItem(itemId: number) {
+    if (!clientId) return
+    const res = await fetch("/api/admin/portal/items", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId, itemId }),
+    })
+    if (res.ok) {
+      itemsReq.mutate()
+      toast.success("Record removed from the portal")
+    } else {
+      toast.error("Unable to remove record")
+    }
+  }
+
   return (
     <Dialog
       open={open}
@@ -146,6 +250,7 @@ export function ClientPortalDialog({
           setTempPassword(null)
           setName("")
           setEmail("")
+          setItem({ ...EMPTY_ITEM })
         }
         onOpenChange(v)
       }}
@@ -296,6 +401,195 @@ export function ClientPortalDialog({
                 </Button>
               </div>
             ) : null}
+          </div>
+        </section>
+
+        <Separator />
+
+        {/* Shared records (published items) */}
+        <section className="grid gap-3">
+          <div className="flex items-center gap-2">
+            <FileStack className="size-4 text-primary" />
+            <h3 className="text-sm font-semibold">Shared records</h3>
+          </div>
+          <p className="-mt-1 text-xs text-muted-foreground">
+            Publish quotes, orders, invoices, payments, documents and projects so this client can see them in their
+            portal.
+          </p>
+
+          {itemsReq.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading shared records…</p>
+          ) : sharedItems.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+              Nothing shared yet. Publish a record below to make it visible in the portal.
+            </p>
+          ) : (
+            <ul className="grid gap-2">
+              {sharedItems.map((it) => {
+                const meta = PORTAL_RESOURCE_META[it.resource as PortalResource]
+                return (
+                  <li
+                    key={it.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3"
+                  >
+                    <div className="grid gap-0.5">
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        {it.title}
+                        {it.reference ? (
+                          <span className="font-mono text-xs text-muted-foreground">{it.reference}</span>
+                        ) : null}
+                      </span>
+                      <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <Badge variant="outline" className="text-[10px]">
+                          {meta?.label ?? it.resource}
+                        </Badge>
+                        {it.status ? <span>{it.status}</span> : null}
+                        {it.amount != null ? (
+                          <span>
+                            {it.currency ? `${it.currency} ` : ""}
+                            {Number(it.amount).toLocaleString()}
+                          </span>
+                        ) : null}
+                        {it.issue_date ? <span>{String(it.issue_date).slice(0, 10)}</span> : null}
+                      </span>
+                    </div>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => removeItem(it.id)}
+                      aria-label={`Remove ${it.title}`}
+                    >
+                      <Trash2 className="size-4 text-destructive" />
+                    </Button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          {/* Publish a record */}
+          <div className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4">
+            <h4 className="flex items-center gap-2 text-sm font-medium">
+              <Plus className="size-4 text-primary" /> Share a record
+            </h4>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-resource">Type</Label>
+                <Select
+                  value={item.resource}
+                  onValueChange={(v) => setItemField("resource", v as string)}
+                >
+                  <SelectTrigger id="item-resource">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PORTAL_ITEM_RESOURCES.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {PORTAL_RESOURCE_META[r].label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-title">Title</Label>
+                <Input
+                  id="item-title"
+                  value={item.title}
+                  onChange={(e) => setItemField("title", e.target.value)}
+                  placeholder="e.g. Invoice for September"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-reference">Reference</Label>
+                <Input
+                  id="item-reference"
+                  value={item.reference}
+                  onChange={(e) => setItemField("reference", e.target.value)}
+                  placeholder="e.g. INV-00042"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-status">Status</Label>
+                <Input
+                  id="item-status"
+                  value={item.status}
+                  onChange={(e) => setItemField("status", e.target.value)}
+                  placeholder="e.g. Paid, Pending"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-amount">Amount</Label>
+                <Input
+                  id="item-amount"
+                  type="number"
+                  value={item.amount}
+                  onChange={(e) => setItemField("amount", e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-currency">Currency</Label>
+                <Input
+                  id="item-currency"
+                  value={item.currency}
+                  onChange={(e) => setItemField("currency", e.target.value)}
+                  placeholder="e.g. INR"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-issue-date">Issue date</Label>
+                <Input
+                  id="item-issue-date"
+                  type="date"
+                  value={item.issueDate}
+                  onChange={(e) => setItemField("issueDate", e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-due-date">Due date</Label>
+                <Input
+                  id="item-due-date"
+                  type="date"
+                  value={item.dueDate}
+                  onChange={(e) => setItemField("dueDate", e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-file-url">File URL</Label>
+                <Input
+                  id="item-file-url"
+                  value={item.fileUrl}
+                  onChange={(e) => setItemField("fileUrl", e.target.value)}
+                  placeholder="https://…"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="item-file-name">File name</Label>
+                <Input
+                  id="item-file-name"
+                  value={item.fileName}
+                  onChange={(e) => setItemField("fileName", e.target.value)}
+                  placeholder="document.pdf"
+                />
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="item-description">Description</Label>
+              <Textarea
+                id="item-description"
+                rows={2}
+                value={item.description}
+                onChange={(e) => setItemField("description", e.target.value)}
+                placeholder="Optional note shown to the client"
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button size="sm" onClick={publishItem} disabled={publishing}>
+                {publishing ? <Loader2 className="size-4 animate-spin" /> : <FileStack className="size-4" />}
+                Share record
+              </Button>
+            </div>
           </div>
         </section>
       </DialogContent>

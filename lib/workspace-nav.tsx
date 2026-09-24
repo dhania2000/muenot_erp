@@ -346,9 +346,10 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
   },
 ]
 
-const CLIENTS_CHILDREN = [
-  { label: "Clients", href: "/modules/clients/clients", feature: "clients.view_clients" },
-]
+  const CLIENTS_CHILDREN = [
+    { label: "Clients", href: "/modules/clients/clients", feature: "clients.view_clients" },
+    { label: "Client 360", href: "/modules/clients/client-360", feature: "clients.view_clients" },
+  ]
 
 const TICKETS_CHILDREN = [
   { label: "All Tickets", href: "/modules/tickets/all", feature: "tickets.view_tickets" },

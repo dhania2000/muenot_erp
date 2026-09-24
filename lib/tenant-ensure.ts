@@ -62,6 +62,19 @@ async function runEnsure(): Promise<void> {
       if (!(await indexExists(table, idx))) {
         await query(`ALTER TABLE \`${table}\` ADD KEY \`${idx}\` (\`${TENANT_COLUMN}\`)`)
       }
+      // Composite covering index (tenant_id, id). Scoped reads always filter by
+      // tenant_id and page/order by the primary key, so a leading-tenant
+      // composite index serves those access paths far better than the bare
+      // single-column index. Added only when the table has an `id` column;
+      // non-fatal because a legacy schema still works via the single index.
+      if (await columnExists(table, "id")) {
+        const cidx = `idx_${table}_tenant_id`
+        if (!(await indexExists(table, cidx))) {
+          await query(`ALTER TABLE \`${table}\` ADD KEY \`${cidx}\` (\`${TENANT_COLUMN}\`, \`id\`)`).catch(
+            () => {},
+          )
+        }
+      }
       if (defaultId != null) {
         await query(`UPDATE \`${table}\` SET \`${TENANT_COLUMN}\` = ? WHERE \`${TENANT_COLUMN}\` IS NULL`, [
           defaultId,

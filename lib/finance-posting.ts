@@ -11,6 +11,7 @@ import {
   type AccountRole,
   type ResolvedAccount,
 } from "@/lib/finance-accounts"
+import { assertPeriodOpen } from "@/lib/finance-period-lock"
 
 // ---------------------------------------------------------------------------
 // Double-entry posting engine (server-only).
@@ -401,12 +402,16 @@ export async function postSalesInvoice(
   inv: Record<string, any>,
   opts: { createdBy?: number | null; reverse?: boolean } = {},
 ): Promise<PostingResult> {
+  const invoiceDate = String(inv.invoice_date || new Date().toISOString().slice(0, 10)).slice(0, 10)
+  // SPEC 162 — sales invoices (incl. their GST/TDS) cannot post/repost/reverse
+  // into a locked accounting period.
+  await assertPeriodOpen(invoiceDate)
   const lines = buildSalesInvoiceLines(inv)
   return postLines(lines, {
     entityType: "sales_invoice",
     entityId: Number(inv.id),
     entityRef: String(inv.invoice_id || inv.id),
-    date: String(inv.invoice_date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+    date: invoiceDate,
     financialYear: inv.financial_year ?? null,
     partyId: inv.customer_party_id || inv.client_id || null,
     partyName: inv.client_name || null,
@@ -428,12 +433,16 @@ export async function postPurchaseBill(
   opts: { createdBy?: number | null; reverse?: boolean } = {},
 ): Promise<PostingResult> {
   await ensurePurchasePostingAccounts()
+  const billDate = String(bill.bill_date || new Date().toISOString().slice(0, 10)).slice(0, 10)
+  // SPEC 162 — purchase bills (incl. their GST/TDS) cannot post/repost/reverse
+  // into a locked accounting period.
+  await assertPeriodOpen(billDate)
   const lines = buildPurchaseBillLines(bill)
   return postLines(lines, {
     entityType: "purchase_bill",
     entityId: Number(bill.id),
     entityRef: String(bill.bill_id || bill.id),
-    date: String(bill.bill_date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+    date: billDate,
     financialYear: bill.financial_year ?? null,
     partyId: bill.vendor_id || null,
     partyName: bill.vendor_name || bill.vendor_legal_name || null,

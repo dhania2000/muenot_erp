@@ -6,6 +6,7 @@ import { tdsSummary, tdsDetail, type TdsDirection } from "@/lib/finance-tds-fili
 import { listTdsRules, entityTypeForConstitution } from "@/lib/finance-tds-rules"
 import { postLines, type PostingLine } from "@/lib/finance-posting"
 import { ensureExpensePostingAccounts } from "@/lib/finance-accounts"
+import { assertPeriodOpen } from "@/lib/finance-period-lock"
 import { getSetting } from "@/lib/settings/server"
 import { normalizePan, panStatus } from "@/lib/pan"
 
@@ -680,6 +681,11 @@ export async function createChallan(input: {
   const total = round2(tds + interest + lateFee)
   const quarter = quarterOfPeriod(input.period)
   const fy = fyOfPeriod(input.period)
+
+  // SPEC 162 — a TDS challan cannot be deposited/posted into a locked period.
+  // Guard by the posting date (payment date if given, else the challan period).
+  await assertPeriodOpen(input.paymentDate || input.period)
+
   const challanId = await nextRecordId("TCH")
 
   await query(
@@ -735,6 +741,9 @@ export async function deleteChallan(challanId: string, actorId?: number | null) 
   await ensureTdsComplianceSchema()
   const [row] = (await query(`SELECT * FROM tds_challans WHERE challan_id = ? LIMIT 1`, [challanId])) as any[]
   if (!row) throw new Error("Challan not found.")
+
+  // SPEC 162 — a challan whose posting date falls in a locked period cannot be deleted/reversed.
+  await assertPeriodOpen(row.payment_date ? String(row.payment_date).slice(0, 10) : row.period)
 
   // Unwind the Bank/Journal/GL posting before deleting the challan (Phase 19–20).
   if (row.voucher_no) {

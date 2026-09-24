@@ -143,6 +143,8 @@ export const TDS_FILING_EXTRA_ACTIONS: ExtendedAction[] = [
  */
 export const JOURNAL_EXTRA_ACTIONS: ExtendedAction[] = [
   { key: "export", label: "Export Journals", fallback: "view", scoped: false, description: "Export the journal register, detail, account-wise, voucher-wise and period-wise datasets." },
+  { key: "lock_period", label: "Lock Accounting Period", fallback: "delete", scoped: false, description: "Lock an accounting month so journal, invoice, payment and tax transactions dated in it can no longer be posted or edited (SPEC 162)." },
+  { key: "unlock_period", label: "Unlock Accounting Period", fallback: "delete", scoped: false, description: "Re-open a locked accounting month so finance can post or edit transactions dated in it again (SPEC 162)." },
 ]
 
 /**

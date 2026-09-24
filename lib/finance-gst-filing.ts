@@ -4,6 +4,7 @@ import { logFinanceEvent } from "@/lib/finance-audit"
 import { ensureGstInputSchema } from "@/lib/finance-ensure"
 import { ensureGstPaymentAccounts } from "@/lib/finance-accounts"
 import { postLines, type PostingLine } from "@/lib/finance-posting"
+import { assertPeriodOpen } from "@/lib/finance-period-lock"
 
 /**
  * GST filing engine (server-only) — Phase 3.
@@ -435,6 +436,8 @@ export async function recordGstTaxPaid(
   const mode: "bank" | "cash" = opts.mode === "cash" ? "cash" : "bank"
   const paidOn =
     opts.paidOn && /^\d{4}-\d{2}-\d{2}$/.test(opts.paidOn) ? opts.paidOn : new Date().toISOString().slice(0, 10)
+  // SPEC 162 — a GST tax payment cannot be posted into a locked period.
+  await assertPeriodOpen(paidOn)
   await query(
     `INSERT INTO gst_tax_payments (period, amount, payment_mode, paid_on, updated_by)
        VALUES (?,?,?,?,?)

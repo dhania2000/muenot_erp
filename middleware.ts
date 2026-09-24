@@ -3,9 +3,16 @@ import { jwtVerify } from "jose"
 
 const SESSION_COOKIE = "ems_session"
 const PORTAL_SESSION_COOKIE = "ems_portal_session"
+const VENDOR_PORTAL_SESSION_COOKIE = "ems_vendor_portal_session"
 const PUBLIC_PATHS = ["/login", "/api/auth/login"]
 // SPEC 118 — Client Portal public entry points (external users).
 const PORTAL_PUBLIC_PATHS = ["/portal/login", "/api/portal/auth/login", "/api/portal/auth/logout"]
+// SPEC 119 — Vendor Portal public entry points (external users).
+const VENDOR_PORTAL_PUBLIC_PATHS = [
+  "/vendor-portal/login",
+  "/api/vendor-portal/auth/login",
+  "/api/vendor-portal/auth/logout",
+]
 
 function getSecretKey() {
   return new TextEncoder().encode(process.env.SESSION_SECRET || "")
@@ -14,6 +21,11 @@ function getSecretKey() {
 // Portal tokens are domain-separated from internal tokens (see lib/portal/auth.ts).
 function getPortalSecretKey() {
   return new TextEncoder().encode(`${process.env.SESSION_SECRET || ""}:portal`)
+}
+
+// Vendor-portal tokens use their own domain-separated key (see lib/vendor-portal/auth.ts).
+function getVendorPortalSecretKey() {
+  return new TextEncoder().encode(`${process.env.SESSION_SECRET || ""}:vendor-portal`)
 }
 
 async function getSessionFromRequest(request: NextRequest) {
@@ -39,6 +51,18 @@ async function getPortalSessionFromRequest(request: NextRequest) {
   }
 }
 
+async function getVendorPortalSessionFromRequest(request: NextRequest) {
+  const token = request.cookies.get(VENDOR_PORTAL_SESSION_COOKIE)?.value
+  if (!token) return null
+  try {
+    const { payload } = await jwtVerify(token, getVendorPortalSecretKey())
+    if ((payload as Record<string, unknown>).typ !== "vendor-portal") return null
+    return payload as { portalUserId: number; tenantId: number; vendorId: number }
+  } catch {
+    return null
+  }
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const requestId = `req_${crypto.randomUUID()}`
@@ -49,6 +73,7 @@ export async function middleware(request: NextRequest) {
     if (PORTAL_PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next")) {
       const headers = new Headers(request.headers)
       headers.set("x-request-id", requestId)
+      headers.set("x-pathname", pathname)
       const response = NextResponse.next({ request: { headers } })
       response.headers.set("x-request-id", requestId)
       return response
@@ -64,6 +89,34 @@ export async function middleware(request: NextRequest) {
     }
     const headers = new Headers(request.headers)
     headers.set("x-request-id", requestId)
+    headers.set("x-pathname", pathname)
+    const response = NextResponse.next({ request: { headers } })
+    response.headers.set("x-request-id", requestId)
+    return response
+  }
+
+  // ---- Vendor portal (SPEC 119): a fully separate auth plane -------------
+  if (pathname.startsWith("/vendor-portal") || pathname.startsWith("/api/vendor-portal")) {
+    if (VENDOR_PORTAL_PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next")) {
+      const headers = new Headers(request.headers)
+      headers.set("x-request-id", requestId)
+      headers.set("x-pathname", pathname)
+      const response = NextResponse.next({ request: { headers } })
+      response.headers.set("x-request-id", requestId)
+      return response
+    }
+    const vendorSession = await getVendorPortalSessionFromRequest(request)
+    if (!vendorSession) {
+      if (pathname.startsWith("/api")) {
+        return NextResponse.json({ error: "Not authenticated", requestId }, { status: 401, headers: responseHeaders })
+      }
+      const loginUrl = new URL("/vendor-portal/login", request.url)
+      if (pathname !== "/vendor-portal") loginUrl.searchParams.set("redirect", pathname)
+      return NextResponse.redirect(loginUrl)
+    }
+    const headers = new Headers(request.headers)
+    headers.set("x-request-id", requestId)
+    headers.set("x-pathname", pathname)
     const response = NextResponse.next({ request: { headers } })
     response.headers.set("x-request-id", requestId)
     return response
@@ -127,5 +180,12 @@ function extractSubdomain(hostname: string): string | null {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/admin/:path*", "/modules/:path*", "/portal/:path*", "/api/:path*"],
+  matcher: [
+    "/dashboard/:path*",
+    "/admin/:path*",
+    "/modules/:path*",
+    "/portal/:path*",
+    "/vendor-portal/:path*",
+    "/api/:path*",
+  ],
 }

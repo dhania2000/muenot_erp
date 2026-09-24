@@ -21,6 +21,7 @@ import {
   HardDrive,
   ClipboardList,
   Workflow,
+  BarChart3,
 } from "lucide-react"
 import { MANAGEMENT_ENTITIES } from "@/lib/management-entities"
 
@@ -652,6 +653,15 @@ export async function buildWorkspaceNav(
       href: "/admin/governance",
       icon: <ShieldCheck className="size-4" />,
       children: GOVERNANCE_CHILDREN,
+    })
+
+    // Report builder sits directly below Data Governance and is likewise
+    // restricted to admins. Authorized users compose custom reports over
+    // whitelisted, tenant-scoped, classification-redacted data sources.
+    navItems.push({
+      label: "Report Builder",
+      href: "/admin/reports",
+      icon: <BarChart3 className="size-4" />,
     })
 
     // Subscription & Billing sits directly below Administration and is likewise

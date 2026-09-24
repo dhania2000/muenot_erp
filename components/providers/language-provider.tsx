@@ -48,6 +48,7 @@ export function LanguageProvider({
   }, [])
 
   const dir = useMemo(() => getLanguage(language)?.dir ?? 'ltr', [language])
+  const locale = useMemo(() => localeForLanguage(language), [language])
 
   useEffect(() => {
     document.documentElement.lang = language
@@ -61,7 +62,10 @@ export function LanguageProvider({
     document.cookie = `${COOKIE_NAME}=${code}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`
   }, [])
 
-  const value = useMemo(() => ({ language, dir, setLanguage }), [language, dir, setLanguage])
+  const value = useMemo(
+    () => ({ language, locale, dir, setLanguage }),
+    [language, locale, dir, setLanguage],
+  )
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>
 }

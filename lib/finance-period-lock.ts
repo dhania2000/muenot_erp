@@ -1,5 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { isFiscalPeriodClosedOrLocked } from "@/lib/finance/fiscal-year"
 
 /**
  * Accounting period lock — prevents back-dated postings into a closed book.
@@ -73,7 +74,10 @@ export async function isPeriodLocked(dateOrPeriod?: string | null): Promise<bool
     `SELECT status FROM finance_period_locks WHERE period = ? LIMIT 1`,
     [period],
   )) as any[]
-  return rows.length > 0 && String(rows[0].status) === "Locked"
+  if (rows.length > 0 && String(rows[0].status) === "Locked") return true
+  // Fiscal Year Engine (SPEC 161): a Closed or Locked fiscal period also seals
+  // the month, so back-dated postings into it are rejected the same way.
+  return await isFiscalPeriodClosedOrLocked(period)
 }
 
 /**

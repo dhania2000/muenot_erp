@@ -174,6 +174,13 @@ export const TENANT_OWNED_TABLES = [
   "shopkeeper_products",
   "shopkeeper_orders",
   "shopkeeper_order_items",
+  // SPEC 90 — Centralized Master Data. Tenant-owned business masters. The geo /
+  // currency / unit reference catalogue (md_countries, md_states, md_cities,
+  // md_currencies, md_units, md_payment_terms, md_approval_levels) is a global
+  // shared catalogue like modules/features and is deliberately NOT listed here.
+  "md_cost_centers",
+  "md_locations",
+  "md_categories",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

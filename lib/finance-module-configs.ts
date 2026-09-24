@@ -1134,8 +1134,18 @@ const customersVendors: ModuleConfig = {
     fld("GST verification", "gst_verification_source", "Verification source", "text", { hidden: true }),
   ],
   tableColumns: [
-    { key: "party_id", label: "Vendor ID", mono: true },
-    { key: "customer_name", label: "Vendor", sub: "vendor_category" },
+    {
+      key: "party_id",
+      label: "Vendor ID",
+      mono: true,
+      link: (row) => `/modules/finance/customers-vendors/${encodeURIComponent(row.party_id)}`,
+    },
+    {
+      key: "customer_name",
+      label: "Vendor",
+      sub: "vendor_category",
+      link: (row) => `/modules/finance/customers-vendors/${encodeURIComponent(row.party_id)}`,
+    },
     { key: "gstin", label: "GSTIN", mono: true },
     { key: "gst_verification_status", label: "GST", badge: { Verified: "default", Unverified: "outline", Failed: "destructive", Cancelled: "destructive" } },
     { key: "city", label: "City", sub: "state" },

@@ -47,7 +47,9 @@ export function SessionsSection() {
         description="Live and recent portal sessions across all clients. Revoke any session to force sign-out."
         actions={
           <AlertDialog>
-            <AlertDialogTrigger render={<Button size="sm" variant="destructive">Revoke all sessions</Button>} />
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="destructive">Revoke all sessions</Button>
+            </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>Revoke all sessions?</AlertDialogTitle>

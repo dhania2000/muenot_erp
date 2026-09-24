@@ -33,6 +33,7 @@ export async function POST(request: Request) {
     const result = await runReport(definition, {
       tenantId,
       role: guard.ctx.tenantRole,
+      userId: guard.ctx.userId,
       limitOverride: limit,
     })
     return NextResponse.json(result)

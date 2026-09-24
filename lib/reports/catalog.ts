@@ -19,6 +19,8 @@
  * browser — physical table and tenant-column names never leave the server.
  */
 
+import type { DataDomain } from "@/lib/data-scope-model"
+
 /** Logical type of a column — drives the operators and aggregations offered. */
 export type ReportColumnType = "string" | "number" | "date" | "datetime" | "boolean"
 
@@ -51,6 +53,21 @@ export type ReportSource = {
   requiredFeature: string
   /** Whitelisted, typed columns. Unknown-at-runtime columns are dropped. */
   columns: ReportColumnDef[]
+  /**
+   * SPEC 99 — row access control. The data-scope domain whose per-user grant
+   * governs row visibility for this report (user/team/entity/branch). When
+   * absent, the report carries no relational row scope (tenant + field-level
+   * protection still apply). Column lists below are CANDIDATES; only the ones
+   * present in the live schema are ever referenced, so a missing column fails
+   * the relational scope CLOSED rather than leaking rows.
+   */
+  scopeDomainKey?: string
+  /** Candidate columns identifying the owning / assigned user (self / team). */
+  ownerColumns?: string[]
+  /** Candidate columns identifying the legal entity (entity scope). */
+  scopeEntityColumns?: string[]
+  /** Candidate columns identifying the branch (branch scope). */
+  scopeBranchColumns?: string[]
 }
 
 const col = (key: string, label: string, type: ReportColumnType): ReportColumnDef => ({ key, label, type })
@@ -71,6 +88,10 @@ export const REPORT_SOURCES: ReportSource[] = [
     tenantColumns: ["tenant_id", "company_id"],
     defaultDateColumn: "date_of_joining",
     requiredFeature: "hr.view_employees",
+    scopeDomainKey: "hr.employees",
+    ownerColumns: ["user_id", "created_by"],
+    scopeEntityColumns: ["entity", "legal_entity", "entity_id", "legal_entity_id"],
+    scopeBranchColumns: ["branch", "branch_name", "branch_id", "work_location"],
     columns: [
       col("id", "ID", "number"),
       col("employee_code", "Employee code", "string"),
@@ -168,6 +189,10 @@ export const REPORT_SOURCES: ReportSource[] = [
     tenantColumns: ["tenant_id", "company_id"],
     defaultDateColumn: "created_at",
     requiredFeature: "sales.view_leads",
+    scopeDomainKey: "sales.leads",
+    ownerColumns: ["assigned_to", "created_by", "owner", "owner_id"],
+    scopeEntityColumns: ["entity", "entity_id", "legal_entity_id"],
+    scopeBranchColumns: ["branch", "branch_id"],
     columns: [
       col("id", "ID", "number"),
       col("name", "Name", "string"),
@@ -251,6 +276,24 @@ export const REPORT_SOURCES: ReportSource[] = [
 
 export function getReportSource(key: string): ReportSource | undefined {
   return REPORT_SOURCES.find((s) => s.key === key)
+}
+
+/**
+ * SPEC 99 — project a source's row-scope metadata into the pure `DataDomain`
+ * shape the data-scope engine consumes. Returns `null` when the source has no
+ * linked scope domain (no relational row restriction). Kept here (pure, no DB)
+ * so the report row-access rules are unit-testable without a database.
+ */
+export function reportScopeDomain(source: ReportSource): DataDomain | null {
+  if (!source.scopeDomainKey) return null
+  return {
+    key: source.scopeDomainKey,
+    label: source.label,
+    table: source.table,
+    ownerColumns: source.ownerColumns ?? [],
+    entityColumns: source.scopeEntityColumns ?? [],
+    branchColumns: source.scopeBranchColumns ?? [],
+  }
 }
 
 /** Public projection of a column — safe for the browser. */

@@ -611,9 +611,16 @@ export async function executeReportSchedule(
 
     // Phase 1: run through the same permission-aware builder as manual exports.
     // Schedules are always created by a tenant admin (see requireTenantAdmin in
-    // the routes), so runs execute with that role's data scope.
+    // the routes), so runs execute with that role's data scope, and — per
+    // SPEC 99 — under the CREATOR's user id so row-level scope (User / Team /
+    // Entity / Branch) and field-level protection are applied to the delivered
+    // artifact exactly as they would be for an interactive run.
     const role: TenantRole = "tenant_admin"
-    const result = await runReport(report.definition, { tenantId: schedule.tenantId, role })
+    const result = await runReport(report.definition, {
+      tenantId: schedule.tenantId,
+      role,
+      userId: schedule.createdBy ?? 0,
+    })
 
     const fileName = reportArtifactFileName(schedule.reportName, schedule.format, now)
     const { bytes, contentType } = await serializeArtifact(schedule.format, schedule.reportName, result)

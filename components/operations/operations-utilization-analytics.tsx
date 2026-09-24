@@ -27,7 +27,7 @@ import {
   summarizeUtilization,
   type UtilizationRow,
   type UtilizationStatus,
-} from "@/lib/operations-utilization"
+} from "@/lib/operations-utilization-shared"
 
 const STATUS_VARIANT: Record<UtilizationStatus, "default" | "secondary" | "destructive" | "outline"> = {
   Optimal: "default",

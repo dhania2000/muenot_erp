@@ -63,6 +63,11 @@ export const TENANT_OWNED_TABLES = [
   "usage_events",
   "usage_daily",
   "usage_limits",
+  // Usage-based billing (Spec 5) — per-tenant plan allowances / overage rates
+  // and the reconciliation ledger that guarantees one invoice line per metric
+  // per billing period with no double charging.
+  "usage_allowances",
+  "usage_billing_ledger",
   // Billing engine
   "billing_invoices",
   "billing_invoice_lines",

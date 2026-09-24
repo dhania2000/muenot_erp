@@ -183,6 +183,18 @@ const configs: Record<string, { title: string; fields: string[] }> = {
     title: "Scorecard Criteria",
     fields: ["scorecard_id", "criteria_name", "weight", "max_score", "score", "weighted_score", "status", "remarks"],
   },
+  teams: {
+    title: "Teams",
+    fields: ["team_name", "team_code", "team_type", "department", "team_lead", "project_id", "project_name", "client_name", "member_count", "capacity_hours", "allocated_hours", "location", "work_mode", "shift", "status", "remarks"],
+  },
+  revenue: {
+    title: "Project Revenue",
+    fields: ["project_id", "project_name", "client_name", "revenue_type", "billing_model", "invoice_no", "description", "amount", "recognized_amount", "billed_amount", "received_amount", "currency", "revenue_date", "period", "recognition_status", "status", "remarks"],
+  },
+  risks: {
+    title: "Risk Register",
+    fields: ["project_id", "project_name", "client_name", "risk_title", "description", "risk_category", "probability", "impact", "risk_score", "risk_level", "risk_owner", "mitigation_plan", "contingency_plan", "identified_date", "review_date", "target_date", "closure_date", "status", "remarks"],
+  },
 }
 
 // Default lifecycle statuses used when a module has no specialised set.
@@ -204,6 +216,9 @@ const STATUS_BY_KIND: Record<string, string[]> = {
   qa_audits: ["Planned", "In Progress", "Completed", "Closed"],
   work_orders: ["Open", "In Progress", "On Hold", "Completed", "Cancelled"],
   resource_requests: ["Open", "Approved", "Fulfilled", "Rejected", "Cancelled"],
+  teams: ["Active", "Forming", "On Hold", "Disbanded"],
+  revenue: ["Forecast", "Committed", "Invoiced", "Received", "Written Off"],
+  risks: ["Open", "Assessed", "Mitigating", "Monitoring", "Closed", "Occurred"],
 }
 
 // Fixed option lists for enum-style fields shared across modules. Any field not
@@ -244,11 +259,24 @@ const ENUM_BY_KIND: Record<string, Record<string, string[]>> = {
   timesheets: {
     approval_status: ["Draft", "Submitted", "Approved", "Rejected"],
   },
+  teams: {
+    team_type: ["Delivery", "Support", "QA", "Management", "Cross-functional"],
+  },
+  revenue: {
+    revenue_type: ["Milestone", "Time & Material", "Fixed Fee", "Retainer", "Change Request", "Other"],
+    recognition_status: ["Pending", "Recognized", "Deferred", "Invoiced", "Received"],
+  },
+  risks: {
+    risk_category: ["Technical", "Financial", "Operational", "Schedule", "Resource", "Compliance", "Security", "External"],
+    probability: ["Low", "Medium", "High"],
+    impact: ["Low", "Medium", "High"],
+    risk_level: ["Low", "Medium", "High", "Critical"],
+  },
 }
 
 // Fields that are computed automatically by the server and must not be edited
 // by hand (e.g. SLA delay is derived from due date vs. actual completion).
-const READONLY_FIELDS = new Set(["delay_days"])
+const READONLY_FIELDS = new Set(["delay_days", "risk_score", "risk_level"])
 
 // Fields that render as a time picker rather than a text input.
 const TIME_FIELDS = new Set(["start_time", "end_time"])
@@ -263,7 +291,7 @@ function optionsFor(kind: string, field: string): string[] | null {
 }
 
 // Columns that render as a coloured status Badge in the list view.
-const BADGE_FIELDS = new Set(["status", "sla_status", "priority", "approval_status", "payment_status", "severity"])
+const BADGE_FIELDS = new Set(["status", "sla_status", "priority", "approval_status", "payment_status", "severity", "risk_level", "recognition_status"])
 
 function formatCell(value: any): string {
   if (value == null || String(value).trim() === "") return "—"

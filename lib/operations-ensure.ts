@@ -227,6 +227,82 @@ export async function ensureOperationsSchema(): Promise<void> {
       KEY idx_checklist_items_checklist (checklist_id)
     )`)
 
+    // SPEC 146 — Project teams: named delivery teams with a lead and capacity.
+    await query(`CREATE TABLE IF NOT EXISTS operations_teams (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      team_name VARCHAR(255) DEFAULT NULL,
+      team_code VARCHAR(128) DEFAULT NULL,
+      team_type VARCHAR(64) DEFAULT NULL,
+      department VARCHAR(191) DEFAULT NULL,
+      team_lead VARCHAR(255) DEFAULT NULL,
+      project_id VARCHAR(191) DEFAULT NULL,
+      project_name VARCHAR(255) DEFAULT NULL,
+      client_name VARCHAR(255) DEFAULT NULL,
+      member_count INT DEFAULT NULL,
+      capacity_hours DECIMAL(10,2) DEFAULT NULL,
+      allocated_hours DECIMAL(10,2) DEFAULT NULL,
+      location VARCHAR(191) DEFAULT NULL,
+      work_mode VARCHAR(64) DEFAULT NULL,
+      shift VARCHAR(64) DEFAULT NULL,
+      status VARCHAR(64) DEFAULT NULL,
+      remarks TEXT DEFAULT NULL,
+      created_by INT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`)
+
+    // SPEC 146 — Project revenue: billed/recognized revenue lines per project.
+    await query(`CREATE TABLE IF NOT EXISTS operations_revenue (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id VARCHAR(191) DEFAULT NULL,
+      project_name VARCHAR(255) DEFAULT NULL,
+      client_name VARCHAR(255) DEFAULT NULL,
+      revenue_type VARCHAR(128) DEFAULT NULL,
+      billing_model VARCHAR(128) DEFAULT NULL,
+      invoice_no VARCHAR(128) DEFAULT NULL,
+      description TEXT DEFAULT NULL,
+      amount DECIMAL(14,2) DEFAULT NULL,
+      recognized_amount DECIMAL(14,2) DEFAULT NULL,
+      billed_amount DECIMAL(14,2) DEFAULT NULL,
+      received_amount DECIMAL(14,2) DEFAULT NULL,
+      currency VARCHAR(16) DEFAULT NULL,
+      revenue_date DATE DEFAULT NULL,
+      period VARCHAR(64) DEFAULT NULL,
+      recognition_status VARCHAR(64) DEFAULT NULL,
+      status VARCHAR(64) DEFAULT NULL,
+      remarks TEXT DEFAULT NULL,
+      created_by INT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`)
+
+    // SPEC 146 — Risk register: probability × impact drives derived score/level.
+    await query(`CREATE TABLE IF NOT EXISTS operations_risks (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id VARCHAR(191) DEFAULT NULL,
+      project_name VARCHAR(255) DEFAULT NULL,
+      client_name VARCHAR(255) DEFAULT NULL,
+      risk_title VARCHAR(255) DEFAULT NULL,
+      description TEXT DEFAULT NULL,
+      risk_category VARCHAR(128) DEFAULT NULL,
+      probability VARCHAR(32) DEFAULT NULL,
+      impact VARCHAR(32) DEFAULT NULL,
+      risk_score INT DEFAULT NULL,
+      risk_level VARCHAR(32) DEFAULT NULL,
+      risk_owner VARCHAR(255) DEFAULT NULL,
+      mitigation_plan TEXT DEFAULT NULL,
+      contingency_plan TEXT DEFAULT NULL,
+      identified_date DATE DEFAULT NULL,
+      review_date DATE DEFAULT NULL,
+      target_date DATE DEFAULT NULL,
+      closure_date DATE DEFAULT NULL,
+      status VARCHAR(64) DEFAULT NULL,
+      remarks TEXT DEFAULT NULL,
+      created_by INT UNSIGNED DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`)
+
     ensured = true
   } catch (error) {
     console.log("[v0] ensureOperationsSchema failed:", (error as Error).message)

@@ -1,5 +1,6 @@
 import "server-only"
 import { jsPDF } from "jspdf"
+import { getWhiteLabel, VENDOR } from "@/lib/white-label"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1248,8 +1249,22 @@ export function buildPurchaseBillPdf(
   })
 }
 
-/** Shared helper: derive the company block from the settings map. */
-export function companyFromSettings(s: Record<string, string>): InvoiceCompany {
+/**
+ * Shared helper: derive the company block from the settings map.
+ *
+ * SPEC 156: the footer carries the vendor attribution ("Powered by Muenot")
+ * unless the tenant's plan grants white-label AND they opted in to hide it.
+ * Resolving white-label here (rather than in each PDF builder) keeps every
+ * generated document — invoices, bills, quotations, contracts, payroll slips —
+ * consistent from a single source of truth. It is tenant-scoped, so one
+ * tenant's white-label state never affects another's documents.
+ */
+export async function companyFromSettings(s: Record<string, string>): Promise<InvoiceCompany> {
+  const userFooter = (s["pdf.footer_text"] || "").trim()
+  const wl = await getWhiteLabel().catch(() => null)
+  const attribution = wl && wl.hideVendor ? "" : wl?.poweredByText || `Powered by ${VENDOR.name}`
+  const footerText = [userFooter, attribution].filter(Boolean).join("  ·  ")
+
   return {
     name: s["company.name"] || "Company",
     addressLines: [
@@ -1263,6 +1278,6 @@ export function companyFromSettings(s: Record<string, string>): InvoiceCompany {
     taxLabel: s["tax.number_label"] || s["address.tax_name"] || "GSTIN",
     taxNumber: s["address.tax_number"] || "",
     accentColor: hexToRgb(s["pdf.accent_color"] || s["theme.primary_color"]) ?? undefined,
-    footerText: s["pdf.footer_text"] || "",
+    footerText,
   }
 }

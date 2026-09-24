@@ -40,7 +40,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (!detail) return NextResponse.json({ error: "Quotation not found" }, { status: 404 })
 
   const [settings, bank] = await Promise.all([getSettings(), loadBank()])
-  const pdf = buildQuotationPdf(detail.quotation as any, detail.items as any, companyFromSettings(settings), bank)
+  const pdf = buildQuotationPdf(detail.quotation as any, detail.items as any, await companyFromSettings(settings), bank)
 
   const q = detail.quotation
   const suffix = q.version && q.version > 1 ? `-v${q.version}` : ""

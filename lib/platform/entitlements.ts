@@ -335,7 +335,7 @@ export const ENTITLEMENT_PRESETS: Record<string, PlanEntitlements> = {
     integrations: null,
     reports: "advanced",
     support_level: "dedicated",
-    feature_flags: [],
+    feature_flags: ["white_label"],
   },
 }
 

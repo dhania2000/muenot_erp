@@ -3,6 +3,7 @@ import { LoginForm, type SocialProviders } from "@/components/login-form"
 import { BrandMark } from "@/components/login/brand-mark"
 import { LanguageWidget } from "@/components/providers/language-widget"
 import { getPublicSettings } from "@/lib/settings/server"
+import { getWhiteLabel } from "@/lib/white-label"
 import { listEnabledProvidersForLogin } from "@/lib/sso-store"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2 } from "lucide-react"
 
@@ -34,6 +35,7 @@ export default async function LoginPage({
   searchParams: Promise<{ sso_error?: string }>
 }) {
   const settings = await getPublicSettings()
+  const whiteLabel = await getWhiteLabel()
   const params = await searchParams
   const ssoProviders = await listEnabledProvidersForLogin().catch(() => [])
   const ssoError = params.sso_error ? SSO_ERROR_MESSAGES[params.sso_error] || "Sign-in with your identity provider failed." : null
@@ -122,6 +124,19 @@ export default async function LoginPage({
             <p className="text-xs text-muted-foreground">
               Employees: ask your administrator if you don&apos;t have a login yet.
             </p>
+            {!whiteLabel.hideVendor && (
+              <p className="mt-2 text-xs text-muted-foreground/70">
+                Powered by{" "}
+                <a
+                  href={whiteLabel.vendor.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-muted-foreground hover:text-foreground hover:underline"
+                >
+                  {whiteLabel.vendor.name}
+                </a>
+              </p>
+            )}
           </div>
         </div>
       </section>

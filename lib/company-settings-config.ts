@@ -353,6 +353,23 @@ const rawSections: Omit<SettingSection, "module" | "submodule">[] = [
     ],
   },
   {
+    id: "white_label",
+    label: "White-Label",
+    icon: "Sparkles",
+    description: "Remove vendor attribution across the workspace. Requires a plan that includes white-label.",
+    fields: [
+      {
+        key: "whitelabel.hide_vendor",
+        label: "Hide \"Powered by Muenot\"",
+        type: "toggle",
+        options: yesNo,
+        default: "Disabled",
+        full: true,
+        help: "When enabled (and your plan allows white-label), vendor attribution is removed from the login screen, outbound emails and generated PDFs.",
+      },
+    ],
+  },
+  {
     id: "modules",
     label: "Module Settings",
     icon: "Blocks",
@@ -586,6 +603,7 @@ export const SECTION_TAXONOMY: Record<string, { module: string; submodule: strin
   notifications: { module: "System", submodule: "Notifications" },
   message: { module: "System", submodule: "Messaging" },
   modules: { module: "System", submodule: "Modules" },
+  white_label: { module: "System", submodule: "Branding" },
   profile: { module: "System", submodule: "Profile Defaults" },
   finance: { module: "Finance", submodule: "Invoicing" },
   tax: { module: "Finance", submodule: "Tax" },

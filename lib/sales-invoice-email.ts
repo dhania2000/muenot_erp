@@ -114,7 +114,7 @@ export async function sendSalesInvoiceEmail(opts: {
   }
 
   const [settings, bank, buyer] = await Promise.all([getSettings(), loadBank(), loadBuyer(inv)])
-  const company = companyFromSettings(settings)
+  const company = await companyFromSettings(settings)
   const pdf = buildSalesInvoicePdf(inv, company, buyer.party, bank)
 
   const invoiceNo = inv.invoice_id || `#${inv.id}`

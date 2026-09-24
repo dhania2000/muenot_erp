@@ -72,7 +72,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   const [settings, bank] = await Promise.all([getSettings(), loadBank()])
-  const company = companyFromSettings(settings)
+  const company = await companyFromSettings(settings)
   const pdf = buildFreelanceInvoicePdf(inv, company, bank)
 
   const invoiceNo = inv.freelance_invoice_id || `#${inv.id}`

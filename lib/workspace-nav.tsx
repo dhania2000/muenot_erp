@@ -151,13 +151,6 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Fiscal Year", href: "/modules/finance/fiscal-year", feature: "" },
   { label: "Period Lock", href: "/modules/finance/period-lock", feature: "" },
   { label: "Core Integration", href: "/modules/finance/core-integration", feature: "" },
-  { label: "Automatic Journals", href: "/modules/finance/auto-journal", feature: "" },
-  { label: "Journal Reversal", href: "/modules/finance/journal-reversal", feature: "" },
-  { label: "Bank Reconciliation", href: "/modules/finance/bank-reconciliation", feature: "" },
-  { label: "Payment Reconciliation", href: "/modules/finance/payment-reconciliation", feature: "" },
-  { label: "Tax Engine", href: "/modules/finance/tax-engine", feature: "" },
-  { label: "GST Automation", href: "/modules/finance/gst-automation", feature: "" },
-  { label: "TDS Automation", href: "/modules/finance/tds-automation", feature: "" },
 ]
 
 // Recruitment sidebar organised as a hierarchical ERP structure. Parent groups

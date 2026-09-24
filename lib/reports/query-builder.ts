@@ -30,9 +30,10 @@ import {
   type ReportDefinition,
   type ReportFilter,
 } from "@/lib/reports/model"
-import { classifiedFieldsFor, enforceExportClassification, getClearanceMatrix } from "@/lib/data-classification"
 import type { TenantRole } from "@/lib/role-model"
 import { resolveExistingColumn } from "@/lib/data-export-catalog"
+import { buildReportScope, enforceReportSecurity, resolveReportActor } from "@/lib/reports/authorization"
+import type { DataScopeSql } from "@/lib/data-scope-model"
 
 const IDENTIFIER_RE = /^[a-z0-9_]+$/
 
@@ -126,7 +127,13 @@ export type CompiledQuery = {
  * Compile a validated definition into a single parameterized statement, scoped
  * to `tenantId`. `existing` is the live column set of the source's table.
  */
-function compile(source: ReportSource, def: ReportDefinition, tenantId: number | null, existing: Set<string>): CompiledQuery {
+function compile(
+  source: ReportSource,
+  def: ReportDefinition,
+  tenantId: number | null,
+  existing: Set<string>,
+  scope: DataScopeSql | null,
+): CompiledQuery {
   const tenantCol = resolveExistingColumn(source.tenantColumns, existing)
   if (tenantId != null && !tenantCol) {
     // The table exists but we cannot find a tenant discriminator: refuse.
@@ -159,6 +166,14 @@ function compile(source: ReportSource, def: ReportDefinition, tenantId: number |
   if (tenantCol) {
     where.push(`${ident(tenantCol)} = ?`)
     params.push(tenantId)
+  }
+
+  // SPEC 99 — row-level access control (User / Team / Entity / Branch). The
+  // predicate is pre-built against the live schema and fails CLOSED ("1=0")
+  // when a relational scope is misconfigured, so it can only ever hide rows.
+  if (scope && scope.sql) {
+    where.push(scope.sql)
+    params.push(...scope.params)
   }
 
   for (const f of def.filters) {
@@ -207,12 +222,22 @@ export type RunReportResult = {
   rowCount: number
   truncated: boolean
   redactedFields: string[]
+  /** Fields masked/hidden by field-level security (SPEC 99). */
+  maskedFields: string[]
   aggregated: boolean
 }
 
 export type RunOptions = {
   tenantId: number | null
   role: TenantRole
+  /**
+   * The acting user's id, used to resolve their data scope (User / Team /
+   * Entity / Branch) and attribute policies. Omit / 0 for system contexts,
+   * which resolve to no relational restriction.
+   */
+  userId?: number
+  /** Permission groups the actor belongs to (field-level security scope). */
+  permissionGroups?: string[]
   /** Override the definition's limit (e.g. a smaller preview cap). */
   limitOverride?: number
 }
@@ -239,20 +264,27 @@ export async function runReport(rawDefinition: unknown, opts: RunOptions): Promi
     def.limit = Math.min(opts.limitOverride, def.limit ?? REPORT_CAPS.maxRows, REPORT_CAPS.maxRows)
   }
 
-  const compiled = compile(source, def, opts.tenantId, existing)
+  // SPEC 99 — resolve the acting user's full authorization context and build
+  // the row-visibility predicate BEFORE compiling, so scope is enforced in SQL.
+  const actor = await resolveReportActor({
+    userId: opts.userId ?? 0,
+    tenantId: opts.tenantId,
+    role: opts.role,
+    permissionGroups: opts.permissionGroups,
+  })
+  const scope = await buildReportScope(source, actor, existing)
+
+  const compiled = compile(source, def, opts.tenantId, existing, scope)
   const rows = await query<Record<string, unknown>[]>(compiled.sql, compiled.params)
 
-  let finalRows = rows
-  let redacted: string[] = []
-  // Only raw-row reports map cleanly onto classified field names; aggregate
-  // outputs use derived aliases and pass through untouched.
-  if (!compiled.isAggregated) {
-    const matrix = await getClearanceMatrix()
-    const fields = await classifiedFieldsFor(opts.tenantId, source.module, source.entity)
-    const enforced = enforceExportClassification(rows, fields, opts.role, matrix)
-    finalRows = enforced.rows as Record<string, unknown>[]
-    redacted = enforced.redacted
-  }
+  // SPEC 99 — field-level protection (Role × Classification, then field-level
+  // security). Aggregated outputs pass through untouched inside the enforcer.
+  const enforced = await enforceReportSecurity(rows, {
+    source,
+    actor,
+    isAggregated: compiled.isAggregated,
+  })
+  const finalRows = enforced.rows as Record<string, unknown>[]
 
   const limit = Math.min(def.limit ?? REPORT_CAPS.maxRows, REPORT_CAPS.maxRows)
   return {
@@ -260,7 +292,8 @@ export async function runReport(rawDefinition: unknown, opts: RunOptions): Promi
     rows: finalRows,
     rowCount: finalRows.length,
     truncated: finalRows.length >= limit,
-    redactedFields: redacted,
+    redactedFields: enforced.redactedFields,
+    maskedFields: enforced.maskedFields,
     aggregated: compiled.isAggregated,
   }
 }

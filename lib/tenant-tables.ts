@@ -181,6 +181,12 @@ export const TENANT_OWNED_TABLES = [
   "md_cost_centers",
   "md_locations",
   "md_categories",
+  // SPEC 91 — Master Data Governance. Maker/checker workflow, ownership and
+  // append-only change history for critical masters. Tenant-owned: each tenant
+  // governs and approves its own master values independently.
+  "md_gov_records",
+  "md_gov_change_requests",
+  "md_gov_history",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

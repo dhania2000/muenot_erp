@@ -15,3 +15,37 @@ export {
   type ListOptions,
   type UpsertInput,
 } from "./service"
+
+// SPEC 91 — Master Data Governance
+export {
+  GOV_STATUSES,
+  GOV_ACTIONS,
+  GOVERNED_KINDS,
+  isGovernedKind,
+  canTransition,
+  allowedTransitions,
+  resolvedStatusForAction,
+  validateActionForStatus,
+  evaluateApprovalAuthority,
+  isEffectiveNow,
+  statusLabel,
+  type GovStatus,
+  type GovAction,
+  type GovDecision,
+  type ChangeRequestStatus,
+} from "./governance-model"
+export { ensureGovernanceSchema } from "./governance-schema"
+export {
+  getGovernance,
+  listGovernance,
+  listChangeRequests,
+  getHistory,
+  setOwnership,
+  submitChangeRequest,
+  approveChangeRequest,
+  rejectChangeRequest,
+  type GovRecord,
+  type ChangeRequest,
+  type HistoryEntry,
+  type SubmitInput,
+} from "./governance"

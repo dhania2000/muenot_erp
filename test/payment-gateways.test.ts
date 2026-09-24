@@ -781,7 +781,7 @@ describe("gateway registry", () => {
         PAYU_MERCHANT_SALT: "msalt",
         CASHFREE_APP_ID: "app",
         CASHFREE_SECRET_KEY: "cfsk",
-      } as NodeJS.ProcessEnv,
+      } as unknown as NodeJS.ProcessEnv,
       true,
     )
     expect(gateways).toEqual(expect.arrayContaining(["razorpay", "stripe", "payu", "cashfree"]))
@@ -793,7 +793,7 @@ describe("gateway registry", () => {
 
   it("omits a provider whose credentials are absent", () => {
     resetRegistry()
-    configureGatewaysFromEnv({ STRIPE_SECRET_KEY: "sk" } as NodeJS.ProcessEnv, true)
+    configureGatewaysFromEnv({ STRIPE_SECRET_KEY: "sk" } as unknown as NodeJS.ProcessEnv, true)
     expect(hasGateway("stripe")).toBe(true)
     expect(hasGateway("razorpay")).toBe(false)
     expect(hasGateway("payu")).toBe(false)
@@ -802,10 +802,10 @@ describe("gateway registry", () => {
 
   it("registers PayU only when both merchant key and salt are present", () => {
     resetRegistry()
-    configureGatewaysFromEnv({ PAYU_MERCHANT_KEY: "mkey" } as NodeJS.ProcessEnv, true)
+    configureGatewaysFromEnv({ PAYU_MERCHANT_KEY: "mkey" } as unknown as NodeJS.ProcessEnv, true)
     expect(hasGateway("payu")).toBe(false)
     resetRegistry()
-    configureGatewaysFromEnv({ PAYU_MERCHANT_KEY: "mkey", PAYU_MERCHANT_SALT: "msalt" } as NodeJS.ProcessEnv, true)
+    configureGatewaysFromEnv({ PAYU_MERCHANT_KEY: "mkey", PAYU_MERCHANT_SALT: "msalt" } as unknown as NodeJS.ProcessEnv, true)
     expect(hasGateway("payu")).toBe(true)
   })
 })

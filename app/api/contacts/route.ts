@@ -9,6 +9,7 @@ import {
   findContactDuplicates,
 } from "@/lib/contacts/db"
 import { validateContact, displayNameOf } from "@/lib/contacts/model"
+import { recordSystemEvent } from "@/lib/activity/integrations"
 
 export async function GET(request: Request) {
   await ensureContactTables()
@@ -67,6 +68,19 @@ export async function POST(request: Request) {
     meta: { links },
     actorId: session.userId,
   })
+
+  // SPEC 109 — feed the centralized activity timeline (non-fatal).
+  await recordSystemEvent(
+    {
+      subjectType: "contact",
+      subjectId: id,
+      subjectLabel: displayNameOf(body),
+      actorId: session.userId,
+      sourceModule: "contacts",
+      meta: { contact_code, links },
+    },
+    { title: `Contact ${displayNameOf(body)} created`, action: "created" },
+  )
 
   return NextResponse.json({ ok: true, id, contact_code, links }, { status: 201 })
 }

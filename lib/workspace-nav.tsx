@@ -21,6 +21,7 @@ import {
   ClipboardList,
   Workflow,
   BarChart3,
+  ListChecks,
 } from "lucide-react"
 import { MANAGEMENT_ENTITIES } from "@/lib/management-entities"
 
@@ -580,6 +581,17 @@ export async function buildWorkspaceNav(
         label: e.label,
         href: `/modules/management/${e.key}`,
       })),
+    })
+  }
+
+  // SPEC 110 — Centralized Task Engine. A top-level module (not stored in the
+  // modules table) available to every workspace member; access is scoped to
+  // the acting tenant at the data layer.
+  if (!navItems.some((i) => i.href === "/modules/tasks")) {
+    navItems.push({
+      label: "Tasks",
+      href: "/modules/tasks",
+      icon: <ListChecks className="size-4" />,
     })
   }
 

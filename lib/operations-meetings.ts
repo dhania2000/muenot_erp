@@ -1,5 +1,6 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { recordMeetingHistory } from "@/lib/operations-meeting-detail"
 import { getGoogleAccount } from "@/lib/google-accounts"
 import {
   isGoogleOAuthConfigured,
@@ -64,6 +65,7 @@ export type MeetingInput = {
   organizer_name?: string | null
   create_google_event?: boolean
   send_invites?: boolean
+  parent_meeting_id?: number | string | null
 }
 
 function splitEmails(raw: string | null | undefined): string[] {
@@ -177,8 +179,8 @@ export async function createMeeting(input: MeetingInput, actorId: number | null)
     `INSERT INTO operations_meetings
        (title, meeting_type, entity_type, entity_id, project_id, project_name, client_name,
         description, start_time, end_time, attendees, organizer_id, organizer_name, location,
-        google_event_id, meet_link, html_link, status, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        google_event_id, meet_link, html_link, status, parent_meeting_id, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       input.title,
       input.meeting_type ?? "Project Meeting",
@@ -198,10 +200,37 @@ export async function createMeeting(input: MeetingInput, actorId: number | null)
       meetLink,
       htmlLink,
       "Scheduled",
+      input.parent_meeting_id ?? null,
       actorId,
     ],
   )) as any
   const id = result?.insertId
+
+  // Seed structured participants from the organizer + the attendees string so
+  // the participants tab is populated the moment a meeting is scheduled.
+  if (id) {
+    if (organizerId || input.organizer_name) {
+      await query(
+        `INSERT INTO operations_meeting_participants (meeting_id, user_id, name, role, is_organizer, response_status)
+         VALUES (?,?,?,?,1,'Accepted')`,
+        [id, organizerId, input.organizer_name ?? null, "Organizer"],
+      ).catch(() => null)
+    }
+    for (const email of splitEmails(input.attendees)) {
+      await query(
+        `INSERT INTO operations_meeting_participants (meeting_id, email, role, response_status)
+         VALUES (?,?,?, 'Pending')`,
+        [id, email, "Attendee"],
+      ).catch(() => null)
+    }
+    await recordMeetingHistory(
+      id,
+      "scheduled",
+      `Meeting scheduled for ${toSqlDateTime(input.start_time)}`,
+      { id: actorId, name: input.organizer_name ?? null },
+    )
+  }
+
   const rows = (await query(`SELECT * FROM operations_meetings WHERE id = ? LIMIT 1`, [id]).catch(() => [])) as any[]
   return { meeting: rows[0] ?? null, googleWarning }
 }
@@ -271,6 +300,15 @@ export async function updateMeeting(
     `UPDATE operations_meetings SET ${setCols.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`,
     [...setCols.map((c) => fields[c]), id],
   )
+  const rescheduled =
+    toSqlDateTime(input.start_time ?? existing.start_time) !== toSqlDateTime(existing.start_time) ||
+    toSqlDateTime(input.end_time ?? existing.end_time) !== toSqlDateTime(existing.end_time)
+  await recordMeetingHistory(
+    id,
+    rescheduled ? "rescheduled" : "updated",
+    rescheduled ? `New time: ${fields.start_time}` : "Meeting details updated",
+    { id: actorId, name: input.organizer_name ?? existing.organizer_name ?? null },
+  )
   return { meeting: await getMeeting(id), googleWarning }
 }
 
@@ -292,6 +330,7 @@ export async function cancelMeeting(id: string | number, actorId: number | null)
     }
   }
   await query(`UPDATE operations_meetings SET status = 'Cancelled' WHERE id = ?`, [id])
+  await recordMeetingHistory(id, "cancelled", "Meeting cancelled", { id: actorId, name: null })
   return { meeting: await getMeeting(id), googleWarning }
 }
 

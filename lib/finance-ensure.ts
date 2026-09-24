@@ -1048,3 +1048,54 @@ export async function ensureProvisionsAccrualsColumns() {
 
   provisionsAccrualsEnsured = true
 }
+
+/**
+ * SPEC 143 — Budget Management. A single `finance_budgets` table backs every
+ * budget dimension (Annual, Monthly, Department, Cost Center and Project) so the
+ * config-driven CRUD, the Budget vs Actual report and the approval workflow all
+ * read one authoritative plan. The derived variance / utilisation / status
+ * columns are recomputed on every write by the module's pure `compute`, and are
+ * stored so lists and exports stay consistent with the report engine. Runs once
+ * per process; `CREATE TABLE IF NOT EXISTS` keeps it idempotent.
+ */
+let budgetSchemaEnsured = false
+
+export async function ensureBudgetSchema() {
+  if (budgetSchemaEnsured) return
+
+  await query(`CREATE TABLE IF NOT EXISTS finance_budgets (
+    id                   INT AUTO_INCREMENT PRIMARY KEY,
+    budget_id            VARCHAR(30) NOT NULL,
+    budget_name          VARCHAR(255) DEFAULT NULL,
+    budget_type          VARCHAR(40) DEFAULT NULL,
+    budget_nature        VARCHAR(20) NOT NULL DEFAULT 'Expense',
+    financial_year       VARCHAR(12) DEFAULT NULL,
+    period_month         VARCHAR(20) DEFAULT NULL,
+    department           VARCHAR(190) DEFAULT NULL,
+    cost_center          VARCHAR(190) DEFAULT NULL,
+    project_id           VARCHAR(40) DEFAULT NULL,
+    project_name         VARCHAR(190) DEFAULT NULL,
+    account_group        VARCHAR(120) DEFAULT NULL,
+    budgeted_amount      DECIMAL(16,2) NOT NULL DEFAULT 0,
+    actual_amount        DECIMAL(16,2) NOT NULL DEFAULT 0,
+    variance             DECIMAL(16,2) NOT NULL DEFAULT 0,
+    variance_percent     DECIMAL(9,2) NOT NULL DEFAULT 0,
+    utilization_percent  DECIMAL(9,2) NOT NULL DEFAULT 0,
+    variance_status      VARCHAR(30) DEFAULT NULL,
+    approval_status      VARCHAR(20) NOT NULL DEFAULT 'Draft',
+    approved_by          VARCHAR(190) DEFAULT NULL,
+    approval_date        DATE DEFAULT NULL,
+    notes                TEXT DEFAULT NULL,
+    created_by           INT DEFAULT NULL,
+    created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_bud_id (budget_id),
+    KEY idx_bud_fy (financial_year),
+    KEY idx_bud_type (budget_type),
+    KEY idx_bud_status (approval_status),
+    KEY idx_bud_dept (department),
+    KEY idx_bud_cc (cost_center)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  budgetSchemaEnsured = true
+}

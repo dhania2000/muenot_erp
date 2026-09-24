@@ -10,6 +10,7 @@ import {
 import {
   syncTimesheet,
   computeSlaTracking,
+  computeRiskScoring,
   spawnQualityActions,
   syncScorecardCriteria,
   recalcScorecard,
@@ -56,6 +57,9 @@ const tables = {
   productivity: "operations_productivity",
   scorecards: "operations_scorecards",
   scorecard_criteria: "operations_scorecard_criteria",
+  teams: "operations_teams",
+  revenue: "operations_revenue",
+  risks: "operations_risks",
 } as const
 
 type Kind = keyof typeof tables
@@ -96,6 +100,9 @@ const permissionKeys: Record<Kind, string> = {
   productivity: "operations.productivity",
   scorecards: "operations.scorecards",
   scorecard_criteria: "operations.scorecard_criteria",
+  teams: "operations.teams",
+  revenue: "operations.revenue",
+  risks: "operations.risks",
 }
 
 // Whitelist of writable columns per kind. Shared by create (POST) and update
@@ -135,6 +142,9 @@ const allowedFields: Record<Kind, string[]> = {
   productivity:["resource_id","resource_name","project_id","period","tasks_assigned","tasks_completed","deliverables_completed","estimated_hours","logged_hours","billable_hours","task_completion_percent","efficiency_percent","billable_percent","productivity_score","source","status","remarks"],
   scorecards:["scorecard_no","scorecard_type","subject_type","subject_id","subject_name","project_id","client_name","period","review_date","reviewer","total_score","max_score","score_percent","result","status","remarks"],
   scorecard_criteria:["scorecard_id","criteria_name","weight","max_score","score","weighted_score","status","remarks"],
+  teams:["team_name","team_code","team_type","department","team_lead","project_id","project_name","client_name","member_count","capacity_hours","allocated_hours","location","work_mode","shift","status","remarks"],
+  revenue:["project_id","project_name","client_name","revenue_type","billing_model","invoice_no","description","amount","recognized_amount","billed_amount","received_amount","currency","revenue_date","period","recognition_status","status","remarks"],
+  risks:["project_id","project_name","client_name","risk_title","description","risk_category","probability","impact","risk_score","risk_level","risk_owner","mitigation_plan","contingency_plan","identified_date","review_date","target_date","closure_date","status","remarks"],
 }
 
 function kind(value: string | null): Kind | null { return value && value in tables ? value as Kind : null }
@@ -185,6 +195,7 @@ export async function POST(request: Request) {
   const body = await request.json(); const selected = kind(body.kind); if (!selected) return NextResponse.json({ error: "Invalid record type" }, { status: 400 })
   if (!(await canCreateInModule(session, permissionKeys[selected]))) return NextResponse.json({ error: "You do not have permission to create this record." }, { status: 403 })
   if (selected === "sla_monitoring") Object.assign(body, computeSlaTracking(body))
+  if (selected === "risks") Object.assign(body, computeRiskScoring(body))
   const keys = allowedFields[selected].filter((key) => body[key] !== undefined); if (!keys.length) return NextResponse.json({ error: "No fields supplied" }, { status: 400 })
   try {
     await ensureOperationsSchema()
@@ -205,6 +216,7 @@ export async function PUT(request: Request) {
     if (!existing.length) return NextResponse.json({ error: "Record not found" }, { status: 404 })
     if (!(await canActOnRecord(session, permissionKeys[selected], "update", existing[0]))) return NextResponse.json({ error: "You do not have permission to edit this record." }, { status: 403 })
     if (selected === "sla_monitoring") Object.assign(body, computeSlaTracking({ ...existing[0], ...body }))
+    if (selected === "risks") Object.assign(body, computeRiskScoring({ ...existing[0], ...body }))
     const keys = allowedFields[selected].filter((key) => body[key] !== undefined); if (!keys.length) return NextResponse.json({ error: "No fields supplied" }, { status: 400 })
     const values = keys.map((key) => body[key] === "" ? null : body[key])
     const setClause = keys.map((key) => `${key} = ?`).join(",")
@@ -288,6 +300,7 @@ export async function PATCH(request: Request) {
       }
       let effective = { ...patch }
       if (selected === "sla_monitoring") effective = { ...effective, ...computeSlaTracking({ ...existing[0], ...effective }) as any }
+      if (selected === "risks") effective = { ...effective, ...computeRiskScoring({ ...existing[0], ...effective }) as any }
       const keys = Object.keys(effective)
       const setClause = keys.map((key) => `${key} = ?`).join(",")
       const values = keys.map((key) => (effective as any)[key] === "" ? null : (effective as any)[key])

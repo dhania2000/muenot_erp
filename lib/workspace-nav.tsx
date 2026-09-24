@@ -247,6 +247,7 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
       { label: "Project Management", href: "/modules/operations/projects", feature: "operations.view_projects" },
       { label: "Project Milestones", href: "/modules/operations/milestones", feature: "operations.view_milestones" },
       { label: "Project Deliverables", href: "/modules/operations/deliverables", feature: "operations.view_deliverables" },
+      { label: "Project Teams", href: "/modules/operations/teams", feature: "operations.view_teams" },
       { label: "Project Documents", href: "/modules/operations/project-documents", feature: "operations.view_project_documents" },
     ],
   },
@@ -327,9 +328,16 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
     label: "Finance",
     children: [
       { label: "Project Cost", href: "/modules/operations/project-cost", feature: "operations.view_project_cost" },
+      { label: "Project Revenue", href: "/modules/operations/project-revenue", feature: "operations.view_project_revenue" },
       { label: "Resource Cost", href: "/modules/operations/resource-cost", feature: "operations.view_resource_cost" },
       { label: "Vendor Cost", href: "/modules/operations/vendor-cost", feature: "operations.view_vendor_cost" },
       { label: "Budget vs Actual", href: "/modules/operations/budget-vs-actual", feature: "operations.view_budget_vs_actual" },
+    ],
+  },
+  {
+    label: "Risk Management",
+    children: [
+      { label: "Risk Register", href: "/modules/operations/risks", feature: "operations.view_risks" },
     ],
   },
   {

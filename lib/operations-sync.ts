@@ -354,6 +354,23 @@ export async function syncTimesheet(row: Record<string, any>): Promise<void> {
  * merged into the SLA row BEFORE it is written, so a breach is recorded
  * automatically instead of relying on manual data entry.
  */
+// Derive a risk register row's quantitative score and severity band from its
+// probability × impact grid so the values stay consistent and cannot be edited
+// by hand. Low/Medium/High map to 1/2/3; score 1-9 buckets into Low..Critical.
+export function computeRiskScoring(row: Record<string, any>): { risk_score?: number; risk_level?: string } {
+  const scale: Record<string, number> = { low: 1, medium: 2, high: 3 }
+  const p = scale[String(row.probability ?? "").trim().toLowerCase()]
+  const i = scale[String(row.impact ?? "").trim().toLowerCase()]
+  if (!p || !i) return {}
+  const score = p * i
+  let level: string
+  if (score >= 6) level = "Critical"
+  else if (score >= 4) level = "High"
+  else if (score >= 2) level = "Medium"
+  else level = "Low"
+  return { risk_score: score, risk_level: level }
+}
+
 export function computeSlaTracking(row: Record<string, any>): { delay_days?: number; sla_status?: string } {
   const due = row.due_date ? new Date(String(row.due_date)) : null
   const actual = row.actual_completion ? new Date(String(row.actual_completion)) : null

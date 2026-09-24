@@ -1,16 +1,10 @@
-import { ReceiptText } from "lucide-react"
-import { SpecPage } from "@/components/spec/spec-page"
+import { ExpenseClaimsClient } from "@/components/hr/expense-claims/expense-claims-client"
+
+export const metadata = {
+  title: "Expense Claims & Reimbursements",
+  description: "Submit expense claims with receipts, mileage and corporate-card spend for approval and reimbursement.",
+}
 
 export default function ExpenseClaimsPage() {
-  return (
-    <SpecPage
-      spec="SPEC 127"
-      title="Expense Claims & Reimbursements"
-      description="Employees submit expense claims with receipts for approval and reimbursement."
-      icon={ReceiptText}
-      capabilities={["Claim submission", "Receipt upload", "Policy limits", "Approvals", "Reimbursement", "Reports"]}
-      emptyTitle="No claims submitted"
-      emptyDescription="Expense claims and their approval status will appear here."
-    />
-  )
+  return <ExpenseClaimsClient />
 }

@@ -48,6 +48,8 @@ export const SCHEDULER_CATEGORY_LABELS: Record<SchedulerCategory, string> = {
 
 const CATEGORY_BY_JOB: Record<string, SchedulerCategory> = {
   operations_monitoring: "reports",
+  report_scheduler: "reports",
+  document_expiry: "notifications",
   notice_board: "notifications",
   knowledge_base: "notifications",
   call_cleanup: "notifications",

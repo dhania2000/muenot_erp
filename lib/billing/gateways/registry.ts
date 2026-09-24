@@ -1,6 +1,8 @@
 import type { PaymentGateway } from "./types"
 import { RazorpayGateway } from "./razorpay"
 import { StripeGateway } from "./stripe"
+import { PayUGateway } from "./payu"
+import { CashfreeGateway } from "./cashfree"
 
 /**
  * Gateway registry (Phase 2/3).
@@ -67,6 +69,33 @@ export function configureGatewaysFromEnv(env: NodeJS.ProcessEnv = process.env, f
         secretKey: env.STRIPE_SECRET_KEY,
         webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? "",
         publishableKey: env.STRIPE_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+      }),
+    )
+  }
+
+  if (env.PAYU_MERCHANT_KEY && env.PAYU_MERCHANT_SALT) {
+    registerGateway(
+      new PayUGateway({
+        merchantKey: env.PAYU_MERCHANT_KEY,
+        merchantSalt: env.PAYU_MERCHANT_SALT,
+        apiBase: env.PAYU_API_BASE,
+        successUrl: env.PAYU_SUCCESS_URL,
+        failureUrl: env.PAYU_FAILURE_URL,
+      }),
+    )
+  }
+
+  if (env.CASHFREE_APP_ID && env.CASHFREE_SECRET_KEY) {
+    registerGateway(
+      new CashfreeGateway({
+        appId: env.CASHFREE_APP_ID,
+        secretKey: env.CASHFREE_SECRET_KEY,
+        apiBase: env.CASHFREE_API_BASE,
+        apiVersion: env.CASHFREE_API_VERSION,
+        returnUrl: env.CASHFREE_RETURN_URL,
+        toleranceSeconds: env.CASHFREE_WEBHOOK_TOLERANCE_SECONDS
+          ? Number(env.CASHFREE_WEBHOOK_TOLERANCE_SECONDS)
+          : undefined,
       }),
     )
   }

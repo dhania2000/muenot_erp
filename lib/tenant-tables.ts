@@ -256,6 +256,14 @@ export const TENANT_OWNED_TABLES = [
   "client_portal_tickets",
   "client_portal_ticket_messages",
   "client_portal_messages",
+  // SPEC 119 — Vendor Portal. External-facing, tenant + vendor isolated. Each
+  // row belongs to exactly one tenant AND one vendor; the store layer
+  // (lib/vendor-portal/store.ts) additionally constrains vendor_id on every
+  // query so one vendor can never see another vendor's data within a tenant.
+  "vendor_portal_users",
+  "vendor_portal_access",
+  "vendor_portal_items",
+  "vendor_portal_messages",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

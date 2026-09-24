@@ -5,16 +5,20 @@ import {
   accessAtLeast,
   ancestorIdsFromMap,
   canPerform,
+  evaluateShareAccess,
   formatDocRef,
   generateShareToken,
   isExpired,
   normalizeAccessLevel,
   normalizeApproval,
+  normalizeRecipientType,
   normalizeShareAccess,
   normalizeStatus,
   normalizeSubjectType,
   resolveEffectiveAccess,
+  shareDownloadExhausted,
   shareTokenValid,
+  type ShareGate,
 } from "@/lib/dms/model"
 
 /**
@@ -185,5 +189,111 @@ describe("share tokens — sharing", () => {
     expect(shareTokenValid({ expiresAt: "2026-12-31T00:00:00Z", revokedAt: null }, now)).toBe(true)
     expect(shareTokenValid({ expiresAt: "2026-01-01T00:00:00Z", revokedAt: null }, now)).toBe(false)
     expect(shareTokenValid({ expiresAt: null, revokedAt: "2026-05-01T00:00:00Z" }, now)).toBe(false)
+  })
+})
+
+/**
+ * SPEC 89 — Phase 4 verification for the pure access gate. These cover the
+ * unauthorized and expired-link paths the signed route and public landing page
+ * both rely on, in the exact severity order the gate resolves them.
+ */
+describe("evaluateShareAccess — signed access gate", () => {
+  const now = new Date("2026-06-01T00:00:00Z")
+
+  function gate(overrides: Partial<ShareGate> = {}): ShareGate {
+    return {
+      access: overrides.access ?? "download",
+      expiresAt: overrides.expiresAt ?? null,
+      revokedAt: overrides.revokedAt ?? null,
+      recipientType: overrides.recipientType ?? "link",
+      recipient: overrides.recipient ?? null,
+      hasPassword: overrides.hasPassword ?? false,
+      maxDownloads: overrides.maxDownloads ?? null,
+      downloadCount: overrides.downloadCount ?? 0,
+    }
+  }
+
+  it("allows an open, unexpired link to be viewed and downloaded", () => {
+    expect(evaluateShareAccess({ share: gate(), intent: "view", now })).toEqual({ ok: true })
+    expect(evaluateShareAccess({ share: gate(), intent: "download", now })).toEqual({ ok: true })
+  })
+
+  it("blocks a revoked link before anything else", () => {
+    const share = gate({ revokedAt: "2026-05-01T00:00:00Z", expiresAt: "2020-01-01T00:00:00Z" })
+    expect(evaluateShareAccess({ share, intent: "view", now })).toEqual({ ok: false, reason: "revoked" })
+  })
+
+  it("blocks an expired link", () => {
+    const share = gate({ expiresAt: "2026-01-01T00:00:00Z" })
+    expect(evaluateShareAccess({ share, intent: "view", now })).toEqual({ ok: false, reason: "expired" })
+    // A future expiry is still valid.
+    const future = gate({ expiresAt: "2026-12-31T00:00:00Z" })
+    expect(evaluateShareAccess({ share: future, intent: "view", now })).toEqual({ ok: true })
+  })
+
+  it("requires a signed-in viewer for internal and team links", () => {
+    const internal = gate({ recipientType: "internal", recipient: "42" })
+    expect(evaluateShareAccess({ share: internal, intent: "view", now })).toEqual({
+      ok: false,
+      reason: "login_required",
+    })
+    const team = gate({ recipientType: "team", recipient: "admin" })
+    expect(evaluateShareAccess({ share: team, intent: "view", now })).toEqual({
+      ok: false,
+      reason: "login_required",
+    })
+  })
+
+  it("rejects an internal link when the viewer is not the named user", () => {
+    const share = gate({ recipientType: "internal", recipient: "42" })
+    expect(
+      evaluateShareAccess({ share, intent: "view", viewer: { userId: 7, role: "employee" }, now }),
+    ).toEqual({ ok: false, reason: "forbidden" })
+    expect(
+      evaluateShareAccess({ share, intent: "view", viewer: { userId: 42, role: "employee" }, now }),
+    ).toEqual({ ok: true })
+  })
+
+  it("rejects a team link when the viewer's role does not match", () => {
+    const share = gate({ recipientType: "team", recipient: "admin" })
+    expect(
+      evaluateShareAccess({ share, intent: "view", viewer: { userId: 7, role: "employee" }, now }),
+    ).toEqual({ ok: false, reason: "forbidden" })
+    // Role match is case-insensitive.
+    expect(
+      evaluateShareAccess({ share, intent: "view", viewer: { userId: 7, role: "ADMIN" }, now }),
+    ).toEqual({ ok: true })
+  })
+
+  it("requires a verified password when one is set", () => {
+    const share = gate({ hasPassword: true })
+    expect(evaluateShareAccess({ share, intent: "view", now })).toEqual({
+      ok: false,
+      reason: "password_required",
+    })
+    expect(evaluateShareAccess({ share, intent: "view", passwordVerified: true, now })).toEqual({ ok: true })
+  })
+
+  it("enforces view-only links and download caps", () => {
+    const viewOnly = gate({ access: "view" })
+    expect(evaluateShareAccess({ share: viewOnly, intent: "view", now })).toEqual({ ok: true })
+    expect(evaluateShareAccess({ share: viewOnly, intent: "download", now })).toEqual({
+      ok: false,
+      reason: "download_disabled",
+    })
+
+    const capped = gate({ maxDownloads: 2, downloadCount: 2 })
+    expect(evaluateShareAccess({ share: capped, intent: "download", now })).toEqual({
+      ok: false,
+      reason: "download_limit",
+    })
+    expect(shareDownloadExhausted(capped)).toBe(true)
+    // Viewing is still allowed even when the download cap is reached.
+    expect(evaluateShareAccess({ share: capped, intent: "view", now })).toEqual({ ok: true })
+  })
+
+  it("normalizes unknown recipient types to an open link", () => {
+    expect(normalizeRecipientType("nonsense")).toBe("link")
+    expect(normalizeRecipientType("internal")).toBe("internal")
   })
 })

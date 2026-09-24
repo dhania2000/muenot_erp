@@ -4,6 +4,7 @@ import { ensureTenantIsolation } from "@/lib/tenant-ensure"
 import { recordAudit } from "@/lib/sales/lead-lifecycle"
 import { ensureContactTables, mergeContacts } from "@/lib/contacts/db"
 import { ContactNotFoundError } from "@/lib/contacts/model"
+import { recordSystemEvent } from "@/lib/activity/integrations"
 
 /**
  * Merge a duplicate into this survivor. Body: { loserId }. The survivor is the
@@ -38,6 +39,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     meta: { survivorId, loserId },
     actorId: session.userId,
   })
+
+  // SPEC 109 — feed the centralized activity timeline (non-fatal).
+  await recordSystemEvent(
+    {
+      subjectType: "contact",
+      subjectId: survivorId,
+      actorId: session.userId,
+      sourceModule: "contacts",
+      meta: { survivorId, loserId },
+    },
+    { title: `Contact ${loserId} merged into ${survivorId}`, action: "merged" },
+  )
 
   return NextResponse.json({ ok: true, survivorId, loserId })
 }

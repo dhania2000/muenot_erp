@@ -19,8 +19,8 @@ import {
   toBool,
   toMatchRecord,
   validateContact,
-  type CandidateWithId,
 } from "@/lib/contacts/model"
+import type { CandidateWithId } from "@/lib/duplicate-detection/model"
 
 /**
  * SPEC 108 Phase 4 — test duplicate handling (and the pure model it rests on).

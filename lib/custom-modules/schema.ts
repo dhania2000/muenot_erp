@@ -67,13 +67,56 @@ async function doEnsure(): Promise<void> {
       state VARCHAR(60) DEFAULT NULL,
       values_json JSON NOT NULL,
       attachments_json JSON NOT NULL,
+      merged_into BIGINT DEFAULT NULL,
+      merged_at DATETIME DEFAULT NULL,
       created_by INT DEFAULT NULL,
       updated_by INT DEFAULT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_custom_module_rec_module (tenant_id, module_id),
       KEY idx_custom_module_rec_state (tenant_id, module_id, state),
+      KEY idx_custom_module_rec_merged (tenant_id, module_id, merged_into),
       KEY idx_custom_module_rec_tenant (tenant_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+
+  // SPEC 104 — record merge history. One row per executed merge, holding the
+  // full pre-merge snapshot so an authorized operator can roll the merge back.
+  await query(`
+    CREATE TABLE IF NOT EXISTS custom_module_merges (
+      id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      tenant_id BIGINT NOT NULL,
+      module_id BIGINT NOT NULL,
+      module_version INT NOT NULL DEFAULT 1,
+      primary_id BIGINT NOT NULL,
+      secondary_ids_json JSON NOT NULL,
+      field_sources_json JSON NOT NULL,
+      snapshot_json JSON NOT NULL,
+      reference_changes INT NOT NULL DEFAULT 0,
+      status VARCHAR(20) NOT NULL DEFAULT 'merged',
+      created_by INT DEFAULT NULL,
+      rolled_back_by INT DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      rolled_back_at DATETIME DEFAULT NULL,
+      KEY idx_custom_module_merge_module (tenant_id, module_id),
+      KEY idx_custom_module_merge_status (tenant_id, module_id, status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `)
+
+  // Self-heal the tombstone columns on databases whose records table predates
+  // SPEC 104 (CREATE TABLE IF NOT EXISTS never adds columns to an existing row).
+  await ensureColumn("custom_module_records", "merged_into", "BIGINT DEFAULT NULL")
+  await ensureColumn("custom_module_records", "merged_at", "DATETIME DEFAULT NULL")
+}
+
+/** Add a column only when it is missing — idempotent, safe on every request. */
+async function ensureColumn(table: string, column: string, definition: string): Promise<void> {
+  const rows = (await query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  )) as unknown[]
+  if (rows.length === 0) {
+    await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`)
+  }
 }

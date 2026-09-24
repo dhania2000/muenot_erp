@@ -3,15 +3,15 @@ const mock=vi.hoisted(()=>({sql:vi.fn(),query:vi.fn(),provider:vi.fn(),lookup:vi
 vi.mock("@/lib/db",()=>({query:mock.query,withTransaction:async(fn:any)=>fn({query:mock.sql})}))
 vi.mock("@/lib/notification-engine/schema",()=>({ensureNotificationEngineSchema:async()=>{}}))
 vi.mock("@/lib/notification-engine/providers",()=>({providerFor:mock.lookup}))
-import { enqueueNotification, processNotification, retryNotification, savePreference, notificationOverview } from "@/lib/notification-engine/service"
-import { CHANNELS, defaultEnabled, escapeHtml, renderTemplate, validateNotice } from "@/lib/notification-engine/model"
+import { enqueueNotification, processNotification, retryNotification, savePreference, saveModulePreference, ownModulePreferences, notificationOverview } from "@/lib/notification-engine/service"
+import { CHANNELS, defaultEnabled, escapeHtml, renderTemplate, validateNotice, resolveDelivery, nextDigestSlot } from "@/lib/notification-engine/model"
 import { fingerprint } from "@/lib/job-idempotency"
 const notice={tenantId:7,userId:5,channel:"in_app" as const,key:"test:1",title:"Hello",body:"World"}
-let d:any,member:boolean,pref:any,due:boolean
+let d:any,member:boolean,pref:any,modPref:any,due:boolean
 beforeEach(()=>{
   vi.clearAllMocks()
   d={id:8,tenant_id:7,user_id:5,channel:"in_app",title:"Hello",body:"World",link:null,status:"queued",attempts:0}
-  member=true;pref=undefined;due=true
+  member=true;pref=undefined;modPref=undefined;due=true
   mock.lookup.mockReturnValue(mock.provider)
   mock.provider.mockResolvedValue({providerId:"receipt-1"})
   mock.query.mockResolvedValue([])
@@ -19,6 +19,7 @@ beforeEach(()=>{
     if(sql.startsWith("SELECT * FROM notification_deliveries"))return [[d]]
     if(sql.includes("available_at<=UTC_TIMESTAMP"))return [due?[{id:8}]:[]]
     if(sql.includes("FROM users"))return [member?[{id:5,email:"test@example.invalid"}]:[]]
+    if(sql.includes("FROM notification_module_prefs"))return [modPref?[modPref]:[]]
     if(sql.includes("FROM notification_preferences"))return [pref?[pref]:[]]
     if(sql.includes("SELECT id,request_hash"))return [[{id:8,request_hash:fingerprint({userId:5,title:"Hello",body:"World",link:null,priority:5,at:null,context:null})}]]
     if(sql.startsWith("INSERT INTO notifications"))return [{insertId:99}]
@@ -74,7 +75,7 @@ describe(" transaction protocol (mock database)",()=>{
     if(kind==="optout")pref={enabled:0}
     if(kind==="external-default")d.channel="email"
     await processNotification(8)
-    expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("status='skipped'"),[8])
+    expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("status='skipped'"),expect.arrayContaining([8]))
     expect(mock.provider).not.toHaveBeenCalled()
   })
   it("records external acceptance, not confirmed delivery",async()=>{
@@ -116,9 +117,53 @@ describe(" transaction protocol (mock database)",()=>{
     expect(mock.query).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO notification_preferences"),[7,5,"email",1,null])
     await expect(savePreference(7,5,"sms",true,"123")).rejects.toThrow("international")
   })
+  it("persists frequency and priority when supplied, and validates them",async()=>{
+    await savePreference(7,5,"email",true,null,{minPriority:10,frequency:"daily"})
+    expect(mock.query).toHaveBeenCalledWith(expect.stringContaining("min_priority,frequency"),[7,5,"email",1,null,10,"daily"])
+    await expect(savePreference(7,5,"email",true,null,{minPriority:3 as any})).rejects.toThrow("Priority")
+    await expect(savePreference(7,5,"email",true,null,{frequency:"weekly" as any})).rejects.toThrow("frequency")
+  })
+  it("upserts and validates module preferences",async()=>{
+    await saveModulePreference(7,5,"sales",false)
+    expect(mock.query).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO notification_module_prefs"),[7,5,"sales",0])
+    await expect(saveModulePreference(7,5,"",true)).rejects.toThrow("Invalid module preference")
+    mock.query.mockResolvedValueOnce([{module_key:"sales",enabled:0}])
+    expect(await ownModulePreferences(7,5)).toEqual([{moduleKey:"sales",enabled:false}])
+  })
+  it("silences an opt-in notice for a muted module group",async()=>{
+    d.source_context={moduleKey:"sales.leads"};modPref={enabled:0}
+    await processNotification(8)
+    expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("status='skipped'"),expect.arrayContaining(["module_muted",8]))
+    expect(mock.sql.mock.calls.some(([s])=>s.startsWith("INSERT INTO notifications"))).toBe(false)
+  })
+  it("delivers a mandatory notice even when the module group is muted",async()=>{
+    d.mandatory=1;d.source_context={moduleKey:"sales.leads"};modPref={enabled:0}
+    await processNotification(8)
+    expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO notifications"),expect.anything())
+    expect(d.status).toBe("delivered")
+  })
   it("scopes all monitoring queries to the tenant",async()=>{
     await notificationOverview(7)
     expect(mock.query).toHaveBeenCalledTimes(3)
     for(const [sql,args] of mock.query.mock.calls){expect(sql).toContain("WHERE tenant_id=?");expect(args).toEqual([7])}
+  })
+})
+describe(" delivery decision engine",()=>{
+  const base={mandatory:false,priority:5,channelEnabled:true,moduleEnabled:true,minPriority:0,frequency:"immediate" as const,createdAt:new Date("2027-01-01T00:00:00Z"),now:new Date("2027-01-01T00:00:00Z")}
+  it("always delivers mandatory notices regardless of every opt-out",()=>{
+    for(const override of [{channelEnabled:false},{moduleEnabled:false},{minPriority:10,priority:0},{frequency:"off" as const}])
+      expect(resolveDelivery({...base,mandatory:true,...override}).action).toBe("deliver")
+  })
+  it("delivers an ordinary notice when no filter blocks it",()=>expect(resolveDelivery(base).action).toBe("deliver"))
+  it("skips when the channel is disabled",()=>expect(resolveDelivery({...base,channelEnabled:false})).toEqual({action:"skip",reason:"channel_disabled"}))
+  it("skips when the module group is muted",()=>expect(resolveDelivery({...base,moduleEnabled:false})).toEqual({action:"skip",reason:"module_muted"}))
+  it("skips a notice below the chosen minimum priority",()=>expect(resolveDelivery({...base,priority:5,minPriority:10})).toEqual({action:"skip",reason:"below_priority"}))
+  it("skips when the channel frequency is off",()=>expect(resolveDelivery({...base,frequency:"off"})).toEqual({action:"skip",reason:"frequency_off"}))
+  it("defers a daily-digest notice to the next digest slot, then delivers",()=>{
+    const created=new Date("2027-01-01T09:00:00Z")
+    const deferred=resolveDelivery({...base,frequency:"daily",createdAt:created,now:created})
+    expect(deferred.action).toBe("defer")
+    if(deferred.action==="defer")expect(deferred.at.getTime()).toBe(nextDigestSlot(created).getTime())
+    expect(resolveDelivery({...base,frequency:"daily",createdAt:created,now:nextDigestSlot(created)}).action).toBe("deliver")
   })
 })

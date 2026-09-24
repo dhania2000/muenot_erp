@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-const mock=vi.hoisted(()=>({guard:vi.fn(),overview:vi.fn(),template:vi.fn(),send:vi.fn(),retry:vi.fn(),preferences:vi.fn(),save:vi.fn(),worker:vi.fn()}))
+const mock=vi.hoisted(()=>({guard:vi.fn(),overview:vi.fn(),template:vi.fn(),send:vi.fn(),retry:vi.fn(),preferences:vi.fn(),save:vi.fn(),modulePrefs:vi.fn(),saveModule:vi.fn(),worker:vi.fn()}))
 vi.mock("@/lib/platform-guard",()=>({requireTenantAdmin:mock.guard,requireTenantRole:mock.guard,effectiveTenantId:()=>7}))
-vi.mock("@/lib/notification-engine/service",()=>({notificationOverview:mock.overview,saveTemplate:mock.template,sendTemplate:mock.send,retryNotification:mock.retry,ownPreferences:mock.preferences,savePreference:mock.save,runNotificationWorker:mock.worker}))
+vi.mock("@/lib/notification-engine/service",()=>({notificationOverview:mock.overview,saveTemplate:mock.template,sendTemplate:mock.send,retryNotification:mock.retry,ownPreferences:mock.preferences,savePreference:mock.save,ownModulePreferences:mock.modulePrefs,saveModulePreference:mock.saveModule,runNotificationWorker:mock.worker}))
 import { GET, POST } from "@/app/api/admin/notification-engine/route"
 import { GET as preferences, POST as save } from "@/app/api/notification-preferences/route"
 import { GET as worker } from "@/app/api/cron/notification-delivery/route"
@@ -21,6 +21,21 @@ describe(" API boundaries",()=>{
     expect((await save(request({tenantId:99,userId:99,channel:"email",enabled:true}))).status).toBe(200)
     expect(mock.save).toHaveBeenCalledWith(7,2,"email",true,null)
     await preferences();expect(mock.preferences).toHaveBeenCalledWith(7,2)
+  })
+  it("forwards frequency and priority filters using the session identity",async()=>{
+    expect((await save(request({channel:"email",enabled:true,frequency:"daily",minPriority:10}))).status).toBe(200)
+    expect(mock.save).toHaveBeenCalledWith(7,2,"email",true,null,{minPriority:10,frequency:"daily"})
+  })
+  it("routes module preferences to the module store, scoped to the session",async()=>{
+    expect((await save(request({type:"module",moduleKey:"sales",enabled:false}))).status).toBe(200)
+    expect(mock.saveModule).toHaveBeenCalledWith(7,2,"sales",false)
+    expect(mock.save).not.toHaveBeenCalled()
+  })
+  it("returns both channel and module preferences for the session user",async()=>{
+    mock.preferences.mockResolvedValue([{channel:"email",enabled:true}]);mock.modulePrefs.mockResolvedValue([{moduleKey:"sales",enabled:false}])
+    const body=await (await preferences()).json()
+    expect(mock.preferences).toHaveBeenCalledWith(7,2);expect(mock.modulePrefs).toHaveBeenCalledWith(7,2)
+    expect(body).toEqual({channels:[{channel:"email",enabled:true}],modules:[{moduleKey:"sales",enabled:false}]})
   })
   it("rejects cross-origin mutations and unsupported operations",async()=>{
     expect((await POST(request({operation:"template"},"https://attacker.example"))).status).toBe(403)

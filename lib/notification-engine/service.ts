@@ -20,17 +20,41 @@ export async function enqueueNotification(c:PoolConnection,n:Notice):Promise<num
   if(d.request_hash!==hash)throw new Error("Notification key already used with different content")
   return Number(d.id)
 }
-export async function savePreference(tenant:number,user:number,channel:Channel,enabled:boolean,destination:string|null) {
+export async function savePreference(tenant:number,user:number,channel:Channel,enabled:boolean,destination:string|null,options?:{minPriority?:number;frequency?:Frequency}) {
   if(!CHANNELS.includes(channel)||typeof enabled!=="boolean")throw new Error("Invalid preference")
   if(destination && (destination.length>512||(["sms","whatsapp"].includes(channel)&&!/^\+[1-9]\d{7,14}$/.test(destination))))throw new Error("Phone must be in international +country format")
   if(channel==="in_app"||channel==="email")destination=null // email always resolved from owned user profile
   await ensureNotificationEngineSchema()
+  // Cadence/priority filters only apply to opt-in notices; mandatory security
+  // notices bypass them entirely (see resolveDelivery). When the caller supplies
+  // either filter we upsert all four columns, otherwise we preserve the legacy
+  // channel-only upsert so existing callers keep their stored cadence.
+  if(options && (options.minPriority!==undefined||options.frequency!==undefined)) {
+    const minPriority=options.minPriority??0
+    const frequency=options.frequency??defaultFrequency(channel)
+    if(!PRIORITIES.includes(minPriority as any))throw new Error("Priority must be 0, 5 or 10")
+    if(!FREQUENCIES.includes(frequency))throw new Error("Invalid frequency")
+    await query("INSERT INTO notification_preferences (tenant_id,user_id,channel,enabled,destination,min_priority,frequency) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE enabled=VALUES(enabled),destination=VALUES(destination),min_priority=VALUES(min_priority),frequency=VALUES(frequency)",[tenant,user,channel,enabled?1:0,destination,minPriority,frequency])
+    return
+  }
   await query("INSERT INTO notification_preferences (tenant_id,user_id,channel,enabled,destination) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE enabled=VALUES(enabled),destination=VALUES(destination)",[tenant,user,channel,enabled?1:0,destination])
 }
 export async function ownPreferences(tenant:number,user:number) {
   await ensureNotificationEngineSchema()
-  const list=await query<any[]>("SELECT channel,enabled,destination FROM notification_preferences WHERE tenant_id=? AND user_id=?",[tenant,user])
-  return CHANNELS.map(channel=>{const row=list.find(r=>r.channel===channel);return {channel,enabled:row?!!row.enabled:defaultEnabled(channel),destination:row?.destination??""}})
+  const list=await query<any[]>("SELECT channel,enabled,destination,min_priority,frequency FROM notification_preferences WHERE tenant_id=? AND user_id=?",[tenant,user])
+  return CHANNELS.map(channel=>{const row=list.find(r=>r.channel===channel);return {channel,enabled:row?!!row.enabled:defaultEnabled(channel),destination:row?.destination??"",minPriority:row?Number(row.min_priority):0,frequency:(row?.frequency as Frequency)??defaultFrequency(channel)}})
+}
+// Per-module (app group) opt-out. Module preferences never override a mandatory
+// notice; they only silence ordinary activity notices for that module group.
+export async function saveModulePreference(tenant:number,user:number,moduleKey:string,enabled:boolean) {
+  if(typeof moduleKey!=="string"||!moduleKey.trim()||moduleKey.length>80||typeof enabled!=="boolean")throw new Error("Invalid module preference")
+  await ensureNotificationEngineSchema()
+  await query("INSERT INTO notification_module_prefs (tenant_id,user_id,module_key,enabled) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE enabled=VALUES(enabled)",[tenant,user,moduleKey,enabled?1:0])
+}
+export async function ownModulePreferences(tenant:number,user:number) {
+  await ensureNotificationEngineSchema()
+  const list=await query<any[]>("SELECT module_key,enabled FROM notification_module_prefs WHERE tenant_id=? AND user_id=?",[tenant,user])
+  return list.map(r=>({moduleKey:r.module_key,enabled:!!r.enabled}))
 }
 export async function saveTemplate(tenant:number,actor:number,name:string,title:string,body:string) {
   if(typeof name!=="string"||!name.trim()||name.length>120)throw new Error("Invalid template name")
@@ -58,8 +82,11 @@ export async function processNotification(id:number) {
     }
     const context=typeof d.source_context==="string"?JSON.parse(d.source_context):d.source_context??{}
     const moduleKey=typeof context.moduleKey==="string"?context.moduleKey:null
+    // Module opt-outs are stored per app group (e.g. "hr", "sales"); resolve the
+    // group from the notice's groupSlug, falling back to the module key prefix.
+    const groupKey=(typeof context.groupSlug==="string"&&context.groupSlug)?context.groupSlug:(moduleKey?moduleKey.split(".")[0]:null)
     const [pref]=await rows(c,"SELECT enabled,destination,min_priority,frequency FROM notification_preferences WHERE tenant_id=? AND user_id=? AND channel=?",[d.tenant_id,d.user_id,d.channel])
-    const [modPref]=moduleKey?await rows(c,"SELECT enabled FROM notification_module_prefs WHERE tenant_id=? AND user_id=? AND module_key=?",[d.tenant_id,d.user_id,moduleKey]):[undefined]
+    const [modPref]=groupKey?await rows(c,"SELECT enabled FROM notification_module_prefs WHERE tenant_id=? AND user_id=? AND module_key=?",[d.tenant_id,d.user_id,groupKey]):[undefined]
     const decision=resolveDelivery({
       mandatory:!!d.mandatory,
       priority:Number(d.priority),

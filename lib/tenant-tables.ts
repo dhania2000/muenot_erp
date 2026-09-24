@@ -193,6 +193,18 @@ export const TENANT_OWNED_TABLES = [
   // shared with another tenant.
   "numbering_rules",
   "numbering_counters",
+  // SPEC 93 — Reference Number Management. Per-tenant configuration of which
+  // reference numbers each business document carries and how duplicates are
+  // handled, plus the captured reference values themselves. Each tenant's
+  // references and duplicate scope are fully isolated from every other tenant.
+  "reference_configs",
+  "document_references",
+  // SPEC 94 — Custom Fields. Tenant-defined, metadata-driven fields that extend
+  // any module's records without code changes, plus the per-record values they
+  // capture. Both a tenant's field DEFINITIONS and the captured VALUES are fully
+  // isolated from every other tenant.
+  "custom_field_defs",
+  "custom_field_values",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

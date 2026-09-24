@@ -535,7 +535,7 @@ export async function buildWorkspaceNav(
 
   const navItems: NavItem[] = [
     { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="size-4" /> },
-    { label: "Dashboards", href: "/dashboards", icon: <LayoutGrid className="size-4" /> },
+    { label: "Dashboard Build", href: "/dashboards", icon: <LayoutGrid className="size-4" /> },
     ...modules.map((m) => {
       const item: NavItem = {
         label: m.slug === "assets" ? "Assets & Subscriptions" : m.name,

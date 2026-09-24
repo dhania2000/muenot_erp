@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { requirePlatformStaff, requirePlatformSuperAdmin } from "@/lib/platform-guard"
-import { getShopkeeperDetail, updateShopkeeper, setShopkeeperStatus, changeShopkeeperPlan, resetShopkeeperOwnerPassword, ShopkeeperProvisioningError } from "@/lib/shopkeeper-provisioning"
+import { getShopkeeperDetail, updateShopkeeper, setShopkeeperStatus, changeShopkeeperPlan, resetShopkeeperOwnerPassword, deleteShopkeeper, ShopkeeperProvisioningError } from "@/lib/shopkeeper-provisioning"
 
 export const dynamic = "force-dynamic"
 
@@ -58,5 +58,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: err.message, fieldErrors: err.fieldErrors ?? [] }, { status: err.status })
     }
     return NextResponse.json({ error: "Failed to update shopkeeper" }, { status: 500 })
+  }
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requirePlatformSuperAdmin()
+  if (!guard.ok) return NextResponse.json({ error: guard.reason }, { status: guard.status })
+  const { id } = await params
+  const tenantId = parseId(id)
+  if (!tenantId) return NextResponse.json({ error: "Invalid shopkeeper id" }, { status: 400 })
+  try {
+    await deleteShopkeeper(tenantId, { userId: guard.ctx.userId, email: guard.session.email })
+    return NextResponse.json({ deleted: true })
+  } catch (err) {
+    if (err instanceof ShopkeeperProvisioningError) return NextResponse.json({ error: err.message }, { status: err.status })
+    return NextResponse.json({ error: "Failed to delete shopkeeper" }, { status: 500 })
   }
 }

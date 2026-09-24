@@ -2,6 +2,7 @@ import { pool, query } from "@/lib/db"
 import { nextRecordId } from "@/lib/record-ids"
 import { postLines } from "@/lib/finance-posting"
 import { logFinanceEvent } from "@/lib/finance-audit"
+import { assertPeriodOpen } from "@/lib/finance-period-lock"
 
 /**
  * Payments & Accounts-Receivable engine (server-only) — Phase 2.
@@ -387,6 +388,9 @@ export async function recordPayment(input: RecordPaymentInput) {
   const depositRole = input.deposit_role === "cash" ? "cash" : "bank"
   const paymentDate = String(input.payment_date).slice(0, 10)
 
+  // SPEC 162 — a payment must not be recorded into a locked accounting period.
+  await assertPeriodOpen(paymentDate)
+
   const paymentDisplayId = await nextRecordId("PAY", { allowCustom: true })
 
   // Persist the payment + allocations first. If ledger posting throws we delete
@@ -487,6 +491,9 @@ export async function reversePayment(id: number, reason: string, actorId?: numbe
   const [payment] = (await query(`SELECT * FROM payments WHERE id = ? LIMIT 1`, [id])) as any[]
   if (!payment) throw new Error("Payment not found.")
   if (String(payment.status) !== "Active") throw new Error("Only an active payment can be reversed.")
+
+  // SPEC 162 — a payment dated in a locked period cannot be reversed/changed.
+  await assertPeriodOpen(String(payment.payment_date).slice(0, 10))
 
   const total = round2(num(payment.amount))
   const depositRole = String(payment.deposit_role) === "cash" ? "cash" : "bank"

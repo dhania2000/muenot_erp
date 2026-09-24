@@ -14,6 +14,7 @@ import {
   type InvoiceItemInput,
 } from "@/lib/sales-invoice-compute"
 import { postSalesInvoice } from "@/lib/finance-posting"
+import { assertPeriodOpen, PeriodLockedError } from "@/lib/finance-period-lock"
 import { logFinanceEvent, getFinanceEvents } from "@/lib/finance-audit"
 import { runSourceChecks } from "@/lib/sales-invoice-sources"
 import {
@@ -66,6 +67,28 @@ const POST_ISSUE_EDITABLE = new Set([
 const POSTED_EDITABLE = new Set([
   "amount_received", "payment_status", "payment_date", "payment_reference",
 ])
+
+/**
+ * Accounting Period Lock (SPEC 162) — reject any create / edit / delete of a
+ * sales invoice whose date falls in a locked accounting month. Guards both the
+ * document's existing date (a sealed invoice is frozen) and any incoming date
+ * (an invoice cannot be moved into a locked month). Returns a 409 response to
+ * abort with, or null when every supplied date is in an open period.
+ */
+async function periodLockGuard(...dates: Array<string | null | undefined>): Promise<NextResponse | null> {
+  try {
+    for (const d of dates) {
+      if (d === undefined || d === null || String(d).trim() === "") continue
+      await assertPeriodOpen(String(d))
+    }
+    return null
+  } catch (error) {
+    if (error instanceof PeriodLockedError) {
+      return NextResponse.json({ error: error.message, period: error.period, locked: true }, { status: 409 })
+    }
+    throw error
+  }
+}
 
 const num = (v: any) => {
   const n = Number(v)
@@ -353,6 +376,12 @@ export async function POST(req: NextRequest) {
   await ensureSalesInvoiceSchema()
 
   const body = await req.json()
+
+  // Accounting Period Lock (SPEC 162) — no new invoice may be dated into a
+  // locked month, checked before any numbering or ledger work happens.
+  const createLock = await periodLockGuard(body.invoice_date)
+  if (createLock) return createLock
+
   const settings = await getSettings()
   const fyStartMonth = FY_MONTH[settings["app.financial_year_start"]] ?? 3
 
@@ -538,6 +567,12 @@ export async function PATCH(req: NextRequest) {
   if (!(await canActOnRecord(session, SALES_INVOICE_PERMISSION_KEY, "update", existing))) {
     return NextResponse.json({ error: "You do not have permission to update this invoice." }, { status: 403 })
   }
+
+  // Accounting Period Lock (SPEC 162) — an invoice sealed in a locked month is
+  // frozen (edits, payment tracking, cancellation reversal), and it cannot be
+  // re-dated into a locked month.
+  const editLock = await periodLockGuard(existing.invoice_date, body.invoice_date)
+  if (editLock) return editLock
 
   const status = String(existing.invoice_status || "Draft")
   const settings = await getSettings()
@@ -757,11 +792,16 @@ export async function DELETE(req: NextRequest) {
 
   // Only Draft invoices may be hard-deleted; anything posted/issued must be
   // reversed with a credit note to preserve the audit trail.
-  const [existing] = (await query("SELECT id, invoice_status, created_by FROM sales_invoices WHERE id = ?", [id])) as any[]
+  const [existing] = (await query("SELECT id, invoice_status, invoice_date, created_by FROM sales_invoices WHERE id = ?", [id])) as any[]
   if (!existing) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
   if (!(await canActOnRecord(session, SALES_INVOICE_PERMISSION_KEY, "delete", existing))) {
     return NextResponse.json({ error: "You do not have permission to delete this invoice." }, { status: 403 })
   }
+
+  // Accounting Period Lock (SPEC 162) — a draft dated in a locked month cannot
+  // be deleted; unlock the period first.
+  const deleteLock = await periodLockGuard(existing.invoice_date)
+  if (deleteLock) return deleteLock
   if (String(existing.invoice_status || "Draft") !== "Draft") {
     return NextResponse.json({ error: "Only Draft invoices can be deleted. Issue a credit note instead." }, { status: 409 })
   }

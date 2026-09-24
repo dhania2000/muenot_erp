@@ -18,6 +18,7 @@ import { nextBankTransactionId, syncBankTransactionPosting, reverseBankTransacti
 import { nextFinanceAccountId, recomputeAccountBalance, recomputeBalancesForBankTxn } from "@/lib/finance-account-master"
 import { guardBankTransactionWrite, guardBankAccountClose } from "@/lib/finance-bank-guards"
 import { logFinanceEvent } from "@/lib/finance-audit"
+import { assertPeriodOpen, PeriodLockedError } from "@/lib/finance-period-lock"
 import {
   syncGstInputForBill,
   deleteGstInputForBill,
@@ -431,6 +432,58 @@ function cfgIdColumn(moduleKey: string): string {
   return FINANCE_MODULE_CONFIGS[moduleKey]?.idColumn ?? "id"
 }
 
+/**
+ * SPEC 162 — Accounting Period Lock (central enforcement).
+ *
+ * The transactional finance modules whose dated documents feed the Journal /
+ * General Ledger. Creating, editing or deleting one of these in a locked
+ * accounting month is rejected here at the shared CRUD entry point — in
+ * addition to the guards the individual posting engines already enforce — so a
+ * signed-off period's trial balance can never move through the generic module
+ * route (invoices, bills, expenses, bank movements and the register vouchers).
+ * Masters (customers/vendors, chart of accounts, bank & cash accounts) are not
+ * period-scoped and are intentionally excluded.
+ */
+const PERIOD_LOCKED_MODULES = new Set<string>([
+  "fte-invoices",
+  "freelance-invoices",
+  "purchase-bills",
+  "expenses",
+  "bank-transactions",
+  "fixed-assets",
+  "loans-advances",
+  "investments",
+  "provisions-accruals",
+  "capital-equity",
+])
+
+/**
+ * Reject the request when any of the supplied transaction dates falls in a
+ * locked accounting period. Guards both the prior date (you cannot touch a
+ * document already sealed in a closed month) and the incoming date (you cannot
+ * move a document into one). Returns a 409 response to abort with, or null when
+ * every date is open. Only applies to the transactional modules above.
+ */
+async function guardPeriodLock(
+  moduleKey: string,
+  cfg: ModuleConfig,
+  dates: Array<string | null | undefined>,
+): Promise<NextResponse | null> {
+  if (!PERIOD_LOCKED_MODULES.has(moduleKey) || !cfg.dateColumn) return null
+  try {
+    for (const d of dates) {
+      if (d === undefined || d === null || String(d).trim() === "") continue
+      await assertPeriodOpen(String(d))
+    }
+    return null
+  } catch (error) {
+    if (error instanceof PeriodLockedError) {
+      return NextResponse.json({ error: error.message, period: error.period, locked: true }, { status: 409 })
+    }
+    throw error
+  }
+}
+
 /** Column keys a client is allowed to write (everything except computed fields). */
 function inputKeys(cfg: ModuleConfig) {
   return cfg.fields.filter((f) => !f.computed).map((f) => f.key)
@@ -642,6 +695,11 @@ export function createFinanceHandlers(moduleKey: string) {
       if (message) return NextResponse.json({ error: message }, { status: 400 })
     }
 
+    // Accounting Period Lock (SPEC 162) — reject a new dated document in a
+    // locked month before the id is minted so a rejection burns no sequence.
+    const createLock = await guardPeriodLock(moduleKey, cfg, [record[cfg.dateColumn ?? ""]])
+    if (createLock) return createLock
+
     // Duplicate guard (Phase 24). Only on create, and only when the client has
     // not already confirmed with `__forceCreate`. A hit returns 409 so the form
     // can surface the existing record and ask the user to confirm.
@@ -703,6 +761,14 @@ export function createFinanceHandlers(moduleKey: string) {
     if (permissionKey && !(await canActOnRecord(session, permissionKey, "update", existing))) {
       return NextResponse.json({ error: "You do not have permission to update this record." }, { status: 403 })
     }
+
+    // Accounting Period Lock (SPEC 162) — block editing a document already
+    // sealed in a locked month, and block moving one into a locked month.
+    const editLock = await guardPeriodLock(moduleKey, cfg, [
+      existing[cfg.dateColumn ?? ""],
+      cfg.dateColumn ? body[cfg.dateColumn] : undefined,
+    ])
+    if (editLock) return editLock
 
     const merged = { ...existing, ...body }
 
@@ -780,13 +846,20 @@ export function createFinanceHandlers(moduleKey: string) {
     // needs it.
     const afterDelete = AFTER_DELETE[moduleKey]
     let doomed: Record<string, any> | null = null
-    if (permissionKey || typeof afterDelete === "function") {
+    if (permissionKey || typeof afterDelete === "function" || PERIOD_LOCKED_MODULES.has(moduleKey)) {
       const [row] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
       doomed = row ?? null
     }
 
     if (permissionKey && doomed && !(await canActOnRecord(session, permissionKey, "delete", doomed))) {
       return NextResponse.json({ error: "You do not have permission to delete this record." }, { status: 403 })
+    }
+
+    // Accounting Period Lock (SPEC 162) — a document dated in a locked month
+    // cannot be deleted; unlock the period first.
+    if (doomed) {
+      const deleteLock = await guardPeriodLock(moduleKey, cfg, [doomed[cfg.dateColumn ?? ""]])
+      if (deleteLock) return deleteLock
     }
 
     // Dependency guard (e.g. a Chart of Accounts head still referenced by a

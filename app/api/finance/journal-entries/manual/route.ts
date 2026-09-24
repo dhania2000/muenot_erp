@@ -10,6 +10,7 @@ import {
   transitionManualJournal,
   deleteManualJournal,
   getManualJournal,
+  listJournalAdjustments,
   validateManualJournal,
   JOURNAL_ACTIONS,
   MANUAL_JOURNAL_SOURCE,
@@ -71,7 +72,10 @@ export async function GET(req: NextRequest) {
     // Phase 42/47 — the detail drawer shows the full lifecycle trail alongside
     // the header + lines. Manual-journal events are keyed by the voucher ref.
     const events = await getFinanceEventsByRefs("journal", [journalId])
-    return NextResponse.json({ status, rows, events })
+    // SPEC 165 — every adjustment/correction/reclassification raised against
+    // this voucher, so the drawer can show the chain of corrections layered on.
+    const links = await listJournalAdjustments(journalId)
+    return NextResponse.json({ status, rows, events, links })
   }
 
   const accounts = await listPostableAccounts()

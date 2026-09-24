@@ -45,6 +45,23 @@ type LineDraft = {
   tds: string
 }
 
+/**
+ * SPEC 165 — context for raising a linked adjustment / correction /
+ * reclassification against a POSTED journal. The dialog is seeded from the
+ * original and posts to the /adjust endpoint instead of editing anything.
+ */
+export type AdjustmentContext = {
+  originalId: string
+  kind: "Adjustment" | "Correction" | "Reclassification"
+  seed: {
+    journalDate?: string
+    voucherType?: string
+    referenceNo?: string
+    narration?: string
+    lines: EditableJournal["lines"]
+  }
+}
+
 /** An existing unposted journal loaded for editing. */
 export type EditableJournal = {
   journalId: string
@@ -102,13 +119,17 @@ export function ManualJournalDialog({
   onOpenChange,
   onSaved,
   editJournal = null,
+  adjustment = null,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSaved: (journalId: string) => void
   editJournal?: EditableJournal | null
+  adjustment?: AdjustmentContext | null
 }) {
   const isEdit = !!editJournal
+  const isAdjust = !isEdit && !!adjustment
+  const adjKind = adjustment?.kind ?? null
   const { data } = useSWR<{ accounts: PostableAccount[] }>(
     open ? "/api/finance/journal-entries/manual" : null,
     fetcher,
@@ -165,6 +186,36 @@ export function ManualJournalDialog({
             }))
           : [newLine(), newLine()],
       )
+    } else if (adjustment) {
+      // SPEC 165 — seed a linked adjustment from the posted original. A
+      // Correction pre-fills the original's own lines (the operator edits the
+      // corrected values); Adjustment/Reclassification start from blank lines
+      // so the operator enters only the delta / reclassifying entry.
+      const s = adjustment.seed
+      setJournalDate(s.journalDate?.slice(0, 10) || today())
+      setVoucherType(s.voucherType || (adjustment.kind === "Reclassification" ? "Journal" : "Adjustment"))
+      setReferenceNo(s.referenceNo || adjustment.originalId)
+      setNarration(s.narration || `${adjustment.kind} of ${adjustment.originalId}`)
+      setPaymentMode("")
+      setChequeUtr("")
+      setAttachmentUrl("")
+      setAttachmentType("")
+      setLines(
+        adjustment.kind === "Correction" && s.lines.length
+          ? s.lines.map((l) => ({
+              key: `l${++seq}`,
+              accountId: l.accountId,
+              debit: l.debit ? String(l.debit) : "",
+              credit: l.credit ? String(l.credit) : "",
+              narration: l.narration || "",
+              partyId: l.partyId || "",
+              projectId: l.projectId || "",
+              costCentre: l.costCentre || "",
+              gst: l.gst ? String(l.gst) : "",
+              tds: l.tds ? String(l.tds) : "",
+            }))
+          : [newLine(), newLine()],
+      )
     } else {
       setJournalDate(today())
       setVoucherType("Journal")
@@ -173,7 +224,7 @@ export function ManualJournalDialog({
       setLines([newLine(), newLine()])
     }
     setError(null)
-  }, [open, editJournal])
+  }, [open, editJournal, adjustment])
 
   // Accounts grouped for a tidy <optgroup> picker.
   const grouped = useMemo(() => {
@@ -244,13 +295,28 @@ export function ManualJournalDialog({
         lines: linePayload,
       }
 
-      // Editing an unposted journal replaces its lines (PUT) and always returns
-      // it to Draft server-side; creating uses POST with the submit intent.
-      const res = await fetch("/api/finance/journal-entries/manual", {
-        method: isEdit ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(isEdit ? { journalId: editJournal!.journalId, ...base } : { ...base, submit: mode === "submit" }),
-      })
+      // SPEC 165 — an adjustment posts to the dedicated /adjust endpoint, which
+      // creates a NEW linked voucher against the posted original and never
+      // rewrites its history. Editing an unposted journal replaces its lines
+      // (PUT) and always returns it to Draft server-side; creating uses POST.
+      const res = isAdjust
+        ? await fetch("/api/finance/journal-entries/adjust", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              originalId: adjustment!.originalId,
+              kind: adjustment!.kind,
+              submit: mode === "submit",
+              ...base,
+            }),
+          })
+        : await fetch("/api/finance/journal-entries/manual", {
+            method: isEdit ? "PUT" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(
+              isEdit ? { journalId: editJournal!.journalId, ...base } : { ...base, submit: mode === "submit" },
+            ),
+          })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         setError(json.error || "Could not save the journal.")
@@ -267,12 +333,22 @@ export function ManualJournalDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? `Edit journal ${editJournal!.journalId}` : "New manual journal"}</DialogTitle>
+          <DialogTitle>
+            {isAdjust
+              ? `${adjKind} of ${adjustment!.originalId}`
+              : isEdit
+                ? `Edit journal ${editJournal!.journalId}`
+                : "New manual journal"}
+          </DialogTitle>
           <DialogDescription>
             Enter a balanced double-entry voucher. Total debit must equal total credit.{" "}
-            {isEdit
-              ? "Saving returns the journal to Draft; it posts to the ledger only after it is approved and posted."
-              : "The journal is saved unposted and only reaches the general ledger once it is approved and posted."}
+            {isAdjust
+              ? adjKind === "Correction"
+                ? `This creates a new linked voucher and reverses ${adjustment!.originalId}; the original posting is never overwritten. It reaches the ledger only after approval and posting.`
+                : `This creates a new linked ${adjKind!.toLowerCase()} voucher against ${adjustment!.originalId}; the original posting is never overwritten. It reaches the ledger only after approval and posting.`
+              : isEdit
+                ? "Saving returns the journal to Draft; it posts to the ledger only after it is approved and posted."
+                : "The journal is saved unposted and only reaches the general ledger once it is approved and posted."}
           </DialogDescription>
         </DialogHeader>
 
@@ -593,7 +669,7 @@ export function ManualJournalDialog({
           {!isEdit && (
             <Button onClick={() => save("submit")} disabled={!canSave}>
               {saving === "submit" && <Loader2Icon data-icon="inline-start" className="animate-spin" />}
-              Submit for approval
+              {isAdjust ? `Submit ${adjKind!.toLowerCase()} for approval` : "Submit for approval"}
             </Button>
           )}
         </DialogFooter>

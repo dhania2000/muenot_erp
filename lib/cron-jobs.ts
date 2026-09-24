@@ -67,6 +67,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["related_party_scan", "Related-party scan", "/api/cron/related-party-scan", "0 8 * * *"],
   ["recruit_reminders", "Recruitment reminders", "/api/cron/recruit-reminders", "0 7 * * *"],
   ["operations_monitoring", "Operations monitoring", "/api/cron/operations-monitoring", "0 7 * * *"],
+  ["document_expiry", "Document expiry sweep", "/api/cron/document-expiry", "0 7 * * *"],
   ["calendar_sync", "Calendar sync", "/api/cron/calendar-sync", "*/30 * * * *"],
   ["whatsapp_scheduler", "WhatsApp scheduler", "/api/marketing/whatsapp/scheduler", "*/5 * * * *"],
   ["marketing_journeys", "Marketing journeys", "/api/cron/marketing-journeys", "*/5 * * * *"],

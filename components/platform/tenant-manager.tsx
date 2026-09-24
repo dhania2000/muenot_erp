@@ -15,6 +15,8 @@ import {
   PauseCircle,
   PlayCircle,
   Ban,
+  Pencil,
+  Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -82,6 +84,8 @@ export function TenantManager({
   const router = useRouter()
   const [pendingId, setPendingId] = useState<number | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [editTenant, setEditTenant] = useState<TenantRow | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<TenantRow | null>(null)
 
   async function impersonate(tenant: TenantRow) {
     setPendingId(tenant.id)
@@ -138,6 +142,27 @@ export function TenantManager({
         return
       }
       toast.success(`${tenant.name} is now ${status}`)
+      router.refresh()
+    } catch {
+      toast.error("Network error — please try again")
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    const tenant = deleteTarget
+    setPendingId(tenant.id)
+    try {
+      const res = await fetch(`/api/platform/tenants/${tenant.id}`, { method: "DELETE" })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(json.error || "Could not delete tenant")
+        return
+      }
+      toast.success(`Deleted ${tenant.name}`)
+      setDeleteTarget(null)
       router.refresh()
     } catch {
       toast.error("Network error — please try again")
@@ -234,8 +259,14 @@ export function TenantManager({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Lifecycle</DropdownMenuLabel>
+                            <DropdownMenuLabel>Manage</DropdownMenuLabel>
                             <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => setEditTenant(tenant)}>
+                              <Pencil className="size-4" />
+                              Edit details
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuLabel>Lifecycle</DropdownMenuLabel>
                             <DropdownMenuItem
                               disabled={tenant.status === "active"}
                               onClick={() => setStatus(tenant, "active")}
@@ -257,6 +288,14 @@ export function TenantManager({
                               <Ban className="size-4" />
                               Deactivate
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => setDeleteTarget(tenant)}
+                            >
+                              <Trash2 className="size-4" />
+                              Delete
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       ) : null}
@@ -272,7 +311,155 @@ export function TenantManager({
       {canManage ? (
         <CreateTenantDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={() => router.refresh()} />
       ) : null}
+
+      {canManage ? (
+        <EditTenantDialog
+          tenant={editTenant}
+          onOpenChange={(v) => !v && setEditTenant(null)}
+          onUpdated={() => {
+            setEditTenant(null)
+            router.refresh()
+          }}
+        />
+      ) : null}
+
+      {canManage ? (
+        <Dialog open={deleteTarget !== null} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete tenant</DialogTitle>
+              <DialogDescription>
+                This permanently removes{" "}
+                <span className="font-medium text-foreground">{deleteTarget?.name}</span> and its owner access. This
+                action cannot be undone. Tenants with existing business data cannot be deleted — deactivate them
+                instead.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={pendingId === deleteTarget?.id}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={confirmDelete} disabled={pendingId === deleteTarget?.id}>
+                {pendingId === deleteTarget?.id ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                Delete tenant
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
+  )
+}
+
+function EditTenantDialog({
+  tenant,
+  onOpenChange,
+  onUpdated,
+}: {
+  tenant: TenantRow | null
+  onOpenChange: (v: boolean) => void
+  onUpdated: () => void
+}) {
+  const [name, setName] = useState("")
+  const [plan, setPlan] = useState("standard")
+  const [deployment, setDeployment] = useState("shared_database")
+  const [busy, setBusy] = useState(false)
+
+  // Sync the form to the selected tenant whenever the dialog opens for a new row.
+  const tenantId = tenant?.id ?? null
+  const [syncedId, setSyncedId] = useState<number | null>(null)
+  if (tenant && tenantId !== syncedId) {
+    setSyncedId(tenantId)
+    setName(tenant.name)
+    setPlan(tenant.plan)
+    setDeployment(tenant.deploymentModel)
+  }
+
+  async function submit() {
+    if (!tenant) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/platform/tenants/${tenant.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, plan, deployment_model: deployment }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(json.error || "Could not update tenant")
+        return
+      }
+      toast.success(`Updated ${json.tenant?.name ?? name}`)
+      onUpdated()
+    } catch {
+      toast.error("Network error — please try again")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={tenant !== null} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit tenant</DialogTitle>
+          <DialogDescription>
+            Update the tenant&apos;s display name, plan and deployment model. The slug is fixed once created.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="edit-tenant-name">Name</Label>
+            <Input id="edit-tenant-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Inc." />
+          </div>
+          {tenant ? (
+            <div className="flex flex-col gap-1">
+              <Label className="text-muted-foreground">Slug</Label>
+              <p className="text-sm text-muted-foreground">{tenant.slug}</p>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-2">
+              <Label>Plan</Label>
+              <Select value={plan} onValueChange={setPlan}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="starter">Starter</SelectItem>
+                  <SelectItem value="standard">Standard</SelectItem>
+                  <SelectItem value="growth">Growth</SelectItem>
+                  <SelectItem value="enterprise">Enterprise</SelectItem>
+                  <SelectItem value="shopkeeper">Shopkeeper</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Deployment</Label>
+              <Select value={deployment} onValueChange={setDeployment}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="shared_database">Shared database</SelectItem>
+                  <SelectItem value="separate_schema">Separate schema</SelectItem>
+                  <SelectItem value="dedicated_database">Dedicated database</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={busy || !name.trim()}>
+            {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+            Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

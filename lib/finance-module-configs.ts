@@ -6,6 +6,8 @@ import {
   INTEREST_METHODS,
   computeLoanScheduleFields,
 } from "@/lib/finance-loans-calc"
+import { deriveBudgetFields } from "@/lib/finance-budget-calc"
+import { deriveRequisitionFields, deriveRfqFields, derivePoAmounts, deriveGrnFields } from "@/lib/finance-procurement-calc"
 import type { FieldDef, FieldType, ModuleConfig, TableColumn } from "@/lib/finance-schema"
 
 /** Terse field builder. */
@@ -2305,7 +2307,431 @@ const relatedParties: ModuleConfig = {
     "COUNT(*) total_rows, COALESCE(SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END),0) active_rows, COALESCE(SUM(opening_balance),0) total_opening",
 }
 
+// ---------------------------------------------------------------------------
+// SPEC 143 — Budget Management
+// ---------------------------------------------------------------------------
+// One config-driven module backs every budget dimension. `budget_type` selects
+// the dimension (Annual / Monthly / Department / Cost Center / Project) and
+// toggles the relevant dimension field; `budget_nature` (Expense / Revenue /
+// Capex) decides what "favorable" means. The variance, variance %, utilisation
+// and status columns are recomputed on every write by the shared, DB-free
+// `deriveBudgetFields` so the list, the detail view and the Budget vs Actual
+// report always agree. Approval is a simple Draft → Submitted → Approved /
+// Rejected status captured on the record (mirrors the Expense approval pattern).
+const BUDGET_TYPES = ["Annual", "Monthly", "Department", "Cost Center", "Project"]
+const BUDGET_NATURES = ["Expense", "Revenue", "Capex"]
+const BUDGET_APPROVAL_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"]
+const BUDGET_ACCOUNT_GROUPS = ["Asset", "Liability", "Equity", "Income", "Expense"]
+const BUDGET_VARIANCE_STATUSES = [
+  "No Activity", "Under Budget", "On Track", "Warning", "Over Budget", "Below Target", "Exceeded",
+]
+
+const budgets: ModuleConfig = {
+  key: "budgets",
+  table: "finance_budgets",
+  label: "Budget Management",
+  subtitle: "Finance management",
+  addLabel: "New budget",
+  idColumn: "budget_id",
+  idPrefix: "BUD",
+  financialYearColumn: "financial_year",
+  statusColumn: "approval_status",
+  searchColumns: [
+    "budget_id", "budget_name", "budget_type", "department", "cost_center",
+    "project_name", "account_group", "financial_year", "period_month",
+  ],
+  filters: [
+    { type: "select", key: "budget_type", label: "Type", options: BUDGET_TYPES },
+    { type: "select", key: "budget_nature", label: "Nature", options: BUDGET_NATURES },
+    { type: "select", key: "approval_status", label: "Approval", options: BUDGET_APPROVAL_STATUSES },
+    { type: "select", key: "variance_status", label: "Variance", options: BUDGET_VARIANCE_STATUSES },
+    { type: "financial_year", key: "financial_year", label: "Financial year" },
+  ],
+  fields: [
+    fld("Budget definition", "budget_name", "Budget name", "text", { required: true, placeholder: "e.g. FY26 Marketing" }),
+    fld("Budget definition", "budget_type", "Budget type", "select", { options: BUDGET_TYPES, required: true }),
+    fld("Budget definition", "budget_nature", "Budget nature", "select", { options: BUDGET_NATURES, required: true }),
+    fld("Budget definition", "financial_year", "Financial year", "text", { required: true, placeholder: "2026-27" }),
+    fld("Budget definition", "period_month", "Month", "select", { financialYearMonths: true, optional: true, visibleWhen: { field: "budget_type", in: ["Monthly"] } }),
+    fld("Budget definition", "account_group", "Account group", "select", { options: BUDGET_ACCOUNT_GROUPS, optional: true }),
+
+    // The dimension field toggles with the budget type so an Annual budget is a
+    // clean entity-level plan, while Department / Cost Center / Project budgets
+    // capture the axis they are measured against.
+    fld("Dimension", "department", "Department", "select", { referenceSource: "hr-department", optional: true, visibleWhen: { field: "budget_type", in: ["Department"] } }),
+    fld("Dimension", "cost_center", "Cost center", "text", { placeholder: "e.g. CC-Sales-North", visibleWhen: { field: "budget_type", in: ["Cost Center"] } }),
+    fld("Dimension", "project_id", "Project ID", "text", { hidden: true }),
+    fld("Dimension", "project_name", "Project", "text", { visibleWhen: { field: "budget_type", in: ["Project"] } }),
+
+    fld("Amounts", "budgeted_amount", "Budgeted amount", "number", { required: true, money: true }),
+    fld("Amounts", "actual_amount", "Actual amount", "number", { money: true }),
+    fld("Amounts", "variance", "Variance (budget − actual)", "number", { computed: true, money: true }),
+    fld("Amounts", "variance_percent", "Variance %", "number", { computed: true }),
+    fld("Amounts", "utilization_percent", "Utilisation %", "number", { computed: true }),
+    fld("Amounts", "variance_status", "Variance status", "text", { computed: true }),
+
+    fld("Approval", "approval_status", "Approval status", "select", { options: BUDGET_APPROVAL_STATUSES }),
+    fld("Approval", "approved_by", "Approved by", "text"),
+    fld("Approval", "approval_date", "Approval date", "date"),
+
+    fld("Notes", "notes", "Notes", "textarea"),
+  ],
+  // Client-side mirror of the authoritative server recomputation, so the
+  // "Calculated automatically" box previews the same variance the server saves.
+  compute: (v) => deriveBudgetFields(v),
+  tableColumns: [
+    { key: "budget_id", label: "Budget ID", mono: true },
+    { key: "budget_name", label: "Budget", sub: "budget_type" },
+    { key: "financial_year", label: "FY", sub: "period_month" },
+    { key: "budgeted_amount", label: "Budgeted", align: "right", money: true },
+    { key: "actual_amount", label: "Actual", align: "right", money: true },
+    { key: "variance", label: "Variance", align: "right", money: true },
+    {
+      key: "variance_status",
+      label: "Variance",
+      badge: {
+        "Under Budget": "default",
+        "On Track": "default",
+        Exceeded: "default",
+        Warning: "secondary",
+        "Below Target": "secondary",
+        "No Activity": "outline",
+        "Over Budget": "destructive",
+      },
+    },
+    {
+      key: "approval_status",
+      label: "Approval",
+      badge: { Approved: "default", Submitted: "secondary", Draft: "outline", Rejected: "destructive" },
+    },
+  ],
+  kpis: [
+    { label: "Total Budgeted", key: "total_budgeted", money: true, icon: "Wallet" },
+    { label: "Total Actual", key: "total_actual", money: true, icon: "Coins" },
+    { label: "Net Variance", key: "total_variance", money: true, icon: "TrendingUp" },
+    { label: "Over Budget", key: "over_budget_rows", icon: "Landmark" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(budgeted_amount),0) total_budgeted, COALESCE(SUM(actual_amount),0) total_actual, COALESCE(SUM(variance),0) total_variance, COALESCE(SUM(CASE WHEN variance_status = 'Over Budget' THEN 1 ELSE 0 END),0) over_budget_rows, COUNT(*) total_rows",
+}
+
+// ---------------------------------------------------------------------------
+// SPEC 136 — Procurement lifecycle documents.
+// Requisition → RFQ → Purchase Order → Goods Receipt → (Purchase Bill → Payment)
+// ---------------------------------------------------------------------------
+
+const PROCUREMENT_PRIORITIES = ["Low", "Medium", "High", "Urgent"]
+const PROCUREMENT_APPROVAL_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"]
+const REQUISITION_STATUSES = ["Open", "In RFQ", "In PO", "Fulfilled", "Cancelled"]
+const UOMS = ["Nos", "Units", "Kg", "Litre", "Metre", "Box", "Set", "Hour", "Day", "Month", "Licence", "Service"]
+const RFQ_SELECTION_METHODS = ["Lowest Quote", "Manual"]
+const RFQ_STATUSES = ["Draft", "Issued", "Quotes Received", "Awarded", "Cancelled"]
+const PO_STATUSES = ["Draft", "Approved", "Sent", "Partially Received", "Received", "Closed", "Cancelled"]
+const GRN_QUALITY_STATUSES = ["Pending", "Passed", "Partial", "Failed"]
+const GRN_RECEIPT_STATUSES = ["Pending", "Partial", "Complete", "Over-received"]
+
+const purchaseRequisition: ModuleConfig = {
+  key: "purchase-requisition",
+  table: "procurement_requisitions",
+  label: "Purchase Requisition",
+  subtitle: "Procurement management",
+  addLabel: "New requisition",
+  idColumn: "requisition_id",
+  idPrefix: "PR",
+  dateColumn: "request_date",
+  statusColumn: "approval_status",
+  searchColumns: [
+    "requisition_id", "title", "item_description", "department", "cost_center",
+    "project_name", "requested_by", "financial_year",
+  ],
+  financialYearColumn: "financial_year",
+  filters: [
+    { type: "select", key: "approval_status", label: "Approval", options: PROCUREMENT_APPROVAL_STATUSES },
+    { type: "select", key: "requisition_status", label: "Stage", options: REQUISITION_STATUSES },
+    { type: "select", key: "priority", label: "Priority", options: PROCUREMENT_PRIORITIES },
+    { type: "financial_year", key: "financial_year", label: "Financial year" },
+  ],
+  fields: [
+    fld("Request", "title", "Requisition title", "text", { required: true, placeholder: "e.g. 10 developer laptops" }),
+    fld("Request", "request_date", "Request date", "date", { required: true }),
+    fld("Request", "requested_by", "Requested by", "text", { required: true }),
+    fld("Request", "department", "Department", "select", { referenceSource: "hr-department", optional: true }),
+    fld("Request", "priority", "Priority", "select", { options: PROCUREMENT_PRIORITIES }),
+    fld("Request", "required_by_date", "Required by", "date", { optional: true }),
+    fld("Request", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+
+    fld("Item", "item_description", "Item / service", "textarea", { required: true }),
+    fld("Item", "quantity", "Quantity", "number", { required: true }),
+    fld("Item", "uom", "Unit", "select", { options: UOMS }),
+    fld("Item", "estimated_unit_price", "Estimated unit price", "number", { money: true }),
+    fld("Item", "estimated_amount", "Estimated amount", "number", { computed: true, money: true }),
+    fld("Item", "currency", "Currency", "select", { options: CURRENCIES, optional: true }),
+
+    fld("Allocation", "cost_center", "Cost center", "text", { placeholder: "e.g. CC-Eng", optional: true }),
+    fld("Allocation", "project_name", "Project", "text", { optional: true }),
+    fld("Allocation", "budget_reference", "Budget reference", "text", { placeholder: "Budget ID", optional: true }),
+    fld("Allocation", "justification", "Justification", "textarea", { optional: true }),
+
+    fld("Approval", "approval_status", "Approval status", "select", { options: PROCUREMENT_APPROVAL_STATUSES }),
+    fld("Approval", "approved_by", "Approved by", "text", { optional: true }),
+    fld("Approval", "approval_date", "Approval date", "date", { optional: true }),
+    fld("Approval", "requisition_status", "Lifecycle stage", "select", { options: REQUISITION_STATUSES }),
+
+    fld("Notes", "notes", "Notes", "textarea", { optional: true }),
+  ],
+  compute: (v) => deriveRequisitionFields(v),
+  tableColumns: [
+    { key: "requisition_id", label: "PR ID", mono: true },
+    { key: "title", label: "Requisition", sub: "department" },
+    { key: "request_date", label: "Requested", sub: "required_by_date" },
+    { key: "quantity", label: "Qty", align: "right" },
+    { key: "estimated_amount", label: "Estimated", align: "right", money: true },
+    { key: "priority", label: "Priority", badge: { Urgent: "destructive", High: "secondary", Medium: "outline", Low: "outline" } },
+    {
+      key: "approval_status",
+      label: "Approval",
+      badge: { Approved: "default", Submitted: "secondary", Draft: "outline", Rejected: "destructive" },
+    },
+    {
+      key: "requisition_status",
+      label: "Stage",
+      badge: { Fulfilled: "default", "In PO": "secondary", "In RFQ": "secondary", Open: "outline", Cancelled: "destructive" },
+    },
+  ],
+  kpis: [
+    { label: "Requisitions", key: "total_rows", icon: "ClipboardList" },
+    { label: "Estimated Value", key: "total_estimated", money: true, icon: "Wallet" },
+    { label: "Pending Approval", key: "pending_approval", icon: "Clock" },
+    { label: "Approved", key: "approved_rows", icon: "CheckCircle2" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(estimated_amount),0) total_estimated, COALESCE(SUM(CASE WHEN approval_status = 'Submitted' THEN 1 ELSE 0 END),0) pending_approval, COALESCE(SUM(CASE WHEN approval_status = 'Approved' THEN 1 ELSE 0 END),0) approved_rows, COUNT(*) total_rows",
+}
+
+const rfq: ModuleConfig = {
+  key: "rfq",
+  table: "procurement_rfqs",
+  label: "Request for Quotation",
+  subtitle: "Procurement management",
+  addLabel: "New RFQ",
+  idColumn: "rfq_id",
+  idPrefix: "RFQ",
+  dateColumn: "issue_date",
+  statusColumn: "status",
+  searchColumns: [
+    "rfq_id", "title", "requisition_id", "item_description",
+    "vendor_1_name", "vendor_2_name", "vendor_3_name", "selected_vendor_name",
+  ],
+  filters: [
+    { type: "select", key: "status", label: "Status", options: RFQ_STATUSES },
+    { type: "select", key: "selection_method", label: "Selection", options: RFQ_SELECTION_METHODS },
+  ],
+  fields: [
+    fld("RFQ", "title", "RFQ title", "text", { required: true, placeholder: "e.g. Laptops — Q1 sourcing" }),
+    fld("RFQ", "requisition_id", "Requisition ID", "text", { placeholder: "PR-000001", optional: true }),
+    fld("RFQ", "issue_date", "Issue date", "date", { required: true }),
+    fld("RFQ", "due_date", "Quotes due by", "date", { optional: true }),
+    fld("RFQ", "item_description", "Item / service", "textarea", { required: true }),
+    fld("RFQ", "quantity", "Quantity", "number" ),
+    fld("RFQ", "uom", "Unit", "select", { options: UOMS }),
+
+    fld("Quotes", "vendor_1_name", "Vendor 1", "text", { optional: true }),
+    fld("Quotes", "vendor_1_quote", "Vendor 1 quote", "number", { money: true }),
+    fld("Quotes", "vendor_2_name", "Vendor 2", "text", { optional: true }),
+    fld("Quotes", "vendor_2_quote", "Vendor 2 quote", "number", { money: true }),
+    fld("Quotes", "vendor_3_name", "Vendor 3", "text", { optional: true }),
+    fld("Quotes", "vendor_3_quote", "Vendor 3 quote", "number", { money: true }),
+
+    fld("Award", "selection_method", "Selection method", "select", { options: RFQ_SELECTION_METHODS }),
+    fld("Award", "selected_vendor_name", "Awarded vendor", "text", { optional: true }),
+    fld("Award", "lowest_quote", "Lowest quote", "number", { computed: true, money: true }),
+    fld("Award", "highest_quote", "Highest quote", "number", { computed: true, money: true }),
+    fld("Award", "awarded_amount", "Awarded amount", "number", { computed: true, money: true }),
+    fld("Award", "estimated_savings", "Savings vs highest", "number", { computed: true, money: true }),
+    fld("Award", "quote_count", "Quotes received", "number", { computed: true }),
+    fld("Award", "status", "Status", "select", { options: RFQ_STATUSES }),
+
+    fld("Notes", "notes", "Notes", "textarea", { optional: true }),
+  ],
+  compute: (v) => deriveRfqFields(v),
+  tableColumns: [
+    { key: "rfq_id", label: "RFQ ID", mono: true },
+    { key: "title", label: "RFQ", sub: "requisition_id" },
+    { key: "quote_count", label: "Quotes", align: "right" },
+    { key: "lowest_quote", label: "Lowest", align: "right", money: true },
+    { key: "selected_vendor_name", label: "Awarded to" },
+    { key: "awarded_amount", label: "Awarded", align: "right", money: true },
+    { key: "estimated_savings", label: "Savings", align: "right", money: true },
+    {
+      key: "status",
+      label: "Status",
+      badge: { Awarded: "default", "Quotes Received": "secondary", Issued: "secondary", Draft: "outline", Cancelled: "destructive" },
+    },
+  ],
+  kpis: [
+    { label: "RFQs", key: "total_rows", icon: "FileText" },
+    { label: "Awarded Value", key: "total_awarded", money: true, icon: "Coins" },
+    { label: "Total Savings", key: "total_savings", money: true, icon: "TrendingDown" },
+    { label: "Awarded", key: "awarded_rows", icon: "CheckCircle2" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(awarded_amount),0) total_awarded, COALESCE(SUM(estimated_savings),0) total_savings, COALESCE(SUM(CASE WHEN status = 'Awarded' THEN 1 ELSE 0 END),0) awarded_rows, COUNT(*) total_rows",
+}
+
+const purchaseOrders: ModuleConfig = {
+  key: "purchase-orders",
+  table: "procurement_purchase_orders",
+  label: "Purchase Orders",
+  subtitle: "Procurement management",
+  addLabel: "New purchase order",
+  idColumn: "po_number",
+  idPrefix: "PO",
+  dateColumn: "order_date",
+  statusColumn: "status",
+  searchColumns: [
+    "po_number", "vendor_name", "rfq_id", "requisition_id", "item_description", "financial_year",
+  ],
+  financialYearColumn: "financial_year",
+  filters: [
+    { type: "select", key: "status", label: "Status", options: PO_STATUSES },
+    { type: "select", key: "approval_status", label: "Approval", options: PROCUREMENT_APPROVAL_STATUSES },
+    { type: "financial_year", key: "financial_year", label: "Financial year" },
+  ],
+  fields: [
+    fld("Order", "vendor_name", "Vendor", "text", { required: true, placeholder: "Awarded vendor" }),
+    fld("Order", "vendor_id", "Vendor ID", "text", { optional: true }),
+    fld("Order", "order_date", "Order date", "date", { required: true }),
+    fld("Order", "expected_delivery_date", "Expected delivery", "date", { optional: true }),
+    fld("Order", "rfq_id", "RFQ ID", "text", { placeholder: "RFQ-000001", optional: true }),
+    fld("Order", "requisition_id", "Requisition ID", "text", { placeholder: "PR-000001", optional: true }),
+    fld("Order", "financial_year", "Financial year", "text", { placeholder: "2026-27" }),
+
+    fld("Line", "item_description", "Item / service", "textarea", { required: true }),
+    fld("Line", "quantity", "Quantity", "number", { required: true }),
+    fld("Line", "uom", "Unit", "select", { options: UOMS }),
+    fld("Line", "unit_price", "Unit price", "number", { required: true, money: true }),
+    fld("Line", "subtotal", "Subtotal", "number", { computed: true, money: true }),
+    fld("Line", "discount_percent", "Discount %", "number"),
+    fld("Line", "discount_amount", "Discount amount", "number", { computed: true, money: true }),
+    fld("Line", "taxable_amount", "Taxable amount", "number", { computed: true, money: true }),
+    fld("Line", "gst_rate", "GST %", "number"),
+    fld("Line", "gst_amount", "GST amount", "number", { computed: true, money: true }),
+    fld("Line", "total_amount", "Total amount", "number", { computed: true, money: true }),
+    fld("Line", "currency", "Currency", "select", { options: CURRENCIES, optional: true }),
+
+    fld("Terms", "payment_terms", "Payment terms", "text", { optional: true }),
+    fld("Terms", "delivery_terms", "Delivery terms", "text", { optional: true }),
+    fld("Terms", "approval_status", "Approval status", "select", { options: PROCUREMENT_APPROVAL_STATUSES }),
+    fld("Terms", "status", "Order status", "select", { options: PO_STATUSES }),
+
+    fld("Notes", "notes", "Notes", "textarea", { optional: true }),
+  ],
+  compute: (v) => derivePoAmounts(v),
+  tableColumns: [
+    { key: "po_number", label: "PO Number", mono: true },
+    { key: "vendor_name", label: "Vendor", sub: "rfq_id" },
+    { key: "order_date", label: "Ordered", sub: "expected_delivery_date" },
+    { key: "quantity", label: "Qty", align: "right" },
+    { key: "total_amount", label: "Total", align: "right", money: true },
+    {
+      key: "approval_status",
+      label: "Approval",
+      badge: { Approved: "default", Submitted: "secondary", Draft: "outline", Rejected: "destructive" },
+    },
+    {
+      key: "status",
+      label: "Status",
+      badge: {
+        Received: "default",
+        Closed: "default",
+        "Partially Received": "secondary",
+        Sent: "secondary",
+        Approved: "secondary",
+        Draft: "outline",
+        Cancelled: "destructive",
+      },
+    },
+  ],
+  kpis: [
+    { label: "Purchase Orders", key: "total_rows", icon: "ShoppingCart" },
+    { label: "Ordered Value", key: "total_ordered", money: true, icon: "Wallet" },
+    { label: "Open Orders", key: "open_orders", icon: "Clock" },
+    { label: "Received", key: "received_orders", icon: "PackageCheck" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(total_amount),0) total_ordered, COALESCE(SUM(CASE WHEN status IN ('Draft','Approved','Sent','Partially Received') THEN 1 ELSE 0 END),0) open_orders, COALESCE(SUM(CASE WHEN status IN ('Received','Closed') THEN 1 ELSE 0 END),0) received_orders, COUNT(*) total_rows",
+}
+
+const goodsReceipt: ModuleConfig = {
+  key: "goods-receipt",
+  table: "procurement_goods_receipts",
+  label: "Goods Receipt",
+  subtitle: "Procurement management",
+  addLabel: "New goods receipt",
+  idColumn: "grn_id",
+  idPrefix: "GRN",
+  dateColumn: "receipt_date",
+  statusColumn: "receipt_status",
+  searchColumns: ["grn_id", "po_number", "vendor_name", "item_description"],
+  filters: [
+    { type: "select", key: "receipt_status", label: "Receipt", options: GRN_RECEIPT_STATUSES },
+    { type: "select", key: "quality_status", label: "Quality", options: GRN_QUALITY_STATUSES },
+  ],
+  fields: [
+    fld("Receipt", "po_number", "Purchase order", "text", { required: true, placeholder: "PO-000001" }),
+    fld("Receipt", "vendor_name", "Vendor", "text", { optional: true }),
+    fld("Receipt", "receipt_date", "Receipt date", "date", { required: true }),
+    fld("Receipt", "item_description", "Item / service", "textarea", { required: true }),
+    fld("Receipt", "uom", "Unit", "select", { options: UOMS }),
+
+    fld("Quantities", "ordered_quantity", "Ordered qty", "number", { required: true }),
+    fld("Quantities", "received_quantity", "Received qty", "number", { required: true }),
+    fld("Quantities", "accepted_quantity", "Accepted qty", "number"),
+    fld("Quantities", "rejected_quantity", "Rejected qty", "number"),
+    fld("Quantities", "pending_quantity", "Pending qty", "number", { computed: true }),
+    fld("Quantities", "unit_price", "Unit price", "number", { money: true }),
+    fld("Quantities", "received_value", "Received value", "number", { computed: true, money: true }),
+
+    fld("Quality", "quality_status", "Quality status", "select", { options: GRN_QUALITY_STATUSES }),
+    fld("Quality", "receipt_status", "Receipt status", "select", { options: GRN_RECEIPT_STATUSES, computed: true }),
+    fld("Quality", "inspection_notes", "Inspection notes", "textarea", { optional: true }),
+  ],
+  compute: (v) => deriveGrnFields(v),
+  tableColumns: [
+    { key: "grn_id", label: "GRN ID", mono: true },
+    { key: "po_number", label: "PO", sub: "vendor_name" },
+    { key: "receipt_date", label: "Received" },
+    { key: "ordered_quantity", label: "Ordered", align: "right" },
+    { key: "received_quantity", label: "Received", align: "right" },
+    { key: "pending_quantity", label: "Pending", align: "right" },
+    { key: "received_value", label: "Value", align: "right", money: true },
+    {
+      key: "quality_status",
+      label: "Quality",
+      badge: { Passed: "default", Partial: "secondary", Pending: "outline", Failed: "destructive" },
+    },
+    {
+      key: "receipt_status",
+      label: "Receipt",
+      badge: { Complete: "default", Partial: "secondary", Pending: "outline", "Over-received": "destructive" },
+    },
+  ],
+  kpis: [
+    { label: "Receipts", key: "total_rows", icon: "PackageCheck" },
+    { label: "Received Value", key: "total_received", money: true, icon: "Coins" },
+    { label: "Complete", key: "complete_rows", icon: "CheckCircle2" },
+    { label: "Rejected Qty", key: "total_rejected", icon: "AlertTriangle" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(received_value),0) total_received, COALESCE(SUM(CASE WHEN receipt_status = 'Complete' THEN 1 ELSE 0 END),0) complete_rows, COALESCE(SUM(rejected_quantity),0) total_rejected, COUNT(*) total_rows",
+}
+
 export const FINANCE_MODULE_CONFIGS: Record<string, ModuleConfig> = {
+  "purchase-requisition": purchaseRequisition,
+  "rfq": rfq,
+  "purchase-orders": purchaseOrders,
+  "goods-receipt": goodsReceipt,
+  "budgets": budgets,
   "fixed-assets": fixedAssets,
   "loans-advances": loansAdvances,
   "investments": investments,

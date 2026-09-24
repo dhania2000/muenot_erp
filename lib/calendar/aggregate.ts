@@ -30,6 +30,7 @@ export type AggregateResult = {
 export type AggregateOptions = {
   userId: number
   email: string | null
+  tenantId?: number | null
   timeMin: string
   timeMax: string
 }
@@ -38,6 +39,7 @@ export async function aggregateCalendar(opts: AggregateOptions): Promise<Aggrega
   const win: SourceWindow = {
     userId: opts.userId,
     email: opts.email,
+    tenantId: opts.tenantId ?? null,
     fromDate: istDateOnly(opts.timeMin),
     toDate: istDateOnly(opts.timeMax),
   }

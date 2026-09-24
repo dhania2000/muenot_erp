@@ -18,6 +18,12 @@ export type CalendarSourceModule =
   | "hr"
   | "events"
   | "personal"
+  // Spec 111 — Calendar Engine additions.
+  | "tasks"
+  | "followup"
+  | "leave"
+  | "training"
+  | "deadline"
 
 export type GoogleSyncStatus =
   | "Synced"
@@ -70,4 +76,10 @@ export const CATEGORY_META: Record<
   HR: { label: "HR", module: "hr" },
   Events: { label: "Events", module: "events" },
   Personal: { label: "Personal", module: "personal" },
+  // Spec 111 — Calendar Engine additions.
+  Task: { label: "Task", module: "tasks" },
+  "Follow-up": { label: "Follow-up", module: "followup" },
+  Leave: { label: "Leave", module: "leave" },
+  Training: { label: "Training", module: "training" },
+  Deadline: { label: "Deadline", module: "deadline" },
 }

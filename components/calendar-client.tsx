@@ -18,7 +18,18 @@ import {
   Video,
 } from "lucide-react"
 
-type SourceModule = "sales" | "operations" | "recruitment" | "hr" | "events" | "google"
+type SourceModule =
+  | "sales"
+  | "operations"
+  | "recruitment"
+  | "hr"
+  | "events"
+  | "google"
+  | "tasks"
+  | "followup"
+  | "leave"
+  | "training"
+  | "deadline"
 
 type CalendarEvent = {
   id: string
@@ -65,6 +76,27 @@ const SOURCE_META: Record<SourceModule, { label: string; dot: string; chip: stri
   },
   hr: { label: "HR", dot: "bg-emerald-500", chip: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
   events: { label: "Events", dot: "bg-rose-500", chip: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
+  tasks: { label: "Tasks", dot: "bg-sky-500", chip: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
+  followup: {
+    label: "Follow-ups",
+    dot: "bg-teal-500",
+    chip: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  },
+  leave: {
+    label: "Leave",
+    dot: "bg-green-600",
+    chip: "bg-green-600/10 text-green-700 dark:text-green-400",
+  },
+  training: {
+    label: "Training",
+    dot: "bg-indigo-500",
+    chip: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+  },
+  deadline: {
+    label: "Deadlines",
+    dot: "bg-red-600",
+    chip: "bg-red-600/10 text-red-700 dark:text-red-400",
+  },
   google: { label: "Personal", dot: "bg-muted-foreground", chip: "bg-muted text-muted-foreground" },
 }
 
@@ -390,12 +422,7 @@ export function CalendarClient({ name, description }: { name: string; descriptio
             </div>
           </div>
 
-          {!connected ? (
-            <div className="mt-8 flex flex-col items-center gap-3 py-16 text-center text-sm text-muted-foreground">
-              <CalendarDays className="size-9" />
-              <p>Connect your Google account to see your calendar events here.</p>
-            </div>
-          ) : view === "month" ? (
+          {view === "month" ? (
             <div className="mt-6 grid grid-cols-7 gap-px overflow-hidden rounded-md border border-border bg-border text-sm">
               {WEEKDAYS.map((day) => (
                 <div key={day} className="bg-muted p-2 text-center font-medium text-muted-foreground">

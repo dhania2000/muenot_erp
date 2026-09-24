@@ -235,6 +235,17 @@ export const TENANT_OWNED_TABLES = [
   "task_comments",
   "task_attachments",
   "task_activity",
+  // SPEC 112 — Meeting Management. A tenant-owned general meeting engine with
+  // participants, agenda, attachments, notes, action items, follow-ups and an
+  // immutable change history. Every row belongs to exactly one tenant.
+  "meetings",
+  "meeting_participants",
+  "meeting_agenda_items",
+  "meeting_attachments",
+  "meeting_notes",
+  "meeting_action_items",
+  "meeting_followups",
+  "meeting_history",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

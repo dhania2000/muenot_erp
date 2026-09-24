@@ -135,7 +135,6 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Financial Reports", href: "/modules/finance/financial-reports", feature: "finance.financial_reports" },
   { label: "Emails", href: "/modules/finance/emails", feature: "finance.send_emails" },
   { label: "Email Templates", href: "/modules/finance/email-templates", feature: "finance.view_email_templates" },
-  { label: "Vendor 360", href: "/modules/finance/vendor-360", feature: "" },
   { label: "Vendor Portal", href: "/modules/finance/vendor-portal", feature: "" },
   { label: "Procurement", href: "/modules/finance/procurement", feature: "" },
   { label: "Purchase Requisition", href: "/modules/finance/purchase-requisition", feature: "" },

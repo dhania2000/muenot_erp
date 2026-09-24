@@ -66,7 +66,9 @@ export default async function LoginPage({
       >
         {loginBackground && <div className="absolute inset-0 bg-sidebar/80" aria-hidden />}
         <div className="relative flex items-center">
-          <BrandMark brandName={brandName} logo={logo} className="h-6 w-auto max-w-[160px] object-contain" />
+          <div className="inline-flex items-center rounded-lg bg-white px-3 py-2 shadow-sm">
+            <BrandMark brandName={brandName} logo={logo} className="h-6 w-auto max-w-[160px] object-contain" />
+          </div>
         </div>
 
         <div className="relative flex flex-col gap-8">
@@ -97,7 +99,9 @@ export default async function LoginPage({
         <div className="w-full max-w-sm">
           <div className="mb-8 flex flex-col gap-1 lg:hidden">
             <div className="mb-4">
-              <BrandMark brandName={brandName} logo={logo} className="h-6 w-auto max-w-[160px] object-contain" />
+              <div className="inline-flex items-center rounded-lg bg-white px-3 py-2 shadow-sm">
+                <BrandMark brandName={brandName} logo={logo} className="h-6 w-auto max-w-[160px] object-contain" />
+              </div>
             </div>
           </div>
 

@@ -675,6 +675,30 @@ export async function setDocumentWorkflow(
   return (await tenantUpdate("dms_documents", set, "id = ? AND deleted_at IS NULL", [id])) > 0
 }
 
+/**
+ * SPEC 87 — every document that is (or has been) routed through the approval
+ * engine: it carries a workflow type, an active/decided approval status, or a
+ * bound approval request. Powers the Document Approval console.
+ */
+export async function listWorkflowDocuments(): Promise<DmsDocument[]> {
+  await ensureDmsSchema()
+  const { where, params } = scopedWhere(
+    "dms_documents",
+    "d.deleted_at IS NULL AND (d.workflow_type IS NOT NULL OR d.approval_status <> 'none' OR d.approval_request_id IS NOT NULL)",
+    [],
+    { alias: "d" },
+  )
+  const rows = await query<any[]>(
+    `SELECT d.*, c.name AS category_name, f.name AS folder_name
+       FROM dms_documents d
+       LEFT JOIN dms_categories c ON c.id = d.category_id AND c.tenant_id = d.tenant_id
+       LEFT JOIN dms_folders f ON f.id = d.folder_id AND f.tenant_id = d.tenant_id
+     ${where} ORDER BY d.updated_at DESC LIMIT 300`,
+    params,
+  )
+  return rows.map(mapDocument)
+}
+
 /** The (single) document bound to an approval request, tenant-scoped. */
 export async function getDocumentByApprovalRequest(requestId: number): Promise<DmsDocument | null> {
   await ensureDmsSchema()

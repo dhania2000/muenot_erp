@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth"
 import { getCurrentTenant } from "@/lib/tenant-context"
 import { actOnApprovalRequest, type ActInput } from "@/lib/approval-authority"
 import { handleApprovalOutcome } from "@/lib/maker-checker"
+import { handleDocumentApprovalOutcome } from "@/lib/dms/approval"
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
@@ -37,8 +38,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // propagate the decision to any captured maker-checker change bound
   // to this request. Applies the deferred operation on approval; discards it on
   // reject/cancel. A no-op for plain requests with no captured change.
+  // Also sync the DMS document lifecycle (SPEC 87) when a document is bound to
+  // this request — a no-op for every non-document approval.
   try {
     await handleApprovalOutcome(Number(id), result.status)
+    await handleDocumentApprovalOutcome(Number(id), result.status)
   } catch (err) {
     // The decision itself is recorded; surface apply failures without losing it.
     return NextResponse.json(

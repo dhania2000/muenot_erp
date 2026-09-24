@@ -47,8 +47,8 @@ import type {
   DmsCategory,
   DmsTag,
 } from "@/lib/dms/types"
-import type { AccessLevel } from "@/lib/dms/model"
-import { canPerform } from "@/lib/dms/model"
+import type { AccessLevel, DocWorkflowType } from "@/lib/dms/model"
+import { canPerform, DOC_WORKFLOW_TYPES, workflowLabel } from "@/lib/dms/model"
 
 type DetailResponse = {
   document: DmsDocument
@@ -336,16 +336,19 @@ function ApprovalControls({
   onChanged: () => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [workflowType, setWorkflowType] = useState<DocWorkflowType>(
+    (doc.workflowType as DocWorkflowType) ?? DOC_WORKFLOW_TYPES[0].key,
+  )
   const canApprove = canPerform("approve", access)
   const canEdit = canPerform("edit", access)
 
-  async function act(action: string) {
+  async function act(action: string, extra?: Record<string, unknown>) {
     setBusy(true)
     try {
       const res = await fetch(`/api/dms/documents/${doc.id}/approval`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, ...extra }),
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body?.error || "Action failed")
@@ -358,21 +361,43 @@ function ApprovalControls({
     }
   }
 
+  const isPending = doc.approvalStatus === "pending"
+  const canSubmit = canEdit && !isPending && (doc.status === "draft" || doc.status === "rejected")
+
   return (
     <div className="rounded-lg border bg-muted/30 p-3">
-      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium">
         <ShieldCheck className="size-4" /> Approval
         <Badge variant="outline" className="ml-1 capitalize">
-          {doc.approvalStatus}
+          {doc.status}
         </Badge>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {canEdit && doc.approvalStatus !== "pending" && (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => act("submit")}>
-            <Send className="mr-1 size-3.5" /> Submit for approval
-          </Button>
+        {doc.workflowType && (
+          <Badge variant="secondary" className="ml-1">
+            {workflowLabel(doc.workflowType)}
+          </Badge>
         )}
-        {canApprove && doc.approvalStatus === "pending" && (
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {canSubmit && (
+          <>
+            <Select value={workflowType} onValueChange={(v) => setWorkflowType(v as DocWorkflowType)}>
+              <SelectTrigger className="h-8 w-[180px]">
+                <SelectValue placeholder="Workflow" />
+              </SelectTrigger>
+              <SelectContent>
+                {DOC_WORKFLOW_TYPES.map((t) => (
+                  <SelectItem key={t.key} value={t.key}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => act("submit", { workflowType })}>
+              <Send className="mr-1 size-3.5" /> Submit for approval
+            </Button>
+          </>
+        )}
+        {canApprove && isPending && (
           <>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => act("approve")}>
               <Check className="mr-1 size-3.5" /> Approve
@@ -382,9 +407,19 @@ function ApprovalControls({
             </Button>
           </>
         )}
-        {canApprove && doc.approvalStatus !== "none" && doc.approvalStatus !== "pending" && (
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => act("reset")}>
-            Reset
+        {canEdit && isPending && (
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => act("withdraw")}>
+            Withdraw
+          </Button>
+        )}
+        {canEdit && doc.status === "approved" && (
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => act("publish")}>
+            Publish
+          </Button>
+        )}
+        {canEdit && doc.status === "rejected" && (
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => act("revert")}>
+            Return to draft
           </Button>
         )}
       </div>

@@ -193,6 +193,12 @@ export const TENANT_OWNED_TABLES = [
   // shared with another tenant.
   "numbering_rules",
   "numbering_counters",
+  // SPEC 93 — Reference Number Management. Per-tenant configuration of which
+  // reference numbers each business document carries and how duplicates are
+  // handled, plus the captured reference values themselves. Each tenant's
+  // references and duplicate scope are fully isolated from every other tenant.
+  "reference_configs",
+  "document_references",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

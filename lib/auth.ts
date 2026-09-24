@@ -45,6 +45,17 @@ export type SessionPayload = {
    */
   impersonatedTenantId?: number | null
   /**
+   * The organization a MULTI-ORG user has actively switched into. Unlike
+   * `impersonatedTenantId` (a platform-operator concept), this is available to
+   * any user and is only ever honored for a tenant the user holds an ACTIVE
+   * membership in (lib/tenant-membership.ts). It is set solely by the audited
+   * organization switcher, which re-mints the token after validating membership;
+   * `getSession()` re-validates it against live membership on every request, so
+   * a revoked membership or a forged/stale field falls closed to the home
+   * tenant. Null / absent means the session is scoped to the home tenant.
+   */
+  activeTenantId?: number | null
+  /**
    * opaque session id (jti) that keys the server-side session
    * record in lib/session-store.ts. Optional so tokens issued before the
    * session store existed still verify — `getSession()` treats a missing
@@ -123,12 +134,39 @@ export async function getSession(): Promise<SessionPayload | null> {
     // only ever set by the audited impersonation endpoint. It is honored here
     // only for a genuine platform operator, so a forged/leftover field on a
     // non-platform token can never redirect scoping to another tenant.
-    const effectiveTenantId =
+    let effectiveTenantId =
       session.impersonatedTenantId != null &&
       session.platformRole != null &&
       session.platformRole !== "none"
         ? session.impersonatedTenantId
         : tenantId
+
+    // multi-org switching: a user who has switched into another organization
+    // carries `activeTenantId` in the verified token. Platform impersonation
+    // (above) always wins; otherwise, when the active tenant differs from the
+    // home tenant, it is honored ONLY after re-validating a LIVE active
+    // membership. This fails closed to the home tenant if the membership was
+    // revoked/suspended or the value is stale/forged, so switching can never
+    // outlive access.
+    const isImpersonating =
+      session.impersonatedTenantId != null &&
+      session.platformRole != null &&
+      session.platformRole !== "none"
+    if (
+      !isImpersonating &&
+      session.activeTenantId != null &&
+      session.activeTenantId !== tenantId
+    ) {
+      try {
+        const { isActiveMembership } = await import("./tenant-membership")
+        if (await isActiveMembership(session.userId, session.activeTenantId)) {
+          effectiveTenantId = session.activeTenantId
+        }
+      } catch (err) {
+        console.error("[v0] active-tenant membership check failed:", err)
+      }
+    }
+
     if (effectiveTenantId != null) {
       setCurrentTenant({ tenantId: effectiveTenantId })
     }

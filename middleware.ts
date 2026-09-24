@@ -2,10 +2,18 @@ import { NextResponse, type NextRequest } from "next/server"
 import { jwtVerify } from "jose"
 
 const SESSION_COOKIE = "ems_session"
+const PORTAL_SESSION_COOKIE = "ems_portal_session"
 const PUBLIC_PATHS = ["/login", "/api/auth/login"]
+// SPEC 118 — Client Portal public entry points (external users).
+const PORTAL_PUBLIC_PATHS = ["/portal/login", "/api/portal/auth/login", "/api/portal/auth/logout"]
 
 function getSecretKey() {
   return new TextEncoder().encode(process.env.SESSION_SECRET || "")
+}
+
+// Portal tokens are domain-separated from internal tokens (see lib/portal/auth.ts).
+function getPortalSecretKey() {
+  return new TextEncoder().encode(`${process.env.SESSION_SECRET || ""}:portal`)
 }
 
 async function getSessionFromRequest(request: NextRequest) {
@@ -19,10 +27,47 @@ async function getSessionFromRequest(request: NextRequest) {
   }
 }
 
+async function getPortalSessionFromRequest(request: NextRequest) {
+  const token = request.cookies.get(PORTAL_SESSION_COOKIE)?.value
+  if (!token) return null
+  try {
+    const { payload } = await jwtVerify(token, getPortalSecretKey())
+    if ((payload as Record<string, unknown>).typ !== "portal") return null
+    return payload as { portalUserId: number; tenantId: number; clientId: number }
+  } catch {
+    return null
+  }
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const requestId = `req_${crypto.randomUUID()}`
   const responseHeaders = { "x-request-id": requestId }
+
+  // ---- Client portal (SPEC 118): a fully separate auth plane -------------
+  if (pathname.startsWith("/portal") || pathname.startsWith("/api/portal")) {
+    if (PORTAL_PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next")) {
+      const headers = new Headers(request.headers)
+      headers.set("x-request-id", requestId)
+      const response = NextResponse.next({ request: { headers } })
+      response.headers.set("x-request-id", requestId)
+      return response
+    }
+    const portalSession = await getPortalSessionFromRequest(request)
+    if (!portalSession) {
+      if (pathname.startsWith("/api")) {
+        return NextResponse.json({ error: "Not authenticated", requestId }, { status: 401, headers: responseHeaders })
+      }
+      const loginUrl = new URL("/portal/login", request.url)
+      if (pathname !== "/portal") loginUrl.searchParams.set("redirect", pathname)
+      return NextResponse.redirect(loginUrl)
+    }
+    const headers = new Headers(request.headers)
+    headers.set("x-request-id", requestId)
+    const response = NextResponse.next({ request: { headers } })
+    response.headers.set("x-request-id", requestId)
+    return response
+  }
 
   const protectedPath = pathname.startsWith("/dashboard") || pathname.startsWith("/admin") || pathname.startsWith("/modules") || pathname.startsWith("/api/admin") || pathname.startsWith("/api/modules")
   if (!protectedPath || PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next") || pathname.startsWith("/api/auth")) {
@@ -82,5 +127,5 @@ function extractSubdomain(hostname: string): string | null {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/admin/:path*", "/modules/:path*", "/api/:path*"],
+  matcher: ["/dashboard/:path*", "/admin/:path*", "/modules/:path*", "/portal/:path*", "/api/:path*"],
 }

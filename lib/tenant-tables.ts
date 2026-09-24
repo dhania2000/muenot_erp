@@ -246,6 +246,16 @@ export const TENANT_OWNED_TABLES = [
   "meeting_action_items",
   "meeting_followups",
   "meeting_history",
+  // SPEC 118 — Client Portal. External-facing, tenant + client isolated. Each
+  // row belongs to exactly one tenant AND one client; the store layer
+  // (lib/portal/store.ts) additionally constrains client_id on every query so
+  // one client can never see another client's data within the same tenant.
+  "client_portal_users",
+  "client_portal_access",
+  "client_portal_items",
+  "client_portal_tickets",
+  "client_portal_ticket_messages",
+  "client_portal_messages",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

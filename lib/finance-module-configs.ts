@@ -6,6 +6,7 @@ import {
   INTEREST_METHODS,
   computeLoanScheduleFields,
 } from "@/lib/finance-loans-calc"
+import { deriveBudgetFields } from "@/lib/finance-budget-calc"
 import type { FieldDef, FieldType, ModuleConfig, TableColumn } from "@/lib/finance-schema"
 
 /** Terse field builder. */
@@ -2305,7 +2306,116 @@ const relatedParties: ModuleConfig = {
     "COUNT(*) total_rows, COALESCE(SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END),0) active_rows, COALESCE(SUM(opening_balance),0) total_opening",
 }
 
+// ---------------------------------------------------------------------------
+// SPEC 143 — Budget Management
+// ---------------------------------------------------------------------------
+// One config-driven module backs every budget dimension. `budget_type` selects
+// the dimension (Annual / Monthly / Department / Cost Center / Project) and
+// toggles the relevant dimension field; `budget_nature` (Expense / Revenue /
+// Capex) decides what "favorable" means. The variance, variance %, utilisation
+// and status columns are recomputed on every write by the shared, DB-free
+// `deriveBudgetFields` so the list, the detail view and the Budget vs Actual
+// report always agree. Approval is a simple Draft → Submitted → Approved /
+// Rejected status captured on the record (mirrors the Expense approval pattern).
+const BUDGET_TYPES = ["Annual", "Monthly", "Department", "Cost Center", "Project"]
+const BUDGET_NATURES = ["Expense", "Revenue", "Capex"]
+const BUDGET_APPROVAL_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"]
+const BUDGET_ACCOUNT_GROUPS = ["Asset", "Liability", "Equity", "Income", "Expense"]
+const BUDGET_VARIANCE_STATUSES = [
+  "No Activity", "Under Budget", "On Track", "Warning", "Over Budget", "Below Target", "Exceeded",
+]
+
+const budgets: ModuleConfig = {
+  key: "budgets",
+  table: "finance_budgets",
+  label: "Budget Management",
+  subtitle: "Finance management",
+  addLabel: "New budget",
+  idColumn: "budget_id",
+  idPrefix: "BUD",
+  financialYearColumn: "financial_year",
+  statusColumn: "approval_status",
+  searchColumns: [
+    "budget_id", "budget_name", "budget_type", "department", "cost_center",
+    "project_name", "account_group", "financial_year", "period_month",
+  ],
+  filters: [
+    { type: "select", key: "budget_type", label: "Type", options: BUDGET_TYPES },
+    { type: "select", key: "budget_nature", label: "Nature", options: BUDGET_NATURES },
+    { type: "select", key: "approval_status", label: "Approval", options: BUDGET_APPROVAL_STATUSES },
+    { type: "select", key: "variance_status", label: "Variance", options: BUDGET_VARIANCE_STATUSES },
+    { type: "financial_year", key: "financial_year", label: "Financial year" },
+  ],
+  fields: [
+    fld("Budget definition", "budget_name", "Budget name", "text", { required: true, placeholder: "e.g. FY26 Marketing" }),
+    fld("Budget definition", "budget_type", "Budget type", "select", { options: BUDGET_TYPES, required: true }),
+    fld("Budget definition", "budget_nature", "Budget nature", "select", { options: BUDGET_NATURES, required: true }),
+    fld("Budget definition", "financial_year", "Financial year", "text", { required: true, placeholder: "2026-27" }),
+    fld("Budget definition", "period_month", "Month", "select", { financialYearMonths: true, optional: true, visibleWhen: { field: "budget_type", in: ["Monthly"] } }),
+    fld("Budget definition", "account_group", "Account group", "select", { options: BUDGET_ACCOUNT_GROUPS, optional: true }),
+
+    // The dimension field toggles with the budget type so an Annual budget is a
+    // clean entity-level plan, while Department / Cost Center / Project budgets
+    // capture the axis they are measured against.
+    fld("Dimension", "department", "Department", "select", { referenceSource: "hr-department", optional: true, visibleWhen: { field: "budget_type", in: ["Department"] } }),
+    fld("Dimension", "cost_center", "Cost center", "text", { placeholder: "e.g. CC-Sales-North", visibleWhen: { field: "budget_type", in: ["Cost Center"] } }),
+    fld("Dimension", "project_id", "Project ID", "text", { hidden: true }),
+    fld("Dimension", "project_name", "Project", "text", { visibleWhen: { field: "budget_type", in: ["Project"] } }),
+
+    fld("Amounts", "budgeted_amount", "Budgeted amount", "number", { required: true, money: true }),
+    fld("Amounts", "actual_amount", "Actual amount", "number", { money: true }),
+    fld("Amounts", "variance", "Variance (budget − actual)", "number", { computed: true, money: true }),
+    fld("Amounts", "variance_percent", "Variance %", "number", { computed: true }),
+    fld("Amounts", "utilization_percent", "Utilisation %", "number", { computed: true }),
+    fld("Amounts", "variance_status", "Variance status", "text", { computed: true }),
+
+    fld("Approval", "approval_status", "Approval status", "select", { options: BUDGET_APPROVAL_STATUSES }),
+    fld("Approval", "approved_by", "Approved by", "text"),
+    fld("Approval", "approval_date", "Approval date", "date"),
+
+    fld("Notes", "notes", "Notes", "textarea"),
+  ],
+  // Client-side mirror of the authoritative server recomputation, so the
+  // "Calculated automatically" box previews the same variance the server saves.
+  compute: (v) => deriveBudgetFields(v),
+  tableColumns: [
+    { key: "budget_id", label: "Budget ID", mono: true },
+    { key: "budget_name", label: "Budget", sub: "budget_type" },
+    { key: "financial_year", label: "FY", sub: "period_month" },
+    { key: "budgeted_amount", label: "Budgeted", align: "right", money: true },
+    { key: "actual_amount", label: "Actual", align: "right", money: true },
+    { key: "variance", label: "Variance", align: "right", money: true },
+    {
+      key: "variance_status",
+      label: "Variance",
+      badge: {
+        "Under Budget": "default",
+        "On Track": "default",
+        Exceeded: "default",
+        Warning: "secondary",
+        "Below Target": "secondary",
+        "No Activity": "outline",
+        "Over Budget": "destructive",
+      },
+    },
+    {
+      key: "approval_status",
+      label: "Approval",
+      badge: { Approved: "default", Submitted: "secondary", Draft: "outline", Rejected: "destructive" },
+    },
+  ],
+  kpis: [
+    { label: "Total Budgeted", key: "total_budgeted", money: true, icon: "Wallet" },
+    { label: "Total Actual", key: "total_actual", money: true, icon: "Coins" },
+    { label: "Net Variance", key: "total_variance", money: true, icon: "TrendingUp" },
+    { label: "Over Budget", key: "over_budget_rows", icon: "Landmark" },
+  ],
+  summarySelect:
+    "COALESCE(SUM(budgeted_amount),0) total_budgeted, COALESCE(SUM(actual_amount),0) total_actual, COALESCE(SUM(variance),0) total_variance, COALESCE(SUM(CASE WHEN variance_status = 'Over Budget' THEN 1 ELSE 0 END),0) over_budget_rows, COUNT(*) total_rows",
+}
+
 export const FINANCE_MODULE_CONFIGS: Record<string, ModuleConfig> = {
+  "budgets": budgets,
   "fixed-assets": fixedAssets,
   "loans-advances": loansAdvances,
   "investments": investments,

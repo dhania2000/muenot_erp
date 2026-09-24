@@ -201,6 +201,30 @@ export async function countItemsByResource(
   return out
 }
 
+/** List every shared record published to a client across all resources. Staff use only. */
+export async function listClientItems(tenantId: number, clientId: number): Promise<PortalItem[]> {
+  await ensurePortalSchema()
+  const rows = await query<(PortalItem & { meta: unknown })[]>(
+    `SELECT id, resource, reference, title, description, status, amount, currency,
+            issue_date, due_date, file_url, file_name, created_at, meta
+       FROM client_portal_items
+      WHERE tenant_id = ? AND client_id = ?
+      ORDER BY COALESCE(issue_date, DATE(created_at)) DESC, id DESC`,
+    [tenantId, clientId],
+  )
+  return rows.map(({ meta, ...row }) => ({ ...row, items: parseOrderItems(meta) }))
+}
+
+/** Unpublish (delete) a shared record from a client. Staff use only. Returns true when a row was removed. */
+export async function deleteItem(tenantId: number, clientId: number, itemId: number): Promise<boolean> {
+  await ensurePortalSchema()
+  const result = await query<{ affectedRows: number }>(
+    `DELETE FROM client_portal_items WHERE tenant_id = ? AND client_id = ? AND id = ?`,
+    [tenantId, clientId, itemId],
+  )
+  return Number(result?.affectedRows ?? 0) > 0
+}
+
 /** Publish a shared record to a client. Internal/staff use only. */
 export async function createItem(input: {
   tenantId: number

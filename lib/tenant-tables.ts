@@ -211,6 +211,14 @@ export const TENANT_OWNED_TABLES = [
   // fully isolated from every other tenant.
   "custom_forms",
   "custom_form_submissions",
+  // SPEC 96 — Custom Module Framework. Tenant-created lightweight modules: a
+  // metadata-driven entity DEFINITION (fields, list view, permissions, workflow,
+  // reports) and the RECORDS captured against it in a single generic record
+  // table discriminated by module id. A tenant's module definitions and records
+  // are fully isolated from every other tenant — the record table is always
+  // filtered by both tenant_id and module_id.
+  "custom_modules",
+  "custom_module_records",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

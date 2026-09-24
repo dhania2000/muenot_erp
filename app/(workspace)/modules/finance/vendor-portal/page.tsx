@@ -1,5 +1,5 @@
 import { DoorOpen } from "lucide-react"
-import { VendorPortalManager } from "@/components/vendor-portal/vendor-portal-manager"
+import { VendorPortalAdmin } from "@/components/vendor-portal/admin/vendor-portal-admin"
 
 export default function VendorPortalPage() {
   return (
@@ -18,7 +18,7 @@ export default function VendorPortalPage() {
         </div>
       </header>
 
-      <VendorPortalManager />
+      <VendorPortalAdmin />
     </div>
   )
 }

@@ -25,6 +25,7 @@ export async function GET(request: Request) {
   const result = await aggregateCalendar({
     userId: session.userId,
     email: session.email,
+    tenantId: session.tenantId ?? null,
     timeMin,
     timeMax,
   })

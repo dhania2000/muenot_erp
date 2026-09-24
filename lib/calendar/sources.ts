@@ -55,6 +55,8 @@ function mapGoogleSyncStatus(raw: unknown): UnifiedCalendarEvent["googleSyncStat
 export type SourceWindow = {
   userId: number
   email: string | null
+  /** The acting tenant, used to scope tenant-owned sources (tasks). */
+  tenantId: number | null
   /** Inclusive IST date bounds "YYYY-MM-DD". */
   fromDate: string
   toDate: string
@@ -311,6 +313,276 @@ export async function readCompanyEvents(win: SourceWindow): Promise<UnifiedCalen
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Tasks & Deadlines (Spec 110 → 111)                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Surface the current user's tasks (Spec 110 `tasks`) in the central calendar.
+ * A task appears when the user created it or is an assignee/watcher on it.
+ * Tasks are tenant-owned, so they are always scoped to the acting tenant.
+ *
+ * Each task is projected onto its DUE date (its deadline). Tasks flagged as a
+ * hard deadline — priority urgent/high, or explicitly `related_entity='deadline'`
+ * — are categorised as "Deadline" (all-day marker); the rest are "Task".
+ * Completed/cancelled tasks keep showing so history stays accurate.
+ */
+export async function readTasksAndDeadlines(win: SourceWindow): Promise<UnifiedCalendarEvent[]> {
+  try {
+    if (win.tenantId == null) return []
+    const cols = await tableColumns("tasks")
+    if (!cols.size) return []
+    const hasDueAt = cols.has("due_at")
+    const hasDueDate = cols.has("due_date")
+    if (!hasDueAt && !hasDueDate) return []
+
+    const dueExpr = hasDueAt && hasDueDate ? "COALESCE(t.due_at, t.due_date)" : hasDueAt ? "t.due_at" : "t.due_date"
+    const fromDt = `${win.fromDate} 00:00:00`
+    const toDt = `${win.toDate} 23:59:59`
+    const hasAssignees = (await tableColumns("task_assignees")).has("task_id")
+
+    const ownership = hasAssignees
+      ? "(t.created_by = ? OR EXISTS (SELECT 1 FROM task_assignees a WHERE a.task_id = t.id AND a.user_id = ?))"
+      : "t.created_by = ?"
+    const args: unknown[] = hasAssignees
+      ? [win.tenantId, win.userId, win.userId, fromDt, toDt]
+      : [win.tenantId, win.userId, fromDt, toDt]
+
+    const rows = await query<any[]>(
+      `SELECT t.* FROM tasks t
+        WHERE t.tenant_id = ?
+          AND ${ownership}
+          AND ${dueExpr} IS NOT NULL
+          AND ${dueExpr} BETWEEN ? AND ?
+        ORDER BY ${dueExpr}
+        LIMIT 500`,
+      args,
+    )
+    return rows.map((r) => {
+      const rawDue = hasDueAt && r.due_at ? r.due_at : r.due_date
+      const timed = hasDueAt && r.due_at && !/^\d{4}-\d{2}-\d{2}$/.test(String(r.due_at).trim())
+      const startWall = timed ? wallClockFromDateTime(rawDue) : null
+      const dateStr = toDateString(rawDue)!
+      const priority = String(r.priority || "").toLowerCase()
+      const status = String(r.status || "")
+      const cancelled = status === "cancelled"
+      const isDeadline =
+        priority === "urgent" || priority === "high" || String(r.related_entity || "") === "deadline"
+      return {
+        id: `tasks:${r.id}`,
+        title: `${isDeadline ? "Deadline" : "Task"}: ${r.title || "Untitled task"}`,
+        start: startWall ? toIstIso(startWall)! : dateStr,
+        end: startWall ? toIstIso(addMinutesWall(startWall, 30)) : null,
+        allDay: !startWall,
+        location: null,
+        description: r.description || null,
+        hangoutLink: null,
+        htmlLink: null,
+        status: r.status || null,
+        sourceModule: isDeadline ? "deadline" : "tasks",
+        sourceRecordId: String(r.id),
+        category: isDeadline ? "Deadline" : "Task",
+        organizer: null,
+        externalEventId: null,
+        googleSyncStatus: cancelled ? "Cancelled" : null,
+        href: `/modules/tasks?id=${r.id}`,
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sales follow-ups (Spec 111)                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Surface the user's open sales follow-ups (`sales_lead_followups`) on their
+ * due date. Done/cancelled follow-ups still appear so the day's history reads
+ * correctly. Scoped to follow-ups the user owns (assigned_to / created_by).
+ */
+export async function readFollowUps(win: SourceWindow): Promise<UnifiedCalendarEvent[]> {
+  try {
+    const cols = await tableColumns("sales_lead_followups")
+    if (!cols.has("due_at")) return []
+    const fromDt = `${win.fromDate} 00:00:00`
+    const toDt = `${win.toDate} 23:59:59`
+    const leadCols = await tableColumns("sales_leads")
+    const leadJoin = leadCols.size
+      ? "LEFT JOIN sales_leads l ON l.id = f.lead_id"
+      : ""
+    const leadName = leadCols.has("company_name")
+      ? "l.company_name"
+      : leadCols.has("contact_name")
+        ? "l.contact_name"
+        : "NULL"
+    const rows = await query<any[]>(
+      `SELECT f.*, ${leadName} AS lead_name FROM sales_lead_followups f
+        ${leadJoin}
+        WHERE (f.assigned_to = ? OR f.created_by = ?)
+          AND f.due_at BETWEEN ? AND ?
+        ORDER BY f.due_at
+        LIMIT 500`,
+      [win.userId, win.userId, fromDt, toDt],
+    )
+    return rows.map((r) => {
+      const startWall = wallClockFromDateTime(r.due_at)
+      const cancelled = String(r.status || "") === "Cancelled"
+      const who = r.lead_name || `Lead #${r.lead_id}`
+      return {
+        id: `followup:${r.id}`,
+        title: `Follow-up: ${who}`,
+        start: toIstIso(startWall) || String(r.due_at),
+        end: null,
+        allDay: false,
+        location: null,
+        description: [r.purpose, r.channel ? `Channel: ${r.channel}` : null, r.outcome]
+          .filter(Boolean)
+          .join("\n") || null,
+        hangoutLink: null,
+        htmlLink: null,
+        status: r.status || null,
+        sourceModule: "followup",
+        sourceRecordId: String(r.id),
+        category: "Follow-up",
+        organizer: null,
+        externalEventId: null,
+        googleSyncStatus: cancelled ? "Cancelled" : null,
+        href: `/modules/sales/followups?id=${r.id}`,
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Leave (Spec 111)                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Surface the signed-in employee's leave (`hr_leave_requests`) as all-day
+ * multi-day events spanning from_date..to_date. Only the user's own requests
+ * are shown, matched via their HR employee id. Rejected requests are omitted;
+ * cancelled ones are flagged.
+ */
+export async function readLeave(win: SourceWindow): Promise<UnifiedCalendarEvent[]> {
+  try {
+    const cols = await tableColumns("hr_leave_requests")
+    if (!cols.has("from_date")) return []
+    if (!win.email) return []
+
+    // Resolve the user's HR employee id.
+    const empCols = await tableColumns("hr_employees")
+    const emailPred = empCols.has("personal_email")
+      ? "official_email = ? OR personal_email = ?"
+      : "official_email = ?"
+    const empArgs = empCols.has("personal_email") ? [win.email, win.email] : [win.email]
+    const [emp] = await query<any[]>(
+      `SELECT id FROM hr_employees WHERE ${emailPred} LIMIT 1`,
+      empArgs,
+    )
+    if (!emp) return []
+
+    const rows = await query<any[]>(
+      `SELECT * FROM hr_leave_requests
+        WHERE employee_id = ?
+          AND status NOT IN ('Manager Rejected','HR Rejected')
+          AND from_date <= ?
+          AND to_date >= ?
+        ORDER BY from_date
+        LIMIT 500`,
+      [emp.id, win.toDate, win.fromDate],
+    )
+    return rows.map((r) => {
+      const from = toDateString(r.from_date)!
+      const to = toDateString(r.to_date) || from
+      const cancelled = String(r.status || "") === "Cancelled"
+      return {
+        id: `leave:${r.id}`,
+        title: `Leave: ${r.leave_type_id || "Time off"}`,
+        start: from,
+        end: to,
+        allDay: true,
+        location: null,
+        description: [r.reason, `Status: ${r.status}`, `${r.days} day(s)`].filter(Boolean).join("\n") || null,
+        hangoutLink: null,
+        htmlLink: null,
+        status: r.status || null,
+        sourceModule: "leave",
+        sourceRecordId: String(r.id),
+        category: "Leave",
+        organizer: r.employee_name || null,
+        externalEventId: null,
+        googleSyncStatus: cancelled ? "Cancelled" : null,
+        href: `/modules/hr/leave-requests?id=${r.id}`,
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Training (Spec 111)                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Surface scheduled training sessions. There is no dedicated training table in
+ * every install, so this reader probes the likely candidates and degrades to an
+ * empty list when none exist — the calendar simply shows no Training events
+ * until an HR training module ships a table with these columns.
+ */
+export async function readTrainings(win: SourceWindow): Promise<UnifiedCalendarEvent[]> {
+  for (const table of ["hr_trainings", "training_sessions", "hr_training_sessions"]) {
+    try {
+      const cols = await tableColumns(table)
+      if (!cols.has("start_at") && !cols.has("session_date")) continue
+      const timed = cols.has("start_at")
+      const dateCol = timed ? "start_at" : "session_date"
+      const endCol = cols.has("end_at") ? "end_at" : null
+      const titleCol = cols.has("title") ? "title" : cols.has("name") ? "name" : "NULL"
+      const fromDt = timed ? `${win.fromDate} 00:00:00` : win.fromDate
+      const toDt = timed ? `${win.toDate} 23:59:59` : win.toDate
+      const rows = await query<any[]>(
+        `SELECT *, ${titleCol} AS _title FROM ${table}
+          WHERE ${dateCol} BETWEEN ? AND ?
+          ORDER BY ${dateCol}
+          LIMIT 500`,
+        [fromDt, toDt],
+      )
+      return rows.map((r) => {
+        const startWall = timed ? wallClockFromDateTime(r[dateCol]) : null
+        const endWall = endCol && r[endCol] ? wallClockFromDateTime(r[endCol]) : null
+        const date = toDateString(r[dateCol])!
+        return {
+          id: `training:${r.id}`,
+          title: `Training: ${r._title || "Session"}`,
+          start: startWall ? toIstIso(startWall)! : date,
+          end: endWall ? toIstIso(endWall) : null,
+          allDay: !startWall,
+          location: r.location || null,
+          description: r.description || null,
+          hangoutLink: r.meeting_link || r.meet_link || null,
+          htmlLink: null,
+          status: r.status || null,
+          sourceModule: "training",
+          sourceRecordId: String(r.id),
+          category: "Training",
+          organizer: r.trainer || r.host_name || null,
+          externalEventId: null,
+          googleSyncStatus: null,
+          href: `/modules/hr/training?id=${r.id}`,
+        }
+      })
+    } catch {
+      // try the next candidate table
+    }
+  }
+  return []
+}
+
 /** Read every ERP source for the user in the window (Google added separately). */
 export async function readErpSources(win: SourceWindow): Promise<UnifiedCalendarEvent[]> {
   const results = await Promise.all([
@@ -318,6 +590,10 @@ export async function readErpSources(win: SourceWindow): Promise<UnifiedCalendar
     readOperationsMeetings(win),
     readRecruitmentInterviews(win),
     readCompanyEvents(win),
+    readTasksAndDeadlines(win),
+    readFollowUps(win),
+    readLeave(win),
+    readTrainings(win),
   ])
   return results.flat()
 }

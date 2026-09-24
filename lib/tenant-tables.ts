@@ -205,6 +205,11 @@ export const TENANT_OWNED_TABLES = [
   // isolated from every other tenant.
   "custom_field_defs",
   "custom_field_values",
+  // SPEC 135 — Goal / KPI Engine. Per-tenant KPI/goal definitions and their
+  // append-only progress check-ins. Every goal and check-in belongs to exactly
+  // one tenant and must never be visible to another.
+  "kpi_goals",
+  "kpi_checkins",
   // SPEC 95 — Custom Forms. Tenant-authored, metadata-driven data-entry forms
   // (sections, fields, conditional rules, approval config) and the submissions
   // captured against them. A tenant's form DEFINITIONS and the SUBMISSIONS are

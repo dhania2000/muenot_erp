@@ -285,6 +285,7 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
     label: "Timesheets",
     children: [
       { label: "Timesheet Management", href: "/modules/operations/timesheets", feature: "operations.view_timesheets" },
+      { label: "Time Tracking", href: "/modules/operations/time-tracking", feature: "operations.view_timesheets" },
       { label: "Productivity", href: "/modules/operations/productivity", feature: "operations.view_productivity" },
     ],
   },

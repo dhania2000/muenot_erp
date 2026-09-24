@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { hashPassword, verifyPassword } from "@/lib/password"
 import { ensurePortalSchema } from "@/lib/portal/schema"
 import { ensureDefaultClientResources } from "@/lib/portal/access"
+import { ensureProductSchema } from "@/lib/products-ensure"
 import type { PortalItemResource } from "@/lib/portal/config"
 
 /**
@@ -164,6 +165,8 @@ export type PortalItem = {
   file_url: string | null
   file_name: string | null
   created_at: string
+  /** Structured product line items (client-placed orders only). */
+  items?: PortalOrderLineItem[]
 }
 
 export async function listItems(
@@ -172,14 +175,15 @@ export async function listItems(
   resource: PortalItemResource,
 ): Promise<PortalItem[]> {
   await ensurePortalSchema()
-  return query<PortalItem[]>(
+  const rows = await query<(PortalItem & { meta: unknown })[]>(
     `SELECT id, resource, reference, title, description, status, amount, currency,
-            issue_date, due_date, file_url, file_name, created_at
+            issue_date, due_date, file_url, file_name, created_at, meta
        FROM client_portal_items
       WHERE tenant_id = ? AND client_id = ? AND resource = ?
       ORDER BY COALESCE(issue_date, DATE(created_at)) DESC, id DESC`,
     [tenantId, clientId, resource],
   )
+  return rows.map(({ meta, ...row }) => ({ ...row, items: parseOrderItems(meta) }))
 }
 
 export async function countItemsByResource(
@@ -241,6 +245,63 @@ export async function createItem(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Product catalog (portal-facing, read-only)
+// ---------------------------------------------------------------------------
+//
+// Clients browse the tenant's active product master to build an order. The
+// `products` table carries no tenant_id (it is shared / single-tenant per DB,
+// see lib/tenant-tables.ts), so only the customer-facing price fields are
+// exposed here — never cost/purchase pricing.
+
+export type PortalCatalogProduct = {
+  id: number
+  product_code: string
+  name: string
+  sku: string | null
+  description: string | null
+  category: string | null
+  unit: string
+  selling_price: number
+  mrp: number
+  image_url: string | null
+}
+
+/** List active products a client can order, with an optional text search. */
+export async function listPortalCatalog(search?: string, limit = 100): Promise<PortalCatalogProduct[]> {
+  await ensureProductSchema()
+  const s = (search ?? "").trim()
+  const rows = await query<PortalCatalogProduct[]>(
+    `SELECT p.id, p.product_id AS product_code, p.name, p.sku, p.description, p.category,
+            p.unit, p.selling_price, p.mrp, p.image_url
+       FROM products p
+      WHERE p.status = 'Active'
+        AND (? = '' OR p.name LIKE ? OR p.sku LIKE ? OR p.product_id LIKE ? OR p.category LIKE ?)
+      ORDER BY p.name ASC
+      LIMIT ?`,
+    [s, `%${s}%`, `%${s}%`, `%${s}%`, `%${s}%`, limit],
+  )
+  return rows
+}
+
+/**
+ * Fetch active products by internal id. Used to re-price a client order
+ * server-side — prices ALWAYS come from the DB here, never from client input.
+ */
+export async function getPortalCatalogByIds(ids: number[]): Promise<PortalCatalogProduct[]> {
+  const clean = Array.from(new Set(ids.filter((n) => Number.isInteger(n) && n > 0)))
+  if (clean.length === 0) return []
+  await ensureProductSchema()
+  const placeholders = clean.map(() => "?").join(",")
+  return query<PortalCatalogProduct[]>(
+    `SELECT p.id, p.product_id AS product_code, p.name, p.sku, p.description, p.category,
+            p.unit, p.selling_price, p.mrp, p.image_url
+       FROM products p
+      WHERE p.status = 'Active' AND p.id IN (${placeholders})`,
+    clean,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Client-placed orders (SPEC 117 — Sales Order Management)
 // ---------------------------------------------------------------------------
 //
@@ -248,6 +309,30 @@ export async function createItem(input: {
 // with resource='orders' and meta.source='portal_request', so it is cleanly
 // distinguishable from staff-published order records (meta = NULL). Sales staff
 // review these under Sales → Sales Order Management.
+
+/** A single product line on a client-placed order. Prices are server-sourced. */
+export type PortalOrderLineItem = {
+  productId: number
+  productCode: string | null
+  name: string
+  unit: string | null
+  quantity: number
+  unitPrice: number
+  lineTotal: number
+}
+
+/** Parse the order line items persisted in the item's `meta` JSON, if any. */
+function parseOrderItems(meta: unknown): PortalOrderLineItem[] | undefined {
+  if (!meta) return undefined
+  try {
+    const parsed = typeof meta === "string" ? JSON.parse(meta) : meta
+    const items = (parsed as { items?: unknown })?.items
+    if (Array.isArray(items) && items.length > 0) return items as PortalOrderLineItem[]
+  } catch {
+    // Ignore malformed meta — treat as an order without structured line items.
+  }
+  return undefined
+}
 
 /** Canonical lifecycle for a client-placed order. */
 export const PORTAL_ORDER_STATUSES = [
@@ -278,13 +363,22 @@ export async function createClientOrder(input: {
   description?: string | null
   amount?: number | null
   currency?: string | null
+  items?: PortalOrderLineItem[]
 }): Promise<number> {
   await ensurePortalSchema()
+  const items = input.items ?? []
   const meta = JSON.stringify({
     source: "portal_request",
     portalUserId: input.portalUserId,
     placedBy: input.authorName,
+    ...(items.length > 0 ? { items } : {}),
   })
+  // When the order is built from catalog products, the amount is the sum of the
+  // server-priced line totals; otherwise fall back to the free-text estimate.
+  const amount =
+    items.length > 0
+      ? Math.round(items.reduce((sum, it) => sum + it.lineTotal, 0) * 100) / 100
+      : input.amount ?? null
   // A short human reference unique enough for display; scoped per tenant.
   const countRows = await query<{ n: number }[]>(
     `SELECT COUNT(*) AS n FROM client_portal_items WHERE tenant_id = ? AND resource = 'orders'`,
@@ -301,7 +395,7 @@ export async function createClientOrder(input: {
       reference,
       input.title,
       input.description ?? null,
-      input.amount ?? null,
+      amount,
       input.currency ?? null,
       meta,
     ],
@@ -322,6 +416,8 @@ export type PortalPlacedOrder = {
   issue_date: string | null
   placed_by: string | null
   created_at: string
+  /** Structured product line items, when the client ordered from the catalog. */
+  items?: PortalOrderLineItem[]
 }
 
 /**
@@ -348,17 +444,18 @@ export async function listPortalPlacedOrders(
     where.push("i.client_id = ?")
     params.push(opts.clientId)
   }
-  return query<PortalPlacedOrder[]>(
+  const rows = await query<(PortalPlacedOrder & { meta: unknown })[]>(
     `SELECT i.id, i.client_id, c.client_name, i.reference, i.title, i.description, i.status,
             i.amount, i.currency, i.issue_date,
             JSON_UNQUOTE(JSON_EXTRACT(i.meta, '$.placedBy')) AS placed_by,
-            i.created_at
+            i.created_at, i.meta
        FROM client_portal_items i
        LEFT JOIN clients c ON c.id = i.client_id AND c.tenant_id = i.tenant_id
       WHERE ${where.join(" AND ")}
       ORDER BY i.created_at DESC, i.id DESC`,
     params,
   )
+  return rows.map(({ meta, ...row }) => ({ ...row, items: parseOrderItems(meta) }))
 }
 
 /** Aggregate counts per status for the tenant's client-placed orders. */

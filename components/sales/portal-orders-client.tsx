@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { Fragment, useMemo, useState } from "react"
 import useSWR from "swr"
 import { toast } from "sonner"
 import { fetcher } from "@/lib/fetcher"
@@ -23,7 +23,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Search, ShoppingCart } from "lucide-react"
+import { Search, ShoppingCart, ChevronDown, ChevronRight } from "lucide-react"
+
+type PortalOrderLineItem = {
+  productId: number
+  productCode: string | null
+  name: string
+  unit: string | null
+  quantity: number
+  unitPrice: number
+  lineTotal: number
+}
 
 type PortalOrder = {
   id: number
@@ -38,6 +48,7 @@ type PortalOrder = {
   issue_date: string | null
   placed_by: string | null
   created_at: string
+  items?: PortalOrderLineItem[]
 }
 
 type ApiResponse = { orders: PortalOrder[]; counts: Record<string, number> }
@@ -65,6 +76,7 @@ export function PortalOrdersClient({
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [updatingId, setUpdatingId] = useState<number | null>(null)
+  const [expandedId, setExpandedId] = useState<number | null>(null)
 
   const { data, mutate } = useSWR<ApiResponse>("/api/sales/portal-orders", fetcher, {
     fallbackData: { orders: initialOrders, counts: initialCounts },
@@ -174,6 +186,7 @@ export function PortalOrdersClient({
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8" />
               <TableHead>Reference</TableHead>
               <TableHead>Client</TableHead>
               <TableHead>Order</TableHead>
@@ -186,7 +199,7 @@ export function PortalOrdersClient({
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-12 text-center">
+                <TableCell colSpan={8} className="py-12 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
                     <ShoppingCart className="h-8 w-8" />
                     <p className="text-sm">
@@ -198,47 +211,122 @@ export function PortalOrdersClient({
                 </TableCell>
               </TableRow>
             ) : (
-              filtered.map((o) => (
-                <TableRow key={o.id}>
-                  <TableCell className="font-medium">{o.reference ?? `#${o.id}`}</TableCell>
-                  <TableCell>{o.client_name ?? "—"}</TableCell>
-                  <TableCell className="max-w-[280px]">
-                    <div className="font-medium truncate">{o.title}</div>
-                    {o.description && (
-                      <div className="text-xs text-muted-foreground truncate">{o.description}</div>
+              filtered.map((o) => {
+                const lineItems = o.items ?? []
+                const hasItems = lineItems.length > 0
+                const isExpanded = expandedId === o.id
+                return (
+                  <Fragment key={o.id}>
+                    <TableRow>
+                      <TableCell className="p-0 pl-2">
+                        {hasItems && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedId(isExpanded ? null : o.id)}
+                            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+                            aria-label={isExpanded ? "Collapse line items" : "Expand line items"}
+                            aria-expanded={isExpanded}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </button>
+                        )}
+                      </TableCell>
+                      <TableCell className="font-medium">{o.reference ?? `#${o.id}`}</TableCell>
+                      <TableCell>{o.client_name ?? "—"}</TableCell>
+                      <TableCell className="max-w-[280px]">
+                        <div className="font-medium truncate">{o.title}</div>
+                        {hasItems ? (
+                          <div className="text-xs text-muted-foreground">
+                            {lineItems.length} product{lineItems.length === 1 ? "" : "s"}
+                          </div>
+                        ) : (
+                          o.description && (
+                            <div className="text-xs text-muted-foreground truncate">{o.description}</div>
+                          )
+                        )}
+                      </TableCell>
+                      <TableCell>{o.placed_by ?? "—"}</TableCell>
+                      <TableCell>{o.issue_date ? formatDate(o.issue_date) : formatDate(o.created_at)}</TableCell>
+                      <TableCell className="text-right">
+                        {o.amount != null ? formatCurrency(o.amount, o.currency ?? undefined) : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {canManage ? (
+                          <Select
+                            value={o.status ?? "Requested"}
+                            onValueChange={(v) => updateStatus(o, v as Status)}
+                            disabled={updatingId === o.id}
+                          >
+                            <SelectTrigger className="w-[150px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {STATUSES.map((s) => (
+                                <SelectItem key={s} value={s}>
+                                  {s}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge variant="secondary" className={STATUS_STYLE[o.status ?? "Requested"]}>
+                            {o.status ?? "Requested"}
+                          </Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                    {isExpanded && hasItems && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={8} className="bg-muted/30 p-0">
+                          <div className="px-6 py-3">
+                            {o.description && (
+                              <p className="mb-3 text-sm text-muted-foreground">
+                                <span className="font-medium text-foreground">Notes: </span>
+                                {o.description}
+                              </p>
+                            )}
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="h-8">Product</TableHead>
+                                  <TableHead className="h-8">Code</TableHead>
+                                  <TableHead className="h-8 text-right">Unit price</TableHead>
+                                  <TableHead className="h-8 text-right">Qty</TableHead>
+                                  <TableHead className="h-8 text-right">Line total</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {lineItems.map((it) => (
+                                  <TableRow key={it.productId} className="hover:bg-transparent">
+                                    <TableCell className="py-2">{it.name}</TableCell>
+                                    <TableCell className="py-2 font-mono text-xs text-muted-foreground">
+                                      {it.productCode ?? "—"}
+                                    </TableCell>
+                                    <TableCell className="py-2 text-right tabular-nums">
+                                      {formatCurrency(it.unitPrice, o.currency ?? undefined)}
+                                    </TableCell>
+                                    <TableCell className="py-2 text-right tabular-nums">
+                                      {it.quantity}
+                                      {it.unit ? ` ${it.unit}` : ""}
+                                    </TableCell>
+                                    <TableCell className="py-2 text-right tabular-nums">
+                                      {formatCurrency(it.lineTotal, o.currency ?? undefined)}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     )}
-                  </TableCell>
-                  <TableCell>{o.placed_by ?? "—"}</TableCell>
-                  <TableCell>{o.issue_date ? formatDate(o.issue_date) : formatDate(o.created_at)}</TableCell>
-                  <TableCell className="text-right">
-                    {o.amount != null ? formatCurrency(o.amount, o.currency ?? undefined) : "—"}
-                  </TableCell>
-                  <TableCell>
-                    {canManage ? (
-                      <Select
-                        value={o.status ?? "Requested"}
-                        onValueChange={(v) => updateStatus(o, v as Status)}
-                        disabled={updatingId === o.id}
-                      >
-                        <SelectTrigger className="w-[150px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {STATUSES.map((s) => (
-                            <SelectItem key={s} value={s}>
-                              {s}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Badge variant="secondary" className={STATUS_STYLE[o.status ?? "Requested"]}>
-                        {o.status ?? "Requested"}
-                      </Badge>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
+                  </Fragment>
+                )
+              })
             )}
           </TableBody>
         </Table>

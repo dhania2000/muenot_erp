@@ -50,11 +50,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Plus, Search, BriefcaseBusiness, Building2, UserRound, ArrowLeft, ArrowRight, Check, GitMerge, Eye, Pencil } from "lucide-react"
+import { MoreHorizontal, Plus, Search, BriefcaseBusiness, Building2, UserRound, ArrowLeft, ArrowRight, Check, GitMerge, Eye, Pencil, ShieldCheck } from "lucide-react"
 import { ExcelExportButton } from "@/components/excel-export-button"
 import { ImportButton } from "@/components/import-button"
 import { EntityCombobox, type ComboOption } from "@/components/clients/entity-combobox"
 import { Client360Drawer } from "@/components/clients/client-360-drawer"
+import { ClientPortalDialog } from "@/components/clients/client-portal-dialog"
 
 export type ClientRow = {
   id: number
@@ -784,6 +785,7 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
     setDialogOpen(true)
   }, canManage)
   const [merging, setMerging] = useState<ClientRow | null>(null)
+  const [portalClient, setPortalClient] = useState<ClientRow | null>(null)
 
   const clients = data?.clients ?? []
   const filtered = useMemo(() => {
@@ -967,6 +969,9 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
                         >
                           <Pencil className="size-4" /> Edit client
                         </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setPortalClient(client)}>
+                          <ShieldCheck className="size-4" /> Manage portal
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => setMerging(client)}>
                           <GitMerge className="size-4" /> Merge client
                         </DropdownMenuItem>
@@ -1014,6 +1019,12 @@ export function ClientsClient({ canManage }: { canManage: boolean }) {
         clients={clients}
         onOpenChange={(v) => !v && setMerging(null)}
         onMerged={() => mutate()}
+      />
+
+      <ClientPortalDialog
+        client={portalClient}
+        open={!!portalClient}
+        onOpenChange={(v) => !v && setPortalClient(null)}
       />
     </div>
   )

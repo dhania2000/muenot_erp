@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { Button } from "@/components/ui/button"
@@ -281,6 +282,9 @@ export function OperationsMeetingsClient() {
                   </a>
                 )}
                 <div className="flex items-center gap-1 pt-2">
+                  <Button size="sm" variant="secondary" render={<Link href={`/modules/operations/meetings/${m.id}`} />}>
+                    Open
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={() => openEdit(m)} aria-label="Edit meeting">
                     <Pencil className="size-4" /> Edit
                   </Button>

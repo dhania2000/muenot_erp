@@ -111,6 +111,106 @@ export async function ensureOperationsSchema(): Promise<void> {
       KEY idx_operations_meetings_start (start_time)
     )`)
 
+    // SPEC 112 — full meeting management. Additive columns on the meeting head
+    // for minutes, follow-up scheduling and follow-up chaining (a meeting can
+    // point back to the meeting it follows up on).
+    await ensureColumn("operations_meetings", "minutes", "MEDIUMTEXT NULL")
+    await ensureColumn("operations_meetings", "follow_up_date", "DATE NULL")
+    await ensureColumn("operations_meetings", "follow_up_notes", "TEXT NULL")
+    await ensureColumn("operations_meetings", "parent_meeting_id", "BIGINT NULL")
+
+    // Structured participants (beyond the free-text attendees string) with an
+    // RSVP response and attendance capture.
+    await query(`CREATE TABLE IF NOT EXISTS operations_meeting_participants (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      meeting_id BIGINT NOT NULL,
+      user_id INT UNSIGNED DEFAULT NULL,
+      name VARCHAR(255) DEFAULT NULL,
+      email VARCHAR(255) DEFAULT NULL,
+      role VARCHAR(48) DEFAULT 'Attendee',
+      response_status VARCHAR(32) DEFAULT 'Pending',
+      attendance VARCHAR(32) DEFAULT NULL,
+      is_organizer TINYINT(1) DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_meeting_participants_meeting (meeting_id)
+    )`)
+
+    // Ordered agenda topics, each with a presenter, time-box and outcome.
+    await query(`CREATE TABLE IF NOT EXISTS operations_meeting_agenda (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      meeting_id BIGINT NOT NULL,
+      sort_order INT DEFAULT 0,
+      topic VARCHAR(512) DEFAULT NULL,
+      presenter VARCHAR(255) DEFAULT NULL,
+      duration_minutes INT DEFAULT NULL,
+      status VARCHAR(32) DEFAULT 'Pending',
+      notes TEXT DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_meeting_agenda_meeting (meeting_id)
+    )`)
+
+    // Attachments — file references land in the tenant's connected storage via
+    // the storage facade; we persist the returned reference here.
+    await query(`CREATE TABLE IF NOT EXISTS operations_meeting_attachments (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      meeting_id BIGINT NOT NULL,
+      file_url VARCHAR(1024) NOT NULL,
+      file_name VARCHAR(512) DEFAULT NULL,
+      content_type VARCHAR(191) DEFAULT NULL,
+      size_bytes BIGINT DEFAULT NULL,
+      uploaded_by INT UNSIGNED DEFAULT NULL,
+      uploaded_by_name VARCHAR(255) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_meeting_attachments_meeting (meeting_id)
+    )`)
+
+    // Meeting notes / minutes entries (multiple, attributed, timestamped).
+    await query(`CREATE TABLE IF NOT EXISTS operations_meeting_notes (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      meeting_id BIGINT NOT NULL,
+      body MEDIUMTEXT NOT NULL,
+      author_id INT UNSIGNED DEFAULT NULL,
+      author_name VARCHAR(255) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_meeting_notes_meeting (meeting_id)
+    )`)
+
+    // Action items with owner, due/follow-up dates and their own status.
+    await query(`CREATE TABLE IF NOT EXISTS operations_meeting_action_items (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      meeting_id BIGINT NOT NULL,
+      title VARCHAR(512) NOT NULL,
+      description TEXT DEFAULT NULL,
+      assignee VARCHAR(255) DEFAULT NULL,
+      assignee_email VARCHAR(255) DEFAULT NULL,
+      priority VARCHAR(32) DEFAULT 'Medium',
+      status VARCHAR(32) DEFAULT 'Open',
+      due_date DATE DEFAULT NULL,
+      follow_up_date DATE DEFAULT NULL,
+      completed_at DATETIME DEFAULT NULL,
+      created_by INT UNSIGNED DEFAULT NULL,
+      created_by_name VARCHAR(255) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_meeting_action_items_meeting (meeting_id)
+    )`)
+
+    // Immutable activity trail for the meeting (scheduled, rescheduled,
+    // status changes, participant/agenda/note/action-item edits, follow-ups).
+    await query(`CREATE TABLE IF NOT EXISTS operations_meeting_history (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      meeting_id BIGINT NOT NULL,
+      action VARCHAR(64) NOT NULL,
+      detail TEXT DEFAULT NULL,
+      actor_id INT UNSIGNED DEFAULT NULL,
+      actor_name VARCHAR(255) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_meeting_history_meeting (meeting_id)
+    )`)
+
     // Phases 34-35 — checklist items driving completion %.
     await query(`CREATE TABLE IF NOT EXISTS operations_checklist_items (
       id INT AUTO_INCREMENT PRIMARY KEY,

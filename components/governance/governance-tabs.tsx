@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 // Mirrors the SecurityTabs pattern so the whole cluster shares one look.
 const TABS: { label: string; href: string }[] = [
   { label: "Audit log", href: "/admin/governance" },
+  { label: "Master data", href: "/admin/governance/master-data" },
   { label: "Classification", href: "/admin/governance/classification" },
   { label: "Field security", href: "/admin/governance/field-security" },
   { label: "Retention", href: "/admin/governance/retention" },

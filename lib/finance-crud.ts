@@ -6,7 +6,7 @@ import { nextRecordId } from "@/lib/record-ids"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
-import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns, ensureRegisterModuleTables, ensureLoansAdvancesColumns } from "@/lib/finance-ensure"
+import { ensureFreelanceInvoiceColumns, ensureFteInvoiceColumns, ensureCustomerVendorGstColumns, ensurePurchaseBillColumns, ensureExpenseColumns, ensureBankTransactionColumns, ensureChartOfAccountsColumns, ensureRegisterModuleTables, ensureLoansAdvancesColumns, ensureBudgetSchema } from "@/lib/finance-ensure"
 import { syncRegisterPosting, reverseRegisterPosting } from "@/lib/finance-register-posting"
 import { augmentLoanAdvance, syncLoanSchedule, deleteLoanSchedule } from "@/lib/finance-loans"
 import { syncProvisionSchedule, deleteProvisionSchedule } from "@/lib/finance-provisions"
@@ -540,6 +540,7 @@ export function createFinanceHandlers(moduleKey: string) {
     if (moduleKey === "bank-transactions") await ensureBankTransactionColumns()
     if (moduleKey === "chart-of-accounts") await ensureChartOfAccountsColumns()
     if (REGISTER_MODULE_KEYS.has(moduleKey)) await ensureRegisterModuleTables()
+    if (moduleKey === "budgets") await ensureBudgetSchema()
     if (moduleKey === "loans-advances") await ensureLoansAdvancesColumns()
     if (moduleKey === "investments") {
       const { ensureInvestmentSchema } = await import("@/lib/finance-investments")

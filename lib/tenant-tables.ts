@@ -187,6 +187,12 @@ export const TENANT_OWNED_TABLES = [
   "md_gov_records",
   "md_gov_change_requests",
   "md_gov_history",
+  // SPEC 92 — Numbering Engine. Per-tenant, per-entity numbering rules and the
+  // running sequence counters they draw from. Each tenant configures and
+  // consumes its own numbering streams; a counter must never be visible to or
+  // shared with another tenant.
+  "numbering_rules",
+  "numbering_counters",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

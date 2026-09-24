@@ -1,16 +1,26 @@
 import { Hash } from "lucide-react"
-import { SpecPage } from "@/components/spec/spec-page"
+import { NumberingClient } from "./numbering-client"
+
+export const dynamic = "force-dynamic"
 
 export default function NumberingEnginePage() {
   return (
-    <SpecPage
-      spec="SPEC 92"
-      title="Numbering Engine"
-      description="Configurable auto-numbering sequences for invoices, orders, tickets and every document type."
-      icon={Hash}
-      capabilities={["Prefixes", "Suffixes", "Padding", "Reset cycles", "Fiscal-year reset", "Per-entity sequences"]}
-      emptyTitle="No sequences configured"
-      emptyDescription="Numbering sequences and their next values will appear here."
-    />
+    <div className="flex flex-col gap-6 p-6">
+      <header className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Hash className="h-5 w-5" />
+        </div>
+        <div>
+          <div className="text-xs font-medium text-muted-foreground">SPEC 92</div>
+          <h1 className="text-2xl font-semibold tracking-tight">Numbering Engine</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Centralized, tenant-specific auto-numbering for every entity — prefixes, suffixes, padding,
+            fiscal-year and periodic resets, and custom formats. Numbers are allocated atomically so
+            duplicates cannot occur.
+          </p>
+        </div>
+      </header>
+      <NumberingClient />
+    </div>
   )
 }

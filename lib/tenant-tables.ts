@@ -225,6 +225,16 @@ export const TENANT_OWNED_TABLES = [
   // a candidate pair or merge audit row is never visible to another tenant.
   "dup_candidates",
   "dup_merge_log",
+  // SPEC 110 — Centralized Task Engine. A single tenant-owned task backbone any
+  // module can create work against, with dependencies, checklist items,
+  // comments, attachments, recurrence and an approval workflow. Every row
+  // belongs to exactly one tenant and is never visible to another.
+  "tasks",
+  "task_dependencies",
+  "task_checklist_items",
+  "task_comments",
+  "task_attachments",
+  "task_activity",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

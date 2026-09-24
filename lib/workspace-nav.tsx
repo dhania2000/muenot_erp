@@ -16,7 +16,6 @@ import {
   Megaphone,
   MessageCircle,
   LayoutDashboard,
-  LayoutGrid,
   CreditCard,
   HardDrive,
   ClipboardList,
@@ -78,10 +77,6 @@ const HR_CHILDREN: FeatureChild[] = [
   { label: "Screen Activity Monitoring", href: "/modules/hr/screen-monitoring", feature: "hr.view_screen_monitoring" },
   { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
   { label: "Offboarding", href: "/modules/hr/offboarding", feature: "hr.view_offboarding" },
-  { label: "Employee 360", href: "/modules/hr/employee-360" },
-  { label: "Employee Self-Service", href: "/modules/hr/self-service" },
-  { label: "Employee Lifecycle", href: "/modules/hr/lifecycle" },
-  { label: "Payroll", href: "/modules/hr/payroll" },
   { label: "Expense Claims", href: "/modules/hr/expense-claims" },
   { label: "Training & Development", href: "/modules/hr/training" },
   { label: "HR Policies", href: "/modules/hr/policies" },
@@ -536,7 +531,6 @@ export async function buildWorkspaceNav(
 
   const navItems: NavItem[] = [
     { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="size-4" /> },
-    { label: "Dashboard Build", href: "/dashboards", icon: <LayoutGrid className="size-4" /> },
     ...modules.map((m) => {
       const item: NavItem = {
         label: m.slug === "assets" ? "Assets & Subscriptions" : m.name,

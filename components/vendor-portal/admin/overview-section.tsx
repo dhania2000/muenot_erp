@@ -56,9 +56,9 @@ const QUICK_ACTIONS: { label: string; icon: typeof UserPlus; target: SectionKey 
   { label: "Create Vendor Account", icon: UserPlus, target: "directory" },
   { label: "Invite Vendor", icon: Send, target: "invitations" },
   { label: "Review Applications", icon: FileSearch, target: "applications" },
-  { label: "Review Documents", icon: FileCheck2, target: "documents" },
+  { label: "Review Documents", icon: FileCheck2, target: "bank" },
   { label: "Manage Access", icon: SlidersHorizontal, target: "access" },
-  { label: "Configure Onboarding", icon: ClipboardList, target: "settings" },
+  { label: "Configure Onboarding", icon: ClipboardList, target: "onboarding" },
   { label: "Portal Settings", icon: Settings2, target: "settings" },
   { label: "Audit Logs", icon: ScrollText, target: "audit" },
 ]

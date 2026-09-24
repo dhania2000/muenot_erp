@@ -2,7 +2,15 @@
  * SPEC 86 — Document Management System shared types.
  * Client-safe projections returned by the store + API layers.
  */
-import type { AccessLevel, ApprovalStatus, DocStatus, DocWorkflowType, ShareAccess, SubjectType } from "./model"
+import type {
+  AccessLevel,
+  ApprovalStatus,
+  DocStatus,
+  DocWorkflowType,
+  ShareAccess,
+  ShareRecipientType,
+  SubjectType,
+} from "./model"
 
 export type DmsFolder = {
   id: number
@@ -96,10 +104,36 @@ export type DmsShare = {
   documentId: number
   token: string
   access: ShareAccess
+  /** SPEC 89 — who the link is for and how it is gated. */
+  recipientType: ShareRecipientType
+  /** userId (internal), role (team) or email (external); null for open links. */
+  recipient: string | null
+  /** Optional friendly name so a link can be identified in the console. */
+  label: string | null
+  /** True when a password is required. The hash itself is never projected. */
+  hasPassword: boolean
+  /** Per-link download cap; null means unlimited (subject to access level). */
+  maxDownloads: number | null
   expiresAt: string | null
   revokedAt: string | null
   downloadCount: number
+  viewCount: number
+  lastAccessedAt: string | null
   createdBy: number | null
+  createdAt: string | null
+  // Enriched fields (populated on tenant-wide console reads).
+  documentTitle?: string | null
+  docRef?: string | null
+}
+
+/** A single recorded access against a share link (SPEC 89 access audit). */
+export type DmsShareAccessEntry = {
+  id: number
+  shareId: number | null
+  documentId: number | null
+  action: string
+  detail: string | null
+  userId: number | null
   createdAt: string | null
 }
 

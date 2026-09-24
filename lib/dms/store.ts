@@ -22,6 +22,7 @@ import {
   formatDocRef,
   normalizeAccessLevel,
   normalizeApproval,
+  normalizeRecipientType,
   normalizeShareAccess,
   normalizeStatus,
   normalizeSubjectType,
@@ -35,6 +36,7 @@ import {
   type DocStatus,
   type DocWorkflowType,
   type ShareAccess,
+  type ShareRecipientType,
   type SubjectType,
 } from "./model"
 import type {
@@ -138,11 +140,21 @@ function mapShare(r: any): DmsShare {
     documentId: Number(r.document_id),
     token: r.token,
     access: normalizeShareAccess(r.access),
+    recipientType: normalizeRecipientType(r.recipient_type),
+    recipient: r.recipient ?? null,
+    label: r.label ?? null,
+    // Only expose whether a password exists — never the hash itself.
+    hasPassword: Boolean(r.password_hash),
+    maxDownloads: r.max_downloads == null ? null : Number(r.max_downloads),
     expiresAt: r.expires_at ?? null,
     revokedAt: r.revoked_at ?? null,
     downloadCount: Number(r.download_count ?? 0),
+    viewCount: Number(r.view_count ?? 0),
+    lastAccessedAt: r.last_accessed_at ?? null,
     createdBy: r.created_by == null ? null : Number(r.created_by),
     createdAt: r.created_at ?? null,
+    documentTitle: r.document_title ?? undefined,
+    docRef: r.document_id != null ? formatDocRef(Number(r.document_id)) : undefined,
   }
 }
 
@@ -828,6 +840,12 @@ export async function createShare(input: {
   documentId: number
   token: string
   access: ShareAccess
+  recipientType?: ShareRecipientType
+  recipient?: string | null
+  label?: string | null
+  /** Pre-hashed password (bcrypt). Never pass a plaintext password here. */
+  passwordHash?: string | null
+  maxDownloads?: number | null
   expiresAt?: string | null
   createdBy?: number | null
 }): Promise<DmsShare> {
@@ -836,11 +854,36 @@ export async function createShare(input: {
     document_id: input.documentId,
     token: input.token,
     access: normalizeShareAccess(input.access),
+    recipient_type: normalizeRecipientType(input.recipientType),
+    recipient: input.recipient ?? null,
+    label: input.label?.slice(0, 200) ?? null,
+    password_hash: input.passwordHash ?? null,
+    max_downloads: input.maxDownloads != null && input.maxDownloads > 0 ? Math.floor(input.maxDownloads) : null,
     expires_at: input.expiresAt ?? null,
     created_by: input.createdBy ?? null,
   })
   const row = await tenantFindById("dms_document_shares", insertId)
   return mapShare(row)
+}
+
+/**
+ * Tenant-wide share listing for the management console, joined to the owning
+ * document so the UI can show titles without an N+1 fetch.
+ */
+export async function listAllShares(limit = 500): Promise<DmsShare[]> {
+  await ensureDmsSchema()
+  const cap = Math.min(Math.max(limit, 1), 1000)
+  const tid = currentTenantId()
+  const rows = await query<any[]>(
+    `SELECT s.*, d.title AS document_title
+       FROM dms_document_shares s
+       LEFT JOIN dms_documents d ON d.id = s.document_id AND d.tenant_id = s.tenant_id
+      WHERE s.tenant_id = ?
+      ORDER BY s.created_at DESC
+      LIMIT ${cap}`,
+    [tid],
+  )
+  return rows.map(mapShare)
 }
 
 export async function revokeShare(id: number): Promise<boolean> {
@@ -856,6 +899,8 @@ export async function revokeShare(id: number): Promise<boolean> {
 export async function getShareByToken(token: string): Promise<{
   share: DmsShare
   tenantId: number
+  /** Raw bcrypt hash, returned only to the access gate for verification. */
+  passwordHash: string | null
 } | null> {
   await ensureDmsSchema()
   const rows = await query<any[]>(
@@ -863,14 +908,27 @@ export async function getShareByToken(token: string): Promise<{
     [token],
   )
   if (!rows[0]) return null
-  return { share: mapShare(rows[0]), tenantId: Number(rows[0].tenant_id) }
+  return {
+    share: mapShare(rows[0]),
+    tenantId: Number(rows[0].tenant_id),
+    passwordHash: rows[0].password_hash ?? null,
+  }
 }
 
 export async function incrementShareDownload(id: number): Promise<void> {
   await ensureDmsSchema()
   const { where, params } = scopedWhere("dms_document_shares", "id = ?", [id])
   await query(
-    `UPDATE dms_document_shares SET download_count = download_count + 1 ${where}`,
+    `UPDATE dms_document_shares SET download_count = download_count + 1, last_accessed_at = NOW() ${where}`,
+    params,
+  )
+}
+
+export async function incrementShareView(id: number): Promise<void> {
+  await ensureDmsSchema()
+  const { where, params } = scopedWhere("dms_document_shares", "id = ?", [id])
+  await query(
+    `UPDATE dms_document_shares SET view_count = view_count + 1, last_accessed_at = NOW() ${where}`,
     params,
   )
 }
@@ -884,6 +942,7 @@ export async function logAudit(input: {
   action: string
   detail?: string | null
   userId?: number | null
+  shareId?: number | null
 }): Promise<void> {
   await ensureDmsSchema()
   try {
@@ -892,6 +951,7 @@ export async function logAudit(input: {
       action: input.action.slice(0, 40),
       detail: input.detail?.slice(0, 1000) ?? null,
       user_id: input.userId ?? null,
+      share_id: input.shareId ?? null,
     })
   } catch (err) {
     // Audit must never break the primary operation.
@@ -905,6 +965,33 @@ export async function listAudit(documentId?: number, limit = 100): Promise<DmsAu
   const rows = await tenantSelect<any[]>("dms_audit", {
     where: documentId != null ? "document_id = ?" : "",
     params: documentId != null ? [documentId] : [],
+    tail: `ORDER BY created_at DESC LIMIT ${cap}`,
+  })
+  return rows.map(mapAudit)
+}
+
+/**
+ * SPEC 89 access audit — every access recorded against a specific share link.
+ * Used by the sharing console to show who opened/downloaded a link and when.
+ */
+export async function listShareAudit(shareId: number, limit = 200): Promise<DmsAuditEntry[]> {
+  await ensureDmsSchema()
+  const cap = Math.min(Math.max(limit, 1), 500)
+  const rows = await tenantSelect<any[]>("dms_audit", {
+    where: "share_id = ?",
+    params: [shareId],
+    tail: `ORDER BY created_at DESC LIMIT ${cap}`,
+  })
+  return rows.map(mapAudit)
+}
+
+/** Tenant-wide feed of share-link access events for the console overview. */
+export async function listAllShareAudit(limit = 200): Promise<DmsAuditEntry[]> {
+  await ensureDmsSchema()
+  const cap = Math.min(Math.max(limit, 1), 500)
+  const rows = await tenantSelect<any[]>("dms_audit", {
+    where: "share_id IS NOT NULL",
+    params: [],
     tail: `ORDER BY created_at DESC LIMIT ${cap}`,
   })
   return rows.map(mapAudit)

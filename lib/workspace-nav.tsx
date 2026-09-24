@@ -373,6 +373,7 @@ const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Dashboard", href: "/modules/sales/dashboard", feature: "sales.view_dashboard" },
   { label: "Leads", href: "/modules/sales/leads", feature: "sales.view_leads" },
   { label: "Follow-ups", href: "/modules/sales/followups", feature: "sales.view_leads" },
+  { label: "Deals", href: "/modules/sales/deals", feature: "sales.view_deals" },
   { label: "Companies", href: "/modules/sales/companies", feature: "sales.view_companies" },
   { label: "Meetings", href: "/modules/sales/meetings", feature: "sales.view_meetings" },
   { label: "Quotations", href: "/modules/sales/quotations", feature: "sales.view_quotations" },

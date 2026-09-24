@@ -320,6 +320,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     modules: [
       { key: "sales.dashboard", label: "Sales Dashboard", group: "sales", aliases: ["dashboard"], scope: { table: "sales_leads" } },
       { key: "sales.leads", label: "Leads", group: "sales", aliases: ["lead"], scope: { table: "sales_leads", addedBy: "created_by", ownedBy: "assigned_to" } },
+    { key: "sales.deals", label: "Deals", group: "sales", aliases: ["deal"], scope: { table: "sales_deals", addedBy: "created_by", ownedBy: "owner_id" } },
       { key: "sales.companies", label: "Companies", group: "sales", aliases: ["compan", "account"], scope: { table: "sales_companies", addedBy: "created_by", ownedBy: "assigned_to" } },
       { key: "sales.meetings", label: "Meetings", group: "sales", aliases: ["meeting"], scope: { table: "sales_meetings", addedBy: "added_by" } },
       { key: "sales.quotations", label: "Quotations", group: "sales", aliases: ["quotation", "quote"], scope: { table: "sales_quotations", addedBy: "added_by" } },

@@ -12,6 +12,7 @@ export default async function SalesIndexPage() {
   const order = [
     ["sales.view_dashboard", "/modules/sales/dashboard"],
     ["sales.view_leads", "/modules/sales/leads"],
+    ["sales.view_deals", "/modules/sales/deals"],
     ["sales.view_companies", "/modules/sales/companies"],
     ["sales.view_meetings", "/modules/sales/meetings"],
     ["sales.view_quotations", "/modules/sales/quotations"],

@@ -135,20 +135,14 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Financial Reports", href: "/modules/finance/financial-reports", feature: "finance.financial_reports" },
   { label: "Emails", href: "/modules/finance/emails", feature: "finance.send_emails" },
   { label: "Email Templates", href: "/modules/finance/email-templates", feature: "finance.view_email_templates" },
-  { label: "Vendor 360", href: "/modules/finance/vendor-360", feature: "" },
   { label: "Vendor Portal", href: "/modules/finance/vendor-portal", feature: "" },
   { label: "Procurement", href: "/modules/finance/procurement", feature: "" },
   { label: "Purchase Requisition", href: "/modules/finance/purchase-requisition", feature: "" },
   { label: "RFQ Management", href: "/modules/finance/rfq", feature: "" },
   { label: "Purchase Orders", href: "/modules/finance/purchase-orders", feature: "" },
-  { label: "Goods Receipt", href: "/modules/finance/goods-receipt", feature: "" },
   { label: "Three-Way Match", href: "/modules/finance/three-way-match", feature: "" },
   { label: "Procurement Approvals", href: "/modules/finance/procurement-approvals", feature: "" },
   { label: "Budget Management", href: "/modules/finance/budgets", feature: "" },
-  { label: "Cost Centers", href: "/modules/finance/cost-centers", feature: "" },
-  { label: "Profit Centers", href: "/modules/finance/profit-centers", feature: "" },
-  { label: "Multi-Currency", href: "/modules/finance/multi-currency", feature: "" },
-  { label: "Fiscal Year", href: "/modules/finance/fiscal-year", feature: "" },
   { label: "Period Lock", href: "/modules/finance/period-lock", feature: "" },
   { label: "Core Integration", href: "/modules/finance/core-integration", feature: "" },
 ]
@@ -346,9 +340,10 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
   },
 ]
 
-const CLIENTS_CHILDREN = [
-  { label: "Clients", href: "/modules/clients/clients", feature: "clients.view_clients" },
-]
+  const CLIENTS_CHILDREN = [
+    { label: "Clients", href: "/modules/clients/clients", feature: "clients.view_clients" },
+    { label: "Client 360", href: "/modules/clients/client-360", feature: "clients.view_clients" },
+  ]
 
 const TICKETS_CHILDREN = [
   { label: "All Tickets", href: "/modules/tickets/all", feature: "tickets.view_tickets" },
@@ -407,6 +402,10 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   { label: "Legal entities", href: "/modules/finance/legal-entities" },
   { label: "Employee Links", href: "/admin/employee-links" },
   { label: "Job monitoring", href: "/admin/job-monitoring" },
+  // Moved out of the Finance module — tenant-wide financial configuration that
+  // belongs under Administration alongside fiscal/legal-entity settings.
+  { label: "Multi-Currency", href: "/modules/finance/multi-currency" },
+  { label: "Fiscal Year", href: "/modules/finance/fiscal-year" },
   { label: "Settings", href: "/admin/settings" },
 ]
 

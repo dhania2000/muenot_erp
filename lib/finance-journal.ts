@@ -71,6 +71,13 @@ async function ensureManualJournalColumns(): Promise<void> {
   }
   await ensureColumn("journal_entries", "reversal_of", "VARCHAR(40) DEFAULT NULL")
   await ensureColumn("journal_entries", "reversed_by", "VARCHAR(40) DEFAULT NULL")
+  // SPEC 165 — an adjustment / correction / reclassification voucher is a
+  // SEPARATE linked journal that points back at the posted original it acts on
+  // (adjustment_of) and records which kind of correction it is (adjustment_type).
+  // The original posted voucher is never mutated by these; the link is carried
+  // only on the new voucher so a single posted entry can accumulate many.
+  await ensureColumn("journal_entries", "adjustment_of", "VARCHAR(40) DEFAULT NULL")
+  await ensureColumn("journal_entries", "adjustment_type", "VARCHAR(30) DEFAULT NULL")
   await ensureColumn("journal_entries", "cost_centre", "VARCHAR(120) DEFAULT NULL")
   await ensureColumn("general_ledger", "cost_centre", "VARCHAR(120) DEFAULT NULL")
   // Phase 36/37 — payment details are in the base schema, but a journal-level
@@ -164,6 +171,52 @@ const ACTION_FROM: Record<JournalAction, JournalStatus[]> = {
   cancel: ["Draft", "Pending Approval", "Approved", "Rejected"],
   post: ["Approved"],
   reverse: ["Posted"],
+}
+
+/**
+ * SPEC 165 — the ways a POSTED journal may be corrected without ever rewriting
+ * its history. Each raises a SEPARATE, linked, approval-gated journal:
+ *   - Adjustment     — a supplementary entry that tops-up / adjusts balances
+ *                      related to the original; the original stays valid.
+ *   - Reclassification — moves an amount between accounts (e.g. wrong head);
+ *                      the original stays valid, a balanced move is booked.
+ *   - Correction     — the original was wrong: it is reversed (a linked JE-…-R)
+ *                      AND a corrected replacement journal is raised.
+ * Reversal itself is the fourth verb and is handled by the `reverse` action.
+ */
+export const MANUAL_JOURNAL_ADJUSTMENT_KINDS = ["Adjustment", "Correction", "Reclassification"] as const
+export type AdjustmentKind = (typeof MANUAL_JOURNAL_ADJUSTMENT_KINDS)[number]
+
+/** Audit event type recorded on the ORIGINAL for each adjustment verb. */
+const ADJUSTMENT_EVENT: Record<AdjustmentKind, "adjusted" | "corrected" | "reclassified"> = {
+  Adjustment: "adjusted",
+  Correction: "corrected",
+  Reclassification: "reclassified",
+}
+
+/**
+ * Pure guard (no DB) — may `original` be adjusted / corrected / reclassified
+ * with `kind`? Enforces the immutability contract: only a POSTED journal is a
+ * valid target (a Draft/Approved/Reversed one has nothing settled to correct),
+ * an unknown kind is refused, and a reversal voucher can never itself be the
+ * target — its corrected entry is. Returns a human error string, or null.
+ */
+export function validateAdjustmentTarget(
+  original: { status?: string | null; reversalOf?: string | null } | null,
+  kind: string,
+): string | null {
+  if (!original) return "The original journal was not found, or it is a system posting that must be corrected through its source document."
+  if (!(MANUAL_JOURNAL_ADJUSTMENT_KINDS as readonly string[]).includes(kind)) {
+    return `Unknown adjustment kind "${kind}".`
+  }
+  if (original.reversalOf) {
+    return "A reversal journal cannot be adjusted — act on the corrected entry instead."
+  }
+  if (original.status !== "Posted") {
+    const verb = kind === "Correction" ? "corrected" : kind === "Reclassification" ? "reclassified" : "adjusted"
+    return `Only a Posted journal can be ${verb} (this one is ${original.status ?? "not posted"}). Edit, cancel or reverse it instead.`
+  }
+  return null
 }
 
 export type ManualJournalLineInput = {
@@ -501,7 +554,14 @@ async function resolveLines(
  */
 export async function createManualJournal(
   input: ManualJournalInput,
-  opts: { createdBy?: number | null; submit?: boolean; actorName?: string | null } = {},
+  opts: {
+    createdBy?: number | null
+    submit?: boolean
+    actorName?: string | null
+    // SPEC 165 — when set, the new voucher is stamped as a linked
+    // adjustment/correction/reclassification of a posted original.
+    link?: { adjustmentOf: string; adjustmentType: AdjustmentKind }
+  } = {},
 ): Promise<ManualJournalResult> {
   const shapeError = validateManualJournal(input)
   if (shapeError) throw new Error(shapeError)
@@ -572,6 +632,17 @@ export async function createManualJournal(
       lineIds.push(lineId)
     }
 
+    // SPEC 165 — stamp the back-link to the posted original this voucher
+    // adjusts/corrects/reclassifies. Kept only on the new voucher, so the
+    // original is never mutated and can accumulate many linked adjustments.
+    if (opts.link?.adjustmentOf) {
+      await conn.query(
+        `UPDATE journal_entries SET adjustment_of = ?, adjustment_type = ?
+          WHERE voucher_no = ? AND source_module = ?`,
+        [opts.link.adjustmentOf, opts.link.adjustmentType, journalId, MANUAL_JOURNAL_SOURCE],
+      )
+    }
+
     await conn.commit()
     await logFinanceEvent({
       entityType: "journal",
@@ -607,6 +678,129 @@ export async function getManualJournal(journalId: string): Promise<{ status: Jou
   )) as any[]
   const status = (rows[0]?.approval_status as JournalStatus) ?? null
   return { status, rows }
+}
+
+export type JournalAdjustmentLink = {
+  voucherNo: string
+  adjustmentType: string
+  journalDate: string
+  status: string
+  totalDebit: number
+}
+
+/**
+ * SPEC 165 — every adjustment / correction / reclassification voucher raised
+ * against `originalId`, newest-linked first. Read for the detail drawer so a
+ * posted entry shows the full chain of corrections layered on top of it.
+ */
+export async function listJournalAdjustments(originalId: string): Promise<JournalAdjustmentLink[]> {
+  if (!originalId) return []
+  await ensureManualJournalColumns()
+  const rows = (await query(
+    `SELECT voucher_no, adjustment_type, journal_date, approval_status, SUM(debit) AS total_debit
+       FROM journal_entries
+      WHERE adjustment_of = ? AND source_module = ?
+      GROUP BY voucher_no, adjustment_type, journal_date, approval_status
+      ORDER BY journal_date DESC, voucher_no DESC`,
+    [originalId, MANUAL_JOURNAL_SOURCE],
+  )) as any[]
+  return rows.map((r) => ({
+    voucherNo: String(r.voucher_no),
+    adjustmentType: String(r.adjustment_type ?? ""),
+    journalDate: String(r.journal_date ?? "").slice(0, 10),
+    status: String(r.approval_status ?? ""),
+    totalDebit: round2(num(r.total_debit)),
+  }))
+}
+
+export type AdjustmentResult = ManualJournalResult & { reversalId: string | null; kind: AdjustmentKind }
+
+/**
+ * SPEC 165 — raise a linked adjustment / correction / reclassification against
+ * a POSTED journal, WITHOUT ever rewriting the original's history.
+ *
+ * All three create a brand-new, approval-gated manual journal (Draft, or
+ * Pending Approval when `submit`), stamped with a back-link to the original so
+ * the correction still flows through the normal approve → post lifecycle — it
+ * never silently touches the ledger. "Correction" additionally reverses the
+ * original (a separate linked JE-…-R voucher) because a correction asserts the
+ * original was wrong; the corrected replacement is the linked draft. The
+ * original voucher's own rows are never modified.
+ */
+export async function createAdjustmentJournal(
+  originalId: string,
+  kind: AdjustmentKind,
+  input: ManualJournalInput,
+  opts: { createdBy?: number | null; actorName?: string | null; submit?: boolean } = {},
+): Promise<AdjustmentResult> {
+  // Serialise against any in-flight transition on the original (e.g. a
+  // concurrent reverse) so a correction can't race the voucher it targets.
+  return withJournalLock(originalId, () => createAdjustmentJournalLocked(originalId, kind, input, opts))
+}
+
+async function createAdjustmentJournalLocked(
+  originalId: string,
+  kind: AdjustmentKind,
+  input: ManualJournalInput,
+  opts: { createdBy?: number | null; actorName?: string | null; submit?: boolean },
+): Promise<AdjustmentResult> {
+  await ensureManualJournalColumns()
+  const { status, rows } = await getManualJournal(originalId)
+  const original = rows.length ? { status, reversalOf: rows[0].reversal_of ?? null } : null
+
+  const targetError = validateAdjustmentTarget(original, kind)
+  if (targetError) throw new Error(targetError)
+
+  const shapeError = validateManualJournal(input)
+  if (shapeError) throw new Error(shapeError)
+
+  // Default the reference to the original so the linked voucher is traceable
+  // even before the drawer link is read.
+  const linkedInput: ManualJournalInput = {
+    ...input,
+    referenceNo: input.referenceNo || originalId,
+  }
+
+  // Create the linked journal first — a Draft/Pending voucher has no ledger
+  // impact yet, so if the (Correction-only) reversal below fails we can safely
+  // roll it back and leave the original entirely untouched.
+  const result = await createManualJournal(linkedInput, {
+    createdBy: opts.createdBy ?? null,
+    actorName: opts.actorName ?? null,
+    submit: !!opts.submit,
+    link: { adjustmentOf: originalId, adjustmentType: kind },
+  })
+
+  let reversalId: string | null = null
+  if (kind === "Correction") {
+    try {
+      await reverseManualJournalGroup(originalId, {
+        userId: opts.createdBy ?? null,
+        actorName: opts.actorName ?? null,
+      })
+      reversalId = `${originalId}-R`
+    } catch (error) {
+      // Undo the draft correction so a failed reversal never leaves an orphan.
+      await deleteManualJournal(result.journalId).catch(() => {})
+      throw error
+    }
+  }
+
+  await logFinanceEvent({
+    entityType: "journal",
+    entityRef: originalId,
+    type: ADJUSTMENT_EVENT[kind],
+    summary:
+      `${kind} ${result.journalId} raised against ${originalId}` +
+      (reversalId ? ` (original reversed by ${reversalId})` : ""),
+    detail: { adjustmentJournal: result.journalId, kind, reversalId, submitted: !!opts.submit },
+    amount: result.totalDebit,
+    voucherNo: result.journalId,
+    actorId: opts.createdBy ?? null,
+    actorName: opts.actorName ?? null,
+  })
+
+  return { ...result, reversalId, kind }
 }
 
 /**

@@ -8,13 +8,17 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { JournalExportMenu } from "@/components/finance/journal-export-menu"
-import { ManualJournalDialog, type EditableJournal } from "@/components/finance/manual-journal-dialog"
+import {
+  ManualJournalDialog,
+  type EditableJournal,
+  type AdjustmentContext,
+} from "@/components/finance/manual-journal-dialog"
 import { JournalDetailDrawer } from "@/components/finance/journal-detail-drawer"
 import { JournalImportDialog } from "@/components/finance/journal-import-dialog"
 import { inr, inr0 } from "@/lib/finance-calc"
 import {
   Plus, FilterX, Trash2, ChevronRight, ChevronDown, Lock, Coins, Wallet, ArrowLeftRight, BookOpen,
-  Send, Check, X, Pencil, Undo2, Ban, Eye, Upload, ShieldCheck,
+  Send, Check, X, Pencil, Undo2, Ban, Eye, Upload, ShieldCheck, SlidersHorizontal, Replace, FolderTree,
 } from "lucide-react"
 
 // The lifecycle statuses a manual journal moves through, in workflow order.
@@ -94,8 +98,12 @@ function buildGroups(rows: Row[]): JournalGroup[] {
   return Array.from(map.values())
 }
 
+type JournalActionKind =
+  | "submit" | "approve" | "reject" | "post" | "cancel" | "reverse" | "edit" | "delete"
+  | "adjust" | "correct" | "reclassify"
+
 /** Which workflow actions apply to a manual journal in a given status. */
-function actionsFor(status: string): Array<"submit" | "approve" | "reject" | "post" | "cancel" | "reverse" | "edit" | "delete"> {
+function actionsFor(status: string): JournalActionKind[] {
   switch (status) {
     case "Draft":
       return ["submit", "edit", "cancel", "delete"]
@@ -106,12 +114,21 @@ function actionsFor(status: string): Array<"submit" | "approve" | "reject" | "po
     case "Approved":
       return ["post", "cancel"]
     case "Posted":
-      return ["reverse"]
+      // SPEC 165 — a posted entry can be reversed, or acted on by a linked,
+      // approval-gated adjustment / correction / reclassification. None of
+      // these rewrite the original posting.
+      return ["reverse", "adjust", "correct", "reclassify"]
     case "Cancelled":
       return ["delete"]
     default:
       return []
   }
+}
+
+const ADJUST_KIND: Record<"adjust" | "correct" | "reclassify", AdjustmentContext["kind"]> = {
+  adjust: "Adjustment",
+  correct: "Correction",
+  reclassify: "Reclassification",
 }
 
 export function JournalEntriesClient() {
@@ -127,6 +144,7 @@ export function JournalEntriesClient() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editJournal, setEditJournal] = useState<EditableJournal | null>(null)
+  const [adjustment, setAdjustment] = useState<AdjustmentContext | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [detailGroup, setDetailGroup] = useState<JournalGroup | null>(null)
@@ -258,6 +276,35 @@ export function JournalEntriesClient() {
 
   function openNew() {
     setEditJournal(null)
+    setAdjustment(null)
+    setDialogOpen(true)
+  }
+
+  // SPEC 165 — open the dialog in adjustment mode, seeded from the posted
+  // original. The dialog posts to /adjust, creating a new linked voucher.
+  function openAdjust(group: JournalGroup, kind: AdjustmentContext["kind"]) {
+    setEditJournal(null)
+    setAdjustment({
+      originalId: group.voucherNo,
+      kind,
+      seed: {
+        journalDate: undefined,
+        voucherType: group.voucherType,
+        referenceNo: group.voucherNo,
+        narration: "",
+        lines: group.lines.map((l) => ({
+          accountId: String(l.account_id ?? ""),
+          debit: num(l.debit),
+          credit: num(l.credit),
+          narration: String(l.narration ?? ""),
+          partyId: String(l.party_id ?? ""),
+          projectId: String(l.project_id ?? ""),
+          costCentre: String(l.cost_centre ?? ""),
+          gst: num(l.gst_amount),
+          tds: num(l.tds_amount),
+        })),
+      },
+    })
     setDialogOpen(true)
   }
 
@@ -548,6 +595,21 @@ export function JournalEntriesClient() {
                             {acts.includes("reverse") && (
                               <Button variant="ghost" size="icon" aria-label="Reverse" title="Reverse posting" disabled={busy} onClick={() => runAction(g, "reverse")}>
                                 <Undo2 className="size-4" />
+                              </Button>
+                            )}
+                            {acts.includes("adjust") && (
+                              <Button variant="ghost" size="icon" aria-label="Adjust" title="Raise a linked adjustment" disabled={busy} onClick={() => openAdjust(g, ADJUST_KIND.adjust)}>
+                                <SlidersHorizontal className="size-4" />
+                              </Button>
+                            )}
+                            {acts.includes("correct") && (
+                              <Button variant="ghost" size="icon" aria-label="Correct" title="Correct (reverse + repost corrected)" disabled={busy} onClick={() => openAdjust(g, ADJUST_KIND.correct)}>
+                                <Replace className="size-4" />
+                              </Button>
+                            )}
+                            {acts.includes("reclassify") && (
+                              <Button variant="ghost" size="icon" aria-label="Reclassify" title="Reclassify to different accounts" disabled={busy} onClick={() => openAdjust(g, ADJUST_KIND.reclassify)}>
+                                <FolderTree className="size-4" />
                               </Button>
                             )}
                             {acts.includes("edit") && (

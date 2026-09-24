@@ -93,7 +93,7 @@ export async function listRecords(moduleId: number, state?: string): Promise<Mod
   await ensureCustomModuleSchema()
   const tenantId = requireCurrentTenantId()
   const params: unknown[] = [tenantId, moduleId]
-  let sql = `SELECT ${REC_COLUMNS} FROM custom_module_records WHERE tenant_id = ? AND module_id = ?`
+  let sql = `SELECT ${REC_COLUMNS} FROM custom_module_records WHERE tenant_id = ? AND module_id = ? AND merged_into IS NULL`
   if (state) {
     sql += ` AND state = ?`
     params.push(state)
@@ -108,7 +108,7 @@ export async function getRecordById(moduleId: number, id: number): Promise<Modul
   await ensureCustomModuleSchema()
   const tenantId = requireCurrentTenantId()
   const rows = (await query(
-    `SELECT ${REC_COLUMNS} FROM custom_module_records WHERE tenant_id = ? AND module_id = ? AND id = ? LIMIT 1`,
+    `SELECT ${REC_COLUMNS} FROM custom_module_records WHERE tenant_id = ? AND module_id = ? AND id = ? AND merged_into IS NULL LIMIT 1`,
     [tenantId, moduleId, id],
   )) as RecordRow[]
   return rows[0] ? rowToRecord(rows[0]) : null
@@ -264,7 +264,7 @@ export async function recordStateCounts(moduleId: number): Promise<Record<string
   const tenantId = requireCurrentTenantId()
   const rows = (await query(
     `SELECT COALESCE(state, '') AS state, COUNT(*) AS n FROM custom_module_records
-      WHERE tenant_id = ? AND module_id = ? GROUP BY state`,
+      WHERE tenant_id = ? AND module_id = ? AND merged_into IS NULL GROUP BY state`,
     [tenantId, moduleId],
   )) as { state: string; n: number }[]
   const out: Record<string, number> = {}

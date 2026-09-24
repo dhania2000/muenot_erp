@@ -36,7 +36,7 @@ import {
 import { type TenantRole, tenantRank, toTenantRole } from "@/lib/role-model"
 
 export type { FieldType, FieldOption, FieldConfig } from "@/lib/custom-fields/model"
-export { FIELD_TYPES } from "@/lib/custom-fields/model"
+export { FIELD_TYPES, getFieldTypeDef, numericValueOf, evaluateFormula } from "@/lib/custom-fields/model"
 
 // ---------------------------------------------------------------------------
 // Slug + name normalization

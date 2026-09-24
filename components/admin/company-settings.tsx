@@ -8,6 +8,7 @@ import {
   Target, Timer, ListChecks, ShieldCheck, Palette, Blocks, HardDrive, Languages,
   LogIn, CalendarDays, Link2, FileLock2, DatabaseBackup, UserPlus, Boxes,
   Banknote, AlarmClock, Gauge, ShoppingCart, Users, Webhook, UserCog, Settings2,
+  Mail, FileText,
   type LucideIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -29,6 +30,7 @@ const icons: Record<string, LucideIcon> = {
   Target, Timer, ListChecks, ShieldCheck, Palette, Blocks, HardDrive, Languages,
   LogIn, CalendarDays, Link2, FileLock2, DatabaseBackup, UserPlus, Boxes,
   Banknote, AlarmClock, Gauge, ShoppingCart, Users, Webhook, UserCog,
+  Mail, FileText,
 }
 
 function SectionIcon({ name, className }: { name: string; className?: string }) {

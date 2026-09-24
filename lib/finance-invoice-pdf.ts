@@ -12,6 +12,19 @@ export type InvoiceCompany = {
   website: string
   taxLabel: string // e.g. "GSTIN"
   taxNumber: string
+  /** Tenant PDF brand accent as an [r,g,b] triple; drives the invoice title colour. */
+  accentColor?: [number, number, number]
+  /** Optional tenant footer note printed on every generated PDF. */
+  footerText?: string
+}
+
+/** Parse a #rrggbb / #rgb hex string into an [r,g,b] triple, or null when invalid. */
+export function hexToRgb(hex: string | undefined | null): [number, number, number] | null {
+  if (!hex) return null
+  let h = String(hex).trim().replace(/^#/, "")
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("")
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return null
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
 }
 
 export type InvoiceBank = {
@@ -159,7 +172,7 @@ export function buildFreelanceInvoicePdf(
   }
 
   // Title block on the right.
-  setColor(HEAD)
+  setColor(company.accentColor ?? HEAD)
   doc.setFont("helvetica", "bold")
   doc.setFontSize(20)
   doc.text(title, right, y, { align: "right" })
@@ -387,7 +400,7 @@ export function buildFreelanceInvoicePdf(
   setColor(MUTED)
   doc.setFont("helvetica", "italic")
   doc.setFontSize(8)
-  doc.text("This is a system-generated invoice. No signature is required.", M, footerY)
+  doc.text(company.footerText || "This is a system-generated invoice. No signature is required.", M, footerY)
   doc.setFont("helvetica", "normal")
   doc.text(company.name || "", right, footerY, { align: "right" })
 
@@ -442,7 +455,7 @@ export function buildFteInvoicePdf(
     cy += 11
   }
 
-  setColor(HEAD)
+  setColor(company.accentColor ?? HEAD)
   doc.setFont("helvetica", "bold")
   doc.setFontSize(20)
   doc.text(title, right, y, { align: "right" })
@@ -1249,5 +1262,7 @@ export function companyFromSettings(s: Record<string, string>): InvoiceCompany {
     website: s["company.website"] || "",
     taxLabel: s["tax.number_label"] || s["address.tax_name"] || "GSTIN",
     taxNumber: s["address.tax_number"] || "",
+    accentColor: hexToRgb(s["pdf.accent_color"] || s["theme.primary_color"]) ?? undefined,
+    footerText: s["pdf.footer_text"] || "",
   }
 }

@@ -9,7 +9,7 @@ export type NotificationProvider=(input:ProviderInput)=>Promise<{providerId?:str
 // SMS and push are extension points; production bootstrap must install a provider.
 const providers:Partial<Record<Channel,NotificationProvider>>={
   push:sendFcmNotification,
-  email:async n=>{if(!isEmailConfigured())throw Object.assign(new Error("Email provider not configured"),{code:"PROVIDER_UNCONFIGURED"});const result=await sendEmail({to:n.destination,subject:n.title,html:"<p>"+escapeHtml(n.body).replace(/\n/g,"<br>")+"</p>",headers:{"X-Notification-Key":n.idempotencyKey}});return {providerId:result.messageId}},
+  email:async n=>{if(!isEmailConfigured())throw Object.assign(new Error("Email provider not configured"),{code:"PROVIDER_UNCONFIGURED"});const result=await sendEmail({to:n.destination,subject:n.title,html:"<p>"+escapeHtml(n.body).replace(/\n/g,"<br>")+"</p>",headers:{"X-Notification-Key":n.idempotencyKey},brand:true});return {providerId:result.messageId}},
   whatsapp:async n=>{
     const integration=await getWhatsAppIntegrationForTenant(n.tenantId)
     if(!integration)throw Object.assign(new Error("Provider not configured"),{code:"PROVIDER_UNCONFIGURED"})

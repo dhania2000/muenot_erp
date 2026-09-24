@@ -7,6 +7,7 @@ import { getGoogleAccount } from "@/lib/google-accounts"
 import { makeUserGmailClient, scopeGrantsGmailSend } from "@/lib/google-calendar"
 import { monitorLogger } from "@/lib/system-monitoring"
 import { getCurrentTenant } from "@/lib/tenant-context"
+import { getBranding, renderBrandedEmail } from "@/lib/branding"
 
 let tablesEnsured = false
 
@@ -941,9 +942,27 @@ export async function sendEmail(opts: {
    * Falls back to the shared transport when the user has no mailbox connected.
    */
   senderUserId?: number | null
+  /**
+   * When true, wrap `html` in the acting tenant's branded email shell (logo,
+   * header colour, footer) resolved from settings. Off by default so threaded
+   * sales replies and templates that already ship a full document are untouched.
+   */
+  brand?: boolean
+  /** Optional heading shown in the branded shell; defaults to the subject. */
+  brandTitle?: string
 }): Promise<{ messageId?: string; providerThreadId?: string | null }> {
   try {
   const config = smtpConfig(opts.department)
+  if (opts.brand) {
+    try {
+      const branding = await getBranding()
+      opts = { ...opts, html: renderBrandedEmail(opts.html, branding, { title: opts.brandTitle ?? opts.subject }) }
+    } catch (err) {
+      // Branding is best-effort — never block an email because settings failed
+      // to load. Fall through with the caller-supplied html.
+      console.error("[v0][email] branding wrap skipped:", (err as any)?.message)
+    }
+  }
   const userSender = await getUserMailSender(opts.senderUserId)
   const configuredFrom = opts.from || userSender?.email || config.from || config.user
   const from = buildFromHeader(opts.department, configuredFrom)

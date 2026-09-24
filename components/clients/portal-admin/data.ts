@@ -11,6 +11,16 @@
  * portal.
  */
 
+import {
+  Eye,
+  FileText,
+  KeyRound,
+  LogIn,
+  ShieldAlert,
+  UserCog,
+  type LucideIcon,
+} from "lucide-react"
+
 export type PortalStatus =
   | "active"
   | "pending"
@@ -708,31 +718,56 @@ export const ANNOUNCEMENTS: Announcement[] = [
 
 /* ------------------------------------------------------------------ Activity / audit */
 
+export type ActivityCategory = "auth" | "security" | "access" | "document" | "resource" | "account"
+
 export type ActivityRow = {
   id: string
+  category: ActivityCategory
   event: string
+  /** Person or system that performed the action (used by the global activity feed). */
+  actor: string
+  /** Verb phrase describing what happened. */
+  action: string
+  /** Object the action was performed on. */
+  target: string
+  /** Portal user linked to the event (used by the client 360 drawer). */
   user: string
   client: string
   ip: string
+  /** Human-friendly time shown in the global feed. */
+  timestamp: string
+  /** Raw timestamp shown in the client 360 drawer. */
   at: string
   result: "success" | "failed"
 }
 
 export const ACTIVITY_LOG: ActivityRow[] = [
-  { id: "al1", event: "Successful Login", user: "Priya Nair", client: "Acme Interiors", ip: "103.21.44.12", at: "2026-09-24 09:12", result: "success" },
-  { id: "al2", event: "Document Download", user: "Daniel Osei", client: "Vertex Logistics", ip: "72.14.201.9", at: "2026-09-23 22:40", result: "success" },
-  { id: "al3", event: "Failed Login", user: "ops@zenithmfg.com", client: "Zenith Manufacturing", ip: "185.60.12.4", at: "2026-09-23 06:14", result: "failed" },
-  { id: "al4", event: "Password Reset", user: "Rahul Sharma", client: "Acme Interiors", ip: "103.21.44.55", at: "2026-09-22 08:02", result: "success" },
-  { id: "al5", event: "Permission Change", user: "Admin · R. Mehta", client: "Bluepeak Retail", ip: "10.0.0.4", at: "2026-09-21 15:30", result: "success" },
-  { id: "al6", event: "Account Lock", user: "ops@zenithmfg.com", client: "Zenith Manufacturing", ip: "185.60.12.4", at: "2026-08-30 06:20", result: "failed" },
-  { id: "al7", event: "Resource View", user: "Tom Becker", client: "Harbour Foods", ip: "81.2.69.144", at: "2026-09-22 11:55", result: "success" },
-  { id: "al8", event: "File Upload", user: "Marco Rossi", client: "Bluepeak Retail", ip: "151.38.4.2", at: "2026-09-18 10:11", result: "success" },
+  { id: "al1", category: "auth", event: "Successful Login", actor: "Priya Nair", action: "signed in from", target: "103.21.44.12", user: "Priya Nair", client: "Acme Interiors", ip: "103.21.44.12", timestamp: "2026-09-24 09:12", at: "2026-09-24 09:12", result: "success" },
+  { id: "al2", category: "document", event: "Document Download", actor: "Daniel Osei", action: "downloaded", target: "Project Falcon MSA", user: "Daniel Osei", client: "Vertex Logistics", ip: "72.14.201.9", timestamp: "2026-09-23 22:40", at: "2026-09-23 22:40", result: "success" },
+  { id: "al3", category: "auth", event: "Failed Login", actor: "ops@zenithmfg.com", action: "failed to sign in from", target: "185.60.12.4", user: "ops@zenithmfg.com", client: "Zenith Manufacturing", ip: "185.60.12.4", timestamp: "2026-09-23 06:14", at: "2026-09-23 06:14", result: "failed" },
+  { id: "al4", category: "account", event: "Password Reset", actor: "Rahul Sharma", action: "reset the password for", target: "their account", user: "Rahul Sharma", client: "Acme Interiors", ip: "103.21.44.55", timestamp: "2026-09-22 08:02", at: "2026-09-22 08:02", result: "success" },
+  { id: "al5", category: "access", event: "Permission Change", actor: "Admin · R. Mehta", action: "changed Invoices access for", target: "Bluepeak Retail", user: "Admin · R. Mehta", client: "Bluepeak Retail", ip: "10.0.0.4", timestamp: "2026-09-21 15:30", at: "2026-09-21 15:30", result: "success" },
+  { id: "al6", category: "security", event: "Account Lock", actor: "System", action: "locked the account of", target: "ops@zenithmfg.com", user: "ops@zenithmfg.com", client: "Zenith Manufacturing", ip: "185.60.12.4", timestamp: "2026-08-30 06:20", at: "2026-08-30 06:20", result: "failed" },
+  { id: "al7", category: "resource", event: "Resource View", actor: "Tom Becker", action: "viewed", target: "2026 Contract Renewals", user: "Tom Becker", client: "Harbour Foods", ip: "81.2.69.144", timestamp: "2026-09-22 11:55", at: "2026-09-22 11:55", result: "success" },
+  { id: "al8", category: "document", event: "File Upload", actor: "Marco Rossi", action: "uploaded", target: "VAT Registration.pdf", user: "Marco Rossi", client: "Bluepeak Retail", ip: "151.38.4.2", timestamp: "2026-09-18 10:11", at: "2026-09-18 10:11", result: "success" },
 ]
 
 export const ACTIVITY_EVENTS = [
   "Successful Login", "Failed Login", "Password Reset", "Account Lock",
   "Resource View", "Document Download", "File Upload", "Permission Change",
 ]
+
+export const ACTIVITY_CATEGORY_META: Record<
+  ActivityCategory,
+  { label: string; icon: LucideIcon; className: string }
+> = {
+  auth: { label: "Authentication", icon: LogIn, className: "bg-sky-500/12 text-sky-600 dark:text-sky-400" },
+  security: { label: "Security", icon: ShieldAlert, className: "bg-destructive/12 text-destructive" },
+  access: { label: "Access", icon: KeyRound, className: "bg-violet-500/12 text-violet-600 dark:text-violet-400" },
+  document: { label: "Documents", icon: FileText, className: "bg-amber-500/12 text-amber-600 dark:text-amber-400" },
+  resource: { label: "Resources", icon: Eye, className: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400" },
+  account: { label: "Account", icon: UserCog, className: "bg-muted text-foreground" },
+}
 
 export type AuditRow = {
   id: string
@@ -781,4 +816,32 @@ export const APPLICATION_LABELS: Record<ApplicationStatus, string> = {
 
 export const REQUEST_LABELS: Record<RequestStatus, string> = {
   new: "New", in_review: "In Review", approved: "Approved", rejected: "Rejected", completed: "Completed",
+}
+
+/* ------------------------------------------------------------------ Portal settings toggles */
+
+export type PortalToggles = {
+  selfRegistration: boolean
+  manualApproval: boolean
+  autoProvision: boolean
+  require2fa: boolean
+  ipAllowlist: boolean
+  watermark: boolean
+  moduleInvoices: boolean
+  moduleProjects: boolean
+  moduleSupport: boolean
+  moduleKnowledge: boolean
+}
+
+export const PORTAL_TOGGLES: PortalToggles = {
+  selfRegistration: true,
+  manualApproval: true,
+  autoProvision: false,
+  require2fa: true,
+  ipAllowlist: false,
+  watermark: true,
+  moduleInvoices: true,
+  moduleProjects: true,
+  moduleSupport: true,
+  moduleKnowledge: false,
 }

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { userHasFeature } from "@/lib/permissions"
-import { ClientPortalManager } from "@/components/clients/client-portal-manager"
+import { PortalAdminConsole } from "@/components/clients/portal-admin/portal-admin-console"
 
 export default async function ClientPortalPage() {
   const session = await getSession()
@@ -15,10 +15,11 @@ export default async function ClientPortalPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Client Portal</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Manage portal access, login accounts and shared records for each client.
+          The control center for the external client portal — clients, applications, access, resources,
+          documents, sessions, communications and settings.
         </p>
       </div>
-      <ClientPortalManager />
+      <PortalAdminConsole />
     </div>
   )
 }

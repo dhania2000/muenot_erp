@@ -1,6 +1,7 @@
 import { query } from "@/lib/db"
 import { getSetting } from "@/lib/settings/server"
 import { resolveStepForDate, buildPreview, addDays, type CycleType, type PatternStep } from "@/lib/rotation-ui"
+import { DEFAULT_TIME_ZONE as ENGINE_DEFAULT_TIME_ZONE, normalizeTimeZone } from "@/lib/timezone"
 
 // ---------------------------------------------------------------------------
 // HR Attendance — shared calculation & integration layer.
@@ -11,11 +12,13 @@ import { resolveStepForDate, buildPreview, addDays, type CycleType, type Pattern
 // duplicates that data — attendance rows only store the *derived* result.
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_TIME_ZONE = "Asia/Kolkata"
+// Re-exported from the shared timezone engine so there is one home zone across
+// the ERP (SPEC 158). Kept as a named export here for existing callers.
+export const DEFAULT_TIME_ZONE = ENGINE_DEFAULT_TIME_ZONE
 
 /** Configured company timezone, falling back to IST (the ERP is India-based). */
 export async function getTimeZone(): Promise<string> {
-  return (await getSetting("app.timezone")) || DEFAULT_TIME_ZONE
+  return normalizeTimeZone(await getSetting("app.timezone"), DEFAULT_TIME_ZONE)
 }
 
 /**

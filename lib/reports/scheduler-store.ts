@@ -30,6 +30,7 @@ import { query, withTransaction } from "@/lib/db"
 import { recordAuditLog } from "@/lib/audit-log-store"
 import { sendEmail, type OutgoingAttachment } from "@/lib/email"
 import { matchesCronExpression } from "@/lib/cron-jobs"
+import { assertTimeZone } from "@/lib/timezone"
 import { getReport, type Actor } from "@/lib/reports/store"
 import { runReport, type RunReportResult } from "@/lib/reports/query-builder"
 import type { TenantRole } from "@/lib/role-model"
@@ -369,13 +370,9 @@ export type CreateReportScheduleInput = {
 }
 
 function normalizeTimezone(tz: unknown): string {
-  const value = String(tz ?? "UTC").trim() || "UTC"
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value }).format()
-    return value
-  } catch {
-    throw new Error("Invalid IANA timezone.")
-  }
+  // Report timezone flows through the shared engine so validation, DST handling
+  // and the "invalid zone" contract match every other timezone in the ERP.
+  return assertTimeZone(tz ?? "UTC")
 }
 
 export async function createReportSchedule(

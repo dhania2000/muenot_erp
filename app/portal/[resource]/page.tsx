@@ -4,6 +4,7 @@ import { clientCanAccess } from "@/lib/portal/access"
 import { listItems, listTickets, listMessages } from "@/lib/portal/store"
 import { PORTAL_RESOURCE_META, isPortalItemResource, isPortalResource } from "@/lib/portal/config"
 import { ItemList } from "@/components/portal/item-list"
+import { OrdersView } from "@/components/portal/orders-view"
 import { TicketsView } from "@/components/portal/tickets-view"
 import { MessagesView } from "@/components/portal/messages-view"
 
@@ -33,6 +34,7 @@ export default async function PortalResourcePage({ params }: { params: Promise<{
 
   if (isPortalItemResource(resource)) {
     const items = await listItems(session.tenantId, session.clientId, resource)
+    if (resource === "orders") return <OrdersView items={items} />
     return <ItemList resource={resource} title={meta.labelPlural} items={items} />
   }
 

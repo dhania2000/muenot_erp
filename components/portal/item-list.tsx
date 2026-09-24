@@ -31,18 +31,23 @@ export function ItemList({
   resource,
   title,
   items,
+  headerAction,
 }: {
   resource: PortalItemResource
   title: string
   items: PortalItem[]
+  headerAction?: React.ReactNode
 }) {
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        <p className="text-sm text-muted-foreground">
-          {items.length} {items.length === 1 ? "record" : "records"} shared with you.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          <p className="text-sm text-muted-foreground">
+            {items.length} {items.length === 1 ? "record" : "records"} shared with you.
+          </p>
+        </div>
+        {headerAction}
       </div>
 
       {items.length === 0 ? (

@@ -241,6 +241,164 @@ export async function createItem(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Client-placed orders (SPEC 117 — Sales Order Management)
+// ---------------------------------------------------------------------------
+//
+// An order a CLIENT submits from the portal is stored in client_portal_items
+// with resource='orders' and meta.source='portal_request', so it is cleanly
+// distinguishable from staff-published order records (meta = NULL). Sales staff
+// review these under Sales → Sales Order Management.
+
+/** Canonical lifecycle for a client-placed order. */
+export const PORTAL_ORDER_STATUSES = [
+  "Requested",
+  "Confirmed",
+  "In Progress",
+  "Fulfilled",
+  "Cancelled",
+] as const
+export type PortalOrderStatus = (typeof PORTAL_ORDER_STATUSES)[number]
+
+export function isPortalOrderStatus(v: unknown): v is PortalOrderStatus {
+  return typeof v === "string" && (PORTAL_ORDER_STATUSES as readonly string[]).includes(v)
+}
+
+/**
+ * Create an order the client placed from the portal. tenantId/clientId ALWAYS
+ * come from the verified portal session — never from request input. The record
+ * is marked with meta.source='portal_request' so staff can list client-placed
+ * orders separately from staff-published ones.
+ */
+export async function createClientOrder(input: {
+  tenantId: number
+  clientId: number
+  portalUserId: number
+  authorName: string
+  title: string
+  description?: string | null
+  amount?: number | null
+  currency?: string | null
+}): Promise<number> {
+  await ensurePortalSchema()
+  const meta = JSON.stringify({
+    source: "portal_request",
+    portalUserId: input.portalUserId,
+    placedBy: input.authorName,
+  })
+  // A short human reference unique enough for display; scoped per tenant.
+  const countRows = await query<{ n: number }[]>(
+    `SELECT COUNT(*) AS n FROM client_portal_items WHERE tenant_id = ? AND resource = 'orders'`,
+    [input.tenantId],
+  )
+  const reference = `SO-${String(Number(countRows[0]?.n ?? 0) + 1).padStart(5, "0")}`
+  const result = await query<{ insertId: number }>(
+    `INSERT INTO client_portal_items
+       (tenant_id, client_id, resource, reference, title, description, status, amount, currency, issue_date, meta, created_by)
+     VALUES (?, ?, 'orders', ?, ?, ?, 'Requested', ?, ?, CURDATE(), ?, NULL)`,
+    [
+      input.tenantId,
+      input.clientId,
+      reference,
+      input.title,
+      input.description ?? null,
+      input.amount ?? null,
+      input.currency ?? null,
+      meta,
+    ],
+  )
+  return result.insertId
+}
+
+export type PortalPlacedOrder = {
+  id: number
+  client_id: number
+  client_name: string | null
+  reference: string | null
+  title: string
+  description: string | null
+  status: string | null
+  amount: number | null
+  currency: string | null
+  issue_date: string | null
+  placed_by: string | null
+  created_at: string
+}
+
+/**
+ * List every order clients placed through the portal for a tenant. Scoped to
+ * the tenant only (staff may see all of the tenant's clients); the client
+ * isolation axis does not apply to internal staff. Joins clients for display.
+ */
+export async function listPortalPlacedOrders(
+  tenantId: number,
+  opts: { status?: string; clientId?: number } = {},
+): Promise<PortalPlacedOrder[]> {
+  await ensurePortalSchema()
+  const where: string[] = [
+    "i.tenant_id = ?",
+    "i.resource = 'orders'",
+    "JSON_UNQUOTE(JSON_EXTRACT(i.meta, '$.source')) = 'portal_request'",
+  ]
+  const params: (string | number)[] = [tenantId]
+  if (opts.status) {
+    where.push("i.status = ?")
+    params.push(opts.status)
+  }
+  if (opts.clientId) {
+    where.push("i.client_id = ?")
+    params.push(opts.clientId)
+  }
+  return query<PortalPlacedOrder[]>(
+    `SELECT i.id, i.client_id, c.client_name, i.reference, i.title, i.description, i.status,
+            i.amount, i.currency, i.issue_date,
+            JSON_UNQUOTE(JSON_EXTRACT(i.meta, '$.placedBy')) AS placed_by,
+            i.created_at
+       FROM client_portal_items i
+       LEFT JOIN clients c ON c.id = i.client_id AND c.tenant_id = i.tenant_id
+      WHERE ${where.join(" AND ")}
+      ORDER BY i.created_at DESC, i.id DESC`,
+    params,
+  )
+}
+
+/** Aggregate counts per status for the tenant's client-placed orders. */
+export async function countPortalPlacedOrdersByStatus(tenantId: number): Promise<Record<string, number>> {
+  await ensurePortalSchema()
+  const rows = await query<{ status: string | null; n: number }[]>(
+    `SELECT i.status, COUNT(*) AS n
+       FROM client_portal_items i
+      WHERE i.tenant_id = ? AND i.resource = 'orders'
+        AND JSON_UNQUOTE(JSON_EXTRACT(i.meta, '$.source')) = 'portal_request'
+      GROUP BY i.status`,
+    [tenantId],
+  )
+  const out: Record<string, number> = {}
+  for (const r of rows) out[r.status ?? "Requested"] = Number(r.n)
+  return out
+}
+
+/**
+ * Update the status of a client-placed order. Tenant-scoped, and restricted to
+ * portal-sourced order records so staff cannot mutate unrelated items through
+ * this path. Returns true when a row was updated.
+ */
+export async function setPortalOrderStatus(
+  tenantId: number,
+  orderId: number,
+  status: PortalOrderStatus,
+): Promise<boolean> {
+  await ensurePortalSchema()
+  const result = await query<{ affectedRows: number }>(
+    `UPDATE client_portal_items
+        SET status = ?, updated_at = NOW()
+      WHERE tenant_id = ? AND id = ? AND resource = 'orders'
+        AND JSON_UNQUOTE(JSON_EXTRACT(meta, '$.source')) = 'portal_request'`,
+    [status, tenantId, orderId],
+  )
+  return Number(result?.affectedRows ?? 0) > 0
+}
+
+// ---------------------------------------------------------------------------
 // Tickets
 // ---------------------------------------------------------------------------
 

@@ -90,8 +90,8 @@ export const PORTAL_RESOURCE_META: Record<PortalResource, PortalResourceMeta> = 
     key: "orders",
     label: "Order",
     labelPlural: "Orders",
-    description: "Confirmed orders and their current status.",
-    clientCanCreate: false,
+    description: "Place new orders and track existing orders and their current status.",
+    clientCanCreate: true,
   },
   invoices: {
     key: "invoices",

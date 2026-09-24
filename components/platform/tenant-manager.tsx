@@ -17,7 +17,9 @@ import {
   Ban,
   Pencil,
   Trash2,
+  Database,
 } from "lucide-react"
+import { TenantDatabaseConsole } from "@/components/platform/tenant-database-console"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -86,6 +88,7 @@ export function TenantManager({
   const [createOpen, setCreateOpen] = useState(false)
   const [editTenant, setEditTenant] = useState<TenantRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<TenantRow | null>(null)
+  const [dbTarget, setDbTarget] = useState<TenantRow | null>(null)
 
   async function impersonate(tenant: TenantRow) {
     setPendingId(tenant.id)
@@ -264,6 +267,10 @@ export function TenantManager({
                             <DropdownMenuItem onClick={() => setEditTenant(tenant)}>
                               <Pencil className="size-4" />
                               Edit details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setDbTarget(tenant)}>
+                              <Database className="size-4" />
+                              Database &amp; regions
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuLabel>Lifecycle</DropdownMenuLabel>

@@ -16,7 +16,6 @@ import {
   Megaphone,
   MessageCircle,
   LayoutDashboard,
-  LayoutGrid,
   CreditCard,
   HardDrive,
   ClipboardList,
@@ -78,10 +77,6 @@ const HR_CHILDREN: FeatureChild[] = [
   { label: "Screen Activity Monitoring", href: "/modules/hr/screen-monitoring", feature: "hr.view_screen_monitoring" },
   { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
   { label: "Offboarding", href: "/modules/hr/offboarding", feature: "hr.view_offboarding" },
-  { label: "Employee 360", href: "/modules/hr/employee-360" },
-  { label: "Employee Self-Service", href: "/modules/hr/self-service" },
-  { label: "Employee Lifecycle", href: "/modules/hr/lifecycle" },
-  { label: "Payroll", href: "/modules/hr/payroll" },
   { label: "Expense Claims", href: "/modules/hr/expense-claims" },
   { label: "Training & Development", href: "/modules/hr/training" },
   { label: "HR Policies", href: "/modules/hr/policies" },
@@ -156,13 +151,6 @@ const FINANCE_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Fiscal Year", href: "/modules/finance/fiscal-year", feature: "" },
   { label: "Period Lock", href: "/modules/finance/period-lock", feature: "" },
   { label: "Core Integration", href: "/modules/finance/core-integration", feature: "" },
-  { label: "Automatic Journals", href: "/modules/finance/auto-journal", feature: "" },
-  { label: "Journal Reversal", href: "/modules/finance/journal-reversal", feature: "" },
-  { label: "Bank Reconciliation", href: "/modules/finance/bank-reconciliation", feature: "" },
-  { label: "Payment Reconciliation", href: "/modules/finance/payment-reconciliation", feature: "" },
-  { label: "Tax Engine", href: "/modules/finance/tax-engine", feature: "" },
-  { label: "GST Automation", href: "/modules/finance/gst-automation", feature: "" },
-  { label: "TDS Automation", href: "/modules/finance/tds-automation", feature: "" },
 ]
 
 // Recruitment sidebar organised as a hierarchical ERP structure. Parent groups
@@ -536,7 +524,6 @@ export async function buildWorkspaceNav(
 
   const navItems: NavItem[] = [
     { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="size-4" /> },
-    { label: "Dashboard Build", href: "/dashboards", icon: <LayoutGrid className="size-4" /> },
     ...modules.map((m) => {
       const item: NavItem = {
         label: m.slug === "assets" ? "Assets & Subscriptions" : m.name,

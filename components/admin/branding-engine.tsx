@@ -165,7 +165,7 @@ type Derived = ReturnType<typeof deriveBranding>
 /** Client mirror of lib/branding.ts fallbacks, used purely to drive the preview. */
 function deriveBranding(v: Record<string, string>) {
   const val = (k: string) => (v[k] ?? "").trim()
-  const companyName = val("company.name") || "Muenot Business Team"
+  const companyName = val("company.name") || "Muenot Business Suite"
   const appName = val("app.name") || companyName
   const primary = val("theme.primary_color") || DEFAULT_PRIMARY
   const sidebar = val("theme.sidebar_color") || primary

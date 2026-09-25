@@ -50,7 +50,7 @@ const rawSections: Omit<SettingSection, "module" | "submodule">[] = [
     icon: "Building2",
     description: "Core identity of your organisation shown across the workspace.",
     fields: [
-      { key: "company.name", label: "Company Name", type: "text", default: "Muenot Business Team", placeholder: "Acme Pvt Ltd" },
+      { key: "company.name", label: "Company Name", type: "text", default: "Muenot Business Suite", placeholder: "Acme Pvt Ltd" },
       { key: "company.email", label: "Company Email", type: "email", placeholder: "hello@acme.com" },
       { key: "company.phone", label: "Company Phone", type: "text", placeholder: "+91 90000 00000" },
       { key: "company.website", label: "Company Website", type: "url", placeholder: "https://acme.com" },

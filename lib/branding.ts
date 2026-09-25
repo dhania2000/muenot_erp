@@ -42,7 +42,7 @@ function pick(map: SettingsMap, key: string, fallback = ""): string {
 
 /** Build the branding projection from an already-loaded settings map. */
 export function brandingFromSettings(map: SettingsMap): TenantBranding {
-  const companyName = pick(map, "company.name", "Muenot Business Team")
+  const companyName = pick(map, "company.name", "Muenot Business Suite")
   const appName = pick(map, "app.name", companyName)
   const primaryColor = pick(map, "theme.primary_color", DEFAULT_PRIMARY)
   const companyLogo = pick(map, "company.logo")

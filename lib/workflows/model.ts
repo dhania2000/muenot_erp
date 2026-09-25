@@ -13,6 +13,7 @@ export type Action =
   | { type: "create"; title: string; description: string; userId: number }
   | { type: "email"; userId: number; subject: string; message: string }
   | { type: "whatsapp"; phone: string; message: string }
+  | { type: "asset"; assetTag: string; userId: number }
 export type Workflow = {
   name: string
   description: string
@@ -123,6 +124,11 @@ function validateActions(actions: unknown, mod: WorkflowModule, label: string): 
         if (!/^\+?[1-9]\d{7,14}$/.test(x.phone) || !text(x.message, 1000)) throw new Error("WhatsApp action needs a valid phone number (E.164) and message")
         return { type: "whatsapp", phone: x.phone, message: x.message } as Action
       }
+      case "asset": {
+        const x = a as { assetTag: string; userId: number }
+        if (!positive(x.userId) || typeof x.assetTag !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/.test(x.assetTag)) throw new Error("Asset action needs an asset tag and a recipient")
+        return { type: "asset", assetTag: x.assetTag, userId: x.userId } as Action
+      }
       default:
         throw new Error("Unsupported action")
     }
@@ -167,3 +173,18 @@ export function matches(w: Workflow, record: Record<string, unknown>): boolean {
   return evalGroup(record, normalizeConditions(w.conditions))
 }
 export function approvalAllowed(requester: number, approver: number, designated: number) { return requester !== approver && approver === designated }
+
+// Publish-time safety gate for the visual automation builder. validateWorkflow
+// already whitelists supported ("available") actions and bounds sizes; this
+// additionally rejects definitions that could form an execution cycle or an
+// unbounded timing loop once a workflow is published and allowed to run.
+export function assertPublishable(w: Workflow): void {
+  const all = [...w.actions, ...w.elseActions]
+  if (!w.actions.length) throw new Error("Publish requires at least one THEN action")
+  // Cycle guard: "create" always inserts an erp_workflow_tasks record, which is
+  // exactly what the workflow_tasks module watches — a Tasks workflow creating
+  // tasks could re-trigger itself indefinitely.
+  if (w.module === "workflow_tasks" && all.some((a) => a.type === "create")) throw new Error("Cycle detected: a Tasks workflow cannot create workflow tasks")
+  // Timing-loop guard: cap chained delays/schedules to a sane number of hops.
+  if (all.filter((a) => a.type === "delay" || a.type === "schedule").length > 10) throw new Error("Too many delay/schedule steps; possible timing loop")
+}

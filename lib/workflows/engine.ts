@@ -2,8 +2,10 @@ import "server-only"
 import type { PoolConnection } from "mysql2/promise"
 import { query, withTransaction } from "@/lib/db"
 import { ensureWorkflowSchema } from "./schema"
-import { approvalAllowed, matches, validateWorkflow, type Workflow } from "./model"
+import { approvalAllowed, assertPublishable, matches, validateWorkflow, type Workflow } from "./model"
 import { deliverWebhook } from "./webhook"
+import { enforceFeature } from "@/lib/platform/feature-guard"
+import { recordAuditLog } from "@/lib/audit-log-store"
 import { fingerprint } from "@/lib/job-idempotency"
 import { enqueueNotification } from "@/lib/notification-engine/service"
 import { sendEmail } from "@/lib/email"
@@ -29,22 +31,25 @@ async function notice(c: PoolConnection, tenant: number, runId: number, user: nu
 export async function saveWorkflow(tenant: number, actor: number, input: unknown, id?: number) {
   const w = validateWorkflow(input)
   await ensureWorkflowSchema()
-  return withTransaction(async c => {
+  const savedId = await withTransaction(async c => {
     await member(c,tenant,actor,true)
     for (const a of [...w.actions, ...w.elseActions]) if ("userId" in a) await member(c,tenant,a.userId,a.type === "approval")
     if (id) {
       const [existing] = await rows(c,"SELECT id,version FROM erp_workflows WHERE tenant_id=? AND id=? FOR UPDATE",[tenant,id])
       if (!existing) throw new Error("Workflow not found")
       const nextVersion = Number(existing.version || 1) + 1
-      await c.query("UPDATE erp_workflows SET name=?,description=?,definition=?,version=? WHERE tenant_id=? AND id=?",[w.name,w.description,JSON.stringify(w),nextVersion,tenant,id])
+      // Editing a published workflow reverts it to draft; it must be re-published to run.
+      await c.query("UPDATE erp_workflows SET name=?,description=?,definition=?,version=?,status='draft' WHERE tenant_id=? AND id=?",[w.name,w.description,JSON.stringify(w),nextVersion,tenant,id])
       await c.query("INSERT INTO erp_workflow_versions (tenant_id,workflow_id,version,name,description,definition,changed_by) VALUES (?,?,?,?,?,?,?)",[tenant,id,nextVersion,w.name,w.description,JSON.stringify(w),actor])
       return Number(id)
     }
-    const [r] = await c.query<any>("INSERT INTO erp_workflows (tenant_id,name,description,definition,created_by) VALUES (?,?,?,?,?)", [tenant,w.name,w.description,JSON.stringify(w),actor])
+    const [r] = await c.query<any>("INSERT INTO erp_workflows (tenant_id,name,description,definition,created_by,status) VALUES (?,?,?,?,?,'draft')", [tenant,w.name,w.description,JSON.stringify(w),actor])
     const newId = Number(r.insertId)
     await c.query("INSERT INTO erp_workflow_versions (tenant_id,workflow_id,version,name,description,definition,changed_by) VALUES (?,?,1,?,?,?,?)",[tenant,newId,w.name,w.description,JSON.stringify(w),actor])
     return newId
   })
+  await recordAuditLog({ action: id ? "workflow.update" : "workflow.create", entityType: "erp_workflows", entityId: savedId, entityLabel: w.name, metadata: { module: w.module, trigger: w.trigger }, context: { tenantId: tenant, actorUserId: actor } })
+  return savedId
 }
 export async function setWorkflowEnabled(tenant: number, actor: number, id: number, enabled: boolean) {
   await ensureWorkflowSchema()
@@ -54,6 +59,45 @@ export async function setWorkflowEnabled(tenant: number, actor: number, id: numb
     if (!existing) throw new Error("Workflow not found")
     await c.query("UPDATE erp_workflows SET enabled=? WHERE tenant_id=? AND id=?",[enabled ? 1 : 0,tenant,id])
   })
+}
+// Publish: validates the current definition against the publish-safety gate,
+// checks the tenant's automation entitlement, then marks the workflow published so
+// it becomes eligible to run. Records an audit entry.
+export async function publishWorkflow(tenant: number, actor: number, id: number) {
+  await ensureWorkflowSchema()
+  const result = await withTransaction(async c => {
+    await member(c,tenant,actor,true)
+    const [d] = await rows(c,"SELECT * FROM erp_workflows WHERE tenant_id=? AND id=? FOR UPDATE",[tenant,id])
+    if (!d) throw new Error("Workflow not found")
+    const w = validateWorkflow(parse(d.definition))
+    assertPublishable(w)
+    const gate = await enforceFeature(tenant, "automation.workflows")
+    if (!gate.ok) throw new Error(gate.reason || "Automation workflows are not available on your plan")
+    await c.query("UPDATE erp_workflows SET status='published',enabled=1,published_version=version,published_at=UTC_TIMESTAMP() WHERE tenant_id=? AND id=?",[tenant,id])
+    return { id, version: Number(d.version || 1), name: w.name }
+  })
+  await recordAuditLog({ action: "workflow.publish", entityType: "erp_workflows", entityId: id, entityLabel: result.name, metadata: { version: result.version }, context: { tenantId: tenant, actorUserId: actor } })
+  return result
+}
+// Rollback: snapshots a prior version's definition into a new draft version. History
+// is append-only; the restored definition must be re-published before it can run.
+export async function rollbackWorkflow(tenant: number, actor: number, id: number, toVersion: number) {
+  if (!Number.isSafeInteger(toVersion) || toVersion <= 0) throw new Error("A valid target version is required")
+  await ensureWorkflowSchema()
+  const result = await withTransaction(async c => {
+    await member(c,tenant,actor,true)
+    const [d] = await rows(c,"SELECT id,version FROM erp_workflows WHERE tenant_id=? AND id=? FOR UPDATE",[tenant,id])
+    if (!d) throw new Error("Workflow not found")
+    const [ver] = await rows(c,"SELECT definition,name,description FROM erp_workflow_versions WHERE tenant_id=? AND workflow_id=? AND version=?",[tenant,id,toVersion])
+    if (!ver) throw new Error("Version not found")
+    const w = validateWorkflow(parse(ver.definition))
+    const nextVersion = Number(d.version || 1) + 1
+    await c.query("UPDATE erp_workflows SET name=?,description=?,definition=?,version=?,status='draft' WHERE tenant_id=? AND id=?",[w.name,w.description,JSON.stringify(w),nextVersion,tenant,id])
+    await c.query("INSERT INTO erp_workflow_versions (tenant_id,workflow_id,version,name,description,definition,changed_by) VALUES (?,?,?,?,?,?,?)",[tenant,id,nextVersion,w.name,w.description,JSON.stringify(w),actor])
+    return { id, version: nextVersion, from: toVersion, name: w.name }
+  })
+  await recordAuditLog({ action: "workflow.rollback", entityType: "erp_workflows", entityId: id, entityLabel: result.name, metadata: { from: result.from, version: result.version }, context: { tenantId: tenant, actorUserId: actor } })
+  return result
 }
 // Dry run: validates the draft definition and reports which branch (THEN/ELSE) would
 // fire against a real record and which actions would run. Never writes anything.
@@ -74,6 +118,7 @@ export async function startWorkflow(tenant: number, actor: number, workflowId: n
     await member(c,tenant,actor,true)
     const [d] = await rows(c,"SELECT * FROM erp_workflows WHERE tenant_id=? AND id=? FOR UPDATE",[tenant,workflowId])
     if (!d || !d.enabled) throw new Error("Workflow unavailable")
+    if (d.status !== "published") throw new Error("Workflow is not published; publish it before running")
     const w = validateWorkflow(parse(d.definition))
     const hash = fingerprint({recordId,actor,at:at ?? null})
     const [existing] = await rows(c,"SELECT id,request_hash FROM erp_workflow_runs WHERE tenant_id=? AND workflow_id=? AND request_key=?",[tenant,workflowId,key])

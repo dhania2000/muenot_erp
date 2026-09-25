@@ -7,6 +7,7 @@ import { classifyJobFailure } from "@/lib/job-retry-policy"
 import { CHANNELS, defaultEnabled, defaultFrequency, FREQUENCIES, PRIORITIES, renderTemplate, resolveDelivery, validateNotice, type Channel, type Frequency, type Notice } from "./model"
 import { ensureNotificationEngineSchema } from "./schema"
 import { providerFor } from "./providers"
+import { meterUsage } from "@/lib/billing/usage-guard"
 async function rows(c:PoolConnection,sql:string,args:unknown[]=[]):Promise<any[]>{const [r]=await c.query(sql,args);return r as any[]}
 async function log(c:PoolConnection,d:any,status:string,actor:number|null=null){await c.query("INSERT INTO notification_delivery_log (tenant_id,delivery_id,attempt,status,actor_id) VALUES (?,?,?,?,?)",[d.tenant_id,d.id,d.attempts,status,actor])}
 // Caller owns transaction; schema must be prepared before starting it.
@@ -127,6 +128,14 @@ export async function processNotification(id:number) {
     ])
     result=resultData.providerId?.slice(0,191)??null
     if(resultData.skipped)status="skipped"
+    // Meter billable outbound communications (SMS / WhatsApp) at the single
+    // dispatch choke point, exactly once per delivery. Keyed on the delivery id
+    // so worker retries never double-bill; only counts confirmed acceptance and
+    // carries the tenant explicitly since the worker has no bound session scope.
+    if(status==="accepted") {
+      const commMeter=external.channel==="sms"?"sms_messages":external.channel==="whatsapp"?"whatsapp_messages":null
+      if(commMeter)meterUsage({meterKey:commMeter,quantity:1,tenantId:Number(external.tenant_id),source:"notification",refId:String(id),idempotencyKey:`notif:${external.tenant_id}:${external.channel}:${id}`})
+    }
   } catch(e) {
     const missing=e && typeof e==="object" && "code" in e && e.code==="PROVIDER_UNCONFIGURED"
     const kind=classifyJobFailure(e)

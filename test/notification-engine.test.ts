@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-const mock=vi.hoisted(()=>({sql:vi.fn(),query:vi.fn(),provider:vi.fn(),lookup:vi.fn()}))
+const mock=vi.hoisted(()=>({sql:vi.fn(),query:vi.fn(),provider:vi.fn(),lookup:vi.fn(),meter:vi.fn()}))
 vi.mock("@/lib/db",()=>({query:mock.query,withTransaction:async(fn:any)=>fn({query:mock.sql})}))
 vi.mock("@/lib/notification-engine/schema",()=>({ensureNotificationEngineSchema:async()=>{}}))
 vi.mock("@/lib/notification-engine/providers",()=>({providerFor:mock.lookup}))
+vi.mock("@/lib/billing/usage-guard",()=>({meterUsage:mock.meter}))
 import { enqueueNotification, processNotification, retryNotification, savePreference, saveModulePreference, ownModulePreferences, notificationOverview } from "@/lib/notification-engine/service"
 import { CHANNELS, defaultEnabled, escapeHtml, renderTemplate, validateNotice, resolveDelivery, nextDigestSlot } from "@/lib/notification-engine/model"
 import { fingerprint } from "@/lib/job-idempotency"
@@ -89,6 +90,33 @@ describe(" transaction protocol (mock database)",()=>{
     await processNotification(8)
     expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("status='blocked'"),[1,8])
     expect(mock.provider).not.toHaveBeenCalled()
+    expect(mock.meter).not.toHaveBeenCalled()
+  })
+  it("meters an accepted SMS send exactly once, scoped and idempotent",async()=>{
+    d.channel="sms";pref={enabled:1,destination:"+919876543210"}
+    mock.provider.mockResolvedValue({providerId:"sms-1"})
+    await processNotification(8)
+    expect(d.status).toBe("accepted")
+    expect(mock.meter).toHaveBeenCalledTimes(1)
+    expect(mock.meter.mock.calls[0][0]).toMatchObject({meterKey:"sms_messages",quantity:1,tenantId:7,idempotencyKey:"notif:7:sms:8"})
+  })
+  it("meters an accepted WhatsApp send under the whatsapp meter",async()=>{
+    d.channel="whatsapp";pref={enabled:1,destination:"+919876543210"}
+    mock.provider.mockResolvedValue({providerId:"wa-1"})
+    await processNotification(8)
+    expect(mock.meter).toHaveBeenCalledTimes(1)
+    expect(mock.meter.mock.calls[0][0]).toMatchObject({meterKey:"whatsapp_messages",tenantId:7,idempotencyKey:"notif:7:whatsapp:8"})
+  })
+  it("does not meter in-app or email sends as billable communications",async()=>{
+    d.channel="email";pref={enabled:1,destination:"ignored@example.invalid"}
+    await processNotification(8)
+    expect(mock.meter).not.toHaveBeenCalled()
+  })
+  it("does not meter a provider-skipped SMS send",async()=>{
+    d.channel="sms";pref={enabled:1,destination:"+919876543210"}
+    mock.provider.mockResolvedValue({skipped:true})
+    await processNotification(8)
+    expect(mock.meter).not.toHaveBeenCalled()
   })
   it.each([
     [{code:"ECONNREFUSED"},0,"queued"],

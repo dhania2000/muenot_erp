@@ -36,14 +36,36 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await refundInvoice({ invoiceId, amountCents, reason, idempotencyKey, actorUserId: guard.ctx.userId })
-    const { clawbacks } = await applyInvoiceClawback(invoiceId, guard.ctx.userId)
+    // Audit the refund as soon as it is committed, independently of clawback,
+    // so a clawback failure can never leave an unaudited refund behind.
     if (!result.replayed) {
       await recordPlatformAudit({
         actorUserId: guard.ctx.userId,
         actorEmail: guard.session.email,
         action: "invoice_refunded",
         targetTenantId: result.tenantId,
-        detail: { invoiceId, amount: (amountCents / 100).toFixed(2), reason, clawbacks },
+        detail: { invoiceId, amount: (amountCents / 100).toFixed(2), reason },
+      })
+    }
+    let clawbacks: { partnerId: number; amount: string }[]
+    try {
+      ;({ clawbacks } = await applyInvoiceClawback(invoiceId, guard.ctx.userId))
+    } catch (err) {
+      // The refund is committed. Replaying the same Idempotency-Key re-runs the
+      // (idempotent) clawback without refunding again.
+      console.error("[platform-invoices] clawback failed after refund:", err)
+      return NextResponse.json(
+        { error: "Refund recorded but partner clawback failed; retry with the same Idempotency-Key", refunded: true },
+        { status: 500 },
+      )
+    }
+    if (clawbacks.length) {
+      await recordPlatformAudit({
+        actorUserId: guard.ctx.userId,
+        actorEmail: guard.session.email,
+        action: "partner_commission_clawback",
+        targetTenantId: result.tenantId,
+        detail: { invoiceId, clawbacks },
       })
     }
     return NextResponse.json({ ok: true, replayed: result.replayed, refundedAmount: result.refundedAmount, clawbacks })

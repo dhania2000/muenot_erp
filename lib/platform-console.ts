@@ -613,7 +613,7 @@ export async function ensureCurrentInvoices(): Promise<void> {
       `INSERT INTO \`platform_invoices\`
          (\`tenant_id\`, \`invoice_number\`, \`amount\`, \`currency\`, \`status\`, \`period_start\`, \`period_end\`, \`issued_at\`)
        VALUES (?, ?, ?, ?, 'open', ?, ?, ?)
-       ON DUPLICATE KEY UPDATE \`amount\` = VALUES(\`amount\`)`,
+       ON DUPLICATE KEY UPDATE \`amount\` = IF(\`status\` = 'open', VALUES(\`amount\`), \`amount\`)`,
       [s.tenant_id, number, s.mrr, s.currency, s.current_period_start, s.current_period_end, s.current_period_start],
     )
   }

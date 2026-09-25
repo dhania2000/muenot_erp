@@ -5,6 +5,8 @@ import { recordActivity } from "@/lib/notifications"
 import { registerBusiness, RegistrationError } from "@/lib/tenant-registration"
 import { createEmailVerification } from "@/lib/user-lifecycle"
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit"
+import { attributeSignup } from "@/lib/partners/store"
+import { recordPlatformAudit } from "@/lib/platform-roles"
 
 function isDbConfigured() {
   return Boolean(process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME)
@@ -67,6 +69,25 @@ export async function POST(request: Request) {
       durationSeconds,
     )
     await setSessionCookie(token, durationSeconds)
+
+    // Spec29 — partner referral attribution (best-effort; an unknown or
+    // inactive code is ignored and never blocks or reveals anything).
+    if (body.partnerCode) {
+      try {
+        const attributed = await attributeSignup(result.tenantId, body.partnerCode, result.userId)
+        if (attributed) {
+          await recordPlatformAudit({
+            actorUserId: result.userId,
+            actorEmail: result.email,
+            action: "partner_referral_attributed",
+            targetTenantId: result.tenantId,
+            detail: { partnerId: attributed.partnerId, referralId: attributed.referralId, source: "signup" },
+          })
+        }
+      } catch (err) {
+        console.error("[register] partner attribution failed:", err)
+      }
+    }
 
     // Kick off email verification (best-effort — never blocks signup). The
     // token can be delivered/confirmed later; login is not gated on it unless

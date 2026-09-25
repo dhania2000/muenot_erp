@@ -651,6 +651,97 @@ export async function markInvoicePaid(invoiceId: number): Promise<void> {
   ])
 }
 
+let refundSchemaEnsured: Promise<void> | null = null
+
+/** Spec29: cumulative refund tracking on platform invoices (+ idempotent refund log). */
+export async function ensureInvoiceRefundSchema(): Promise<void> {
+  if (!refundSchemaEnsured) {
+    refundSchemaEnsured = (async () => {
+      await ensurePlatformConsoleSchema()
+      await ensureColumn("platform_invoices", "refunded_amount", "DECIMAL(12,2) NOT NULL DEFAULT 0")
+      await ensureColumn("platform_invoices", "refunded_at", "DATETIME DEFAULT NULL")
+      await query(`
+        CREATE TABLE IF NOT EXISTS \`platform_invoice_refunds\` (
+          \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          \`invoice_id\` INT UNSIGNED NOT NULL,
+          \`amount\` DECIMAL(12,2) NOT NULL,
+          \`reason\` VARCHAR(300) DEFAULT NULL,
+          \`idempotency_key\` VARCHAR(100) NOT NULL,
+          \`created_by\` INT UNSIGNED DEFAULT NULL,
+          \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (\`id\`),
+          UNIQUE KEY \`uniq_inv_refund_idem\` (\`idempotency_key\`),
+          KEY \`idx_inv_refund_invoice\` (\`invoice_id\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `)
+    })().catch((err) => {
+      refundSchemaEnsured = null
+      throw err
+    })
+  }
+  return refundSchemaEnsured
+}
+
+export class InvoiceRefundError extends Error {
+  status: number
+  constructor(message: string, status = 400) {
+    super(message)
+    this.status = status
+  }
+}
+
+/**
+ * Refund (part of) a PAID platform invoice. Idempotent on `idempotencyKey`:
+ * replaying the same key returns the original refund without refunding twice.
+ * The cumulative refund can never exceed the invoice amount (row-locked).
+ */
+export async function refundInvoice(input: {
+  invoiceId: number
+  amountCents: number
+  reason: string | null
+  idempotencyKey: string
+  actorUserId: number
+}): Promise<{ replayed: boolean; refundedAmount: string; tenantId: number }> {
+  await ensureInvoiceRefundSchema()
+  const { withTransaction } = await import("@/lib/db")
+  return withTransaction(async (conn) => {
+    const [existing]: any = await conn.query(
+      "SELECT `invoice_id` FROM `platform_invoice_refunds` WHERE `idempotency_key` = ? LIMIT 1",
+      [input.idempotencyKey],
+    )
+    const [invRows]: any = await conn.query(
+      "SELECT `id`, `tenant_id`, `amount`, `refunded_amount`, `status` FROM `platform_invoices` WHERE `id` = ? FOR UPDATE",
+      [input.invoiceId],
+    )
+    const inv = invRows?.[0]
+    if (!inv) throw new InvoiceRefundError("Invoice not found", 404)
+    if (existing?.[0]) {
+      if (Number(existing[0].invoice_id) !== input.invoiceId) {
+        throw new InvoiceRefundError("Idempotency key already used for another invoice", 409)
+      }
+      return { replayed: true, refundedAmount: String(inv.refunded_amount), tenantId: Number(inv.tenant_id) }
+    }
+    if (inv.status !== "paid") throw new InvoiceRefundError("Only paid invoices can be refunded", 409)
+    const amountCents = Math.round(Number(inv.amount) * 100)
+    const refundedCents = Math.round(Number(inv.refunded_amount ?? 0) * 100)
+    if (refundedCents + input.amountCents > amountCents) {
+      throw new InvoiceRefundError("Refund exceeds the remaining paid amount", 409)
+    }
+    const amount = (input.amountCents / 100).toFixed(2)
+    await conn.query(
+      "INSERT INTO `platform_invoice_refunds` (`invoice_id`, `amount`, `reason`, `idempotency_key`, `created_by`) VALUES (?, ?, ?, ?, ?)",
+      [input.invoiceId, amount, input.reason, input.idempotencyKey, input.actorUserId],
+    )
+    const next = ((refundedCents + input.amountCents) / 100).toFixed(2)
+    await conn.query("UPDATE `platform_invoices` SET `refunded_amount` = ?, `refunded_at` = ? WHERE `id` = ?", [
+      next,
+      new Date().toISOString().slice(0, 19).replace("T", " "),
+      input.invoiceId,
+    ])
+    return { replayed: false, refundedAmount: next, tenantId: Number(inv.tenant_id) }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Feature flags
 // ---------------------------------------------------------------------------

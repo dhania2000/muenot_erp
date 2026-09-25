@@ -2,6 +2,8 @@ import { type NextRequest, NextResponse } from "next/server"
 import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
 import { assignTenantRole, RoleAssignmentError } from "@/lib/platform-roles"
 import { isTenantRole } from "@/lib/role-model"
+import { revokeAllCredentials } from "@/lib/webauthn-store"
+import { recordSecurityEvent } from "@/lib/security-audit-store"
 import {
   adminResetPassword,
   assignDepartment,
@@ -103,6 +105,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       case "reset_mfa": {
         await disableMfa(tenantId, userId, actor)
         return NextResponse.json({ ok: true })
+      }
+      case "reset_security_keys": {
+        // Admin recovery control: wipe every WebAuthn credential a user has
+        // enrolled in THIS tenant (e.g. lost/stolen authenticator). Scoped to
+        // (tenant, user) inside the store so it can never touch another
+        // tenant's rows, and audited so the reset is attributable.
+        const removed = await revokeAllCredentials(tenantId, userId)
+        await recordSecurityEvent({
+          tenantId,
+          category: "access_policy",
+          action: "webauthn_admin_reset",
+          outcome: "revoked",
+          actorUserId: guard.session.userId,
+          actorName: guard.session.name,
+          detail: { removed, subjectUserId: userId },
+        })
+        return NextResponse.json({ ok: true, removed })
       }
       case "assign_department": {
         const orgUnitId = Number(body?.orgUnitId)

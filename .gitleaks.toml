@@ -1,0 +1,18 @@
+title = "muenot_erp secret scan"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fixtures and mock values that are not real credentials"
+paths = [
+  '''^test/''',
+  '''^test-e2e/''',
+  '''^scripts/ci/mock-stripe\.mjs$''',
+  '''^pnpm-lock\.yaml$''',
+  '''^package-lock\.json$''',
+]
+regexes = [
+  '''sk_test_mock''',
+  '''pi_mock_\d+_secret_test''',
+]

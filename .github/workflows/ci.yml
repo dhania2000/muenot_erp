@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.34.3"
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  install:
+    name: Install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+  typecheck:
+    name: Typecheck (ratchet)
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  test:
+    name: Unit tests
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Critical suites (tenant isolation, permissions, billing, webhooks)
+        run: pnpm test:critical --reporter=default --reporter=github-actions
+      - name: Full suite
+        run: pnpm test --reporter=default --reporter=github-actions
+
+  build:
+    name: Build
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+      - run: pnpm build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+      - uses: actions/upload-artifact@v4
+        with:
+          name: next-build
+          path: |
+            .next
+            !.next/cache
+          include-hidden-files: true
+          retention-days: 1
+
+  e2e:
+    name: E2E smoke (login, tenant boundary, checkout)
+    needs: build
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD || 'ci-root-password' }}
+          MYSQL_DATABASE: erp_ci
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD || 'ci-root-password' }}
+      DB_NAME: erp_ci
+      # Throwaway values for the ephemeral CI stack; override via repo secrets if desired.
+      SESSION_SECRET: ${{ secrets.CI_SESSION_SECRET || format('ci-session-{0}-{1}', github.run_id, github.run_attempt) }}
+      E2E_PASSWORD: ${{ secrets.CI_E2E_PASSWORD || format('E2e!{0}x{1}', github.run_id, github.run_attempt) }}
+      STRIPE_SECRET_KEY: sk_test_mock
+      STRIPE_API_BASE: http://127.0.0.1:12111/v1
+      E2E_BASE_URL: http://127.0.0.1:3100
+      NODE_ENV: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        env:
+          NODE_ENV: development
+      - uses: actions/download-artifact@v4
+        with:
+          name: next-build
+          path: .next
+      - name: Bootstrap database
+        run: bash scripts/ci/db-bootstrap.sh
+      - name: Start mock Stripe and app
+        run: |
+          node scripts/ci/mock-stripe.mjs > mock-stripe.log 2>&1 &
+          pnpm exec next start -p 3100 > server.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS -o /dev/null http://127.0.0.1:3100/login && curl -fsS -o /dev/null http://127.0.0.1:12111/health && exit 0
+            sleep 2
+          done
+          echo "server did not start"; tail -100 server.log; exit 1
+      - run: pnpm test:e2e --reporter=default --reporter=github-actions
+      - name: Upload logs and migration report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            server.log
+            mock-stripe.log
+            migration-report.md
+          retention-days: 7

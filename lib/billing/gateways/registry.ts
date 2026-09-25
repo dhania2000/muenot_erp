@@ -69,6 +69,7 @@ export function configureGatewaysFromEnv(env: NodeJS.ProcessEnv = process.env, f
         secretKey: env.STRIPE_SECRET_KEY,
         webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? "",
         publishableKey: env.STRIPE_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+        apiBase: env.STRIPE_API_BASE,
       }),
     )
   }

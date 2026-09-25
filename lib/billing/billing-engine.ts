@@ -234,6 +234,17 @@ async function ensureBillingColumn(table: string, column: string, definition: st
   }
 }
 
+async function ensureBillingIndex(table: string, indexName: string, definition: string): Promise<void> {
+  const rows = (await query(
+    `SELECT 1 FROM information_schema.statistics
+       WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? LIMIT 1`,
+    [table, indexName],
+  )) as any[]
+  if (!rows.length) {
+    await query(`ALTER TABLE \`${table}\` ADD ${definition}`)
+  }
+}
+
 async function runEnsure(): Promise<void> {
   await query(`CREATE TABLE IF NOT EXISTS billing_coupons (
     id               INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -401,6 +412,11 @@ async function runEnsure(): Promise<void> {
     KEY idx_billing_payments_tenant (tenant_id),
     KEY idx_billing_pay_invoice (invoice_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  // Spec23: idempotent checkout — one pending gateway payment per outstanding
+  // balance (see lib/billing/checkout.ts and the 2027-01-15 migration).
+  await ensureBillingColumn("billing_payments", "checkout_key", "VARCHAR(120) DEFAULT NULL")
+  await ensureBillingIndex("billing_payments", "uq_billing_payments_checkout", "UNIQUE KEY `uq_billing_payments_checkout` (`tenant_id`, `checkout_key`)")
 
   await query(`CREATE TABLE IF NOT EXISTS billing_refunds (
     id            INT UNSIGNED NOT NULL AUTO_INCREMENT,

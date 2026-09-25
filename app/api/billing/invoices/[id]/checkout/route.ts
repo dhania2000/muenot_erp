@@ -1,21 +1,22 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { currentTenantId, runForTenant, tenantInsert } from "@/lib/tenant-scope"
-import { getInvoice } from "@/lib/billing/billing-engine"
-import { configureGatewaysFromEnv, getGateway, hasGateway, listGateways } from "@/lib/billing/gateways/registry"
-import { nextRecordId } from "@/lib/record-ids"
+import { runForTenant } from "@/lib/tenant-scope"
+import { BillingError } from "@/lib/billing/billing-engine"
+import { normalizeProvider, openInvoiceCheckout } from "@/lib/billing/checkout"
+import { recordAuditLogFromRequest } from "@/lib/audit-log-store"
+
+export const runtime = "nodejs"
 
 /**
  * Open a gateway charge for an invoice (Phase 3, billing → gateway).
  * ---------------------------------------------------------------------------
- * Session-protected (admin billing). Opens a charge through the requested
- * provider and records a PENDING payment stamped with the provider handle so
- * the later webhook settles the SAME row. The tenant id is embedded in the
- * charge metadata so the (session-less) webhook can route the event back.
+ * Session-protected (tenant admin). The tenant comes only from the verified
+ * session, never from the body. Retries of the same checkout are idempotent
+ * (see lib/billing/checkout.ts). Every attempt — success, replay, rejection —
+ * is written to the audit log.
  *
  * The response returns only `clientParams` — the provider-specific bag the
- * browser hands to that provider's checkout widget. Business logic never reads
- * it, keeping this route provider-agnostic.
+ * browser hands to that provider's checkout widget.
  */
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -23,66 +24,43 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   if (session.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
+  const tenantId = Number(session.tenantId)
+  if (!Number.isInteger(tenantId) || tenantId <= 0) {
+    return NextResponse.json({ error: "No tenant bound to this session." }, { status: 403 })
+  }
+
   const { id } = await ctx.params
   const invoiceId = Number(id)
   if (!Number.isInteger(invoiceId) || invoiceId <= 0) {
     return NextResponse.json({ error: "Invalid invoice id." }, { status: 400 })
   }
 
-  const body = (await req.json().catch(() => ({}))) as { provider?: string }
-  const provider = String(body.provider ?? "").toLowerCase().trim()
+  const body = (await req.json().catch(() => ({}))) as { provider?: unknown }
 
-  configureGatewaysFromEnv()
-  if (!provider) return NextResponse.json({ error: "Specify a payment provider.", available: listGateways() }, { status: 400 })
-  if (!hasGateway(provider)) {
-    return NextResponse.json({ error: `Gateway "${provider}" is not configured.`, available: listGateways() }, { status: 400 })
-  }
-
-  const tenantId = session.tenantId
-  return runForTenant({ tenantId: tenantId as number }, async () => {
-    const inv = await getInvoice(invoiceId)
-    if (!inv) return NextResponse.json({ error: "Invoice not found." }, { status: 404 })
-    if (inv.status === "void") return NextResponse.json({ error: "Cannot charge a void invoice." }, { status: 409 })
-
-    const outstanding = Math.round((inv.total - inv.credit_applied - inv.amount_paid + Number.EPSILON) * 100) / 100
-    if (outstanding <= 0) return NextResponse.json({ error: "Invoice has no outstanding balance." }, { status: 409 })
-
-    const gateway = getGateway(provider)
-    const paymentNo = await nextRecordId("BPAY", { digits: 5, allowCustom: true })
-
-    // Idempotency key ties a retried checkout to the same provider charge.
-    const idempotencyKey = `inv-${currentTenantId()}-${invoiceId}-${paymentNo}`
-
-    const result = await gateway.createPayment({
-      amount: outstanding,
-      currency: inv.currency,
-      reference: paymentNo,
-      description: `Invoice ${inv.invoice_no}`,
-      metadata: { tenant_id: String(currentTenantId()), invoice_id: String(invoiceId), invoice_no: inv.invoice_no },
-      idempotencyKey,
-    })
-
-    // Record the pending payment keyed by the provider handle so the webhook
-    // can find and settle it. `reference` = the provider id we correlate on.
-    await tenantInsert("billing_payments", {
-      payment_no: paymentNo,
-      invoice_id: invoiceId,
-      amount: outstanding,
-      currency: inv.currency,
-      method: "gateway",
-      gateway: provider,
-      reference: result.providerId,
-      status: "pending",
-      note: `Awaiting ${provider} settlement`,
-    })
-
-    return NextResponse.json({
-      provider,
-      paymentNo,
-      providerId: result.providerId,
-      amount: outstanding,
-      currency: inv.currency,
-      clientParams: result.clientParams,
-    })
+  return runForTenant({ tenantId }, async () => {
+    let provider = ""
+    try {
+      provider = normalizeProvider(body.provider)
+      const result = await openInvoiceCheckout({ invoiceId, provider, actorId: session.userId ?? null })
+      await recordAuditLogFromRequest(req, {
+        action: "billing.checkout_open",
+        entityType: "billing_invoice",
+        entityId: invoiceId,
+        metadata: { provider, paymentNo: result.paymentNo, amount: result.amount, currency: result.currency, replayed: result.replayed },
+      })
+      return NextResponse.json(result, { status: result.replayed ? 200 : 201 })
+    } catch (err) {
+      const status = err instanceof BillingError ? err.status : 502
+      const message = err instanceof BillingError ? err.message : "Payment gateway rejected the checkout."
+      if (!(err instanceof BillingError)) console.error("[billing] checkout failed:", err)
+      await recordAuditLogFromRequest(req, {
+        action: "billing.checkout_open",
+        result: status === 403 || status === 404 ? "denied" : "failure",
+        entityType: "billing_invoice",
+        entityId: invoiceId,
+        metadata: { provider: provider || null, status, error: message },
+      })
+      return NextResponse.json({ error: message }, { status })
+    }
   })
 }

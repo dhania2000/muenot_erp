@@ -16,7 +16,8 @@ vi.mock("@/lib/user-lifecycle", () => ({
   consumeMfaChallenge: mock.consume,
 }))
 vi.mock("@/lib/session-store", () => ({ createSession: vi.fn(), newSessionId: () => "test-session", isKnownDevice: async () => null }))
-vi.mock("@/lib/mfa-policy", () => ({ requiresMfaByPolicy: () => true }))
+vi.mock("@/lib/mfa-policy", () => ({ requiresMfaByPolicy: () => true, requiresPhishingResistantMfa: () => false }))
+vi.mock("@/lib/security-alerts-store", () => ({ onFailedLogin: vi.fn(async () => {}), onSuccessfulLogin: vi.fn(async () => {}) }))
 vi.mock("@/lib/password-policy", () => ({ checkLockout: async () => ({ locked: false }), recordFailedLogin: mock.failed, recordSuccessfulLogin: mock.success }))
 vi.mock("@/lib/ip-allowlist-store", () => ({ checkIpAllowlist: vi.fn() }))
 vi.mock("@/lib/security-audit-store", () => ({ recordSecurityEvent: vi.fn() }))

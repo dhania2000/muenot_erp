@@ -24,6 +24,8 @@ export type ApiErrorCode =
   | "conflict"
   | "idempotency_conflict"
   | "idempotency_key_required"
+  | "idempotency_in_progress"
+  | "idempotency_unavailable"
   | "unsupported_version"
   | "rate_limited"
   | "rate_limit_unavailable"
@@ -40,6 +42,8 @@ export const ERROR_STATUS: Record<ApiErrorCode, number> = {
   conflict: 409,
   idempotency_conflict: 409,
   idempotency_key_required: 400,
+  idempotency_in_progress: 409,
+  idempotency_unavailable: 503,
   unsupported_version: 400,
   rate_limited: 429,
   rate_limit_unavailable: 503,

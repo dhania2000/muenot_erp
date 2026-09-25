@@ -52,7 +52,8 @@ async function runEnsure(): Promise<void> {
       KEY \`idx_api_audit_key\` (\`key_id\`),
       KEY \`idx_api_audit_actor\` (\`actor_id\`),
       KEY \`idx_api_audit_created\` (\`created_at\`),
-      KEY \`idx_api_audit_request\` (\`request_id\`)
+      KEY \`idx_api_audit_request\` (\`request_id\`),
+      KEY \`idx_api_audit_trace\` (\`trace_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
   // Self-heal: add actor_id to audit tables created before tracing existed.
@@ -69,6 +70,14 @@ async function ensureActorColumn(): Promise<void> {
     await query("ALTER TABLE `api_request_audit` ADD COLUMN `actor_id` VARCHAR(64) DEFAULT NULL AFTER `key_id`")
     await query("ALTER TABLE `api_request_audit` ADD KEY `idx_api_audit_actor` (`actor_id`)")
   }
+  const traceCols = await query<any[]>(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'api_request_audit' AND COLUMN_NAME = 'trace_id'`,
+  )
+  if (traceCols.length === 0) {
+    await query("ALTER TABLE `api_request_audit` ADD COLUMN `trace_id` CHAR(32) DEFAULT NULL AFTER `request_id`")
+    await query("ALTER TABLE `api_request_audit` ADD KEY `idx_api_audit_trace` (`trace_id`)")
+  }
 }
 
 export function ensureApiAuditSchema(): Promise<void> {
@@ -84,6 +93,7 @@ export async function logApiRequest(entry: {
   keyId: number | null
   actorId?: string | null
   requestId: string
+  traceId?: string | null
   method: string
   path: string
   status: number
@@ -97,13 +107,14 @@ export async function logApiRequest(entry: {
     await ensureApiAuditSchema()
     await query(
       `INSERT INTO \`api_request_audit\`
-         (\`tenant_id\`, \`key_id\`, \`actor_id\`, \`request_id\`, \`method\`, \`path\`, \`status\`, \`error_code\`, \`api_version\`, \`environment\`, \`ip\`, \`duration_ms\`)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (\`tenant_id\`, \`key_id\`, \`actor_id\`, \`request_id\`, \`trace_id\`, \`method\`, \`path\`, \`status\`, \`error_code\`, \`api_version\`, \`environment\`, \`ip\`, \`duration_ms\`)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.tenantId,
         entry.keyId,
         entry.actorId ?? null,
         entry.requestId,
+        entry.traceId ?? null,
         entry.method,
         entry.path.slice(0, 512),
         entry.status,

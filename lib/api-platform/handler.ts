@@ -37,9 +37,15 @@ import { createCache } from "@/lib/cache"
 import { ApiError, isApiError } from "@/lib/api-platform/errors"
 import { API_VERSION, jsonError, jsonErrorFromApiError, type ErrorTrace } from "@/lib/api-platform/response"
 import { resolveApiVersion, type ApiVersion } from "@/lib/api-platform/versioning"
-import { actorFromAuth } from "@/lib/api-platform/trace"
+import { actorFromAuth, formatTraceparent, newTraceId, parseTraceparent } from "@/lib/api-platform/trace"
 import { logApiRequest } from "@/lib/api-platform/audit"
-import { fingerprintRequest, lookupIdempotency, saveIdempotency } from "@/lib/api-platform/idempotency"
+import {
+  completeIdempotency,
+  fingerprintRequest,
+  isValidIdempotencyKey,
+  releaseIdempotency,
+  reserveIdempotency,
+} from "@/lib/api-platform/idempotency"
 import { enforceUsageIfScoped, meterUsage, UsageLimitError } from "@/lib/billing/usage-guard"
 
 export type ApiRequestContext<P = Record<string, string>> = {
@@ -47,6 +53,8 @@ export type ApiRequestContext<P = Record<string, string>> = {
   url: URL
   params: P
   requestId: string
+  /** W3C trace id (adopted from inbound `traceparent` or generated). */
+  traceId: string
   auth: ApiKeyAuth
   clientIp: string | null
   /** The effective API version negotiated from `X-API-Version` (or the default). */
@@ -109,8 +117,9 @@ function newRequestId(): string {
   return `req_${crypto.randomBytes(12).toString("hex")}`
 }
 
-function applyStandardHeaders(res: NextResponse, requestId: string, version: string): NextResponse {
+function applyStandardHeaders(res: NextResponse, requestId: string, version: string, traceId: string): NextResponse {
   res.headers.set("X-Request-Id", requestId)
+  res.headers.set("traceparent", formatTraceparent(traceId))
   // Echo the EFFECTIVE negotiated version so callers can assert the contract.
   res.headers.set("X-API-Version", version)
   return res
@@ -130,6 +139,7 @@ export function withApiV1<P = Record<string, string>>(
     const clientIp = getClientIp(request)
     const method = request.method.toUpperCase()
     const path = url.pathname
+    const traceId = parseTraceparent(request.headers.get("traceparent")) ?? newTraceId()
 
     // Auth outcome + trace context for audit logging in every exit path.
     let auditKeyId: number | null = null
@@ -138,14 +148,17 @@ export function withApiV1<P = Record<string, string>>(
     let auditEnv: string | null = null
     // Effective negotiated version; echoed on responses + stamped on logs.
     let effectiveVersion: ApiVersion = API_VERSION
+    // Idempotency-Key this request has reserved and must complete or release.
+    let reservedKey: string | null = null
 
     const finalize = (res: NextResponse, errorCode: string | null): NextResponse => {
-      applyStandardHeaders(res, requestId, effectiveVersion)
+      applyStandardHeaders(res, requestId, effectiveVersion, traceId)
       void logApiRequest({
         tenantId: auditTenantId,
         keyId: auditKeyId,
         actorId: auditActorId,
         requestId,
+        traceId,
         method,
         path,
         status: res.status,
@@ -160,7 +173,7 @@ export function withApiV1<P = Record<string, string>>(
 
     // The trace triple (request_id + tenant_id + actor_id) is stamped onto
     // every error envelope so a client error report maps to one audit row.
-    const currentTrace = (): ErrorTrace => ({ tenantId: auditTenantId, actorId: auditActorId })
+    const currentTrace = (): ErrorTrace => ({ tenantId: auditTenantId, actorId: auditActorId, traceId })
 
     const fail = (err: ApiError, extraHeaders?: Record<string, string>): NextResponse =>
       finalize(jsonErrorFromApiError(err, requestId, extraHeaders, currentTrace()), err.code)
@@ -310,6 +323,7 @@ export function withApiV1<P = Record<string, string>>(
         url,
         params: routeCtx?.params ? await routeCtx.params : ({} as P),
         requestId,
+        traceId,
         auth,
         clientIp,
         apiVersion: effectiveVersion,
@@ -339,12 +353,23 @@ export function withApiV1<P = Record<string, string>>(
         )
       }
       const idempotencyEnabled = Boolean(options.idempotency) && MUTATING.has(method) && Boolean(idempotencyKey)
-      let fingerprint = ""
+      if (idempotencyEnabled && idempotencyKey && !isValidIdempotencyKey(idempotencyKey)) {
+        return fail(
+          new ApiError("bad_request", "Idempotency-Key must be 1-128 printable ASCII characters"),
+          rateHeaders,
+        )
+      }
       if (idempotencyEnabled && idempotencyKey) {
         const raw = await readRaw()
-        fingerprint = fingerprintRequest(method, path, raw)
-        const prior = await lookupIdempotency(auth.keyId, idempotencyKey, fingerprint)
-        if (prior?.conflict) {
+        const fingerprint = fingerprintRequest(method, path, raw)
+        let outcome
+        try {
+          outcome = await reserveIdempotency(auth.tenantId, auth.keyId, idempotencyKey, fingerprint, requestId)
+        } catch {
+          // Never run a required-idempotent mutation without a reservation.
+          return fail(new ApiError("idempotency_unavailable", "Idempotency store is temporarily unavailable"), rateHeaders)
+        }
+        if (outcome.kind === "conflict") {
           return fail(
             new ApiError(
               "idempotency_conflict",
@@ -353,36 +378,82 @@ export function withApiV1<P = Record<string, string>>(
             rateHeaders,
           )
         }
-        if (prior?.record) {
-          const replay = new NextResponse(prior.record.body, {
-            status: prior.record.status,
-            headers: { "Content-Type": "application/json", "Idempotency-Replayed": "true", ...rateHeaders },
-          })
-          return finalize(replay, prior.record.status >= 400 ? "replayed_error" : null)
+        if (outcome.kind === "in_progress") {
+          return fail(
+            new ApiError("idempotency_in_progress", "A request with this Idempotency-Key is still being processed"),
+            { ...rateHeaders, "Retry-After": "1" },
+          )
         }
+        if (outcome.kind === "replay") {
+          const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "Idempotency-Replayed": "true",
+            ...rateHeaders,
+          }
+          if (outcome.record.requestId) headers["Idempotency-Original-Request-Id"] = outcome.record.requestId
+          const replay = new NextResponse(outcome.record.body, { status: outcome.record.status, headers })
+          return finalize(replay, outcome.record.status >= 400 ? "replayed_error" : null)
+        }
+        reservedKey = idempotencyKey
       }
 
       // 9. Handler.
-      let res = await handler(ctx)
+      const res = await handler(ctx)
       for (const [k, v] of Object.entries(rateHeaders)) res.headers.set(k, v)
       if (apiUsageLimit && (apiUsageLimit.status === "warning" || apiUsageLimit.status === "over")) {
         res.headers.set("X-Usage-Warning", `api_requests:${apiUsageLimit.status}`)
       }
 
-      // 8b. Persist idempotent responses (skip server errors so they can be retried).
-      if (idempotencyEnabled && idempotencyKey && res.status < 500) {
-        const body = await res.clone().text()
-        void saveIdempotency(auth.tenantId, auth.keyId, idempotencyKey, fingerprint, res.status, body)
+      // 8b. Complete the reservation. Server errors release it so the client can retry.
+      if (reservedKey) {
+        const key = reservedKey
+        reservedKey = null
+        try {
+          if (res.status >= 500) await releaseIdempotency(auth.tenantId, auth.keyId, key, requestId)
+          else await completeIdempotency(auth.tenantId, auth.keyId, key, requestId, res.status, await res.clone().text())
+        } catch {
+          // A stuck pending row is reclaimable after PENDING_STALE_SECONDS.
+        }
       }
 
       return finalize(res, res.status >= 400 ? "handler_error" : null)
     } catch (err) {
+      // Expected ApiErrors (4xx) are final outcomes and are stored for replay;
+      // anything else releases the reservation.
+      if (reservedKey && auditTenantId != null && auditKeyId != null) {
+        const key = reservedKey
+        const errRes = isApiError(err)
+          ? jsonErrorFromApiError(err, requestId, undefined, currentTrace())
+          : null
+        try {
+          if (errRes && errRes.status < 500) {
+            await completeIdempotency(auditTenantId, auditKeyId, key, requestId, errRes.status, await errRes.clone().text())
+          } else {
+            await releaseIdempotency(auditTenantId, auditKeyId, key, requestId)
+          }
+        } catch {
+          // best-effort; stale pending rows are reclaimable
+        }
+      }
       if (isApiError(err)) return fail(err)
-      console.log("[v0] Unhandled API error:", err instanceof Error ? err.message : String(err))
+      console.error(
+        JSON.stringify({
+          level: "error",
+          msg: "Unhandled API error",
+          request_id: requestId,
+          trace_id: traceId,
+          tenant_id: auditTenantId,
+          actor_id: auditActorId,
+          method,
+          path,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
       return finalize(
         jsonError("internal_error", "An unexpected error occurred", {
           requestId,
           status: 500,
+          trace: currentTrace(),
         }),
         "internal_error",
       )

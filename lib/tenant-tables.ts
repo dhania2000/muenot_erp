@@ -326,6 +326,12 @@ export const TENANT_OWNED_TABLES = [
   "integration_record_mappings",
   "integration_sync_conflicts",
   "integration_sync_log",
+  // SPEC 17 — API sandbox, versioning & tracing (#186-189). Per-tenant
+  // disposable sandbox sessions/records and idempotency reservations. Every
+  // statement against these carries a tenant_id predicate.
+  "api_sandbox_sessions",
+  "api_sandbox_records",
+  "api_idempotency_keys",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

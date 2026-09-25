@@ -1,8 +1,9 @@
 import "server-only"
 import { query } from "@/lib/db"
-import { currentTenantId, scopedWhere, tenantInsert, tenantUpdate } from "@/lib/tenant-scope"
+import { currentTenantId, currentTenantIdOrNull, scopedWhere, tenantInsert, tenantUpdate } from "@/lib/tenant-scope"
 import { downloadFile } from "./index"
 import { getFileById, getByObjectKey, type FileObject } from "./file-metadata"
+import { resolveScanProviderFromEnv, runWithScanTimeout, ScanTimeoutError } from "./scan-providers"
 
 /**
  * Malware / file-security scanning.
@@ -29,6 +30,14 @@ import { getFileById, getByObjectKey, type FileObject } from "./file-metadata"
  */
 
 const TABLE = "file_security_scans"
+
+/**
+ * Max wall-clock a single scan may take before it is treated as an ERROR
+ * verdict (which a gated file's fail-closed policy withholds). Configurable via
+ * `STORAGE_SCAN_TIMEOUT_MS`; defaults to 30s.
+ */
+const SCAN_TIMEOUT_MS =
+  Number(process.env.STORAGE_SCAN_TIMEOUT_MS) > 0 ? Number(process.env.STORAGE_SCAN_TIMEOUT_MS) : 30_000
 
 // ---------------------------------------------------------------------------
 // Pure vocabulary + policy (unit-tested without a DB)
@@ -229,15 +238,64 @@ export function detectSignatures(buffer: Buffer): ScanFinding[] {
 }
 
 let activeProvider: FileScanProvider = new HeuristicScanProvider()
+let providerExplicitlySet = false
+let envProviderResolved = false
 
 /** Swap the active scanning backend. This is the entire "replaceable provider" surface. */
 export function setFileScanProvider(provider: FileScanProvider): void {
   activeProvider = provider
+  providerExplicitlySet = true
 }
 
-/** The scanning backend currently in effect. */
+/**
+ * The scanning backend currently in effect. When nothing has been set
+ * explicitly, a real backend (e.g. ClamAV) is resolved from the environment
+ * ONCE, falling back to the deterministic built-in heuristic. This is what lets
+ * production run a real AV engine with only configuration — no code change.
+ */
 export function getFileScanProvider(): FileScanProvider {
+  if (!providerExplicitlySet && !envProviderResolved) {
+    envProviderResolved = true
+    try {
+      const fromEnv = resolveScanProviderFromEnv()
+      if (fromEnv) activeProvider = fromEnv
+    } catch (err) {
+      console.error("[v0] scan provider env resolution failed; using built-in heuristic:", err)
+    }
+  }
   return activeProvider
+}
+
+/**
+ * Best-effort file-security access audit. Records scan verdicts and admin
+ * releases into the enterprise audit log so every file carries a forensic
+ * access trail. Dynamically imported to keep this module's pure/DB-free unit
+ * surface (and its import graph) untouched; never throws to the caller.
+ */
+async function auditFileSecurity(
+  action: string,
+  entry: {
+    fileId: number
+    fileRef?: string | null
+    result?: "success" | "failure" | "denied"
+    actorId?: number | null
+    metadata?: Record<string, unknown>
+  },
+): Promise<void> {
+  try {
+    const { recordAuditLog } = await import("@/lib/audit-log-store")
+    await recordAuditLog({
+      action,
+      result: entry.result ?? "success",
+      entityType: "file",
+      entityId: entry.fileId,
+      entityLabel: entry.fileRef ?? null,
+      metadata: entry.metadata ?? null,
+      context: { tenantId: currentTenantIdOrNull(), actorUserId: entry.actorId ?? null },
+    })
+  } catch (err) {
+    console.error("[v0] file security audit write failed (ignored):", err)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +508,21 @@ async function applyOutcome(file: FileObject, outcome: ScanOutcome): Promise<Sca
     "file_id = ?",
     [file.id],
   )
+  // Access audit: record the verdict against the file so every scanned object
+  // carries a forensic security trail (infected = a denied access event).
+  const auditAction =
+    status === "clean" ? "file.scan_clean" : status === "infected" ? "file.scan_infected" : "file.scan_error"
+  await auditFileSecurity(auditAction, {
+    fileId: file.id,
+    fileRef: file.fileRef,
+    result: status === "infected" ? "denied" : status === "error" ? "failure" : "success",
+    metadata: {
+      provider: outcome.provider,
+      verdict: outcome.verdict,
+      detail: outcome.detail ?? null,
+      findings: outcome.findings ?? [],
+    },
+  })
   return (await getScanForFile(file.id))!
 }
 
@@ -480,20 +553,30 @@ export async function runScan(fileId: number): Promise<ScanRecord | null> {
   const provider = getFileScanProvider()
   let outcome: ScanOutcome
   try {
-    outcome = await provider.scan({
-      fileId: file.id,
-      objectKey: file.objectKey,
-      filename: file.filename,
-      mimeType: file.mimeType,
-      size: file.size,
-      read: async () => {
-        const src = await downloadFile(file.objectKey)
-        return readToBuffer(src.body)
-      },
-    })
+    outcome = await runWithScanTimeout(
+      provider.scan({
+        fileId: file.id,
+        objectKey: file.objectKey,
+        filename: file.filename,
+        mimeType: file.mimeType,
+        size: file.size,
+        read: async () => {
+          const src = await downloadFile(file.objectKey)
+          return readToBuffer(src.body)
+        },
+      }),
+      SCAN_TIMEOUT_MS,
+    )
   } catch (err) {
-    console.error("[v0] scan provider threw:", err)
-    outcome = { verdict: "error", provider: provider.id, detail: "The scanner raised an unexpected error" }
+    if (err instanceof ScanTimeoutError) {
+      console.error("[v0] scan timed out:", err.message)
+      // A hung/unreachable scanner is an ERROR verdict, which a gated file's
+      // fail-closed policy withholds until an admin approves or a rescan clears it.
+      outcome = { verdict: "error", provider: provider.id, detail: "Scanner timed out; file held (fail-closed)" }
+    } else {
+      console.error("[v0] scan provider threw:", err)
+      outcome = { verdict: "error", provider: provider.id, detail: "The scanner raised an unexpected error" }
+    }
   }
   return applyOutcome(file, outcome)
 }
@@ -546,6 +629,12 @@ export async function approveFile(
     "file_id = ?",
     [fileId],
   )
+  await auditFileSecurity("file.scan_released", {
+    fileId,
+    fileRef: record.fileRef,
+    actorId: actor.userId,
+    metadata: { previousStatus: record.scanStatus, releasedBy: actor.userId },
+  })
   return { ok: true, record: (await getScanForFile(fileId))! }
 }
 

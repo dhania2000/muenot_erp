@@ -197,6 +197,24 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /*
+   * Native <select> dropdowns.
+   *
+   * On Chrome/Windows the expanded <option> list is drawn by the OS and does
+   * not reliably follow the inherited `color-scheme`, so in dark mode it fell
+   * back to a white popup with near-invisible light text. Reassert the scheme
+   * on the control and paint the options with the themed popover colors so
+   * every native dropdown across the ERP is legible in both themes.
+   */
+  select {
+    color-scheme: light dark;
+  }
+  select option,
+  select optgroup {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
+  }
 }
 
 /*

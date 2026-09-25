@@ -1,6 +1,7 @@
 "use client"
 import { useEffect, useState } from "react"
 import {
+  AlertTriangle,
   Bell,
   CheckCircle2,
   Clock,
@@ -8,9 +9,13 @@ import {
   History,
   Mail,
   MessageCircle,
+  Package,
   PenLine,
   Play,
   Plus,
+  Rocket,
+  RotateCcw,
+  ShieldCheck,
   Sparkles,
   Trash2,
   UserCheck,
@@ -19,7 +24,7 @@ import {
   X,
   Zap,
 } from "lucide-react"
-import { FIELDS, OPERATORS, countRules, isRule, type Action, type Group, type Op, type Rule, type Workflow, type WorkflowModule } from "@/lib/workflows/model"
+import { FIELDS, OPERATORS, countRules, isRule, type Action, type Group, type Issue, type Op, type Rule, type Simulation, type Workflow, type WorkflowModule } from "@/lib/workflows/model"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -46,6 +51,7 @@ const ACTION_META: Record<Action["type"], { label: string; icon: typeof Bell }> 
   create: { label: "Create task", icon: Plus },
   email: { label: "Email", icon: Mail },
   whatsapp: { label: "WhatsApp", icon: MessageCircle },
+  asset: { label: "Assign asset", icon: Package },
 }
 
 // SPECS 46–47 — Enterprise-friendly resource/trigger catalog for the "WHEN"
@@ -104,6 +110,7 @@ const defaults: Record<Action["type"], Action> = {
   update: { type: "update", field: "priority", value: "High" }, assign: { type: "assign", userId: 0 },
   create: { type: "create", title: "", description: "", userId: 0 },
   email: { type: "email", userId: 0, subject: "", message: "" }, whatsapp: { type: "whatsapp", phone: "", message: "" },
+  asset: { type: "asset", assetTag: "", userId: 0 },
 }
 
 function RuleRow({ rule, fields, onChange, onRemove }: { rule: Rule; fields: string[]; onChange: (r: Rule) => void; onRemove: () => void }) {
@@ -210,6 +217,12 @@ function ActionsEditor({ label, tone, actions, module, onChange }: { label: stri
                 <Input value={a.phone} onChange={(e) => update(i, { phone: e.target.value })} />
               </Label>
             )}
+            {a.type === "asset" && (
+              <Label className="block space-y-1">
+                <span className="text-xs text-muted-foreground">Asset tag (e.g. LAPTOP-01)</span>
+                <Input value={a.assetTag} onChange={(e) => update(i, { assetTag: e.target.value })} />
+              </Label>
+            )}
             {a.type === "create" && (
               <>
                 <Label className="block space-y-1">
@@ -270,11 +283,13 @@ function ActionsEditor({ label, tone, actions, module, onChange }: { label: stri
 export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: string }) {
   const [draft, setDraft] = useState<Workflow>(initial)
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [data, setData] = useState<any>({ definitions: [], runs: [], notices: [], tasks: [], events: [], versions: [] })
+  const [data, setData] = useState<any>({ definitions: [], runs: [], notices: [], tasks: [], events: [], versions: [], assets: [] })
   const [message, setMessage] = useState(""), [busy, setBusy] = useState(false)
   const [workflowId, setWorkflowId] = useState(""), [recordId, setRecordId] = useState(initialRecordId), [at, setAt] = useState("")
   const [requestKey, setRequestKey] = useState("")
-  const [previewRecordId, setPreviewRecordId] = useState(""), [previewResult, setPreviewResult] = useState<any>(null), [previewBusy, setPreviewBusy] = useState(false), [previewError, setPreviewError] = useState("")
+  const [previewRecordId, setPreviewRecordId] = useState("")
+  const [simResult, setSimResult] = useState<{ issues: Issue[]; simulation: Simulation | null } | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false), [previewError, setPreviewError] = useState("")
   const [resource, setResource] = useState<string>("sales_leads")
   const [triggerChoice, setTriggerChoice] = useState<string>("manual")
   const resourceMeta = RESOURCE_CATALOG.find((r) => r.value === resource)
@@ -295,16 +310,18 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
     setDraft({ ...parsed, description: parsed.description ?? "", elseActions: parsed.elseActions ?? [] })
     setResource(parsed.module)
     setTriggerChoice(parsed.trigger)
-    setPreviewResult(null); setPreviewError("")
+    setSimResult(null); setPreviewError("")
   }
-  function resetDraft() { setEditingId(null); setDraft(initial); setResource("sales_leads"); setTriggerChoice("manual"); setPreviewResult(null); setPreviewError("") }
-  async function runPreview() {
-    setPreviewBusy(true); setPreviewError(""); setPreviewResult(null)
+  function resetDraft() { setEditingId(null); setDraft(initial); setResource("sales_leads"); setTriggerChoice("manual"); setSimResult(null); setPreviewError("") }
+  async function runSimulation() {
+    setPreviewBusy(true); setPreviewError(""); setSimResult(null)
     try {
-      const r = await fetch("/api/admin/workflows", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ operation: "preview", definition: draft, recordId: Number(previewRecordId) }) })
+      const body: Record<string, unknown> = { operation: "simulate", definition: draft }
+      if (previewRecordId) body.recordId = Number(previewRecordId)
+      const r = await fetch("/api/admin/workflows", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
       const b = await r.json(); if (!r.ok) throw new Error(b.error)
-      setPreviewResult(b)
-    } catch (e) { setPreviewError(e instanceof Error ? e.message : "Preview failed") } finally { setPreviewBusy(false) }
+      setSimResult(b)
+    } catch (e) { setPreviewError(e instanceof Error ? e.message : "Simulation failed") } finally { setPreviewBusy(false) }
   }
   const chosen = data.definitions.find((d: any) => String(d.id) === workflowId)
   const definition = chosen ? (typeof chosen.definition === "string" ? JSON.parse(chosen.definition) : chosen.definition) : null
@@ -435,32 +452,64 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Sparkles className="size-4 text-primary" /> Test mode — execution preview</CardTitle>
-          <CardDescription>Evaluate the workflow you are editing above against a real record, without running any actions or writing anything.</CardDescription>
+          <CardTitle className="flex items-center gap-2"><Sparkles className="size-4 text-primary" /> Simulation &amp; validation</CardTitle>
+          <CardDescription>
+            Run the safety analyzer against your tenant&apos;s live environment (cycles, unavailable actions, permissions).
+            Add a record ID to dry-run the exact path the engine would take — no actions run and nothing is written.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-end gap-2">
+          <div className="flex flex-wrap items-end gap-2">
             <Label className="block flex-1 space-y-1.5 sm:max-w-48">
-              <span className="text-sm font-medium">Record ID</span>
+              <span className="text-sm font-medium">Record ID (optional)</span>
               <Input type="number" min="1" value={previewRecordId} onChange={(e) => setPreviewRecordId(e.target.value)} />
             </Label>
-            <Button variant="outline" disabled={previewBusy || !previewRecordId} onClick={runPreview}>
-              <Play className="size-3.5" /> Preview
+            <Button variant="outline" disabled={previewBusy || !whenSupported} title={!whenSupported ? "Choose a live resource and trigger to simulate" : undefined} onClick={runSimulation}>
+              <Play className="size-3.5" /> {previewRecordId ? "Dry run" : "Validate"}
             </Button>
           </div>
           {previewError && <p className="text-sm text-destructive">{previewError}</p>}
-          {previewResult && (
-            <div className="space-y-1.5 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm">
-              <p className="flex items-center gap-2">
-                Branch that would run:
-                <Badge variant={previewResult.matched ? "default" : "secondary"} className="uppercase">{previewResult.matched ? "THEN" : "ELSE"}</Badge>
-              </p>
-              <p>{previewResult.actions.length} action(s) would execute:</p>
-              <ul className="flex flex-wrap gap-1.5">
-                {previewResult.actions.map((a: any, i: number) => (
-                  <li key={i}><Badge variant="outline">{ACTION_META[a.type as Action["type"]]?.label ?? a.type}</Badge></li>
-                ))}
-              </ul>
+          {simResult && (
+            <div className="space-y-3">
+              {simResult.issues.length === 0 ? (
+                <p className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm">
+                  <ShieldCheck className="size-4 text-primary" /> No blocking issues — this workflow is safe to publish.
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {simResult.issues.map((issue, i) => (
+                    <li key={i} className={`flex items-start gap-2 rounded-lg border p-2.5 text-sm ${issue.severity === "error" ? "border-destructive/40 bg-destructive/5 text-destructive" : "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400"}`}>
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                      <span>
+                        <Badge variant="outline" className="mr-1.5 uppercase">{issue.severity}</Badge>
+                        {issue.branch && <span className="font-medium">{issue.branch.toUpperCase()}{issue.step ? ` step ${issue.step}` : ""}: </span>}
+                        {issue.message}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {simResult.simulation && (
+                <div className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm">
+                  <p className="flex items-center gap-2">
+                    Branch that would run:
+                    {simResult.simulation.branch ? (
+                      <Badge variant={simResult.simulation.branch === "then" ? "default" : "secondary"} className="uppercase">{simResult.simulation.branch}</Badge>
+                    ) : <Badge variant="outline">none (skipped)</Badge>}
+                    {simResult.simulation.completes ? <Badge variant="outline" className="text-primary">completes</Badge> : <Badge variant="outline" className="text-destructive">stops early</Badge>}
+                  </p>
+                  {simResult.simulation.steps.length === 0 && <p className="text-muted-foreground">No steps to run for this record.</p>}
+                  <ol className="space-y-1">
+                    {simResult.simulation.steps.map((s, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <Badge variant="outline" className="shrink-0">{ACTION_META[s.type]?.label ?? s.type}</Badge>
+                        <Badge variant={s.outcome === "blocked" ? "destructive" : "secondary"} className="shrink-0 uppercase">{s.outcome}</Badge>
+                        <span className="text-muted-foreground">{s.detail}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -488,11 +537,22 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
                       <TableCell>{d.name}{d.description && <p className="text-xs text-muted-foreground">{d.description}</p>}</TableCell>
                       <TableCell>{def?.module}</TableCell>
                       <TableCell>{def?.trigger}</TableCell>
-                      <TableCell>v{d.version ?? 1}</TableCell>
-                      <TableCell>{d.enabled ? <Badge>Active</Badge> : <Badge variant="outline">Inactive</Badge>}</TableCell>
                       <TableCell>
-                        <div className="flex gap-1.5">
+                        v{d.version ?? 1}
+                        {d.status === "published" && d.published_version != null && (
+                          <p className="text-xs text-muted-foreground">live: v{d.published_version}{Number(d.published_version) !== Number(d.version) && <span className="text-amber-600 dark:text-amber-400"> (draft ahead)</span>}</p>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          {d.status === "published" ? <Badge className="w-fit"><Rocket className="mr-1 size-3" />Published</Badge> : <Badge variant="outline" className="w-fit">Draft</Badge>}
+                          {!d.enabled && <Badge variant="secondary" className="w-fit">Disabled</Badge>}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1.5">
                           <Button type="button" variant="outline" size="xs" onClick={() => editWorkflow(d)}>Edit</Button>
+                          <Button type="button" size="xs" disabled={busy} onClick={() => send({ operation: "publish", id: d.id, expectedVersion: d.version })}><Rocket className="size-3" /> Publish</Button>
                           <Button type="button" variant="outline" size="xs" disabled={busy} onClick={() => send({ operation: "toggle", id: d.id, enabled: !d.enabled })}>{d.enabled ? "Disable" : "Enable"}</Button>
                         </div>
                       </TableCell>
@@ -545,6 +605,7 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
               <TabsTrigger value="versions">Versions</TabsTrigger>
               <TabsTrigger value="notices">Notifications</TabsTrigger>
               <TabsTrigger value="tasks">Created tasks</TabsTrigger>
+              <TabsTrigger value="assets">Assets</TabsTrigger>
               <TabsTrigger value="events">Execution history</TabsTrigger>
             </TabsList>
 
@@ -587,16 +648,30 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
                   <summary className="cursor-pointer text-sm font-medium">Run #{r.id} · Record #{r.record_id} · {r.status}</summary>
                   <p className="pt-2 text-xs text-muted-foreground">Review this immutable definition before approving. Cancelling stops remaining actions; it does not undo completed actions.</p>
                   <pre className="my-3 overflow-auto rounded-md bg-muted/50 p-3 text-xs">{JSON.stringify(typeof r.snapshot === "string" ? JSON.parse(r.snapshot) : r.snapshot, null, 2)}</pre>
-                  {["queued", "waiting", "approval"].includes(r.status) && (
-                    <Button size="xs" variant="outline" disabled={busy} onClick={() => send({ operation: "cancel", runId: Number(r.id) })}>Cancel remaining actions</Button>
-                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {["queued", "waiting", "approval"].includes(r.status) && (
+                      <Button size="xs" variant="outline" disabled={busy} onClick={() => send({ operation: "cancel", runId: Number(r.id) })}>Cancel remaining actions</Button>
+                    )}
+                    {r.status === "failed" && (
+                      <Button size="xs" variant="outline" disabled={busy} onClick={() => send({ operation: "retry", runId: Number(r.id) })}><RotateCcw className="size-3" /> Retry failed run</Button>
+                    )}
+                  </div>
+                  {r.status === "failed" && r.error_code && <p className="pt-2 text-xs text-destructive">Failed at step {r.cursor + 1}: {r.error_code}. Unsafe steps that may have been delivered externally are blocked from retry.</p>}
                 </details>
               ))}
             </TabsContent>
 
             <TabsContent value="versions" className="space-y-1.5 pt-3 text-sm">
               {data.versions.length === 0 && <p className="text-muted-foreground">No version history yet.</p>}
-              {data.versions.map((v: any, i: number) => <p key={i}>Workflow #{v.workflow_id}: v{v.version} · by user #{v.changed_by} · {v.created_at}</p>)}
+              {data.versions.map((v: any, i: number) => (
+                <div key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 p-2.5">
+                  <span>Workflow #{v.workflow_id}: <span className="font-medium">v{v.version}</span> · {v.name} · by user #{v.changed_by} · {v.created_at}</span>
+                  <div className="flex gap-1.5">
+                    <Button size="xs" variant="outline" disabled={busy} onClick={() => send({ operation: "rollback", id: v.workflow_id, version: v.version })}><History className="size-3" /> Restore as draft</Button>
+                    <Button size="xs" variant="outline" disabled={busy} onClick={() => send({ operation: "rollback", id: v.workflow_id, version: v.version, publish: true })}><RotateCcw className="size-3" /> Restore &amp; publish</Button>
+                  </div>
+                </div>
+              ))}
             </TabsContent>
 
             <TabsContent value="notices" className="space-y-1.5 pt-3 text-sm">
@@ -607,6 +682,15 @@ export function WorkflowConsole({ initialRecordId = "" }: { initialRecordId?: st
             <TabsContent value="tasks" className="space-y-1.5 pt-3 text-sm">
               {data.tasks.length === 0 && <p className="text-muted-foreground">No workflow tasks created yet.</p>}
               {data.tasks.map((t: any) => <p key={t.id}>#{t.id} {t.title} · {t.priority} · {t.status} · User #{t.assigned_to} · Source run #{t.source_run_id}</p>)}
+            </TabsContent>
+
+            <TabsContent value="assets" className="space-y-1.5 pt-3 text-sm">
+              {(data.assets?.length ?? 0) === 0 && <p className="text-muted-foreground">No asset assignments yet.</p>}
+              {data.assets?.map((a: any) => (
+                <p key={a.id} className="flex items-center gap-2">
+                  <Package className="size-3.5 text-primary" /> <span className="font-medium">{a.asset_tag}</span> assigned to user #{a.assigned_to} · run #{a.run_id} · {a.created_at}
+                </p>
+              ))}
             </TabsContent>
 
             <TabsContent value="events" className="space-y-1.5 pt-3 text-sm">

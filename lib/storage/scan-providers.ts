@@ -200,7 +200,7 @@ export class ClamAvScanProvider implements FileScanProvider {
  * "keep the built-in heuristic". Reading a plain env bag (defaulted to
  * `process.env`) keeps this pure and testable.
  */
-export function resolveScanProviderFromEnv(env: NodeJS.ProcessEnv = process.env): FileScanProvider | null {
+export function resolveScanProviderFromEnv(env: Record<string, string | undefined> = process.env): FileScanProvider | null {
   const kind = (env.STORAGE_MALWARE_SCANNER ?? "").trim().toLowerCase()
   if (kind === "clamav" || kind === "clamd") {
     const host = (env.CLAMAV_HOST ?? "").trim()

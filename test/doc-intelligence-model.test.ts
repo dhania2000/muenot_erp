@@ -139,7 +139,7 @@ describe("computeOverallConfidence", () => {
 
   it("collapses to the classifier baseline when no field is confident", () => {
     const zeroed: ExtractedField[] = [
-      { key: "a", label: "A", value: null, confidence: 0, required: true, source: null },
+      { key: "a", label: "A", type: "string", value: null, confidence: 0, required: true, source: null, corrected: false },
     ]
     // With classifierConfidence forced to 0, an all-zero extraction scores 0.
     expect(computeOverallConfidence(zeroed, 0)).toBe(0)
@@ -147,8 +147,8 @@ describe("computeOverallConfidence", () => {
 
   it("weights required fields more heavily and stays within [0,1]", () => {
     const some: ExtractedField[] = [
-      { key: "a", label: "A", value: "x", confidence: 0.8, required: true, source: null },
-      { key: "b", label: "B", value: "y", confidence: 0.6, required: false, source: null },
+      { key: "a", label: "A", type: "string", value: "x", confidence: 0.8, required: true, source: null, corrected: false },
+      { key: "b", label: "B", type: "string", value: "y", confidence: 0.6, required: false, source: null, corrected: false },
     ]
     const blended = computeOverallConfidence(some)
     expect(blended).toBeGreaterThan(0)
@@ -162,8 +162,8 @@ describe("computeOverallConfidence", () => {
 
 describe("mergeCorrections / diffCorrections", () => {
   const base: ExtractedField[] = [
-    { key: "invoice_number", label: "Invoice #", value: "INV-1", confidence: 0.4, required: true, source: null },
-    { key: "total", label: "Total", value: null, confidence: 0, required: true, source: null },
+    { key: "invoice_number", label: "Invoice #", type: "string", value: "INV-1", confidence: 0.4, required: true, source: null, corrected: false },
+    { key: "total", label: "Total", type: "currency", value: null, confidence: 0, required: true, source: null, corrected: false },
   ]
 
   it("applies a correction and bumps that field's confidence to human-verified", () => {
@@ -200,7 +200,7 @@ describe("mergeCorrections / diffCorrections", () => {
 describe("validateExtraction", () => {
   it("fails when a required field is missing", () => {
     const fields: ExtractedField[] = [
-      { key: "invoice_number", label: "Invoice #", value: null, confidence: 0, required: true, source: null },
+      { key: "invoice_number", label: "Invoice #", type: "string", value: null, confidence: 0, required: true, source: null, corrected: false },
     ]
     const result = validateExtraction("invoice", fields)
     expect(result.valid).toBe(false)
@@ -209,9 +209,9 @@ describe("validateExtraction", () => {
 
   it("passes when all required fields are present", () => {
     const fields: ExtractedField[] = [
-      { key: "invoice_number", label: "Invoice #", value: "INV-1", confidence: 1, required: true, source: null },
-      { key: "invoice_date", label: "Invoice date", value: "2026-01-01", confidence: 1, required: true, source: null },
-      { key: "total_amount", label: "Total", value: "500", confidence: 1, required: true, source: null },
+      { key: "invoice_number", label: "Invoice #", type: "string", value: "INV-1", confidence: 1, required: true, source: null, corrected: false },
+      { key: "invoice_date", label: "Invoice date", type: "date", value: "2026-01-01", confidence: 1, required: true, source: null, corrected: false },
+      { key: "total_amount", label: "Total", type: "currency", value: "500", confidence: 1, required: true, source: null, corrected: false },
     ]
     const result = validateExtraction("invoice", fields)
     expect(result.valid).toBe(true)

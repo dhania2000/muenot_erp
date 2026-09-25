@@ -77,12 +77,10 @@ export function sanitizeContent(dirty: unknown): string {
       a: (tagName, attribs) => {
         const href = attribs.href || ""
         const safe = /^(https?:|mailto:|tel:|\/)/i.test(href)
-        return {
-          tagName: "a",
-          attribs: safe
-            ? { href, target: "_blank", rel: "noopener noreferrer nofollow" }
-            : {},
-        }
+        const safeAttribs: Record<string, string> = safe
+          ? { href, target: "_blank", rel: "noopener noreferrer nofollow" }
+          : {}
+        return { tagName: "a", attribs: safeAttribs }
       },
     },
     // Only allow same-origin/relative or https images (blob proxy).

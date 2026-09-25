@@ -1152,7 +1152,7 @@ export async function reconcileOutputGst(period: string) {
     const status = classifyAmount(num(r.taxable) + taxOf(r), num(f.taxable) + taxOf(f))
     counts[status === "Matched" ? "matched" : "mismatch"] += 1
     rows.push({
-      invoice_id: r.invoice_id, invoice_number: r.invoice_number, client_name: r.client_name,
+      invoice_id: r.invoice_id, invoice_number: r.invoice_id, client_name: r.client_name,
       books_taxable: round2(num(r.taxable)), books_tax: taxOf(r),
       filed_taxable: round2(num(f.taxable)), filed_tax: taxOf(f), status,
     })
@@ -1161,7 +1161,7 @@ export async function reconcileOutputGst(period: string) {
     if (liveMap.has(String(f.invoice_id))) continue
     counts.extra += 1
     rows.push({
-      invoice_id: f.invoice_id, invoice_number: f.invoice_number, client_name: f.client_name,
+      invoice_id: f.invoice_id, invoice_number: f.invoice_id, client_name: f.client_name,
       books_taxable: null, books_tax: null,
       filed_taxable: round2(num(f.taxable)), filed_tax: taxOf(f), status: "Extra" as ReconStatus,
     })

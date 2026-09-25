@@ -78,10 +78,10 @@ function norm(v: any): string {
   return String(v ?? "").trim()
 }
 function isEmployeeType(t: any): boolean {
-  return EMPLOYEE_EXPENSE_TYPES.includes(norm(t))
+  return (EMPLOYEE_EXPENSE_TYPES as readonly string[]).includes(norm(t))
 }
 function isVendorType(t: any): boolean {
-  return VENDOR_EXPENSE_TYPES.includes(norm(t))
+  return (VENDOR_EXPENSE_TYPES as readonly string[]).includes(norm(t))
 }
 
 async function loadEmployee(id?: string | null, name?: string | null) {

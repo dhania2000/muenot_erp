@@ -7,7 +7,7 @@ export type Frequency=typeof FREQUENCIES[number]
 // Allowed priority buckets: 0 low, 5 normal, 10 urgent. A per-channel
 // `minPriority` lets a user receive only notices at or above a threshold.
 export const PRIORITIES=[0,5,10] as const
-export type NoticeContext={actorId?:number|null;actorName?:string|null;moduleKey?:string|null;groupSlug?:string|null;action?:string;entityTable?:string|null;entityId?:string|null}
+export type NoticeContext={actorId?:number|null;actorName?:string|null;moduleKey?:string|null;groupSlug?:string|null;action?:string;entityTable?:string|null;entityId?:string|null;kind?:string;taskId?:number;alertId?:number;severity?:string}
 // `mandatory` marks security/compliance notices that MUST reach the user
 // regardless of their preferences — they bypass channel, module, priority and
 // frequency filters. Use only for notices the user is not allowed to opt out of.

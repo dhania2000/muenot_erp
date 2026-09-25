@@ -243,7 +243,10 @@ async function loadExistingFingerprints(
       `SELECT ${cols} FROM \`${config.table}\` ${where} LIMIT ${DEDUPE_SCAN_LIMIT}`,
       params,
     )) as Record<string, unknown>[]
-    for (const r of rows) set.add(importFingerprint(dedupeCols.map((k) => r[k])))
+    for (const r of rows) set.add(importFingerprint(dedupeCols.map((k) => {
+      const value = r[k]
+      return typeof value === "string" || typeof value === "number" ? value : null
+    })))
   } catch {
     // Missing table/columns → no server-side duplicates to compare against.
   }

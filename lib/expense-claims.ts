@@ -221,7 +221,7 @@ type ClaimInput = {
   period_from?: string | null
   period_to?: string | null
   notes?: string | null
-  lines: ClaimLine[]
+  lines?: ClaimLine[]
 }
 
 /** Normalise a line: server always recomputes the amount (never trusts it). */

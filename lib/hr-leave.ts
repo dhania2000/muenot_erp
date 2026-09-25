@@ -1696,7 +1696,7 @@ export async function applyAdjustment(
         `SELECT available FROM hr_leave_balances WHERE employee_id = ? AND leave_type_id = ? AND \`year\` = ?`,
         [employee.id, type.id, year],
       )
-      const available = Number(rows[0]?.available) || 0
+      const available = Number((rows as { available: number }[])[0]?.available) || 0
       if (available + days < 0) {
         await conn.rollback()
         return { ok: false, error: `${type.leave_type} cannot go negative — only ${available} day(s) available.` }

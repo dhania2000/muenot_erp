@@ -73,7 +73,7 @@ function toBool(value: unknown, fallback: boolean): boolean {
 }
 
 /** Clamp an arbitrary day count into the allowed whole-number range. */
-export function clampRetentionDays(value: unknown, min = AUDIT_RETENTION_LIMITS.MIN_DAYS): number {
+export function clampRetentionDays(value: unknown, min: number = AUDIT_RETENTION_LIMITS.MIN_DAYS): number {
   const n = Math.floor(Number(value))
   const lower = Math.max(AUDIT_RETENTION_LIMITS.MIN_DAYS, Math.floor(min))
   if (!Number.isFinite(n)) return lower

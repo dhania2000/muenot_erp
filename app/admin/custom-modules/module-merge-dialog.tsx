@@ -57,7 +57,7 @@ function formatValue(field: ModuleField | undefined, raw: unknown): string {
     if (id != null) return `#${id}`
     return JSON.stringify(raw)
   }
-  if (field && (field.type === "select" || field.type === "multiselect")) {
+  if (field && (field.type === "dropdown" || field.type === "multiselect")) {
     const opt = field.options.find((o) => o.value === String(raw))
     if (opt) return opt.label
   }

@@ -256,7 +256,7 @@ export async function folderAncestorIds(folderId: number | null): Promise<number
   while (current != null && !seen.has(current)) {
     seen.add(current)
     ids.push(current)
-    const row = await tenantFindById<any>("dms_folders", current)
+    const row: { parent_id?: number | null } | null = await tenantFindById("dms_folders", current)
     current = row?.parent_id == null ? null : Number(row.parent_id)
   }
   return ids

@@ -69,6 +69,7 @@ function wireQuery(opts: {
   invoices: Record<number, any>
   idempotencyHit?: any
   allocationsForReverse?: any[]
+  reverseTarget?: any
 }) {
   const updates: Q[] = []
   const deletes: Q[] = []

@@ -57,7 +57,7 @@ export function useScreenMonitor(): MonitorContextValue {
   const ctx = useContext(MonitorContext)
   if (!ctx) {
     // Rendered outside the provider (should not happen) — no-op fallback.
-    return { active: false, startMonitoring: async () => {}, stopMonitoring: async () => {} }
+    return { active: false, status: "off", startMonitoring: async () => {}, stopMonitoring: async () => {} }
   }
   return ctx
 }
@@ -547,7 +547,7 @@ export function ScreenMonitorProvider({ children }: { children: React.ReactNode 
   }, [])
 
   return (
-    <MonitorContext.Provider value={{ active, startMonitoring, stopMonitoring }}>
+    <MonitorContext.Provider value={{ active, status, startMonitoring, stopMonitoring }}>
       {children}
 
       {active ? (

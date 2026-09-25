@@ -22,13 +22,13 @@ export async function GET() {
   try {
     const items = await listRules()
     const rules = items.map((i) => ({
+      ...i.rule,
       entity: i.entity,
       label: i.label,
       module: i.module,
       custom: i.custom,
       active: i.active,
       sample: i.sample,
-      ...i.rule,
     }))
     return NextResponse.json({
       rules,

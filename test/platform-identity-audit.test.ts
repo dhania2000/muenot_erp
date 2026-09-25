@@ -91,7 +91,7 @@ describe("concurrent platform + tenant identity", () => {
   it("a platform role never implies cross-tenant tenant permissions", async () => {
     const staff = await resolveRoleContext({ userId: 2 })
     // Without impersonation, staff has no tenant-level authority over tenant 200.
-    expect(canActOnTenant(staff!, 200)).toBe(false)
+    expect(canActOnTenant(staff!, 200, "tenant_admin")).toBe(false)
   })
 })
 

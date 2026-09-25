@@ -264,7 +264,7 @@ export function simulateWorkflow(w: Workflow, record: Record<string, unknown>, c
   const blocked = new Map(issues.filter((i) => i.severity === "error" && i.branch === branch && i.step).map((i) => [i.step!, i.message]))
   let clock = now, completes = true
   for (const [i, a] of (branch === "then" ? w.actions : w.elseActions).entries()) {
-    const base = { branch, step: i + 1, type: a.type }
+    const base: Pick<SimulationStep, "branch" | "step" | "type"> = { branch, step: i + 1, type: a.type }
     if (blocked.has(i + 1)) { steps.push({ ...base, outcome: "blocked", detail: blocked.get(i + 1)! }); completes = false; break }
     switch (a.type) {
       case "approval": steps.push({ ...base, outcome: "pauses", detail: `Waits for approval by user #${a.userId}; rejection ends the run` }); break

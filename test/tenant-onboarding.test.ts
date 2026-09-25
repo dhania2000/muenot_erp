@@ -16,13 +16,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
  * are mocked so the test asserts the orchestrator's decisions.
  */
 
-const query = vi.fn()
-const getConnection = vi.fn()
-const createTenant = vi.fn()
-const getTenantBySlug = vi.fn()
-const hashPassword = vi.fn(async () => "hashed")
-const generateTempPassword = vi.fn(() => "Temp-Passw0rd")
-const recordPlatformAudit = vi.fn(async () => {})
+const query = vi.fn((..._args: any[]) => undefined as any)
+const getConnection = vi.fn((..._args: any[]) => undefined as any)
+const createTenant = vi.fn((..._args: any[]) => undefined as any)
+const getTenantBySlug = vi.fn((..._args: any[]) => undefined as any)
+const hashPassword = vi.fn(async (..._args: any[]) => "hashed")
+const generateTempPassword = vi.fn((..._args: any[]) => "Temp-Passw0rd")
+const recordPlatformAudit = vi.fn(async (..._args: any[]) => {})
 
 vi.mock("@/lib/db", () => ({
   query: (...a: any[]) => query(...a),
@@ -123,7 +123,7 @@ afterEach(() => {
 function fakeConn(insertId = 42) {
   return {
     beginTransaction: vi.fn(async () => {}),
-    query: vi.fn(async () => [{ insertId }]),
+    query: vi.fn(async (_sql?: string, _params?: unknown[]) => [{ insertId }]),
     commit: vi.fn(async () => {}),
     rollback: vi.fn(async () => {}),
     release: vi.fn(() => {}),
@@ -212,8 +212,8 @@ describe("finalizeOnboarding (idempotent, resumable provisioning)", () => {
     expect(result.adminUserId).toBe(42)
     expect(result.adminTempPassword).toBe("Temp-Passw0rd")
     // First user is seeded as tenant_owner.
-    const insert = conn.query.mock.calls.find(([sql]) => norm(sql).includes("INSERT INTO users"))
-    expect(norm(insert![0])).toContain("tenant_owner")
+    const insert = conn.query.mock.calls.find(([sql]) => norm(sql ?? "").includes("INSERT INTO users"))
+    expect(norm(insert?.[0] ?? "")).toContain("tenant_owner")
     expect(conn.commit).toHaveBeenCalledOnce()
     expect(findCall("SET `status` = 'completed'")).toBeTruthy()
     expect(recordPlatformAudit).toHaveBeenCalledWith(

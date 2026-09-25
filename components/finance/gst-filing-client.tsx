@@ -1860,7 +1860,7 @@ function ComplianceReconBadge({ status }: { status: ComplianceReconStatus }) {
   )
 }
 
-function GstComplianceSection({ period }: { period: string }) {
+function GstComplianceSection({ period, mode = "all" }: { period: string; mode?: "all" | "exceptions" }) {
   const { data } = useSWR<{ compliance: Compliance }>(
     `/api/finance/gst-filing?period=${period}&view=compliance`,
     fetcher,
@@ -1889,7 +1889,7 @@ function GstComplianceSection({ period }: { period: string }) {
         </p>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="three_b">
+        <Tabs defaultValue={mode === "exceptions" ? "exceptions" : "three_b"}>
           <div className="overflow-x-auto pb-2 [scrollbar-width:thin]">
           <TabsList className="w-max flex-nowrap">
             <TabsTrigger value="three_b" className="gap-1.5 whitespace-nowrap">

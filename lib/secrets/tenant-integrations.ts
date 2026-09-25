@@ -205,6 +205,7 @@ export function nextVersion(versions: SecretVersionRow[]): number {
 export type PublicIntegrationField = {
   key: string
   label: string
+  hint?: string
   present: boolean
   masked: string
   version: number | null
@@ -260,9 +261,11 @@ export function toPublicIntegration(
     const present = !!fs?.present
     const last = fs?.lastRotatedAt ?? null
     const label = descriptor.fields.find((f) => f.key === key)?.label ?? key
+    const hint = descriptor.fields.find((f) => f.key === key)?.hint
     return {
       key,
       label,
+      hint,
       present,
       masked: maskSecret(present),
       version: fs?.version ?? null,

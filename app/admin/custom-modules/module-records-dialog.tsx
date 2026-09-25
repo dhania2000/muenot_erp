@@ -65,7 +65,7 @@ function displayValue(field: ModuleField, raw: unknown): string {
     if (id != null) return String(id)
     return JSON.stringify(raw)
   }
-  if (field.type === "select" || field.type === "multiselect") {
+  if (field.type === "dropdown" || field.type === "multiselect") {
     const opt = field.options.find((o) => o.value === String(raw))
     if (opt) return opt.label
   }
@@ -452,7 +452,7 @@ function FieldInput({
     )
   }
 
-  if (field.type === "select" && field.options.length > 0) {
+  if (field.type === "dropdown" && field.options.length > 0) {
     return (
       <Select value={value ? String(value) : ""} onValueChange={onChange}>
         <SelectTrigger id={id}>
@@ -474,9 +474,7 @@ function FieldInput({
       ? "number"
       : field.type === "date"
         ? "date"
-        : field.type === "email"
-          ? "email"
-          : "text"
+        : "text"
 
   return (
     <Input

@@ -46,6 +46,7 @@ export type FieldDef = {
    */
   referenceSource?: HrRefSource
   placeholder?: string
+  help?: string
   required?: boolean
   /** Only render this field when the condition matches the current form. */
   visibleWhen?: VisibleWhen

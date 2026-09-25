@@ -57,7 +57,7 @@ export const POST = withApiV1(
     const companyName = String(body.company_name ?? "").trim() || null
     const record = await createSandboxClient(ctx.auth.tenantId, session.sandboxId, {
       client_name: String(body.client_name).trim(),
-      email: normalizeEmail(body.email),
+      email: normalizeEmail(body.email)!,
       company_name: companyName,
       client_type: companyName ? "Company" : "Individual",
     })

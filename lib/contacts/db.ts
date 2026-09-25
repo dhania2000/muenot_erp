@@ -714,14 +714,15 @@ async function dedupeChildren(conn: any, contactId: number): Promise<void> {
   )
   // Guarantee exactly one primary in each collection.
   for (const tbl of ["contact_emails", "contact_phones", "contact_addresses"]) {
-    const [primaries] = await conn.query<any[]>(
+    const [primaries] = await conn.query(
       `SELECT id FROM \`${tbl}\` WHERE contact_id = ? AND is_primary = 1 ORDER BY id ASC`,
       [contactId],
     )
-    if (primaries.length === 0) {
+    const primaryRows = primaries as { id: number }[]
+    if (primaryRows.length === 0) {
       await conn.query(`UPDATE \`${tbl}\` SET is_primary = 1 WHERE contact_id = ? ORDER BY id ASC LIMIT 1`, [contactId])
-    } else if (primaries.length > 1) {
-      const keep = primaries[0].id
+    } else if (primaryRows.length > 1) {
+      const keep = primaryRows[0].id
       await conn.query(`UPDATE \`${tbl}\` SET is_primary = 0 WHERE contact_id = ? AND id <> ?`, [contactId, keep])
     }
   }

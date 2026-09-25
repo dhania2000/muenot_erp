@@ -945,7 +945,7 @@ export async function runRestoreDrill(tenantId: number | null, runId: number, ac
   let tablesValidated = 0
   let restoredRows = 0
   let status: RestoreTestStatus = "passed"
-  const tempDb = buildTempDatabaseName(runId, startedAt)
+  const tempDb = buildTempDatabaseName(runId, String(startedAt))
   let tempDbCreated = false
 
   try {

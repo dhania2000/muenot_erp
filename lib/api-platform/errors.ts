@@ -28,6 +28,7 @@ export type ApiErrorCode =
   | "idempotency_unavailable"
   | "unsupported_version"
   | "rate_limited"
+  | "usage_limit_reached"
   | "rate_limit_unavailable"
   | "ip_not_allowed"
   | "internal_error"
@@ -46,6 +47,7 @@ export const ERROR_STATUS: Record<ApiErrorCode, number> = {
   idempotency_unavailable: 503,
   unsupported_version: 400,
   rate_limited: 429,
+  usage_limit_reached: 402,
   rate_limit_unavailable: 503,
   ip_not_allowed: 403,
   internal_error: 500,

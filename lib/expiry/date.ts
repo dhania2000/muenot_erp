@@ -151,7 +151,7 @@ export function reminderMilestone(days: number | null, warnDays = DEFAULT_EXPIRY
     return `overdue-w${week}`
   }
   const cap = Math.max(0, warnDays)
-  const offsets = REMINDER_OFFSETS.filter((o) => o <= cap)
+  const offsets: number[] = REMINDER_OFFSETS.filter((o) => o <= cap)
   if (cap > 0 && !offsets.includes(cap)) offsets.push(cap)
   offsets.sort((a, b) => a - b)
   for (const off of offsets) {

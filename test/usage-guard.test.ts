@@ -16,8 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
  */
 
 // Capture what the metering primitives are asked to do, keeping MySQL out.
-const recordUsageMock = vi.fn(async () => true)
-const recordUsageSafeMock = vi.fn(() => {})
+const recordUsageMock = vi.fn(async (_input?: unknown) => true)
+const recordUsageSafeMock = vi.fn((_input?: unknown) => {})
 const enforceMock = vi.fn(async (_meterKey: string, _amount = 1) => ({
   allowed: true,
   used: 1,

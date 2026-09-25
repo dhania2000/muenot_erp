@@ -35,7 +35,7 @@ export async function readExcelFile(file: File): Promise<Record<string, string>[
  */
 export function mapRow<T extends string>(
   row: Record<string, string>,
-  aliases: Record<T, string[]>,
+  aliases: Record<T, readonly string[]>,
 ): Record<T, string> {
   const normalized: Record<string, string> = {}
   for (const [key, value] of Object.entries(row)) {

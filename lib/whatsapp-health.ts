@@ -84,9 +84,9 @@ function qualityStatus(rating: string | null): HealthCheck["status"] {
   return "unknown"
 }
 
-export async function getConnectionHealth(): Promise<ConnectionHealth> {
+export async function getConnectionHealth(integrationOverride?: WhatsAppIntegrationRow): Promise<ConnectionHealth> {
   const checkedAt = new Date().toISOString()
-  const integration = await getWhatsAppIntegration()
+  const integration = integrationOverride ?? await getWhatsAppIntegration()
 
   if (!integration) {
     return {

@@ -89,7 +89,7 @@ export type FileMetadataInput = {
  */
 export function encryptionStateFor(connection: ResolvedConnection | null | undefined): FileEncryptionState {
   const sse = connection?.serverSideEncryption
-  if (sse == null || sse === "") return "none"
+  if (sse == null) return "none"
   return normalizeEncryptionState(sse)
 }
 
@@ -402,7 +402,7 @@ export async function completeLargeUpload(
     }
   }
 
-  const { provider } = await getTenantStorage()
+  const { provider, connection } = await getTenantStorage()
   try {
     const result = await provider.completeMultipart(
       session.storage_key,

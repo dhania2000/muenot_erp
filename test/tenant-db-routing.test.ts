@@ -47,7 +47,7 @@ function factory(config: DbConnectionConfig): TaggedPool {
   created.push(config)
   return {
     __config: config,
-    query: vi.fn(async () => [[{ db: config.database ?? "?", host: config.host }], []]),
+    query: vi.fn(async () => [[{ db: config.database ?? "?", host: config.host }], []]) as unknown as RoutedPool["query"],
     end: vi.fn(async () => {}),
   }
 }

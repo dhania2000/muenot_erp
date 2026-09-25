@@ -16,11 +16,11 @@ vi.mock("@/lib/api-auth", () => ({
 }))
 
 const store = vi.hoisted(() => ({
-  setIntegrationSecret: vi.fn(async () => ({ version: 1, vaultKind: "db", health: "healthy", deduped: false })),
+  setIntegrationSecret: vi.fn(async (_input?: unknown) => ({ version: 1, vaultKind: "db", health: "healthy", deduped: false })),
   rotateIntegrationSecret: vi.fn(async () => ({ version: 2, vaultKind: "db", health: "healthy", deduped: false })),
   rollbackIntegrationSecret: vi.fn(async () => ({ version: 1, fromVersion: 2, deduped: false })),
   testIntegrationConnection: vi.fn(async () => ({ vaultKind: "db", health: "healthy", detail: null })),
-  getIntegrationAudit: vi.fn(async () => [{ id: 1, integrationKey: "stripe", fieldKey: "secret_key", action: "set", actorEmail: "a@t", detail: null, at: "t" }]),
+  getIntegrationAudit: vi.fn(async (_input?: unknown) => [{ id: 1, integrationKey: "stripe", fieldKey: "secret_key", action: "set", actorEmail: "a@t", detail: null, at: "t" }]),
   getIntegrationsOverview: vi.fn(async () => []),
 }))
 vi.mock("@/lib/secrets/tenant-integration-store", () => store)
@@ -107,7 +107,7 @@ describe("happy path — forwards verified identity, not body-supplied actor", (
   })
 
   it("GET overview and audit succeed for an admin", async () => {
-    const overview = await listSecrets(new Request("http://x/api/settings/integration-secrets") as any)
+    const overview = await listSecrets()
     expect(overview.status).toBe(200)
     const audit = await auditHistory(new Request("http://x/api/settings/integration-secrets/audit?integrationKey=stripe") as any)
     expect(audit.status).toBe(200)

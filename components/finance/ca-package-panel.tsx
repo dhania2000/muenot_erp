@@ -356,7 +356,8 @@ export function CaPackagePanel({
                 <div key={group} className="space-y-2">
                   <div className="flex items-center gap-2 border-b pb-1.5">
                     <Checkbox
-                      checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                      checked={allSelected || someSelected}
+                      aria-checked={allSelected ? "true" : someSelected ? "mixed" : "false"}
                       onCheckedChange={() => toggleGroup(reports, allSelected)}
                       aria-label={`Toggle all ${group} reports`}
                     />

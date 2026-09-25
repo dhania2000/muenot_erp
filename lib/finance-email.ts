@@ -398,7 +398,7 @@ export async function sendFinanceEmailRow(
   await query("UPDATE finance_emails SET status='Sending' WHERE id=?", [id])
 
   const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
-  const trackedBody = withTrackingPixel(row.body, baseUrl.replace(/\/$/, ""), id).replace(
+  const trackedBody = withTrackingPixel(row.body, baseUrl.replace(/\/$/, ""), String(id)).replace(
     `/api/track/${id}`,
     `/api/finance/emails/track/${id}`,
   )

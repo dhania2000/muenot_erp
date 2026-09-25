@@ -32,6 +32,7 @@ export class DatabaseVaultProvider implements VaultProvider {
   async getSecret(_ref: string, providerVersion?: string | null): Promise<VaultReadResult> {
     if (!providerVersion) throw new Error("DB vault read requires the stored ciphertext")
     const value = decryptSecret(providerVersion)
+    if (value === null) throw new Error("DB vault value could not be decrypted")
     return { value, providerVersion }
   }
 

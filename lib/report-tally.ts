@@ -33,7 +33,7 @@ export type ReportCompany = {
   taxLabel: string
   taxNumber: string
   /** Permanent Account Number, shown alongside GSTIN on statutory letterheads. */
-  pan: string
+  pan?: string
 }
 
 export type GroupSection = {

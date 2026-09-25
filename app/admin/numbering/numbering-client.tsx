@@ -224,10 +224,10 @@ function RuleDialog({
       const res = await fetch("/api/admin/numbering", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity: row.entity, ...previewRule, active: form.active }),
+        body: JSON.stringify({ ...previewRule, entity: row.entity, active: form.active }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) return toast.error(json?.error ?? "Failed to save rule")
+      if (!res.ok) { toast.error(json?.error ?? "Failed to save rule"); return }
       toast.success(`Saved numbering rule for ${row.label}`)
       onSaved()
     })
@@ -237,7 +237,7 @@ function RuleDialog({
     startTransition(async () => {
       const res = await fetch(`/api/admin/numbering/${row.entity}`, { method: "DELETE" })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) return toast.error(json?.error ?? "Failed to revert")
+      if (!res.ok) { toast.error(json?.error ?? "Failed to revert"); return }
       toast.success(`${row.label} reverted to default`)
       onSaved()
     })
@@ -251,7 +251,7 @@ function RuleDialog({
         body: JSON.stringify({ action }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) return toast.error(json?.error ?? "Action failed")
+      if (!res.ok) { toast.error(json?.error ?? "Action failed"); return }
       if (action === "allocate") {
         setNextNumber(json.allocation.number)
         toast.success(`Allocated ${json.allocation.number}`)

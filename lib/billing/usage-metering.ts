@@ -570,7 +570,7 @@ async function getUsageTrend(tenantId: number, days: number): Promise<UsageTrend
   }
   for (const r of rows) {
     const point = byDate.get(r.usage_date)
-    if (point) point[r.meter_key] = (point[r.meter_key] ?? 0) + Number(r.quantity ?? 0)
+    if (point) point[r.meter_key] = Number(point[r.meter_key] ?? 0) + Number(r.quantity ?? 0)
   }
   return [...byDate.values()]
 }

@@ -83,7 +83,7 @@ export async function registerModuleDocument(
     sourceModule: input.module,
     sourceEntityType: input.entityType,
     sourceEntityId: String(input.entityId),
-    status: input.status ?? "active",
+    status: input.status ?? "published",
     expiresAt: input.expiresAt ?? null,
     createdBy: input.createdBy ?? null,
     tags: input.tags,

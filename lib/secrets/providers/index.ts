@@ -28,12 +28,12 @@ export function getDatabaseVault(): DatabaseVaultProvider {
 }
 
 /** The deployment-configured default external vault kind, if any. */
-export function configuredDefaultVaultKind(env: NodeJS.ProcessEnv = process.env): VaultKind | null {
+export function configuredDefaultVaultKind(env: Record<string, string | undefined> = process.env): VaultKind | null {
   const raw = (env.SECRETS_VAULT_PROVIDER ?? "").trim().toLowerCase()
   return isVaultKind(raw) && raw !== "db" ? raw : null
 }
 
-function buildAws(env: NodeJS.ProcessEnv): AwsSecretsManagerProvider | null {
+function buildAws(env: Record<string, string | undefined>): AwsSecretsManagerProvider | null {
   const region = (env.SECRETS_AWS_REGION ?? env.AWS_REGION ?? "").trim()
   const accessKeyId = (env.SECRETS_AWS_ACCESS_KEY_ID ?? env.AWS_ACCESS_KEY_ID ?? "").trim()
   const secretAccessKey = (env.SECRETS_AWS_SECRET_ACCESS_KEY ?? env.AWS_SECRET_ACCESS_KEY ?? "").trim()
@@ -49,7 +49,7 @@ function buildAws(env: NodeJS.ProcessEnv): AwsSecretsManagerProvider | null {
   })
 }
 
-function buildAzure(env: NodeJS.ProcessEnv): AzureKeyVaultProvider | null {
+function buildAzure(env: Record<string, string | undefined>): AzureKeyVaultProvider | null {
   const vaultName = (env.SECRETS_AZURE_VAULT_NAME ?? "").trim()
   const tenantId = (env.SECRETS_AZURE_TENANT_ID ?? "").trim()
   const clientId = (env.SECRETS_AZURE_CLIENT_ID ?? "").trim()
@@ -71,7 +71,7 @@ function buildAzure(env: NodeJS.ProcessEnv): AzureKeyVaultProvider | null {
  */
 export function buildVaultProvider(
   kind: VaultKind,
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): VaultProvider | null {
   switch (kind) {
     case "db":
@@ -86,7 +86,7 @@ export function buildVaultProvider(
 }
 
 /** True when the given external vault kind is fully configured in this deployment. */
-export function isVaultConfigured(kind: VaultKind, env: NodeJS.ProcessEnv = process.env): boolean {
+export function isVaultConfigured(kind: VaultKind, env: Record<string, string | undefined> = process.env): boolean {
   if (kind === "db") return true
   return buildVaultProvider(kind, env) !== null
 }

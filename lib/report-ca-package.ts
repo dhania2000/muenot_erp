@@ -401,7 +401,7 @@ async function buildPackageDoc(payload: CaPackagePayload) {
   const reportStartPages: number[] = []
   for (const report of reports) {
     doc.addPage()
-    reportStartPages.push(doc.internal.getNumberOfPages())
+    reportStartPages.push(doc.getNumberOfPages())
     await renderReportTable(doc, autoTable, report, payload)
   }
 

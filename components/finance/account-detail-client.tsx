@@ -112,6 +112,18 @@ function balanceCell(amount: number, side: Side) {
   )
 }
 
+function exportAccountLedger(account: Row, ledger: Row[]) {
+  exportRowsToExcel(`account-ledger-${account.account_id}`, ledger, [
+    { header: "Date", value: (row) => row.transaction_date ?? "" },
+    { header: "Voucher", value: (row) => row.voucher_no ?? "" },
+    { header: "Source", value: (row) => row.source_module ?? "" },
+    { header: "Reference", value: (row) => row.source_reference ?? "" },
+    { header: "Description", value: (row) => row.description ?? "" },
+    { header: "Debit", value: (row) => Number(row.debit ?? 0) },
+    { header: "Credit", value: (row) => Number(row.credit ?? 0) },
+  ])
+}
+
 export function AccountDetailClient({ accountId }: { accountId: string }) {
   const { data, error, isLoading } = useSWR<Account360>(
     `/api/finance/chart-of-accounts/${encodeURIComponent(accountId)}`,

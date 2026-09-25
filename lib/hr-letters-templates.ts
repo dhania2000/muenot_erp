@@ -210,7 +210,7 @@ export async function transitionTemplate(
     return { ok: false, error: `Cannot move a ${current.status} template to ${to}`, code: 422 }
   }
   await query("UPDATE hr_letter_templates SET status = ?, updated_by = ? WHERE id = ?", [to, userId, id])
-  await snapshotVersion({ ...current, status: to }, `Status → ${to}`, userId)
+  await snapshotVersion({ ...current, status: to as LetterTemplate["status"] }, `Status → ${to}`, userId)
   const template = await getTemplate(id)
   return { ok: true, template: template! }
 }

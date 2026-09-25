@@ -36,7 +36,7 @@ import {
 
 export const YEAR_END_SOURCE_MODULE = "Year-End Closing"
 
-const FY_START_MONTH = 4 // Indian financial year — April to March.
+const FY_START_MONTH: number = 4 // Indian financial year — April to March.
 
 /** Turn a financial-year label ("2026-27") into its inclusive date range. */
 export function fyRange(fy: string): { from: string; to: string } | null {

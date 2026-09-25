@@ -1,6 +1,7 @@
 import "server-only"
 import { query } from "@/lib/db"
 import { currentTenantId, currentTenantIdOrNull } from "@/lib/tenant-scope"
+import { meterUsage } from "@/lib/billing/usage-guard"
 import type { WhatsAppPriority, WhatsAppStatus, WhatsAppTeam } from "@/lib/whatsapp-shared"
 
 /**

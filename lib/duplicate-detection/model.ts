@@ -334,7 +334,7 @@ export function fieldSimilarity(matcher: FieldMatcher, a: unknown, b: unknown): 
       return na !== "" && na === nb ? 1 : 0
     }
     case "name":
-      return nameSimilarity(a, b)
+      return nameSimilarity(String(a ?? ""), String(b ?? ""))
     case "fuzzy": {
       const na = normalizeText(a)
       const nb = normalizeText(b)

@@ -19,7 +19,7 @@ vi.mock("@/lib/api-auth", () => ({
 
 const store = vi.hoisted(() => ({
   getMarketplaceOverview: vi.fn(async () => [{ key: "slack", status: "not_installed" }]),
-  installConnector: vi.fn(async () => ({ status: "installed", health: "healthy", grantedScopes: ["chat:write"], deduped: false })),
+  installConnector: vi.fn(async (_input?: unknown) => ({ status: "installed", health: "healthy", grantedScopes: ["chat:write"], deduped: false })),
   reconnectConnector: vi.fn(async () => ({ status: "installed", health: "healthy", grantedScopes: ["chat:write"], deduped: false })),
   disconnectConnector: vi.fn(async () => ({ status: "disconnected", revoked: 2, deduped: false })),
   checkConnectorHealth: vi.fn(async () => ({ health: "healthy", detail: null })),

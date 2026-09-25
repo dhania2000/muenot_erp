@@ -30,6 +30,7 @@ export type PageMeta = {
   total?: number
   total_pages?: number
   sort?: string
+  sandbox_id?: string
 }
 
 function baseHeaders(requestId: string, extra?: Record<string, string>): Record<string, string> {

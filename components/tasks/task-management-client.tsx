@@ -159,10 +159,10 @@ export function TaskManagementClient({
           ))}
         </div>
       ) : rows.length === 0 ? (
-        <Empty
-          title="No tasks found"
-          description="Adjust your filters or create the first task for your team."
-        />
+        <Empty>
+          <p className="font-medium">No tasks found</p>
+          <p className="text-sm text-muted-foreground">Adjust your filters or create the first task for your team.</p>
+        </Empty>
       ) : layout === "board" ? (
         <BoardView rows={rows} onOpen={setActiveId} />
       ) : (

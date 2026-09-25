@@ -16,18 +16,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
  * asserts the handler's decisions, not a live DB or cookie jar.
  */
 
-const getSession = vi.fn()
-const createSessionToken = vi.fn(async () => "new.signed.token")
-const setSessionCookie = vi.fn(async () => {})
+const getSession = vi.fn((..._args: any[]) => undefined as any)
+const createSessionToken = vi.fn(async (..._args: any[]) => "new.signed.token")
+const setSessionCookie = vi.fn(async (..._args: any[]) => {})
 
-const listMembershipsForUser = vi.fn()
-const isActiveMembership = vi.fn()
-const getMembershipRole = vi.fn()
+const listMembershipsForUser = vi.fn((..._args: any[]) => undefined as any)
+const isActiveMembership = vi.fn((..._args: any[]) => undefined as any)
+const getMembershipRole = vi.fn((..._args: any[]) => undefined as any)
 
-const getStoredRoles = vi.fn(async () => ({ platformRole: "none", tenantRole: "employee" }))
-const recordPlatformAudit = vi.fn(async () => {})
-const resolveTenantIdForUser = vi.fn(async () => 1)
-const getNum = vi.fn(async () => 480)
+const getStoredRoles = vi.fn(async (..._args: any[]) => ({ platformRole: "none", tenantRole: "employee" }))
+const recordPlatformAudit = vi.fn(async (..._args: any[]) => {})
+const resolveTenantIdForUser = vi.fn(async (..._args: any[]) => 1)
+const getNum = vi.fn(async (..._args: any[]) => 480)
 
 vi.mock("@/lib/auth", () => ({
   getSession: (...a: any[]) => getSession(...a),

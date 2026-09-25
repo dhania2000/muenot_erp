@@ -148,7 +148,7 @@ export class S3StorageProvider implements StorageProvider {
     return this.owner ? { ExpectedBucketOwner: this.owner } : {}
   }
 
-  private sseParam(): { ServerSideEncryption?: ServerSideEncryptionMode } {
+  private sseParam(): { ServerSideEncryption?: Exclude<ServerSideEncryptionMode, "none"> } {
     return this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}
   }
 

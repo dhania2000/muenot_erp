@@ -166,8 +166,9 @@ export async function listReportRuns(input: ListReportRunsInput): Promise<ListRe
     query<any[]>(
       `SELECT
          COUNT(*) AS total,
-         SUM(format <> 'Email') AS downloads,
-         SUM(format = 'Email') AS emails
+         SUM(format IN ('PDF','Excel','CSV')) AS downloads,
+         SUM(format = 'Email') AS emails,
+         SUM(format = 'View') AS views
        FROM finance_report_runs`,
     ),
   ])
@@ -182,6 +183,7 @@ export async function listReportRuns(input: ListReportRunsInput): Promise<ListRe
       total: Number(s.total || 0),
       downloads: Number(s.downloads || 0),
       emails: Number(s.emails || 0),
+      views: Number(s.views || 0),
     },
   }
 }

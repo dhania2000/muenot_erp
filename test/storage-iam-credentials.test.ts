@@ -54,7 +54,7 @@ function conn(overrides: Partial<ResolvedConnection> = {}): ResolvedConnection {
 
 /** Build a fake STS whose AssumeRole either returns creds or throws. */
 function fakeSts(behavior: { creds?: any; throws?: any }) {
-  const send = vi.fn(async () => {
+  const send = vi.fn(async (_command?: { input: { Policy: string; ExternalId: string } }) => {
     if (behavior.throws) throw behavior.throws
     return { Credentials: behavior.creds }
   })
@@ -130,9 +130,9 @@ describe("iam_role mode", () => {
     expect(c1).toMatchObject({ accessKeyId: "ASIA1", sessionToken: "t1" })
 
     // The inline session policy pins the tenant prefix.
-    const sentPolicy = JSON.parse(send.mock.calls[0][0].input.Policy)
+    const sentPolicy = JSON.parse(String(send.mock.calls[0]?.[0]?.input.Policy))
     expect(JSON.stringify(sentPolicy)).toContain("cust-bucket/erp/t/42/*")
-    expect(send.mock.calls[0][0].input.ExternalId).toBe("muenot-secret")
+    expect(send.mock.calls[0]?.[0]?.input.ExternalId).toBe("muenot-secret")
 
     // A second call within the cache window does not hit STS again.
     await resolveCredentials(roleConn(), { stsFactory: factory })

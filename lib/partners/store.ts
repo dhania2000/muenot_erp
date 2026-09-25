@@ -199,14 +199,14 @@ function mapPartner(r: any): PartnerView {
   }
 }
 
-function mapReferral(r: any): ReferralRecord & { ownership: Ownership; source: "platform" | "signup" } {
+function mapReferral(r: any): ReferralRecord & { ownership: Ownership; source: "platform" | "signup" | "affiliate" } {
   return {
     id: Number(r.id),
     partnerId: Number(r.partner_id),
     tenantId: Number(r.tenant_id),
     status: r.status,
     ownership: r.ownership === "partner" ? "partner" : "platform",
-    source: r.source === "signup" ? "signup" : "platform",
+    source: r.source === "signup" || r.source === "affiliate" ? r.source : "platform",
     attributedAt: String(r.attributed_at),
     endedAt: r.ended_at == null ? null : String(r.ended_at),
   }

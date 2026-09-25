@@ -9,6 +9,7 @@ import {
   type ApiKeyEnvironment,
 } from "@/lib/api-keys-store"
 import { ipMatchesCidr } from "@/lib/ip-allowlist-store"
+import { onApiKeyCreated } from "@/lib/security-alerts-store"
 
 async function requireAdminTenant() {
   const session = await getSession()
@@ -71,6 +72,19 @@ export async function POST(request: Request) {
     { name: body.name.trim(), scopes, environment, ipRestrictions, expiresAt },
     ctx.session.userId,
   )
+
+  // Security-alert correlation signal: API-key creation is a sensitive change
+  // that, coming right after a failed-login burst, indicates account takeover.
+  const forwardedFor = request.headers.get("x-forwarded-for")
+  const requestIp = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
+  void onApiKeyCreated({
+    tenantId: ctx.tenantId,
+    keyId: Number((key as any).id),
+    keyName: body.name.trim(),
+    actorUserId: ctx.session.userId,
+    ip: requestIp,
+  })
+
   // The plaintext key is returned exactly once — the server never persists or re-serves it.
   return NextResponse.json({ key, plaintext })
 }

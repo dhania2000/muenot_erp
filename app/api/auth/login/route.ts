@@ -25,6 +25,7 @@ import {
   credentialFingerprint,
 } from "@/lib/webauthn-store"
 import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/password-policy"
+import { onFailedLogin, onSuccessfulLogin } from "@/lib/security-alerts-store"
 import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 import { recordSecurityEvent } from "@/lib/security-audit-store"
 import { evaluateAccessPolicies } from "@/lib/access-policy-store"
@@ -155,6 +156,10 @@ export async function POST(request: Request) {
     const valid = await verifyPassword(password, user.password_hash)
     if (!valid) {
       await recordFailedLogin(user.id)
+      // Correlation signal: feed the failed attempt into the security-alerts
+      // engine so a burst can be detected and later correlated with a takeover.
+      const failTenantId = await resolveTenantIdForUser(user.id)
+      void onFailedLogin({ tenantId: failTenantId, userId: user.id, email: user.email, ip: requestIp })
       void recordAuditLog(
         {
           action: AUDIT_ACTIONS.authLoginDenied,
@@ -404,6 +409,9 @@ export async function POST(request: Request) {
     // Baked into the session token so every subsequent request derives its
     // tenant from the verified session, never from client input.
     const tenantId = (await resolveTenantIdForUser(user.id)) ?? undefined
+
+    // A fully authenticated sign-in clears any open failed-login burst alert.
+    void onSuccessfulLogin({ tenantId: tenantId ?? null, userId: user.id })
 
     // capture the platform/tenant role axes from the DB source of
     // truth. Carried in the token for cheap UI hints only; guards re-resolve

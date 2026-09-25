@@ -19,10 +19,13 @@ import type { TrustedGeo } from "@/lib/geo-trust"
 import {
   type PlatformAccountClass,
   type SecurityPolicyLevel,
+  type TenantPolicyExemptions,
   classifyPlatformAccount,
   isBreakGlassPlatformAdmin,
   isExemptFromTenantDevicePolicy,
+  isPlatformAdminClass,
   securityPolicyLevelFor,
+  tenantPolicyExemptionsFor,
 } from "@/lib/platform-admin-policy"
 
 export type EmergencyAuthorization = {
@@ -110,6 +113,7 @@ export function resolvePlatformSecurityContext(
 async function recordPlatformExemptionAudit(
   input: SignInProtectionInput,
   platform: PlatformSecurityContext,
+  exemptions: TenantPolicyExemptions,
 ): Promise<void> {
   const breakGlass = platform.accountClass === "break_glass_platform_admin"
   try {
@@ -126,7 +130,8 @@ async function recordPlatformExemptionAudit(
       detail: {
         accountClass: platform.accountClass,
         policyLevel: platform.policyLevel,
-        exemption: "tenant_managed_device_and_geo",
+        exemptions: Object.keys(exemptions).filter((k) => exemptions[k as keyof TenantPolicyExemptions]),
+        reason: breakGlass ? "platform_emergency_policy_precedence" : "platform_admin_policy_precedence",
         via: breakGlass ? "break_glass_platform_admin" : "platform_super_admin",
         critical: breakGlass || undefined,
       },
@@ -150,7 +155,18 @@ async function recordPlatformExemptionAudit(
   }
 }
 
+/**
+ * Precedence: PLATFORM_EMERGENCY → PLATFORM_ADMIN → TENANT → USER.
+ *
+ * The platform context is resolved FIRST from server-authoritative inputs. For a
+ * genuine platform admin the tenant-owned managed-device requirement is skipped
+ * unconditionally (not gated on the tenant's own "emergency access" flag, which
+ * was the root cause of the lockout); break-glass additionally skips tenant geo.
+ * Everything not exempted still runs exactly as before.
+ */
 export async function enforceSignInProtection(input: SignInProtectionInput): Promise<SignInProtectionResult> {
+  const platform = resolvePlatformSecurityContext(input.user.id, input.platformRole)
+  const exemptions = tenantPolicyExemptionsFor(platform.accountClass)
   const emergency = await resolveEmergencyAuthorization(input.tenantId, input.user.id, input.platformRole)
   const common = {
     userId: input.user.id,
@@ -163,31 +179,43 @@ export async function enforceSignInProtection(input: SignInProtectionInput): Pro
   }
   const bypassed: Array<"geo" | "device"> = []
 
-  const geoResult = await enforceGeoPolicy(input.tenantId, {
-    ...common,
-    country: input.geo.country,
-    locationMeta: { source: input.geo.source, anonymous: input.geo.anonymous, resolution: input.geo.reason },
-  })
-  if (geoResult.denied) {
-    return {
-      ok: false,
-      status: 403,
-      code: "GEO_BLOCKED",
-      error: "Sign-in is not allowed from your current location. Contact your administrator.",
+  if (exemptions.geo) {
+    bypassed.push("geo")
+  } else {
+    const geoResult = await enforceGeoPolicy(input.tenantId, {
+      ...common,
+      country: input.geo.country,
+      locationMeta: { source: input.geo.source, anonymous: input.geo.anonymous, resolution: input.geo.reason },
+    })
+    if (geoResult.denied) {
+      return {
+        ok: false,
+        status: 403,
+        code: "GEO_BLOCKED",
+        error: "Sign-in is not allowed from your current location. Contact your administrator.",
+      }
     }
+    if (geoResult.bypassed) bypassed.push("geo")
   }
-  if (geoResult.bypassed) bypassed.push("geo")
 
-  const deviceResult = await enforceManagedDevice(input.tenantId, { ...common, assertion: input.deviceAssertion })
-  if (deviceResult.denied) {
-    return {
-      ok: false,
-      status: 403,
-      code: "MANAGED_DEVICE_REQUIRED",
-      error: "Sign-in requires a managed device. Enroll this device or contact your administrator.",
+  if (exemptions.managedDevice) {
+    bypassed.push("device")
+  } else {
+    const deviceResult = await enforceManagedDevice(input.tenantId, { ...common, assertion: input.deviceAssertion })
+    if (deviceResult.denied) {
+      return {
+        ok: false,
+        status: 403,
+        code: "MANAGED_DEVICE_REQUIRED",
+        error: "Sign-in requires a managed device. Enroll this device or contact your administrator.",
+      }
     }
+    if (deviceResult.bypassed) bypassed.push("device")
   }
-  if (deviceResult.bypassed) bypassed.push("device")
 
-  return { ok: true, bypassed, emergency }
+  if (isPlatformAdminClass(platform.accountClass)) {
+    await recordPlatformExemptionAudit(input, platform, exemptions)
+  }
+
+  return { ok: true, bypassed, emergency, platform }
 }

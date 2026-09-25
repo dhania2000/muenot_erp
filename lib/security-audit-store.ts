@@ -23,6 +23,7 @@ export type SecurityEventCategory =
   | "geo_policy"
   | "managed_device"
   | "data_export"
+  | "platform_admin"
 
 export type SecurityEventOutcome =
   | "allowed"

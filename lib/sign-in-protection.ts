@@ -16,6 +16,14 @@ import { enforceGeoPolicy } from "@/lib/geo-policy-store"
 import { enforceManagedDevice } from "@/lib/managed-device-store"
 import { listActiveBreakGlassForUser } from "@/lib/temporary-access-store"
 import type { TrustedGeo } from "@/lib/geo-trust"
+import {
+  type PlatformAccountClass,
+  type SecurityPolicyLevel,
+  classifyPlatformAccount,
+  isBreakGlassPlatformAdmin,
+  isExemptFromTenantDevicePolicy,
+  securityPolicyLevelFor,
+} from "@/lib/platform-admin-policy"
 
 export type EmergencyAuthorization = {
   authorized: boolean
@@ -51,9 +59,96 @@ export type SignInProtectionInput = {
   deviceAssertion: unknown
 }
 
+/**
+ * The platform-vs-tenant security context resolved for this sign-in. Derived
+ * only from server-authoritative inputs (the DB-resolved platform role and the
+ * trusted platform break-glass config), never from client input.
+ */
+export type PlatformSecurityContext = {
+  accountClass: PlatformAccountClass
+  policyLevel: SecurityPolicyLevel
+  /** True ⇒ tenant-owned managed-device / geo enforcement is skipped (precedence). */
+  exemptFromTenantDevicePolicy: boolean
+}
+
 export type SignInProtectionResult =
-  | { ok: true; bypassed: Array<"geo" | "device">; emergency: EmergencyAuthorization }
+  | {
+      ok: true
+      bypassed: Array<"geo" | "device">
+      emergency: EmergencyAuthorization
+      platform: PlatformSecurityContext
+    }
   | { ok: false; status: 403; code: "GEO_BLOCKED" | "MANAGED_DEVICE_REQUIRED"; error: string }
+
+/**
+ * Resolve the platform security context from server-authoritative inputs. The
+ * platform role is the DB source of truth (resolved by the caller via
+ * lib/platform-roles.ts); break-glass status comes only from trusted platform
+ * configuration. No request-controlled value participates.
+ */
+export function resolvePlatformSecurityContext(
+  userId: number,
+  platformRole: string | null | undefined,
+): PlatformSecurityContext {
+  const accountClass = classifyPlatformAccount({
+    platformRole,
+    isBreakGlassPlatformAdmin: isBreakGlassPlatformAdmin(userId, process.env.PLATFORM_BREAK_GLASS_USER_IDS),
+  })
+  return {
+    accountClass,
+    policyLevel: securityPolicyLevelFor(accountClass),
+    exemptFromTenantDevicePolicy: isExemptFromTenantDevicePolicy(accountClass),
+  }
+}
+
+/**
+ * Audit a platform-admin / break-glass exemption from tenant device policy.
+ * Best-effort and dynamically imported so this decision module stays free of a
+ * load-time DB dependency. Break-glass raises a CRITICAL event and notifies
+ * platform security admins via the existing notification infrastructure.
+ */
+async function recordPlatformExemptionAudit(
+  input: SignInProtectionInput,
+  platform: PlatformSecurityContext,
+): Promise<void> {
+  const breakGlass = platform.accountClass === "break_glass_platform_admin"
+  try {
+    const { recordSecurityEvent } = await import("@/lib/security-audit-store")
+    await recordSecurityEvent({
+      tenantId: input.tenantId,
+      category: breakGlass ? "break_glass" : "emergency_bypass",
+      action: breakGlass ? "platform_break_glass_login" : "platform_admin_device_exempt",
+      outcome: "bypassed",
+      actorUserId: input.user.id,
+      actorName: input.user.name,
+      subjectEmail: input.user.email,
+      ipAddress: input.ip,
+      detail: {
+        accountClass: platform.accountClass,
+        policyLevel: platform.policyLevel,
+        exemption: "tenant_managed_device_and_geo",
+        via: breakGlass ? "break_glass_platform_admin" : "platform_super_admin",
+        critical: breakGlass || undefined,
+      },
+    })
+  } catch (err) {
+    console.error("[sign-in-protection] platform exemption audit failed:", err)
+  }
+  if (breakGlass) {
+    try {
+      const { recordActivity } = await import("@/lib/notifications")
+      await recordActivity({
+        action: "update",
+        title: `Break-glass platform access used by ${input.user.name}`,
+        body: `Emergency platform-admin sign-in · ${input.user.email}`,
+        link: "/admin/security/emergency-access",
+        actor: { userId: input.user.id, name: input.user.name, email: input.user.email, role: "admin" },
+      })
+    } catch (err) {
+      console.error("[sign-in-protection] break-glass notify failed:", err)
+    }
+  }
+}
 
 export async function enforceSignInProtection(input: SignInProtectionInput): Promise<SignInProtectionResult> {
   const emergency = await resolveEmergencyAuthorization(input.tenantId, input.user.id, input.platformRole)

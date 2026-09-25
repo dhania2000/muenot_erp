@@ -8,9 +8,22 @@ import { resolveTenantIdForUser } from "@/lib/tenant-service"
 import { getStoredRoles } from "@/lib/platform-roles"
 import { getPublicSettings } from "@/lib/settings/server"
 import { evaluateLogin } from "@/lib/user-lifecycle-core"
-import { consumeMfaChallenge, getLoginSnapshot } from "@/lib/user-lifecycle"
+import { consumeMfaChallenge, consumeBackupCode, getLoginSnapshot } from "@/lib/user-lifecycle"
 import { createSession, newSessionId, isKnownDevice } from "@/lib/session-store"
-import { requiresMfaByPolicy } from "@/lib/mfa-policy"
+import { requiresMfaByPolicy, requiresPhishingResistantMfa } from "@/lib/mfa-policy"
+import { deriveRelyingParty } from "@/lib/webauthn/rp"
+import { verifyAuthentication } from "@/lib/webauthn/core"
+import {
+  issueChallenge as issueWebAuthnChallenge,
+  consumeChallenge as consumeWebAuthnChallenge,
+  listCredentials as listWebAuthnCredentials,
+  findCredential as findWebAuthnCredential,
+  updateCredentialUsage as updateWebAuthnUsage,
+  isLockedOut as isWebAuthnLockedOut,
+  recordAuthFailure as recordWebAuthnFailure,
+  clearAuthFailures as clearWebAuthnFailures,
+  credentialFingerprint,
+} from "@/lib/webauthn-store"
 import { checkLockout, recordFailedLogin, recordSuccessfulLogin } from "@/lib/password-policy"
 import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 import { recordSecurityEvent } from "@/lib/security-audit-store"
@@ -34,7 +47,8 @@ function isDbConfigured() {
 
 export async function POST(request: Request) {
   try {
-    const { email, password, mfaCode } = await request.json()
+    const body = await request.json()
+    const { email, password, mfaCode } = body
 
     if (!email || !password) {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
@@ -224,7 +238,150 @@ export async function POST(request: Request) {
       if (policyRequiresMfa && !snapshot.mfaEnabled) {
         return NextResponse.json({ error: "Your organization requires MFA enrollment before access is granted", code: "MFA_ENROLLMENT_REQUIRED" }, { status: 403 })
       }
-      if (decision.requiresMfa || policyDecision.requireMfa) {
+
+      // Phishing-resistant (WebAuthn) enforcement. When tenant policy requires a
+      // security key for this role, a TOTP code is NOT sufficient: the user must
+      // complete a WebAuthn assertion, or use an audited backup-code recovery to
+      // get back in and re-enrol. This runs BEFORE the generic MFA branch so a
+      // TOTP code can never satisfy a phishing-resistant requirement.
+      const phishingResistantRequired = requiresPhishingResistantMfa({ role: user.role, settings })
+      if (phishingResistantRequired) {
+        const waTenantId = (await resolveTenantIdForUser(user.id)) ?? 0
+        // Per-user WebAuthn lockout stops a cloned-key / replay probe.
+        if (await isWebAuthnLockedOut(waTenantId, user.id)) {
+          await recordSecurityEvent({
+            tenantId: waTenantId,
+            category: "access_policy",
+            action: "webauthn_locked_out",
+            outcome: "blocked",
+            actorUserId: user.id,
+            actorName: user.name,
+            subjectEmail: user.email,
+            ipAddress: requestIp,
+          })
+          return NextResponse.json(
+            { error: "Too many failed security-key attempts. Try again later or use a backup code.", code: "WEBAUTHN_LOCKED" },
+            { status: 423 },
+          )
+        }
+
+        const assertion = (body as any)?.webauthnAssertion
+        const challengeId = (body as any)?.webauthnChallengeId
+        const recoveryCode = (body as any)?.recoveryCode
+
+        // Audited recovery: a one-time backup code (never a TOTP code) lets a
+        // user who lost their authenticator back in to re-enrol.
+        if (recoveryCode) {
+          const recovered = await consumeBackupCode(user.id, String(recoveryCode))
+          if (!recovered) {
+            await recordWebAuthnFailure(waTenantId, user.id, "recovery_invalid")
+            await recordFailedLogin(user.id)
+            return NextResponse.json({ error: "Invalid recovery code", code: "WEBAUTHN_REQUIRED" }, { status: 401 })
+          }
+          await recordSecurityEvent({
+            tenantId: waTenantId,
+            category: "access_policy",
+            action: "webauthn_recovery_backup_code",
+            outcome: "bypassed",
+            actorUserId: user.id,
+            actorName: user.name,
+            subjectEmail: user.email,
+            ipAddress: requestIp,
+          })
+        } else {
+          const credentials = await listWebAuthnCredentials(waTenantId, user.id)
+          if (credentials.length === 0) {
+            // No key enrolled yet: block with a distinct code so the client can
+            // route the user to enrolment (or recovery).
+            return NextResponse.json(
+              { error: "Your organization requires a security key. Enrol one to continue.", code: "WEBAUTHN_ENROLLMENT_REQUIRED" },
+              { status: 403 },
+            )
+          }
+
+          const rp = deriveRelyingParty(request)
+          if (!rp) return NextResponse.json({ error: "Unable to determine relying party origin" }, { status: 400 })
+
+          // First round-trip: issue a challenge bound to (user, tenant, origin,
+          // rpId) and ask the client to sign it. No session is issued.
+          if (!assertion || !challengeId) {
+            const issued = await issueWebAuthnChallenge({
+              tenantId: waTenantId,
+              userId: user.id,
+              purpose: "authenticate",
+              origin: rp.origin,
+              rpId: rp.rpId,
+            })
+            return NextResponse.json(
+              {
+                webauthnRequired: true,
+                challengeId: issued.id,
+                publicKey: {
+                  challenge: issued.challenge,
+                  rpId: rp.rpId,
+                  timeout: 300000,
+                  userVerification: "preferred",
+                  allowCredentials: credentials.map((c) => ({
+                    type: "public-key",
+                    id: c.credentialId,
+                    transports: c.transports,
+                  })),
+                },
+              },
+              { status: 200 },
+            )
+          }
+
+          // Second round-trip: consume the challenge (single-use; rejects
+          // replay), enforce origin binding, then verify the assertion against
+          // the user's stored credential.
+          const consumed = await consumeWebAuthnChallenge({
+            id: String(challengeId),
+            tenantId: waTenantId,
+            userId: user.id,
+            purpose: "authenticate",
+          })
+          if (!consumed || consumed.origin !== rp.origin || consumed.rpId !== rp.rpId) {
+            await recordWebAuthnFailure(waTenantId, user.id, consumed ? "origin_mismatch" : "challenge_invalid")
+            await recordFailedLogin(user.id)
+            return NextResponse.json({ error: "Security-key challenge expired or invalid", code: "WEBAUTHN_REQUIRED" }, { status: 401 })
+          }
+
+          const rawId = typeof assertion?.rawId === "string" ? assertion.rawId : ""
+          const stored = rawId ? await findWebAuthnCredential(waTenantId, user.id, rawId) : null
+          const verified = verifyAuthentication(assertion, { challenge: consumed.challenge, origin: consumed.origin, rpId: consumed.rpId }, stored)
+          if (!verified.ok) {
+            await recordWebAuthnFailure(waTenantId, user.id, verified.failure)
+            await recordFailedLogin(user.id)
+            await recordSecurityEvent({
+              tenantId: waTenantId,
+              category: "access_policy",
+              action: "webauthn_auth_failed",
+              outcome: "blocked",
+              actorUserId: user.id,
+              actorName: user.name,
+              subjectEmail: user.email,
+              ipAddress: requestIp,
+              detail: { failure: verified.failure, credential: rawId ? credentialFingerprint(rawId) : null },
+            })
+            return NextResponse.json({ error: "Security-key verification failed", code: "WEBAUTHN_REQUIRED" }, { status: 401 })
+          }
+
+          await updateWebAuthnUsage(waTenantId, user.id, rawId, verified.newSignCount)
+          await clearWebAuthnFailures(waTenantId, user.id)
+          await recordSecurityEvent({
+            tenantId: waTenantId,
+            category: "access_policy",
+            action: "webauthn_authenticated",
+            outcome: "allowed",
+            actorUserId: user.id,
+            actorName: user.name,
+            subjectEmail: user.email,
+            ipAddress: requestIp,
+            detail: { credential: credentialFingerprint(rawId), userVerified: verified.userVerified },
+          })
+        }
+      } else if (decision.requiresMfa || policyDecision.requireMfa) {
         if (!mfaCode) {
           return NextResponse.json({ mfaRequired: true }, { status: 200 })
         }

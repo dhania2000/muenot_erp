@@ -468,6 +468,24 @@ export const CONFIG_REGISTRY: ConfigDescriptor[] = [
     secret: false,
     default: "0",
   },
+  {
+    key: "security.require_webauthn",
+    label: "Require security key (all users)",
+    description: "Require a phishing-resistant WebAuthn security key / passkey for every user at sign-in.",
+    category: "security",
+    scope: "tenant",
+    secret: false,
+    default: "false",
+  },
+  {
+    key: "security.require_webauthn_admins",
+    label: "Require security key (admins)",
+    description: "Require a phishing-resistant WebAuthn security key / passkey for privileged (admin) roles at sign-in.",
+    category: "security",
+    scope: "tenant",
+    secret: false,
+    default: "false",
+  },
 ]
 
 const BY_KEY = new Map(CONFIG_REGISTRY.map((d) => [d.key, d]))

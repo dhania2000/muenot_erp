@@ -280,7 +280,7 @@ export class SubscriptionError extends Error {
   }
 }
 
-async function recordAudit(input: {
+export async function recordAudit(input: {
   subscriptionId?: string | null
   action: string
   userId?: number | null
@@ -651,21 +651,43 @@ export async function deleteSubscription(subscriptionId: string, session: Sessio
 
 // ── Lifecycle: renew / cancel / suspend / reactivate ──────────────────────────
 
-export async function renewSubscription(
-  subscriptionId: string,
-  input: { new_end_date?: string | null; amount?: number | string; remarks?: string | null },
-  session: SessionPayload,
-) {
+export type RenewalInput = { new_end_date?: string | null; amount?: number | string | null; remarks?: string | null }
+
+const MAX_RENEWAL_AMOUNT = 1_000_000_000
+
+/**
+ * Resolve and validate the terms of a renewal against the current row. Shared
+ * by the renewal-approval request (to freeze the terms an approver sees) and by
+ * the apply step, so the two can never disagree.
+ */
+export function computeRenewalTerms(current: any, input: RenewalInput) {
+  if (current.status === "Cancelled") throw new SubscriptionError("A cancelled subscription cannot be renewed.", 409)
+  if (input.new_end_date && !isValidDate(input.new_end_date)) throw new SubscriptionError("New end date is invalid.")
+  const previousEnd = dateOf(current.end_date)
+  const cycle = current.billing_cycle as BillingCycle
+  const base = previousEnd && previousEnd >= today() ? previousEnd : today()
+  const newEnd = dateOf(input.new_end_date) || (cycle === "One-Time" ? previousEnd : advanceByCycle(base, cycle))
+  if (!newEnd) throw new SubscriptionError("A new end date is required for a one-time subscription.")
+  if (previousEnd && newEnd < previousEnd)
+    throw new SubscriptionError("New end date cannot be earlier than the current end date.")
+  const rawAmount = input.amount === undefined || input.amount === null || input.amount === "" ? current.amount : input.amount
+  const amount = num(rawAmount)
+  if (!Number.isFinite(amount) || amount < 0 || amount > MAX_RENEWAL_AMOUNT)
+    throw new SubscriptionError("Renewal amount must be between 0 and 1,000,000,000.")
+  return { previousEnd, newEnd, amount: Math.round(amount * 100) / 100 }
+}
+
+/**
+ * Apply a renewal. Called by the renewal-approval workflow once a checker has
+ * approved the request — not directly by the API, so a renewal (which commits
+ * company spend) always passes maker-checker review first.
+ */
+export async function renewSubscription(subscriptionId: string, input: RenewalInput, session: SessionPayload) {
   await ensureSubscriptionSchema()
   const current = await loadSubscription(subscriptionId)
   if (!current) throw new SubscriptionError("Subscription not found.", 404)
 
-  const cycle = current.billing_cycle as BillingCycle
-  const base = dateOf(current.end_date) && dateOf(current.end_date)! >= today() ? dateOf(current.end_date)! : today()
-  const newEnd = dateOf(input.new_end_date) || (cycle === "One-Time" ? dateOf(current.end_date) : advanceByCycle(base, cycle))
-  if (input.new_end_date && !isValidDate(input.new_end_date))
-    throw new SubscriptionError("New end date is invalid.")
-  const amount = input.amount !== undefined ? num(input.amount) : num(current.amount)
+  const { newEnd, amount } = computeRenewalTerms(current, input)
 
   await query(
     `UPDATE company_subscriptions SET end_date = ?, amount = ?, status = 'Active', last_reminder_key = NULL WHERE subscription_id = ?`,
@@ -923,7 +945,7 @@ export async function deleteDocument(subscriptionId: string, docId: number, sess
 
 // ── Reads ────────────────────────────────────────────────────────────────────
 
-async function loadSubscription(subscriptionId: string): Promise<any | null> {
+export async function loadSubscription(subscriptionId: string): Promise<any | null> {
   const rows = (await query(`SELECT * FROM company_subscriptions WHERE subscription_id = ? LIMIT 1`, [
     subscriptionId,
   ])) as any[]

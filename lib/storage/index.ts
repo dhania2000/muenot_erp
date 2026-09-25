@@ -20,6 +20,7 @@ import {
 import { recordFileMetadata, getByObjectKey, softDeleteFile, sha256, type FileObject } from "./file-metadata"
 import { enqueueScan, enforceDownloadPolicyForKey } from "./file-scanning"
 import { checkStorageQuota } from "./storage-quota"
+import { meterUsage } from "@/lib/billing/usage-guard"
 import type {
   StorageProvider,
   UploadResult,
@@ -104,6 +105,15 @@ export async function uploadFile(
   const contentType = file.type || "application/octet-stream"
   try {
     const result = await provider.upload(key, data, contentType, { public: opts.public })
+    // Meter billable storage (GB) for this tenant. Idempotent on the object key
+    // so a retried upload of the same key is never double-counted.
+    meterUsage({
+      meterKey: "storage",
+      quantity: (result.size || data.length) / 1_000_000_000,
+      source: opts.metadata?.module ?? "storage",
+      refId: key,
+      idempotencyKey: `storage:${key}`,
+    })
     if (!opts.metadata) return { ok: true, result }
     let recorded: FileObject | undefined
     try {

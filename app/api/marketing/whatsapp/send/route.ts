@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { getWhatsAppIntegration, resolveTenantIntegration, sendWhatsAppText, sendWhatsAppTemplate } from "@/lib/whatsapp"
 import { recordTemplateUsage } from "@/lib/whatsapp-templates"
+import { enforceUsageIfScoped, UsageLimitError } from "@/lib/billing/usage-guard"
 import {
   assignConversation,
   canAccessConversation,
@@ -132,6 +133,21 @@ export async function POST(request: Request) {
   const messageBody = body.message?.trim() || ""
   const templateName = body.templateName?.trim() || "hello_world"
 
+  // Enforce the tenant's WhatsApp quota before spending a message. A hard limit
+  // blocks with 402; a soft limit is allowed but surfaces a warning header.
+  let whatsappLimit
+  try {
+    whatsappLimit = await enforceUsageIfScoped("whatsapp_messages", 1)
+  } catch (err) {
+    if (err instanceof UsageLimitError) {
+      return NextResponse.json(
+        { error: err.message, code: "usage_limit_reached", usage: err.check },
+        { status: 402 },
+      )
+    }
+    throw err
+  }
+
   const result =
     mode === "template"
       ? await sendWhatsAppTemplate({
@@ -179,5 +195,9 @@ export async function POST(request: Request) {
     console.error("[v0] Failed to record outbound WhatsApp message:", (err as Error).message)
   }
 
-  return NextResponse.json({ ok: true, messageId: result.messageId, conversationId })
+  const res = NextResponse.json({ ok: true, messageId: result.messageId, conversationId })
+  if (whatsappLimit && (whatsappLimit.status === "warning" || whatsappLimit.status === "over")) {
+    res.headers.set("X-Usage-Warning", `whatsapp_messages:${whatsappLimit.status}`)
+  }
+  return res
 }

@@ -3,6 +3,7 @@ import { requireFeature } from "@/lib/api-auth"
 import { query } from "@/lib/db"
 import { getCallerId, toE164 } from "@/lib/twilio"
 import { attachLeadEvent } from "@/lib/sales/lead-lifecycle"
+import { meterUsage } from "@/lib/billing/usage-guard"
 
 export const dynamic = "force-dynamic"
 
@@ -60,6 +61,18 @@ export async function POST(request: Request) {
      VALUES (?, ?, ?, ?, ?, 'Outbound', ?, ?, ?, ?, ?)`,
     [leadId, toNumber, toName, getCallerId() || null, twilioCallSid, status, duration, disposition, notes, session.userId],
   )
+
+  // Meter billable voice minutes (rounded up) once the call is logged.
+  // Idempotent on the Twilio call SID (or row id) so a re-log never double-bills.
+  if (duration > 0) {
+    meterUsage({
+      meterKey: "voice_calls",
+      quantity: Math.ceil(duration / 60),
+      source: "sales",
+      refId: twilioCallSid ?? String(result.insertId),
+      idempotencyKey: `call:${twilioCallSid ?? result.insertId}`,
+    })
+  }
 
   if (leadId) {
     await attachLeadEvent({

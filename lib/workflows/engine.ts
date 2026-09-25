@@ -8,6 +8,7 @@ import { fingerprint } from "@/lib/job-idempotency"
 import { enqueueNotification } from "@/lib/notification-engine/service"
 import { sendEmail } from "@/lib/email"
 import { getWhatsAppIntegrationForTenant, sendWhatsAppText } from "@/lib/whatsapp"
+import { meterUsage } from "@/lib/billing/usage-guard"
 
 const parse = (v: unknown) => typeof v === "string" ? JSON.parse(v) : v
 const utcSql = (v: Date) => v.toISOString().slice(0,19).replace("T"," ")
@@ -83,6 +84,10 @@ export async function startWorkflow(tenant: number, actor: number, workflowId: n
     if (!record) throw new Error("Record not found in this tenant")
     const [r] = await c.query<any>("INSERT INTO erp_workflow_runs (tenant_id,workflow_id,snapshot,record_id,request_key,request_hash,requested_by,available_at) VALUES (?,?,?,?,?,?,?,?)",[tenant,workflowId,JSON.stringify(w),recordId,key,hash,actor,utcSql(date)])
     await event(c,{tenant_id:tenant,id:r.insertId,cursor:0},"requested",actor)
+    // Meter one billable automation run per started workflow. Idempotent on the
+    // run id, and recorded under the explicit tenant since the worker/cron entry
+    // points have no bound session scope.
+    meterUsage({ meterKey: "automation_runs", quantity: 1, source: "workflow", refId: String(r.insertId), idempotencyKey: `wf:${r.insertId}`, tenantId: tenant })
     return Number(r.insertId)
   })
 }

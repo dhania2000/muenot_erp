@@ -12,9 +12,13 @@ import "server-only"
  *     scopedWhere so every query carries a tenant_id predicate.
  *   - security_audit_events is read through the security subsystem's own
  *     tenant-aware reader (listSecurityEvents(tenantId, …)).
+ *   - billing_payments / billing_invoices are guard-registered tenant tables →
+ *     read through scopedWhere for EVERY tenant.
  *   - The global ERP finance tables (payments, sales_invoices) carry no
- *     tenant_id by design (see lib/tenant-tables.ts) and are read through the
- *     existing finance helpers; they represent this workspace's finance ledger.
+ *     tenant_id by design (see lib/tenant-tables.ts). They belong to the
+ *     platform-owner workspace only, so they are read ONLY when the current
+ *     tenant is the platform owner. Reading them for any other tenant would
+ *     leak one organization's ledger into another's risk queue.
  *
  * Nothing here decides anything — it only shapes data. All thresholds and
  * verdicts live in the pure model/detector layer.
@@ -110,9 +114,12 @@ export async function collectObservations(opts: CollectOptions): Promise<Collect
   const fromDate = from.toISOString().slice(0, 10)
   const toDate = to.toISOString().slice(0, 10)
 
+  const includeErpLedger =
+    (wants(opts, "payment") || wants(opts, "invoice")) && (await ownsGlobalErpLedger(currentTenantIdOrNull()))
+
   const [payments, invoices, access, usage] = await Promise.all([
-    wants(opts, "payment") ? collectPayments(fromDate, toDate, from, to) : emptyMonetary(),
-    wants(opts, "invoice") ? collectInvoices(fromDate, toDate, from, to) : emptyMonetary(),
+    wants(opts, "payment") ? collectPayments(fromDate, toDate, from, to, includeErpLedger) : emptyMonetary(),
+    wants(opts, "invoice") ? collectInvoices(fromDate, toDate, from, to, includeErpLedger) : emptyMonetary(),
     wants(opts, "access") ? collectAccess(from, to) : Promise.resolve({ series: [] as SeriesPoint[], events: [] as AccessEvent[] }),
     wants(opts, "usage") ? collectUsage(fromDate, toDate, from, to) : Promise.resolve([] as UsageMeterSeries[]),
   ])
@@ -143,28 +150,58 @@ async function collectPayments(
   toDate: string,
   from: Date,
   to: Date,
+  includeErpLedger: boolean,
 ): Promise<{ records: AmountObservation[]; series: SeriesPoint[] }> {
-  try {
-    const rows = await listPayments({ from: fromDate, to: toDate })
-    const active = rows.filter((r) => String(r.status ?? "").toLowerCase() !== "reversed")
-    const records: AmountObservation[] = active.map((r) => ({
-      id: String(r.payment_id ?? r.id),
-      amount: Number(r.amount ?? 0),
-      label: r.payment_id ? `Payment ${r.payment_id}` : null,
-      occurredAt: r.payment_date ? new Date(r.payment_date).toISOString() : null,
-      party: r.party_name ?? null,
-    }))
-    const series = bucketDaily(
-      from,
-      to,
-      active.map((r) => ({ date: r.payment_date ?? null, value: 1 })),
-      "count",
-    )
-    return { records, series }
-  } catch (err) {
-    console.error("[v0] anomaly collectPayments failed:", err)
-    return { records: [], series: [] }
+  const records: AmountObservation[] = []
+  const dates: { date: string | null; value: number }[] = []
+
+  if (includeErpLedger) {
+    try {
+      const rows = await listPayments({ from: fromDate, to: toDate })
+      const active = rows.filter((r) => String(r.status ?? "").toLowerCase() !== "reversed")
+      for (const r of active) {
+        records.push({
+          id: String(r.payment_id ?? r.id),
+          amount: Number(r.amount ?? 0),
+          label: r.payment_id ? `Payment ${r.payment_id}` : null,
+          occurredAt: r.payment_date ? new Date(r.payment_date).toISOString() : null,
+          party: r.party_name ?? null,
+        })
+        dates.push({ date: r.payment_date ?? null, value: 1 })
+      }
+    } catch (err) {
+      console.error("[v0] anomaly collectPayments (ERP ledger) failed:", err)
+    }
   }
+
+  try {
+    const { where, params } = scopedWhere(
+      "billing_payments",
+      "COALESCE(paid_at, created_at) >= ? AND COALESCE(paid_at, created_at) <= ? AND status <> 'failed'",
+      [`${fromDate} 00:00:00`, `${toDate} 23:59:59`],
+    )
+    const rows = (await query(
+      `SELECT id, payment_no, amount, method, COALESCE(paid_at, created_at) AS paid_on
+         FROM \`billing_payments\` ${where}
+        ORDER BY id DESC
+        LIMIT 2000`,
+      params,
+    )) as any[]
+    for (const r of rows) {
+      records.push({
+        id: `billing:${r.payment_no ?? r.id}`,
+        amount: Number(r.amount ?? 0),
+        label: `Billing payment ${r.payment_no ?? r.id}`,
+        occurredAt: r.paid_on ? new Date(r.paid_on).toISOString() : null,
+        party: r.method ? String(r.method) : null,
+      })
+      dates.push({ date: r.paid_on ?? null, value: 1 })
+    }
+  } catch (err) {
+    console.error("[v0] anomaly collectPayments (billing) failed:", err)
+  }
+
+  return { records, series: bucketDaily(from, to, dates, "count") }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +213,49 @@ async function collectInvoices(
   toDate: string,
   from: Date,
   to: Date,
+  includeErpLedger: boolean,
 ): Promise<{ records: AmountObservation[]; series: SeriesPoint[] }> {
+  const erp = includeErpLedger ? await collectErpInvoices(fromDate, toDate) : { records: [], dates: [] }
+  const billing = await collectBillingInvoices(fromDate, toDate)
+  return {
+    records: [...erp.records, ...billing.records],
+    series: bucketDaily(from, to, [...erp.dates, ...billing.dates], "count"),
+  }
+}
+
+type MonetaryRows = { records: AmountObservation[]; dates: { date: string | null; value: number }[] }
+
+async function collectBillingInvoices(fromDate: string, toDate: string): Promise<MonetaryRows> {
+  try {
+    const { where, params } = scopedWhere(
+      "billing_invoices",
+      "issue_date >= ? AND issue_date <= ? AND status NOT IN ('draft', 'void')",
+      [fromDate, toDate],
+    )
+    const rows = (await query(
+      `SELECT id, invoice_no, issue_date, total, customer_name
+         FROM \`billing_invoices\` ${where}
+        ORDER BY issue_date DESC, id DESC
+        LIMIT 2000`,
+      params,
+    )) as any[]
+    return {
+      records: rows.map((r) => ({
+        id: `billing:${r.invoice_no ?? r.id}`,
+        amount: Number(r.total ?? 0),
+        label: `Billing invoice ${r.invoice_no ?? r.id}`,
+        occurredAt: r.issue_date ? new Date(r.issue_date).toISOString() : null,
+        party: r.customer_name || null,
+      })),
+      dates: rows.map((r) => ({ date: r.issue_date ?? null, value: 1 })),
+    }
+  } catch (err) {
+    console.error("[v0] anomaly collectInvoices (billing) failed:", err)
+    return { records: [], dates: [] }
+  }
+}
+
+async function collectErpInvoices(fromDate: string, toDate: string): Promise<MonetaryRows> {
   try {
     const rows = (await query(
       `SELECT invoice_id, invoice_date, net_receivable, invoice_status, invoice_type, party_name
@@ -194,17 +273,27 @@ async function collectInvoices(
       occurredAt: r.invoice_date ? new Date(r.invoice_date).toISOString() : null,
       party: r.party_name ?? null,
     }))
-    const series = bucketDaily(
-      from,
-      to,
-      rows.map((r) => ({ date: r.invoice_date ?? null, value: 1 })),
-      "count",
-    )
-    return { records, series }
+    return { records, dates: rows.map((r) => ({ date: r.invoice_date ?? null, value: 1 })) }
   } catch (err) {
     // sales_invoices may not exist on a fresh install — treat as no data.
-    console.error("[v0] anomaly collectInvoices failed:", err)
-    return { records: [], series: [] }
+    console.error("[v0] anomaly collectInvoices (ERP ledger) failed:", err)
+    return { records: [], dates: [] }
+  }
+}
+
+/**
+ * True only for the platform-owner tenant, which is the sole owner of the
+ * global (tenant_id-less) ERP finance ledger. Fails closed: any error, a null
+ * tenant, or a missing flag means the ledger is NOT read.
+ */
+export async function ownsGlobalErpLedger(tenantId: number | null): Promise<boolean> {
+  if (tenantId == null) return false
+  try {
+    const rows = (await query("SELECT is_platform_owner FROM `tenants` WHERE id = ? LIMIT 1", [tenantId])) as any[]
+    return Number(rows[0]?.is_platform_owner ?? 0) === 1
+  } catch (err) {
+    console.error("[v0] anomaly ownsGlobalErpLedger check failed:", err)
+    return false
   }
 }
 

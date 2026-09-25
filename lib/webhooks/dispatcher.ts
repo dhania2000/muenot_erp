@@ -16,7 +16,6 @@ import "server-only"
  * app/api/cron/webhooks-retry sweeps those on a schedule, and the admin UI
  * also exposes a manual "Retry" action per delivery.
  */
-import crypto from "crypto"
 import {
   createDelivery,
   getDeliveryEndpoint,
@@ -27,13 +26,10 @@ import {
   updateDeliveryResult,
   type WebhookDeliveryRow,
 } from "@/lib/webhooks-store"
+import { signWebhook } from "@/lib/webhooks/signature"
 
 const BACKOFF_MINUTES = [1, 5, 30, 120, 360]
 const DELIVERY_TIMEOUT_MS = 8000
-
-function sign(secret: string, timestamp: string, body: string): string {
-  return crypto.createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex")
-}
 
 async function sendDelivery(delivery: WebhookDeliveryRow): Promise<void> {
   const endpoint = await getDeliveryEndpoint(delivery.endpoint_id)
@@ -43,7 +39,7 @@ async function sendDelivery(delivery: WebhookDeliveryRow): Promise<void> {
   }
   const secret = resolveEndpointSecret(endpoint) ?? ""
   const timestamp = String(Math.floor(Date.now() / 1000))
-  const signature = sign(secret, timestamp, delivery.payload)
+  const signature = signWebhook(secret, timestamp, delivery.payload)
   const attempts = delivery.attempts + 1
 
   try {

@@ -71,6 +71,17 @@ export async function requireTenant() {
  * check failed.
  */
 import { findKeyByPlaintext, touchKeyUsage, type ApiKeyEnvironment } from "@/lib/api-keys-store"
+import { looksLikeOAuthToken, verifyOAuthAccessToken } from "@/lib/oauth/oauth-apps-store"
+
+/**
+ * OAuth access tokens share the `/api/v1` auth pipeline with API keys, so they
+ * are mapped onto the same `ApiKeyAuth` shape. Their synthetic `keyId` is
+ * offset into a disjoint numeric range so it can never collide with a real
+ * `api_keys.id` for per-principal rate-limit buckets or idempotency records
+ * (both of which key off `keyId`). The presence of `auth.oauth` is how the
+ * handler tells the two principal kinds apart.
+ */
+export const OAUTH_KEY_ID_OFFSET = 2_000_000_000
 
 export type ApiKeyAuth = {
   keyId: number
@@ -79,6 +90,8 @@ export type ApiKeyAuth = {
   scopes: string[]
   environment: ApiKeyEnvironment
   ipRestrictions: string
+  /** Present only when the principal is an OAuth access token, not an API key. */
+  oauth?: { tokenId: number; appId: number }
 }
 
 /**
@@ -95,7 +108,33 @@ export async function authenticateApiKeyResult(request: Request): Promise<ApiKey
   const header = request.headers.get("authorization") || ""
   const match = /^Bearer\s+(.+)$/i.exec(header)
   if (!match) return { ok: false, reason: "missing" }
-  const row = await findKeyByPlaintext(match[1].trim())
+  const presented = match[1].trim()
+
+  // OAuth access tokens ride the same pipeline as API keys but resolve through
+  // the OAuth store. Detect them by shape so a single Bearer scheme serves both.
+  if (looksLikeOAuthToken(presented)) {
+    const result = await verifyOAuthAccessToken(presented)
+    if (!result.ok) {
+      // Collapse app-level revocation into the caller-visible "revoked" reason.
+      const reason = result.reason === "app_revoked" ? "revoked" : result.reason
+      return { ok: false, reason }
+    }
+    const t = result.token
+    return {
+      ok: true,
+      auth: {
+        keyId: OAUTH_KEY_ID_OFFSET + t.tokenId,
+        tenantId: t.tenantId,
+        name: t.appName,
+        scopes: t.scopes,
+        environment: "live",
+        ipRestrictions: "",
+        oauth: { tokenId: t.tokenId, appId: t.appId },
+      },
+    }
+  }
+
+  const row = await findKeyByPlaintext(presented)
   if (!row) return { ok: false, reason: "unknown" }
   if (row.status !== "active") return { ok: false, reason: "revoked", keyId: row.id, tenantId: row.tenant_id }
   if (row.expires_at && new Date(row.expires_at).getTime() < Date.now())

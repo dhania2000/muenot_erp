@@ -99,6 +99,11 @@ export function isKnownSource(providerKey: string, entityKind: string): boolean 
   return BY_KEY.has(`${providerKey}:${entityKind}`)
 }
 
+/** The reviewed source catalogue as plain options for the settings UI/API. */
+export function listSyncSources(): Array<{ providerKey: string; entityKind: string; label: string; masterKind: MasterKind }> {
+  return SYNC_SOURCES.map((s) => ({ providerKey: s.providerKey, entityKind: s.entityKind, label: s.label, masterKind: s.masterKind }))
+}
+
 // ---------------------------------------------------------------------------
 // Live fetcher resolution
 // ---------------------------------------------------------------------------

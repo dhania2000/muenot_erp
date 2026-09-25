@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/partner-settlement",
       "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/cron/customer-success",
+      "schedule": "15 3 * * *"
     }
   ]
 }

@@ -417,6 +417,7 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   { label: "Legal entities", href: "/modules/finance/legal-entities" },
   { label: "Employee Links", href: "/admin/employee-links" },
   { label: "Job monitoring", href: "/admin/job-monitoring" },
+  { label: "Customer health", href: "/admin/customer-success" },
   // Moved out of the Finance module — tenant-wide financial configuration that
   // belongs under Administration alongside fiscal/legal-entity settings.
   { label: "Multi-Currency", href: "/modules/finance/multi-currency" },

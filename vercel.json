@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/dispatcher",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/support-sla",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { jwtVerify } from "jose"
+import { maintenanceGate, type GateSubject } from "@/lib/maintenance/edge-gate"
+import { isMaintenanceExemptPath } from "@/lib/maintenance/model"
 
 const SESSION_COOKIE = "ems_session"
 const PORTAL_SESSION_COOKIE = "ems_portal_session"
@@ -28,14 +30,35 @@ function getVendorPortalSecretKey() {
   return new TextEncoder().encode(`${process.env.SESSION_SECRET || ""}:vendor-portal`)
 }
 
+type EdgeSession = {
+  userId: number
+  role: "admin" | "employee"
+  tenantId?: number
+  activeTenantId?: number | null
+  impersonatedTenantId?: number | null
+  platformRole?: string
+  tenantRole?: string
+}
+
 async function getSessionFromRequest(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE)?.value
   if (!token) return null
   try {
     const { payload } = await jwtVerify(token, getSecretKey())
-    return payload as { userId: number; role: "admin" | "employee" }
+    return payload as EdgeSession
   } catch {
     return null
+  }
+}
+
+// Spec28 — the tenant used for maintenance scoping mirrors getSession(): an
+// entered tenant (impersonation) or switched org wins over the home tenant.
+function maintenanceSubject(s: EdgeSession): GateSubject {
+  const tenantId = s.impersonatedTenantId ?? s.activeTenantId ?? s.tenantId ?? null
+  return {
+    tenantId,
+    cacheKey: `u:${s.userId}|t:${tenantId ?? ""}`,
+    hint: { platformRole: s.platformRole ?? null, tenantRole: s.tenantRole ?? null },
   }
 }
 
@@ -87,6 +110,13 @@ export async function middleware(request: NextRequest) {
       if (pathname !== "/portal") loginUrl.searchParams.set("redirect", pathname)
       return NextResponse.redirect(loginUrl)
     }
+    // External portal users never bypass platform/tenant maintenance.
+    const portalBlocked = await maintenanceGate(
+      request,
+      { tenantId: Number(portalSession.tenantId) || null, cacheKey: `p:${portalSession.portalUserId}`, hint: null },
+      requestId,
+    )
+    if (portalBlocked) return portalBlocked
     const headers = new Headers(request.headers)
     headers.set("x-request-id", requestId)
     headers.set("x-pathname", pathname)
@@ -114,6 +144,12 @@ export async function middleware(request: NextRequest) {
       if (pathname !== "/vendor-portal") loginUrl.searchParams.set("redirect", pathname)
       return NextResponse.redirect(loginUrl)
     }
+    const vendorBlocked = await maintenanceGate(
+      request,
+      { tenantId: Number(vendorSession.tenantId) || null, cacheKey: `v:${vendorSession.portalUserId}`, hint: null },
+      requestId,
+    )
+    if (vendorBlocked) return vendorBlocked
     const headers = new Headers(request.headers)
     headers.set("x-request-id", requestId)
     headers.set("x-pathname", pathname)
@@ -123,7 +159,17 @@ export async function middleware(request: NextRequest) {
   }
 
   const protectedPath = pathname.startsWith("/dashboard") || pathname.startsWith("/admin") || pathname.startsWith("/modules") || pathname.startsWith("/api/admin") || pathname.startsWith("/api/modules")
-  if (!protectedPath || PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next") || pathname.startsWith("/api/auth")) {
+  const publicLike = PUBLIC_PATHS.some((p) => pathname === p) || pathname.startsWith("/_next") || pathname.startsWith("/api/auth")
+  if (!protectedPath || publicLike) {
+    // Spec28 — signed-in callers of other APIs (e.g. /api/hr, /api/tenant) are
+    // still subject to maintenance; anonymous/API-key traffic is untouched here.
+    if (!publicLike && !isMaintenanceExemptPath(pathname) && request.cookies.has(SESSION_COOKIE)) {
+      const s = await getSessionFromRequest(request)
+      if (s) {
+        const blocked = await maintenanceGate(request, maintenanceSubject(s), requestId)
+        if (blocked) return blocked
+      }
+    }
     const headers = new Headers(request.headers)
     headers.set("x-request-id", requestId)
     const response = NextResponse.next({ request: { headers } })
@@ -145,6 +191,9 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith("/admin") && session.role !== "admin") {
     return NextResponse.redirect(new URL("/dashboard", request.url))
   }
+
+  const maintenanceBlocked = await maintenanceGate(request, maintenanceSubject(session), requestId)
+  if (maintenanceBlocked) return maintenanceBlocked
 
   // Forward the subdomain as a PRE-AUTH HINT only (e.g. acme.muenot.app -> "acme").
   // Server code must still derive the authoritative tenant from the verified

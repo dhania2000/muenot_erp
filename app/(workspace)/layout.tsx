@@ -7,6 +7,7 @@ import { SettingsProvider } from "@/components/providers/settings-provider"
 import { SettingsBranding } from "@/components/providers/settings-branding"
 import { AppShell } from "@/components/app-shell"
 import { ImpersonationBanner } from "@/components/platform/impersonation-banner"
+import { MaintenanceBanner } from "@/components/maintenance/maintenance-banner"
 import { EmergencyAccessBanner } from "@/components/security/emergency-access-banner"
 import { buildWorkspaceNav } from "@/lib/workspace-nav"
 import { buildWorkspaceCommands } from "@/lib/workspace-commands"
@@ -31,6 +32,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <CallProvider currentUserId={session.userId} permissions={callPerms}>
         <AppShell navItems={navItems} quickCommands={quickCommands} user={session} brandName={settings["company.name"]} logoUrl={settings["company.logo"]}>
           <ImpersonationBanner />
+          <MaintenanceBanner />
           {children}
         </AppShell>
       </CallProvider>

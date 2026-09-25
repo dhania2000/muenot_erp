@@ -59,6 +59,110 @@ export function isEmergencyPath(pathname: string): boolean {
   return EMERGENCY_PATH_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
 }
 
+/**
+ * Additional paths a BLOCKED user must still reach: the maintenance screen and
+ * its lookup, the customer support desk (customers must be able to report
+ * problems while their workspace is down) and system crons (secret-guarded).
+ */
+export const MAINTENANCE_EXEMPT_PREFIXES = [
+  "/maintenance",
+  "/api/maintenance",
+  "/status",
+  "/api/status",
+  "/support",
+  "/api/tenant/support-tickets",
+  "/api/cron",
+  "/_next",
+] as const
+
+export function isMaintenanceExemptPath(pathname: string): boolean {
+  return (
+    isEmergencyPath(pathname) ||
+    MAINTENANCE_EXEMPT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  )
+}
+
+/** Human labels for the plan module catalog (kept in sync with lib/platform/entitlements.ts). */
+export const MAINTENANCE_MODULES = [
+  { key: "crm", label: "CRM & Sales" },
+  { key: "hr", label: "HR & People" },
+  { key: "finance", label: "Finance & Accounting" },
+  { key: "inventory", label: "Inventory & Supply" },
+  { key: "projects", label: "Projects & Jobs" },
+  { key: "billing", label: "Billing & Subscriptions" },
+  { key: "reports", label: "Reporting & Analytics" },
+  { key: "automation", label: "Automation & Workflows" },
+  { key: "ai", label: "AI Assistant" },
+  { key: "integrations", label: "Integrations" },
+] as const
+
+/** Route segment → catalog module key. Unmapped segments are their own key. */
+const SEGMENT_MODULE: Record<string, string> = {
+  sales: "crm",
+  clients: "crm",
+  contacts: "crm",
+  organization: "crm",
+  hr: "hr",
+  recruitment: "hr",
+  recruit: "hr",
+  finance: "finance",
+  products: "inventory",
+  storage: "inventory",
+  orders: "inventory",
+  assets: "inventory",
+  tasks: "projects",
+  operations: "projects",
+  management: "projects",
+  billing: "billing",
+  reports: "reports",
+  automation: "automation",
+  workflows: "automation",
+  ai: "ai",
+  integrations: "integrations",
+}
+
+/** Which module a page (`/modules/x/...`) or API (`/api/x/...`, `/api/modules/x/...`) path belongs to. */
+export function moduleKeyForPath(pathname: string): string | null {
+  const m = /^\/(?:api\/modules|api|modules)\/([a-z0-9_-]+)/.exec(pathname.toLowerCase())
+  if (!m) return null
+  const seg = m[1]
+  return SEGMENT_MODULE[seg] ?? (MODULE_KEY_RE.test(seg) ? seg : null)
+}
+
+export function moduleLabel(key: string | null): string {
+  return MAINTENANCE_MODULES.find((m) => m.key === key)?.label ?? key ?? "module"
+}
+
+export type BypassHint = { platformRole?: string | null; tenantRole?: string | null }
+
+export type GateDecision =
+  | { action: "allow" }
+  | { action: "block"; window: MaintenanceWindow }
+  /** The token CLAIMS a role that could bypass; the server must re-verify from the DB. */
+  | { action: "verify"; window: MaintenanceWindow }
+
+/**
+ * Edge-safe first-pass decision for the request gate. The token hints are only
+ * used to decide whether an authoritative (DB-backed) bypass check is worth
+ * making — they can never grant a bypass by themselves.
+ */
+export function gateDecision(
+  windows: MaintenanceWindow[],
+  target: MaintenanceTarget,
+  hint: BypassHint | null,
+  now: Date = new Date(),
+): GateDecision {
+  const { active } = resolveMaintenance(windows, target, now)
+  if (!active) return { action: "allow" }
+  if (!hint) return { action: "block", window: active }
+  const claimed: BypassActor = {
+    platformRole: (hint.platformRole as BypassActor["platformRole"]) ?? "none",
+    tenantRole: (hint.tenantRole as BypassActor["tenantRole"]) ?? "employee",
+    tenantId: target.tenantId,
+  }
+  return canBypassMaintenance(active, claimed) ? { action: "verify", window: active } : { action: "block", window: active }
+}
+
 function ts(value: string | null): number {
   if (!value) return Number.NaN
   // DB rows come back as "YYYY-MM-DD HH:MM:SS" (UTC); treat them as UTC.
@@ -153,7 +257,7 @@ export function userMessage(w: MaintenanceWindow): string {
       ? "Muenot is undergoing scheduled maintenance."
       : w.scope === "tenant"
         ? "Your workspace is undergoing maintenance."
-        : `The ${w.moduleKey} module is undergoing maintenance.`
+        : `${moduleLabel(w.moduleKey)} is undergoing maintenance.`
   return w.message ? `${who} ${w.message}` : who
 }
 

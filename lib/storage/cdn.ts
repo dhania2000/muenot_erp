@@ -164,6 +164,41 @@ export function isRangeable(kind: MediaKind): boolean {
   return kind === "video" || kind === "audio"
 }
 
+/**
+ * Resolve the final delivery URL for an object, honouring the tenant's
+ * provider-specific CDN origin — WITHOUT ever routing a private session through
+ * a shared cache.
+ *
+ * The rule the ERP relies on for private monitoring/training media:
+ *   - `public`  objects MAY be served from the connection's CDN/public base URL
+ *     (`publicBaseUrl`) so a shared CDN edge can cache them; when no origin is
+ *     configured we fall back to the app's own proxy path.
+ *   - `signed` / `session` deliveries are per-tenant and time-boxed. They MUST
+ *     be served from the signed URL as-is (the app proxy or a native presigned
+ *     URL). We never rewrite them onto the public CDN origin, so a private video
+ *     session can never land in a publicly-shared cache.
+ *
+ * Pure and dependency-free; the caller decides `access` from how the request was
+ * authorized. Returns `signedOrProxyUrl` unchanged for anything private.
+ */
+export function cdnOriginUrl(opts: {
+  access: DeliveryAccess
+  /** Tenant-namespaced object key (no leading slash). */
+  key: string
+  /** The signed proxy URL or native presigned URL already minted for the object. */
+  signedOrProxyUrl: string
+  /** The connection's configured CDN/public base URL, if any. */
+  publicBaseUrl?: string | null
+}): string {
+  const { access, key, signedOrProxyUrl, publicBaseUrl } = opts
+  // Private deliveries are never rewritten onto a shared CDN origin.
+  if (access !== "public") return signedOrProxyUrl
+  const base = (publicBaseUrl || "").trim().replace(/\/+$/, "")
+  if (!base) return signedOrProxyUrl
+  const cleanKey = key.replace(/^\/+/, "")
+  return `${base}/${cleanKey}`
+}
+
 /** Derive a human filename from a storage key (last path segment). */
 export function filenameFromKey(key: string): string {
   const seg = key.split("?")[0].split("/").filter(Boolean).pop() || "download"

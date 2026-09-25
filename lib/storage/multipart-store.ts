@@ -132,6 +132,10 @@ export async function createSession(input: {
   partSize: number
   totalParts: number
   category: UploadCategory
+  /** Logical ERP module the finished object belongs to (drives the metadata row). */
+  module?: string | null
+  /** Client-declared SHA-256 (lowercase hex) of the whole file, for integrity. */
+  checksum?: string | null
   userId?: number | null
 }): Promise<number> {
   await ensureUploadSchema()
@@ -146,9 +150,18 @@ export async function createSession(input: {
     total_parts: input.totalParts,
     status: "active",
     category: input.category,
+    module: input.module ?? null,
+    checksum: normalizeChecksum(input.checksum),
     created_by: input.userId ?? null,
   })
   return insertId
+}
+
+/** Accept only a well-formed lowercase 64-hex SHA-256; anything else is dropped. */
+export function normalizeChecksum(value: string | null | undefined): string | null {
+  if (!value) return null
+  const v = value.trim().toLowerCase()
+  return /^[0-9a-f]{64}$/.test(v) ? v : null
 }
 
 export async function getSession(id: number): Promise<UploadSessionRow | null> {
@@ -235,6 +248,8 @@ async function toStatus(row: UploadSessionRow): Promise<UploadSessionStatus> {
     totalParts: Number(row.total_parts),
     status: row.status,
     category: row.category,
+    module: row.module ?? null,
+    checksum: row.checksum ?? null,
     uploadedParts: parts.map((p) => p.partNumber),
     uploadedBytes,
     createdAt: row.created_at,

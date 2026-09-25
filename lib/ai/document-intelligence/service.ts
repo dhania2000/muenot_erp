@@ -17,7 +17,7 @@ import { getFileById } from "@/lib/storage/file-metadata"
 import { downloadFile } from "@/lib/storage"
 import { getScanForFile } from "@/lib/storage/file-scanning"
 import { registerModuleDocument } from "@/lib/dms/integration"
-import { redactText } from "@/lib/ai/safety-core"
+import { redactString } from "@/lib/ai/safety-core"
 import {
   canQueueForProcessing,
   canPost,
@@ -135,7 +135,7 @@ export async function processExtraction(input: {
   try {
     const rawText = await readDocumentText(extraction.fileId)
     // Data minimization: redact obvious secrets/PII from the text we process.
-    const safeText = redactText(rawText).text
+    const safeText = redactString(rawText)
 
     const provider = getDocExtractionProvider()
     const result = await provider.extract({

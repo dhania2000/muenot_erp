@@ -332,6 +332,13 @@ export const TENANT_OWNED_TABLES = [
   "api_sandbox_sessions",
   "api_sandbox_records",
   "api_idempotency_keys",
+  // SPEC 19 (#74) — AI Document Intelligence. Per-tenant document extraction
+  // jobs, immutable per-version snapshots and an append-only audit trail. Each
+  // extraction is derived from a tenant-owned file_objects row and must never be
+  // visible to, processed by, reviewed or posted from another tenant.
+  "ai_document_extractions",
+  "ai_document_extraction_versions",
+  "ai_document_extraction_audit",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

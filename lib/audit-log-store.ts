@@ -71,6 +71,10 @@ export const AUDIT_ACTIONS = {
   accessPolicyCreate: "access_policy.create",
   accessPolicyUpdate: "access_policy.update",
   accessPolicyDelete: "access_policy.delete",
+  geoPolicyUpdate: "geo_policy.update",
+  managedDevicePolicyUpdate: "managed_device_policy.update",
+  managedDeviceEnroll: "managed_device.enroll",
+  managedDeviceRevoke: "managed_device.revoke",
   temporaryAccessGrant: "temporary_access.grant",
   temporaryAccessRevoke: "temporary_access.revoke",
   // Credentials

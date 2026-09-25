@@ -99,13 +99,30 @@ async function runEnsure(): Promise<void> {
       \`last_seen_at\` DATETIME DEFAULT NULL,
       \`revoked_by\` INT UNSIGNED DEFAULT NULL,
       \`revoked_at\` DATETIME DEFAULT NULL,
+      \`idempotency_key\` VARCHAR(100) DEFAULT NULL,
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
       UNIQUE KEY \`uq_mde_tenant_device\` (\`tenant_id\`, \`device_id\`),
+      UNIQUE KEY \`uq_mde_tenant_idem\` (\`tenant_id\`, \`idempotency_key\`),
       KEY \`idx_mde_tenant_user\` (\`tenant_id\`, \`user_id\`),
       KEY \`idx_mde_tenant_status\` (\`tenant_id\`, \`status\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+  // Upgrade tables created before the idempotency column existed.
+  await ignoreDuplicateDdl(`ALTER TABLE \`managed_device_enrollments\` ADD COLUMN \`idempotency_key\` VARCHAR(100) DEFAULT NULL`)
+  await ignoreDuplicateDdl(
+    `ALTER TABLE \`managed_device_enrollments\` ADD UNIQUE KEY \`uq_mde_tenant_idem\` (\`tenant_id\`, \`idempotency_key\`)`,
+  )
+}
+
+async function ignoreDuplicateDdl(sql: string): Promise<void> {
+  try {
+    await query(sql)
+  } catch (err) {
+    const code = (err as { errno?: number; code?: string }).errno
+    // 1060 duplicate column, 1061 duplicate key name — already applied.
+    if (code !== 1060 && code !== 1061) throw err
+  }
 }
 
 export function ensureManagedDeviceSchema(): Promise<void> {
@@ -211,22 +228,41 @@ export type EnrollResult = { device: ManagedDevice; assertion: string; expiresIn
 export async function enrollManagedDevice(
   tenantId: number | null,
   actor: { userId: number; name?: string | null },
-  input: { userId?: number; label?: unknown; ttlSeconds?: number },
-): Promise<EnrollResult> {
+  input: { userId?: number; label?: unknown; ttlSeconds?: number; idempotencyKey?: string | null },
+): Promise<EnrollResult & { replayed: boolean }> {
   if (tenantId == null) throw new Error("A tenant context is required to enroll a managed device")
   await ensureManagedDeviceSchema()
   const targetUserId = Number.isInteger(input.userId) ? Number(input.userId) : actor.userId
   const label = typeof input.label === "string" && input.label.trim() ? input.label.trim().slice(0, 190) : "Managed device"
-  const deviceId = newDeviceId()
+  const ttlSeconds = input.ttlSeconds && input.ttlSeconds > 0 ? input.ttlSeconds : DEFAULT_ASSERTION_TTL_SECONDS
+  const idempotencyKey = input.idempotencyKey?.trim().slice(0, 100) || null
 
+  // Idempotent replay: the same key within this tenant returns the SAME device
+  // (a fresh assertion for it) instead of enrolling a duplicate.
+  if (idempotencyKey) {
+    const existing = await query<DeviceRow[]>(
+      `SELECT * FROM \`managed_device_enrollments\` WHERE tenant_id = ? AND idempotency_key = ? LIMIT 1`,
+      [tenantId, idempotencyKey],
+    )
+    if (existing.length > 0) {
+      const row = existing[0]
+      if (row.user_id !== targetUserId) throw new Error("Idempotency key was already used for a different user")
+      if (row.status === "revoked") throw new Error("This enrollment was revoked; use a new idempotency key")
+      const assertion = issueAssertion(
+        { deviceId: row.device_id, tenantId, userId: row.user_id, ttlSeconds },
+        signingSecret(),
+      )
+      return { device: toDevice(row), assertion, expiresInSeconds: ttlSeconds, replayed: true }
+    }
+  }
+
+  const deviceId = newDeviceId()
   const res = await query<{ insertId: number }>(
-    `INSERT INTO \`managed_device_enrollments\` (tenant_id, user_id, device_id, label, status, created_by)
-     VALUES (?, ?, ?, ?, 'active', ?)`,
-    [tenantId, targetUserId, deviceId, label, actor.userId],
+    `INSERT INTO \`managed_device_enrollments\` (tenant_id, user_id, device_id, label, status, created_by, idempotency_key)
+     VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+    [tenantId, targetUserId, deviceId, label, actor.userId, idempotencyKey],
   )
   const id = (res as any).insertId as number
-
-  const ttlSeconds = input.ttlSeconds && input.ttlSeconds > 0 ? input.ttlSeconds : DEFAULT_ASSERTION_TTL_SECONDS
   const assertion = issueAssertion({ deviceId, tenantId, userId: targetUserId, ttlSeconds }, signingSecret())
 
   await recordSecurityEvent({
@@ -240,7 +276,7 @@ export async function enrollManagedDevice(
   })
 
   const rows = await query<DeviceRow[]>(`SELECT * FROM \`managed_device_enrollments\` WHERE id = ? LIMIT 1`, [id])
-  return { device: toDevice(rows[0]), assertion, expiresInSeconds: ttlSeconds }
+  return { device: toDevice(rows[0]), assertion, expiresInSeconds: ttlSeconds, replayed: false }
 }
 
 /**
@@ -340,6 +376,8 @@ export async function enforceManagedDevice(
     assertion?: unknown
     ip?: string | null
     emergencyAuthorized?: boolean
+    emergencyVia?: string | null
+    emergencyGrantId?: number | null
   },
 ): Promise<ManagedDeviceEnforcementResult> {
   const policy = await getManagedDevicePolicy(tenantId)
@@ -364,7 +402,12 @@ export async function enforceManagedDevice(
       actorName: params.userName ?? null,
       subjectEmail: params.userEmail ?? null,
       ipAddress: params.ip ?? null,
-      detail: { reason: decision.reason, deviceId },
+      detail: {
+        reason: decision.reason,
+        deviceId,
+        via: params.emergencyVia ?? null,
+        grantId: params.emergencyGrantId ?? null,
+      },
     })
     return { denied: false, decision, bypassed: true, deviceId }
   }

@@ -11,6 +11,7 @@ import { Bell, ChevronDown, Clock3, FileText, Loader2, LogOut, MapPin, MessageSq
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
 import { NotesPanel } from "@/components/notes-panel"
+import { HelpCenterButton } from "@/components/help/help-center-button"
 import { CommandPalette, type QuickCommand } from "@/components/shared/command-palette"
 import { ScreenMonitorProvider, useScreenMonitor } from "@/components/hr/screen-monitor-provider"
 import { AttendanceIdleTracker, clearAttendanceIdleTracking, flushAttendanceIdleBeforeClockOut } from "@/components/hr/attendance-idle-tracker"
@@ -744,6 +745,7 @@ export function AppShell({
             <Button variant="ghost" size="icon-sm" aria-label="Messages" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => router.push("/modules/messages")}><MessageSquare className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="Notes and daily tasks" className="text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={() => setNotesOpen(true)}><StickyNote className="size-5" /></Button>
 <NotificationsBell />
+            <HelpCenterButton pathname={pathname} isAdmin={user.role === "admin"} />
             <LanguageWidget />
             <Button variant="ghost" size="icon-sm" className={cn("text-muted-foreground hover:bg-primary/10 hover:text-primary", onSettings && "bg-primary/10 text-primary")} onClick={() => { if (onSettings) { router.push(preSettingsPathRef.current || "/dashboard") } else { router.push("/admin/settings") } }} aria-label={onSettings ? "Close settings" : "Settings"} aria-pressed={onSettings}><Settings className="size-5" /></Button>
             <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={handleLogout} aria-label="Sign out"><LogOut className="size-4" /></Button>

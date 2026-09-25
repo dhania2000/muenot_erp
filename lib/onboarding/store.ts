@@ -19,7 +19,7 @@ import "server-only"
 import { query } from "@/lib/db"
 import { recordAuditLog, type AuditContext } from "@/lib/audit-log-store"
 import {
-  CHECKLIST_STEPS,
+  applicableStepsFor,
   computeChecklist,
   parseOverrides,
   type ChecklistStepKey,
@@ -62,17 +62,39 @@ async function safeCount(sql: string, params: any[]): Promise<number> {
   }
 }
 
+const EMAIL_INTEGRATIONS = ["smtp", "email", "resend", "sendgrid", "ses"]
+const STORAGE_INTEGRATIONS = ["s3", "storage", "blob", "gcs", "azure-blob"]
+const inList = (xs: string[]) => xs.map(() => "?").join(",")
+
 /**
- * Live per-step completion signals for a tenant. company/email/storage read the
- * install-wide Company Settings key/value store; users and modules are scoped
- * to the tenant via an explicit predicate.
+ * Live per-step completion signals for ONE tenant. Every source is filtered by
+ * `tenant_id = ?`, so one tenant's configuration can never complete another
+ * tenant's checklist:
+ *  - company  → tenant_settings `company.*` overrides
+ *  - email    → tenant_integration_secrets (SMTP-like) or `email.*` overrides
+ *  - storage  → tenant_integration_secrets (S3-like) or `storage.*` overrides
+ *  - users    → more than one active user in the tenant
+ *  - modules  → explicit `module.*` choices or per-user module grants
  */
 export async function collectSignals(tenantId: number): Promise<Record<ChecklistStepKey, boolean>> {
-  const [company, email, storage, users, modules] = await Promise.all([
-    safeCount("SELECT COUNT(*) AS c FROM company_settings WHERE skey = 'company.name' AND svalue IS NOT NULL AND svalue <> ''", []),
-    safeCount("SELECT COUNT(*) AS c FROM company_settings WHERE skey LIKE 'email.%' AND svalue IS NOT NULL AND svalue <> '' AND svalue NOT IN ('disabled','0','false')", []),
-    safeCount("SELECT COUNT(*) AS c FROM company_settings WHERE skey = 'storage.provider' AND svalue IS NOT NULL AND svalue <> ''", []),
+  const setting = (prefix: string) =>
+    safeCount(
+      "SELECT COUNT(*) AS c FROM tenant_settings WHERE tenant_id = ? AND skey LIKE ? AND svalue IS NOT NULL AND svalue <> ''",
+      [tenantId, `${prefix}.%`],
+    )
+  const secret = (keys: string[]) =>
+    safeCount(
+      `SELECT COUNT(*) AS c FROM tenant_integration_secrets WHERE tenant_id = ? AND integration_key IN (${inList(keys)})`,
+      [tenantId, ...keys],
+    )
+  const [company, emailSecret, emailSetting, storageSecret, storageSetting, users, moduleSetting, moduleGrants] = await Promise.all([
+    setting("company"),
+    secret(EMAIL_INTEGRATIONS),
+    setting("email"),
+    secret(STORAGE_INTEGRATIONS),
+    setting("storage"),
     safeCount("SELECT COUNT(*) AS c FROM users WHERE tenant_id = ? AND status = 'active'", [tenantId]),
+    setting("module"),
     safeCount(
       "SELECT COUNT(*) AS c FROM user_module_permissions ump JOIN users u ON u.id = ump.user_id WHERE u.tenant_id = ?",
       [tenantId],
@@ -80,21 +102,17 @@ export async function collectSignals(tenantId: number): Promise<Record<Checklist
   ])
   return {
     company: company > 0,
-    email: email > 0,
-    storage: storage > 0,
+    email: emailSecret + emailSetting > 0,
+    storage: storageSecret + storageSetting > 0,
     users: users > 1,
-    modules: modules > 0,
+    modules: moduleSetting + moduleGrants > 0,
   }
 }
 
-/**
- * Which steps apply to this tenant. The modules step is dropped when the
- * install has no modules to configure, so it never inflates the denominator or
- * shows a step the tenant cannot act on (hidden-module case).
- */
+/** Steps applicable to this install/tenant (see `applicableStepsFor`). */
 export async function applicableSteps(): Promise<ChecklistStepKey[]> {
-  const moduleCount = await safeCount("SELECT COUNT(*) AS c FROM modules", [])
-  return CHECKLIST_STEPS.filter((k) => (k === "modules" ? moduleCount > 0 : true))
+  const availableModules = await safeCount("SELECT COUNT(*) AS c FROM modules", [])
+  return applicableStepsFor({ availableModules })
 }
 
 type Row = { dismissed: number; overrides: unknown }

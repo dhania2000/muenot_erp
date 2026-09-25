@@ -73,12 +73,27 @@ export const STEP_META: Record<ChecklistStepKey, StepMeta> = {
 }
 
 /**
- * Which steps apply to a tenant. The modules step is dropped when the tenant
- * has no module it can switch on (every module hidden by plan/platform), so it
- * never inflates the denominator with a step the tenant cannot act on.
+ * Which steps apply to a tenant. The modules step is dropped when every module
+ * is hidden for the tenant, so it never inflates the denominator with a step
+ * the tenant cannot act on.
  */
-export function applicableStepsFor(input: { availableModules: number }): ChecklistStepKey[] {
-  return CHECKLIST_STEPS.filter((k) => (k === "modules" ? input.availableModules > 0 : true))
+export function applicableStepsFor(input: { enabledModules: number }): ChecklistStepKey[] {
+  return CHECKLIST_STEPS.filter((k) => (k === "modules" ? input.enabledModules > 0 : true))
+}
+
+const TOGGLE_ON = new Set(["1", "true", "yes", "on", "enabled"])
+
+/**
+ * Count modules visible to a tenant. Mirrors the settings semantics: a module
+ * is on unless a `module.<slug>` toggle exists and is not truthy. `toggles`
+ * is the merged global + tenant map (tenant values win), keys lowercased.
+ */
+export function countEnabledModules(slugs: readonly string[], toggles: Record<string, string>): number {
+  return slugs.filter((slug) => {
+    const key = `module.${slug.trim().toLowerCase()}`
+    if (!Object.prototype.hasOwnProperty.call(toggles, key)) return true
+    return TOGGLE_ON.has(String(toggles[key]).trim().toLowerCase())
+  }).length
 }
 
 export function isChecklistStep(v: unknown): v is ChecklistStepKey {

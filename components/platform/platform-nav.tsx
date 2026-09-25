@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
-  LayoutDashboard, Building2, CreditCard, Gauge, Activity, ShieldAlert, Flag, Plug, Settings2, Users, Rocket, Package, SlidersHorizontal, KeyRound, MessageCircle, Archive, LifeBuoy, Database, Zap, Clock3, Cpu, ListChecks, BellRing, Store, Smartphone, FlaskConical, Handshake,
+  LayoutDashboard, Building2, CreditCard, Gauge, Activity, ShieldAlert, Flag, Plug, Settings2, Users, Rocket, Package, SlidersHorizontal, KeyRound, MessageCircle, Archive, LifeBuoy, Database, Zap, Clock3, Cpu, ListChecks, BellRing, Store, Smartphone, FlaskConical, Handshake, Megaphone,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -21,6 +21,7 @@ const NAV: NavItem[] = [
   { href: "/platform/subscriptions", label: "Subscriptions & billing", icon: CreditCard, group: "Operate" },
   { href: "/platform/usage", label: "Usage & storage", icon: Gauge, group: "Operate" },
   { href: "/platform/customer-success", label: "Customer success", icon: Activity, group: "Operate" },
+  { href: "/platform/product-updates", label: "Release notes", icon: Megaphone, group: "Operate" },
   { href: "/platform/health", label: "Health & jobs", icon: Activity, group: "Observe" },
   { href: "/platform/system-monitoring", label: "System Monitoring", icon: ShieldAlert, group: "Observe" },
   { href: "/platform/cron-jobs", label: "Scheduled jobs", icon: Clock3, group: "Observe" },

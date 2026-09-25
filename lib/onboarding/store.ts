@@ -21,6 +21,7 @@ import { recordAuditLog, type AuditContext } from "@/lib/audit-log-store"
 import {
   applicableStepsFor,
   computeChecklist,
+  countEnabledModules,
   parseOverrides,
   type ChecklistStepKey,
   type ComputedChecklist,
@@ -109,10 +110,31 @@ export async function collectSignals(tenantId: number): Promise<Record<Checklist
   }
 }
 
-/** Steps applicable to this install/tenant (see `applicableStepsFor`). */
-export async function applicableSteps(): Promise<ChecklistStepKey[]> {
-  const availableModules = await safeCount("SELECT COUNT(*) AS c FROM modules", [])
-  return applicableStepsFor({ availableModules })
+async function safeRows(sql: string, params: any[]): Promise<any[]> {
+  try {
+    const rows = await query<any[]>(sql, params)
+    return Array.isArray(rows) ? rows : []
+  } catch (err) {
+    if (isMissingTable(err)) return []
+    throw err
+  }
+}
+
+/**
+ * Steps applicable to ONE tenant. Module visibility is resolved from the global
+ * `module.*` defaults overlaid with this tenant's own overrides, so a module a
+ * tenant has hidden never counts toward its modules step.
+ */
+export async function applicableSteps(tenantId: number): Promise<ChecklistStepKey[]> {
+  const [modules, globalToggles, tenantToggles] = await Promise.all([
+    safeRows("SELECT slug FROM modules", []),
+    safeRows("SELECT skey, svalue FROM company_settings WHERE skey LIKE 'module.%'", []),
+    safeRows("SELECT skey, svalue FROM tenant_settings WHERE tenant_id = ? AND skey LIKE 'module.%'", [tenantId]),
+  ])
+  const toggles: Record<string, string> = {}
+  for (const r of [...globalToggles, ...tenantToggles]) toggles[String(r.skey).toLowerCase()] = String(r.svalue ?? "")
+  const slugs = modules.map((r) => String(r.slug ?? "")).filter(Boolean)
+  return applicableStepsFor({ enabledModules: countEnabledModules(slugs, toggles) })
 }
 
 type Row = { dismissed: number; overrides: unknown }
@@ -124,7 +146,7 @@ async function loadRow(tenantId: number): Promise<Row | undefined> {
 /** Full recalculated checklist for a tenant. */
 export async function getChecklist(tenantId: number): Promise<ComputedChecklist> {
   await ensureOnboardingSchema()
-  const [row, signals, applicable] = await Promise.all([loadRow(tenantId), collectSignals(tenantId), applicableSteps()])
+  const [row, signals, applicable] = await Promise.all([loadRow(tenantId), collectSignals(tenantId), applicableSteps(tenantId)])
   return computeChecklist({
     signals,
     overrides: parseOverrides(row?.overrides ?? null),
@@ -166,7 +188,7 @@ export async function setStepState(
   else overrides[step] = state
 
   // Recompute against live signals to decide completion timestamp.
-  const [signals, applicable] = await Promise.all([collectSignals(tenantId), applicableSteps()])
+  const [signals, applicable] = await Promise.all([collectSignals(tenantId), applicableSteps(tenantId)])
   const checklist = computeChecklist({ signals, overrides, dismissed, applicable })
   await persist(tenantId, overrides, dismissed, userId, checklist.complete)
   await recordAuditLog(
@@ -195,7 +217,7 @@ export async function setDismissed(
   const overrides = parseOverrides(row?.overrides ?? null)
   const prev = Boolean(num(row?.dismissed))
   if (prev === dismissed) return { changed: false, checklist: await getChecklist(tenantId) }
-  const [signals, applicable] = await Promise.all([collectSignals(tenantId), applicableSteps()])
+  const [signals, applicable] = await Promise.all([collectSignals(tenantId), applicableSteps(tenantId)])
   const checklist = computeChecklist({ signals, overrides, dismissed, applicable })
   await persist(tenantId, overrides, dismissed, userId, checklist.complete)
   await recordAuditLog(

@@ -124,6 +124,9 @@ export const TENANT_OWNED_TABLES = [
   //. These replace the legacy global company_settings writes while
   // keeping the legacy table available as an inherited platform baseline.
   "tenant_settings",
+  // Spec32 — per-tenant onboarding state and per-user release-note read state.
+  "onboarding_checklist",
+  "product_update_reads",
   "tenant_settings_audit",
   // SPEC 27 — production sandbox & configuration change approval. Enterprise
   // tenants get a separate sandbox environment/connection set, a sanitized

@@ -122,6 +122,18 @@ export function validateUpdateInput(raw: unknown): UpdateInput {
   return { version, title: title.slice(0, MAX_TITLE), body, category, audienceType, audienceConfig }
 }
 
+const IDEMPOTENCY_RE = /^[A-Za-z0-9_\-:.]{8,80}$/
+
+/** Validate an optional `Idempotency-Key` header. Absent → null; malformed → 400. */
+export function normalizeIdempotencyKey(raw: string | null | undefined): string | null {
+  if (raw == null || raw.trim() === "") return null
+  const key = raw.trim()
+  if (!IDEMPOTENCY_RE.test(key)) {
+    throw new ProductUpdateError("Idempotency-Key must be 8-80 chars: letters, digits, _ - : .", "INVALID_IDEMPOTENCY_KEY")
+  }
+  return key
+}
+
 export type Viewer = {
   tenantId: number | null
   role: string

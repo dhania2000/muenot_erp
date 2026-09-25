@@ -53,9 +53,11 @@ async function runEnsure(): Promise<void> {
     \`published_at\` DATETIME DEFAULT NULL,
     \`created_by\` INT UNSIGNED DEFAULT NULL,
     \`created_by_name\` VARCHAR(160) DEFAULT NULL,
+    \`idempotency_key\` VARCHAR(80) DEFAULT NULL,
     \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (\`id\`),
+    UNIQUE KEY \`uq_pu_idempotency\` (\`idempotency_key\`),
     KEY \`idx_pu_status_pub\` (\`status\`, \`published_at\`),
     KEY \`idx_pu_version\` (\`version\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
@@ -64,9 +66,38 @@ async function runEnsure(): Promise<void> {
     \`tenant_id\` INT UNSIGNED NOT NULL,
     \`user_id\` INT UNSIGNED NOT NULL,
     \`read_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (\`update_id\`, \`user_id\`),
-    KEY \`idx_pur_user\` (\`tenant_id\`, \`user_id\`)
+    PRIMARY KEY (\`tenant_id\`, \`update_id\`, \`user_id\`),
+    KEY \`idx_pur_update\` (\`update_id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  await healLegacySchema()
+}
+
+/**
+ * Upgrade tables created by the first Spec32 cut: add the idempotency column
+ * and re-key read state by tenant so the same user id in another tenant (or a
+ * user whose tenant changes) never inherits read state.
+ */
+async function healLegacySchema(): Promise<void> {
+  const hasKey = num(
+    first(
+      await query<any[]>(
+        "SELECT COUNT(*) AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'product_updates' AND column_name = 'idempotency_key'",
+        [],
+      ),
+    )?.c,
+  )
+  if (!hasKey) {
+    await query("ALTER TABLE `product_updates` ADD COLUMN `idempotency_key` VARCHAR(80) DEFAULT NULL, ADD UNIQUE KEY `uq_pu_idempotency` (`idempotency_key`)")
+  }
+  const pk = first(
+    await query<any[]>(
+      "SELECT column_name AS col FROM information_schema.key_column_usage WHERE table_schema = DATABASE() AND table_name = 'product_update_reads' AND constraint_name = 'PRIMARY' ORDER BY ordinal_position LIMIT 1",
+      [],
+    ),
+  )
+  if (pk && String(pk.col).toLowerCase() !== "tenant_id") {
+    await query("ALTER TABLE `product_update_reads` DROP PRIMARY KEY, ADD PRIMARY KEY (`tenant_id`, `update_id`, `user_id`)")
+  }
 }
 
 export type ProductUpdate = {
@@ -111,17 +142,50 @@ async function getById(id: number): Promise<ProductUpdate | null> {
 // ---------------------------------------------------------------------------
 // Authoring (platform operators only — enforced by the route)
 // ---------------------------------------------------------------------------
+async function findByIdempotencyKey(key: string): Promise<ProductUpdate | null> {
+  const row = first(await query<any[]>("SELECT * FROM product_updates WHERE idempotency_key = ?", [key]))
+  return row ? toUpdate(row) : null
+}
+
+/** A retried create must describe the same note; otherwise the key was reused by mistake. */
+function assertSameRequest(existing: ProductUpdate, input: UpdateInput): ProductUpdate {
+  if (existing.version !== input.version || existing.title !== input.title) {
+    throw new ProductUpdateError("Idempotency-Key was already used for a different update", "IDEMPOTENCY_CONFLICT", 409)
+  }
+  return existing
+}
+
+/**
+ * Create a draft. With an idempotency key a retried request returns the
+ * original row (`replayed: true`) instead of creating a duplicate; the unique
+ * index closes the race between two concurrent retries.
+ */
 export async function createUpdate(
   actor: { userId: number; name: string },
   input: UpdateInput,
   auditCtx?: AuditContext,
-): Promise<ProductUpdate> {
+  opts: { idempotencyKey?: string | null } = {},
+): Promise<{ update: ProductUpdate; replayed: boolean }> {
   await ensureProductUpdatesSchema()
-  const res: any = await query(
-    `INSERT INTO product_updates (version, title, body, category, audience_type, audience_config, status, created_by, created_by_name)
-     VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
-    [input.version, input.title, input.body, input.category, input.audienceType, JSON.stringify(input.audienceConfig), actor.userId, actor.name],
-  )
+  const key = opts.idempotencyKey ?? null
+  if (key) {
+    const existing = await findByIdempotencyKey(key)
+    if (existing) return { update: assertSameRequest(existing, input), replayed: true }
+  }
+  let res: any
+  try {
+    res = await query(
+      `INSERT INTO product_updates (version, title, body, category, audience_type, audience_config, status, created_by, created_by_name, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+      [input.version, input.title, input.body, input.category, input.audienceType, JSON.stringify(input.audienceConfig), actor.userId, actor.name, key],
+    )
+  } catch (err) {
+    if (key && (err as { code?: string })?.code === "ER_DUP_ENTRY") {
+      const existing = await findByIdempotencyKey(key)
+      if (existing) return { update: assertSameRequest(existing, input), replayed: true }
+    }
+    throw err
+  }
   const id = num(res?.insertId)
   await recordAuditLog(
     { action: "product_update.created", entityType: "product_update", entityId: String(id), entityLabel: input.title, metadata: { version: input.version, audienceType: input.audienceType } },
@@ -129,7 +193,7 @@ export async function createUpdate(
   )
   const created = await getById(id)
   if (!created) throw new ProductUpdateError("Failed to create update", "CREATE_FAILED", 500)
-  return created
+  return { update: created, replayed: false }
 }
 
 export async function updateUpdate(
@@ -182,8 +246,9 @@ export async function deleteUpdate(id: number, auditCtx?: AuditContext): Promise
   const existing = await getById(id)
   if (!existing) return false
   if (existing.status === "published") throw new ProductUpdateError("Archive a published update instead of deleting it", "PUBLISHED_LOCKED", 409)
+  // Read rows are tenant-owned, so a platform delete does not reach across
+  // tenants to purge them. Ids are never reused, so orphaned reads are inert.
   await query("DELETE FROM product_updates WHERE id = ?", [id])
-  await query("DELETE FROM product_update_reads WHERE update_id = ?", [id])
   await recordAuditLog({ action: "product_update.deleted", entityType: "product_update", entityId: String(id), entityLabel: existing.title }, auditCtx)
   return true
 }
@@ -217,11 +282,11 @@ export async function listForViewer(viewer: Viewer, userId: number): Promise<{ u
   const rows = await query<any[]>(
     `SELECT p.*, r.user_id AS read_user
        FROM product_updates p
-       LEFT JOIN product_update_reads r ON r.update_id = p.id AND r.user_id = ?
+       LEFT JOIN product_update_reads r ON r.update_id = p.id AND r.tenant_id = ? AND r.user_id = ?
       WHERE p.status = 'published'
       ORDER BY COALESCE(p.published_at, p.created_at) DESC, p.id DESC
       LIMIT 200`,
-    [userId],
+    [viewer.tenantId ?? 0, userId],
   )
   const updates: ViewerUpdate[] = []
   let unread = 0

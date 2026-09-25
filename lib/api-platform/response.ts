@@ -22,7 +22,7 @@ export const API_VERSION = DEFAULT_API_VERSION
 export const SUPPORTED_VERSIONS = SUPPORTED_API_VERSIONS
 
 /** Trace fields stamped onto error envelopes for correlation with logs. */
-export type ErrorTrace = { tenantId?: number | null; actorId?: string | null }
+export type ErrorTrace = { tenantId?: number | null; actorId?: string | null; traceId?: string | null }
 
 export type PageMeta = {
   page: number
@@ -69,6 +69,7 @@ export function jsonError(
   // enough to locate the exact server-side audit record.
   if (opts.trace?.tenantId != null) error.tenant_id = opts.trace.tenantId
   if (opts.trace?.actorId != null) error.actor_id = opts.trace.actorId
+  if (opts.trace?.traceId != null) error.trace_id = opts.trace.traceId
   return NextResponse.json(
     { error },
     { status: opts.status, headers: baseHeaders(opts.requestId, opts.headers) },

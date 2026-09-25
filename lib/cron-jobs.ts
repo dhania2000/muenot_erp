@@ -9,6 +9,7 @@ import "server-only"
  */
 import { query, withTransaction } from "@/lib/db"
 import { assertTimeZone, normalizeTimeZone } from "@/lib/timezone"
+import { parseCronPart, validateCronExpression } from "@/lib/cron-expression"
 
 export type CronJobDefinition = {
   key: string
@@ -93,6 +94,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["business_events", "Business event deliveries", "/api/cron/business-events", "* * * * *"],
   ["notification_delivery", "Notification delivery worker", "/api/cron/notification-delivery", "* * * * *"],
   ["temporary_access", "Temporary & break-glass access scheduler", "/api/cron/temporary-access", "* * * * *"],
+  ["tenant_scheduled_jobs", "Tenant scheduled jobs dispatcher", "/api/cron/tenant-scheduled-jobs", "* * * * *"],
 ].map(([key, name, endpoint, expression]) => ({
   key,
   name,
@@ -107,31 +109,8 @@ export function getCronJobDefinition(key: string): CronJobDefinition | null {
   return definitions.get(key) ?? null
 }
 
-function parsePart(part: string, min: number, max: number): number[] | null {
-  const [base, stepRaw] = part.split("/")
-  const step = stepRaw == null ? 1 : Number(stepRaw)
-  if (!Number.isInteger(step) || step < 1) return null
-  if (base === "*") return Array.from({ length: Math.floor((max - min) / step) + 1 }, (_, i) => min + i * step)
-  const range = base.split("-")
-  const start = Number(range[0])
-  const end = range.length === 2 ? Number(range[1]) : start
-  if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) return null
-  const out: number[] = []
-  for (let value = start; value <= end; value += step) out.push(value)
-  return out
-}
-
-export function validateCronExpression(expression: string): { ok: true } | { ok: false; error: string } {
-  const fields = expression.trim().split(/\s+/)
-  if (fields.length !== 5) return { ok: false, error: "Cron expression must contain exactly 5 fields" }
-  const ranges = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 6]]
-  for (let i = 0; i < fields.length; i++) {
-    if (!fields[i] || fields[i].split(",").some((part) => parsePart(part, ranges[i][0], ranges[i][1]) == null)) {
-      return { ok: false, error: `Invalid cron field ${i + 1}` }
-    }
-  }
-  return { ok: true }
-}
+const parsePart = parseCronPart
+export { validateCronExpression }
 
 function fieldMatches(field: string, value: number, min: number, max: number): boolean {
   return field.split(",").some((part) => parsePart(part, min, max)?.includes(value))

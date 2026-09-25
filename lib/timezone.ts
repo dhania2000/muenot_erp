@@ -111,19 +111,28 @@ export type ZonedParts = {
  * Positive means ahead of UTC (Asia/Kolkata => +330). DST-aware because it is
  * evaluated at a specific instant, not for the zone in the abstract.
  */
+const wallFormatterCache = new Map<string, Intl.DateTimeFormat>()
+function wallFormatter(tz: string): Intl.DateTimeFormat {
+  let dtf = wallFormatterCache.get(tz)
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+    wallFormatterCache.set(tz, dtf)
+  }
+  return dtf
+}
+
 export function getOffsetMinutes(instant: Date, zone: string): number {
   const tz = normalizeTimeZone(zone)
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  })
-  const parts = dtf.formatToParts(instant)
+  const parts = wallFormatter(tz).formatToParts(instant)
   const get = (t: string) => Number(parts.find((p) => p.type === t)?.value)
   let hour = get("hour")
   if (hour === 24) hour = 0 // some engines emit "24" at midnight
@@ -206,16 +215,7 @@ export function wallStringToUtc(wall: string, zone: string): Date | null {
 /** The wall-clock parts an instant reads as in `zone`. Read-side primitive. */
 export function utcToZonedParts(instant: Date, zone: string): ZonedParts {
   const tz = normalizeTimeZone(zone)
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(instant)
+  const parts = wallFormatter(tz).formatToParts(instant)
   const get = (t: string) => Number(parts.find((p) => p.type === t)?.value)
   let hour = get("hour")
   if (hour === 24) hour = 0

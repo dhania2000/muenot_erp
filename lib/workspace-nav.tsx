@@ -420,6 +420,7 @@ export const ADMINISTRATION_CHILDREN: NavChild[] = [
   // belongs under Administration alongside fiscal/legal-entity settings.
   { label: "Multi-Currency", href: "/modules/finance/multi-currency" },
   { label: "Fiscal Year", href: "/modules/finance/fiscal-year" },
+  { label: "Integration secrets", href: "/admin/integration-secrets" },
   { label: "Settings", href: "/admin/settings" },
 ]
 

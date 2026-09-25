@@ -294,6 +294,17 @@ export const TENANT_OWNED_TABLES = [
   // never visible to another tenant.
   "currency_exchange_rates",
   "currency_fx_gain_loss",
+  // SPEC 9 — External Secrets Vault providers. A tenant's OWN integration
+  // credentials (Stripe/SMTP/Twilio/…) scoped SEPARATELY from platform secrets:
+  // the per-integration health/vault row, the append-only encrypted version
+  // history (external-vault handle or DB ciphertext), the access audit trail,
+  // and the write idempotency ledger. Every row belongs to exactly one tenant
+  // and a credential must never be visible to, resolved by, or rotated from
+  // another tenant.
+  "tenant_integration_secrets",
+  "tenant_integration_secret_versions",
+  "tenant_integration_secret_audit",
+  "tenant_integration_secret_idempotency",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

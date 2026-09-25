@@ -118,19 +118,77 @@ export function buildInvoiceJournal(inv: InvoiceLike, opts: { deferred?: boolean
   return b.build()
 }
 
+export type InvoiceReversalInput = {
+  /** Gross (tax-inclusive) amount being reversed, as a positive number. */
+  gross: number
+  /** GST portion of `gross`, positive. */
+  tax: number
+  /** Net revenue portion still sitting in Deferred Revenue (unrecognized). */
+  fromDeferred: number
+  /** Account credit applied on the original invoice that is being restored. */
+  creditApplied?: number
+}
+
+/**
+ * Reversal of (part of) an invoice — used by credit notes and voids. Cr AR for
+ * the gross; Dr GST Output for the tax; the net revenue is reversed out of
+ * Deferred Revenue first (for months not yet recognized) and out of Revenue for
+ * the rest. Restored account credit moves Dr AR / Cr Customer Credit.
+ */
+export function buildInvoiceReversalJournal(input: InvoiceReversalInput): JournalLine[] {
+  const gross = round2(Math.abs(input.gross))
+  const tax = round2(Math.min(Math.abs(input.tax), gross))
+  const net = round2(gross - tax)
+  const fromDeferred = round2(Math.min(Math.max(0, input.fromDeferred), net))
+  const fromRevenue = round2(net - fromDeferred)
+  const creditApplied = round2(Math.max(0, input.creditApplied ?? 0))
+  const b = new JournalBuilder()
+  b.debit(PLATFORM_ACCOUNTS.DEFERRED, fromDeferred)
+  b.debit(PLATFORM_ACCOUNTS.REVENUE, fromRevenue)
+  b.debit(PLATFORM_ACCOUNTS.GST_OUTPUT, tax)
+  b.credit(PLATFORM_ACCOUNTS.AR, gross)
+  if (creditApplied > 0) {
+    b.debit(PLATFORM_ACCOUNTS.AR, creditApplied)
+    b.credit(PLATFORM_ACCOUNTS.CUSTOMER_CREDIT, creditApplied)
+  }
+  return b.build()
+}
+
+/**
+ * A credit-note balance converted into spendable account credit: the amount the
+ * platform owes the customer moves from AR (a credit balance) into the Customer
+ * Credit liability. No P&L effect — the credit note already reversed revenue.
+ */
+export function buildArToCreditJournal(amount: number): JournalLine[] {
+  return new JournalBuilder()
+    .debit(PLATFORM_ACCOUNTS.AR, amount)
+    .credit(PLATFORM_ACCOUNTS.CUSTOMER_CREDIT, amount)
+    .build()
+}
+
 /** Payment received: Dr Cash / Cr Accounts Receivable. */
 export function buildPaymentJournal(amount: number): JournalLine[] {
   return new JournalBuilder().debit(PLATFORM_ACCOUNTS.CASH, amount).credit(PLATFORM_ACCOUNTS.AR, amount).build()
 }
 
 /**
- * Refund: Dr Refunds & Sales Returns (contra revenue). Credit Cash for a money
- * refund, or Customer Credit when the refund is issued as store credit.
+ * Refund. The part that pays out a credit note's balance (`arSettled`) clears
+ * the AR credit the credit note created (Dr AR) — revenue and GST were already
+ * reversed by the credit note, so debiting Refunds too would double count. Any
+ * remainder is a goodwill refund: Dr Refunds & Sales Returns (contra revenue).
+ * Credit Cash for a money refund, or Customer Credit when issued as credit.
  */
-export function buildRefundJournal(amount: number, opts: { asCredit?: boolean } = {}): JournalLine[] {
-  const b = new JournalBuilder().debit(PLATFORM_ACCOUNTS.REFUNDS, amount)
-  if (opts.asCredit) b.credit(PLATFORM_ACCOUNTS.CUSTOMER_CREDIT, amount)
-  else b.credit(PLATFORM_ACCOUNTS.CASH, amount)
+export function buildRefundJournal(
+  amount: number,
+  opts: { asCredit?: boolean; arSettled?: number } = {},
+): JournalLine[] {
+  const total = round2(Math.abs(amount))
+  const arSettled = round2(Math.min(Math.max(0, opts.arSettled ?? 0), total))
+  const b = new JournalBuilder()
+    .debit(PLATFORM_ACCOUNTS.AR, arSettled)
+    .debit(PLATFORM_ACCOUNTS.REFUNDS, round2(total - arSettled))
+  if (opts.asCredit) b.credit(PLATFORM_ACCOUNTS.CUSTOMER_CREDIT, total)
+  else b.credit(PLATFORM_ACCOUNTS.CASH, total)
   return b.build()
 }
 
@@ -196,7 +254,7 @@ export function ensurePlatformLedgerSchema(): Promise<void> {
   return schemaReady
 }
 
-// ── Posting (idempotent, tenant-scoped) ─────────────────────────────────────
+// ── Posting (idempotent, tenant-scoped) ─────────────────���───────────────────
 
 export type PostJournalInput = {
   sourceType: SourceType
@@ -312,6 +370,23 @@ export async function getPlatformTrialBalance(): Promise<{
   const td = round2(accounts.reduce((s, a) => s + a.debit, 0))
   const tc = round2(accounts.reduce((s, a) => s + a.credit, 0))
   return { accounts, totalDebit: td, totalCredit: tc, balanced: td === tc }
+}
+
+/** Whether a journal was already posted for this source (any of the events). */
+export async function hasJournal(
+  sourceType: SourceType,
+  sourceId: string | number,
+  eventTypes: string[],
+): Promise<boolean> {
+  if (eventTypes.length === 0) return false
+  await ensurePlatformLedgerSchema()
+  const rows = await tenantSelect<any[]>("platform_journal", {
+    columns: "id",
+    where: `source_type = ? AND source_id = ? AND event_type IN (${eventTypes.map(() => "?").join(", ")})`,
+    params: [sourceType, String(sourceId), ...eventTypes],
+    tail: "LIMIT 1",
+  })
+  return rows.length > 0
 }
 
 /** Recent journal headers for the tenant's platform ledger. */

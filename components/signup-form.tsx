@@ -11,7 +11,7 @@ import { Loader2 } from "lucide-react"
 
 type FieldErrors = Partial<Record<"companyName" | "adminName" | "email" | "mobile" | "password", string>>
 
-export function SignupForm() {
+export function SignupForm({ partnerCode = null }: { partnerCode?: string | null }) {
   const router = useRouter()
   const [companyName, setCompanyName] = useState("")
   const [adminName, setAdminName] = useState("")
@@ -38,7 +38,7 @@ export function SignupForm() {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyName, adminName, email, mobile, password }),
+        body: JSON.stringify({ companyName, adminName, email, mobile, password, partnerCode }),
       })
       const data = await res.json()
 

@@ -112,6 +112,29 @@ export function assertStatusTransition(from: PartnerStatus, to: PartnerStatus): 
   if (from === "terminated") throw new PartnerError("A terminated partner cannot be reactivated", "PARTNER_TERMINATED", 409)
 }
 
+// ---------------------------------------------------------------------------
+// Referral codes (signup attribution)
+// ---------------------------------------------------------------------------
+
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+export const REFERRAL_CODE_LENGTH = 10
+
+/** Unambiguous (no 0/O/1/I) random code a partner shares with prospects. */
+export function generateReferralCode(): string {
+  const bytes = new Uint8Array(REFERRAL_CODE_LENGTH)
+  globalThis.crypto.getRandomValues(bytes)
+  let out = ""
+  for (const b of bytes) out += CODE_ALPHABET[b % CODE_ALPHABET.length]
+  return out
+}
+
+/** Normalize user-supplied codes; anything malformed is treated as "no code". */
+export function normalizeReferralCode(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const code = raw.trim().toUpperCase()
+  return /^[A-Z0-9]{6,16}$/.test(code) ? code : null
+}
+
 export function positiveId(v: unknown): number | null {
   const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v
   return typeof n === "number" && Number.isInteger(n) && n > 0 ? n : null
@@ -293,6 +316,7 @@ export type DashboardReferral = {
   customerName: string
   ownership: Ownership
   status: ReferralStatus
+  source: "platform" | "signup"
   attributedAt: string | null
   endedAt: string | null
 }
@@ -313,7 +337,8 @@ export function toDashboardReferral(r: any): DashboardReferral {
     id: Number(r.id),
     customerName: String(r.tenant_name ?? ""),
     ownership: r.ownership === "partner" ? "partner" : "platform",
-    status: r.status,
+    status: r.status === "cancelled" || r.status === "transferred" ? r.status : "active",
+    source: r.source === "signup" ? "signup" : "platform",
     attributedAt: dayOf(r.attributed_at),
     endedAt: dayOf(r.ended_at),
   }

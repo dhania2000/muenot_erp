@@ -3,6 +3,7 @@ import Link from "next/link"
 import { SignupForm } from "@/components/signup-form"
 import { LanguageWidget } from "@/components/providers/language-widget"
 import { getPublicSettings } from "@/lib/settings/server"
+import { normalizeReferralCode } from "@/lib/partners/model"
 import { Users2, TrendingUp, Wallet, UserPlus, Settings2 } from "lucide-react"
 
 const modules = [
@@ -13,8 +14,14 @@ const modules = [
   { name: "Operations", icon: Settings2 },
 ]
 
-export default async function SignupPage() {
+export default async function SignupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
   const settings = await getPublicSettings()
+  const ref = (await searchParams).ref
+  const partnerCode = normalizeReferralCode(Array.isArray(ref) ? ref[0] : ref)
 
   const brandName = settings["company.name"] || "Muenot"
   const logo = settings["company.login_logo"] || settings["company.logo"] || ""
@@ -88,7 +95,7 @@ export default async function SignupPage() {
             </p>
           </div>
 
-          <SignupForm />
+          <SignupForm partnerCode={partnerCode} />
 
           <p className="mt-8 text-center text-xs text-muted-foreground">
             Looking to join an existing company?{" "}

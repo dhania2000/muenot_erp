@@ -166,8 +166,9 @@ export async function requestRenewal(
   await recordAudit({
     subscriptionId,
     action: "Renewal Requested",
-    remarks: `Request ${requestId}: renew to ${terms.newEnd} for ${terms.amount}${remarks ? ` — ${remarks}` : ""}`,
-    session,
+    userId: session.userId,
+    userName: session.name ?? null,
+    reason: `Request ${requestId}: renew to ${terms.newEnd} for ${terms.amount}${remarks ? ` — ${remarks}` : ""}`,
   })
   return { request: await loadRequest(requestId), replayed: false }
 }
@@ -252,8 +253,9 @@ async function closeRequest(req: any, status: "Rejected" | "Cancelled", session:
   await recordAudit({
     subscriptionId: req.subscription_id,
     action: `Renewal ${status}`,
-    remarks: `Request ${req.request_id}${note ? ` — ${note}` : ""}`,
-    session,
+    userId: session.userId,
+    userName: session.name ?? null,
+    reason: `Request ${req.request_id}${note ? ` — ${note}` : ""}`,
   })
   return { request: await loadRequest(req.request_id), replayed: false }
 }
@@ -296,8 +298,9 @@ async function postApprovedRenewal(req: any, session: SessionPayload, payment: A
     await recordAudit({
       subscriptionId: req.subscription_id,
       action: "Renewal Posted",
-      remarks: `Request ${requestId} → expense ${expense.expenseId}${paymentId ? `, payment ${paymentId}` : ""}`,
-      session,
+      userId: session.userId,
+      userName: session.name ?? null,
+      reason: `Request ${requestId} → expense ${expense.expenseId}${paymentId ? `, payment ${paymentId}` : ""}`,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Finance posting failed"

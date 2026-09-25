@@ -948,6 +948,25 @@ export async function consumeMfaChallenge(userId: number, code: string): Promise
   return Number(res?.affectedRows ?? 0) > 0
 }
 
+/**
+ * Consume a one-time backup code ONLY (never a TOTP code). This is the audited
+ * recovery path used when tenant policy requires a phishing-resistant security
+ * key but the user has lost their authenticator: a backup code lets them back
+ * in to re-enrol, while a plain TOTP code (which is not phishing-resistant)
+ * does not satisfy the policy. Returns true iff a live, unused backup code was
+ * atomically marked used.
+ */
+export async function consumeBackupCode(userId: number, code: string): Promise<boolean> {
+  await ensureUserLifecycleSchema()
+  if (!normalizeBackupCode(code)) return false
+  const hash = hashBackupCode(code)
+  const res = await query<any>(
+    `UPDATE user_mfa_backup_codes SET used_at = NOW() WHERE user_id = ? AND code_hash = ? AND used_at IS NULL`,
+    [userId, hash],
+  )
+  return Number(res?.affectedRows ?? 0) > 0
+}
+
 // ---------------------------------------------------------------------------
 // Data-ownership transfer
 // ---------------------------------------------------------------------------

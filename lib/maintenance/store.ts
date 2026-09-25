@@ -113,6 +113,11 @@ async function liveWindows(): Promise<MaintenanceWindow[]> {
   return mapped
 }
 
+/** Raw live windows for the internal request-gate feed only (token-protected route). */
+export function listLiveWindowsForGate(): Promise<MaintenanceWindow[]> {
+  return liveWindows()
+}
+
 /**
  * Resolve maintenance for one tenant/module. Only windows that apply to this
  * tenant (platform, its own, or all-tenant module windows) can influence the

@@ -73,6 +73,7 @@ const CATEGORY_BY_JOB: Record<string, SchedulerCategory> = {
   temporary_access: "notifications",
   api_rate_limit_cleanup: "storage_cleanup",
   marketing_library: "storage_cleanup",
+  demo_tenant_cleanup: "storage_cleanup",
   gst_daily: "gst_tds",
   gst_monthly: "gst_tds",
   tds_daily: "gst_tds",

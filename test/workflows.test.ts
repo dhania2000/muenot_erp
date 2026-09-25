@@ -5,6 +5,10 @@ vi.mock("@/lib/notification-engine/service",()=>({enqueueNotification:mock.notic
 vi.mock("@/lib/db",()=>({query:mock.query,withTransaction:async(fn:any)=>fn({query:mock.sql})}))
 vi.mock("@/lib/workflows/schema",()=>({ensureWorkflowSchema:async()=>{}}))
 vi.mock("@/lib/workflows/webhook",()=>({deliverWebhook:mock.webhook}))
+vi.mock("@/lib/events/schema",()=>({ensureEventSchema:async()=>{}}))
+vi.mock("@/lib/platform/feature-guard",()=>({enforceFeature:async()=>({ok:true})}))
+vi.mock("@/lib/audit-log-store",()=>({recordAuditLog:async()=>{}}))
+vi.mock("@/lib/billing/usage-guard",()=>({meterUsage:()=>{}}))
 import { advanceWorkflow, decideWorkflow, startWorkflow, workflowOverview, runWorkflowWorker } from "@/lib/workflows/engine"
 import { fingerprint } from "@/lib/job-idempotency"
 const workflow = (actions:Workflow["actions"] = [{type:"update",field:"priority",value:"High"}]):Workflow=>({name:"Lead follow-up",description:"",module:"sales_leads",trigger:"manual",conditions:{logic:"AND",children:[]},actions,elseActions:[]})
@@ -85,7 +89,10 @@ describe(" durable execution protocol (mock DB)",()=>{
     await advanceWorkflow(8)
     expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("UPDATE sales_leads"),["High",7,20])
     expect(mock.sql).toHaveBeenCalledWith("ROLLBACK TO SAVEPOINT workflow_action")
-    expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("status='failed'"),[8])
+    // Transient local failure: rolled back, so an automatic backoff retry is safe.
+    expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("action_retrying"),[1,30,8])
+    run.attempts=2; await advanceWorkflow(8)
+    expect(mock.sql).toHaveBeenCalledWith(expect.stringContaining("status='failed'"),[3,8])
     expect(mock.sql.mock.calls.some(([sql])=>sql.includes("cursor=cursor+1"))).toBe(false)
   })
   it("persists approval wait without advancing past it",async()=>{
@@ -107,6 +114,7 @@ describe(" durable execution protocol (mock DB)",()=>{
   })
   it("records intent before webhook and never retries ambiguous delivery",async()=>{
     run.snapshot=workflow([{type:"webhook",target:"crm"}])
+    vi.stubEnv("WORKFLOW_WEBHOOK_TARGETS",JSON.stringify({"7":{crm:"https://hooks.example/crm"}}))
     mock.webhook.mockRejectedValue(new Error("timeout"))
     const base=mock.sql.getMockImplementation()!
     mock.sql.mockImplementation(async(sql:string,...args:any[])=>{
@@ -122,7 +130,7 @@ describe(" durable execution protocol (mock DB)",()=>{
     const request_hash=fingerprint({recordId:20,actor:2,at:null})
     mock.sql.mockImplementation(async(sql:string)=>{
       if(sql.includes("SELECT id FROM users")) return [[{id:2}]]
-      if(sql.includes("FROM erp_workflows")) return [[{enabled:1,definition:workflow()}]]
+      if(sql.includes("FROM erp_workflows")) return [[{id:1,enabled:1,status:"published",version:1,published_version:1,definition:workflow()}]]
       if(sql.includes("request_key=?")) return [[{id:8,request_hash}]]
       return [[]]
     })
@@ -131,7 +139,7 @@ describe(" durable execution protocol (mock DB)",()=>{
     expect(mock.sql.mock.calls.some(([sql])=>sql.startsWith("INSERT"))).toBe(false)
   })
   it("rejects foreign or missing source records",async()=>{
-    mock.sql.mockImplementation(async(sql:string)=>sql.includes("SELECT id FROM users") ? [[{id:2}]] : sql.includes("FROM erp_workflows")?[[{enabled:1,definition:workflow()}]]:[[]])
+    mock.sql.mockImplementation(async(sql:string)=>sql.includes("SELECT id FROM users") ? [[{id:2}]] : sql.includes("FROM erp_workflows")?[[{id:1,enabled:1,status:"published",version:1,published_version:1,definition:workflow()}]]:[[]])
     await expect(startWorkflow(7,2,1,20,"request-key")).rejects.toThrow("Record not found")
     expect(mock.sql).toHaveBeenCalledWith("SELECT id FROM sales_leads WHERE tenant_id=? AND id=?",[7,20])
   })

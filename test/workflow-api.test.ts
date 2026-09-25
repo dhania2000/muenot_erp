@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 const mock=vi.hoisted(()=>({guard:vi.fn(),start:vi.fn(),save:vi.fn(),decide:vi.fn(),cancel:vi.fn(),overview:vi.fn(),worker:vi.fn()}))
 vi.mock("@/lib/platform-guard",()=>({requireTenantAdmin:mock.guard,effectiveTenantId:()=>7}))
-vi.mock("@/lib/workflows/engine",()=>({startWorkflow:mock.start,saveWorkflow:mock.save,decideWorkflow:mock.decide,cancelWorkflow:mock.cancel,workflowOverview:mock.overview,runWorkflowWorker:mock.worker}))
+vi.mock("@/lib/workflows/engine",()=>({WorkflowError:class extends Error{status=400},startWorkflow:mock.start,saveWorkflow:mock.save,decideWorkflow:mock.decide,cancelWorkflow:mock.cancel,workflowOverview:mock.overview,runWorkflowWorker:mock.worker}))
 import { GET, POST } from "@/app/api/admin/workflows/route"
 import { GET as worker } from "@/app/api/cron/workflows/route"
 const request=(body:unknown,origin="https://erp.example")=>new Request("https://erp.example/api/admin/workflows",{method:"POST",headers:{origin,"content-type":"application/json"},body:JSON.stringify(body)})

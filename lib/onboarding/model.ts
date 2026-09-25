@@ -37,8 +37,6 @@ export type StepMeta = {
   description: string
   /** Where "Set up" takes the user. */
   href: string
-  /** Optional permission slug that also controls whether the step is relevant. */
-  feature?: string
 }
 
 export const STEP_META: Record<ChecklistStepKey, StepMeta> = {
@@ -46,37 +44,41 @@ export const STEP_META: Record<ChecklistStepKey, StepMeta> = {
     key: "company",
     title: "Add your company details",
     description: "Set your company name, logo and address so documents and emails are branded.",
-    href: "/admin/settings/company",
-    feature: "settings.company",
+    href: "/admin/settings",
   },
   users: {
     key: "users",
     title: "Invite your team",
     description: "Add the people who will use the workspace and assign their roles.",
-    href: "/modules/hr/employees",
-    feature: "hr.view_employees",
+    href: "/admin/users",
   },
   email: {
     key: "email",
     title: "Connect email",
-    description: "Configure sending so invoices, letters and notifications reach recipients.",
-    href: "/admin/settings/email",
-    feature: "settings.email",
+    description: "Configure SMTP sending so invoices, letters and notifications reach recipients.",
+    href: "/admin/integration-secrets",
   },
   storage: {
     key: "storage",
     title: "Set up file storage",
-    description: "Choose where uploaded documents and attachments are stored.",
-    href: "/admin/settings/storage",
-    feature: "settings.storage",
+    description: "Connect the storage used for uploaded documents and attachments.",
+    href: "/admin/integration-secrets",
   },
   modules: {
     key: "modules",
-    title: "Enable modules & permissions",
-    description: "Turn on the modules your team needs and grant access to them.",
-    href: "/admin/permissions",
-    feature: "settings.permissions",
+    title: "Choose modules & access",
+    description: "Turn on the modules your team needs and grant roles access to them.",
+    href: "/admin/roles",
   },
+}
+
+/**
+ * Which steps apply to a tenant. The modules step is dropped when the tenant
+ * has no module it can switch on (every module hidden by plan/platform), so it
+ * never inflates the denominator with a step the tenant cannot act on.
+ */
+export function applicableStepsFor(input: { availableModules: number }): ChecklistStepKey[] {
+  return CHECKLIST_STEPS.filter((k) => (k === "modules" ? input.availableModules > 0 : true))
 }
 
 export function isChecklistStep(v: unknown): v is ChecklistStepKey {

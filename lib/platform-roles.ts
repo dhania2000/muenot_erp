@@ -214,6 +214,24 @@ export async function recordPlatformAudit(entry: {
 // Role assignment (escalation-checked)
 // ---------------------------------------------------------------------------
 
+// Relative severity of tenant roles, so a role change can be classed as an
+// escalation (higher) vs. a demotion (lower) for security alerting.
+const SEVERITY_OF_TENANT_ROLE: Record<TenantRole, number> = {
+  employee: 0,
+  module_admin: 1,
+  tenant_admin: 2,
+  tenant_owner: 3,
+}
+
+/** Human-friendly label (email, else name) for a user, for alert subjects. */
+async function getUserLabel(userId: number): Promise<string> {
+  const rows = await query<{ email: string | null; name: string | null }[]>(
+    "SELECT `email`, `name` FROM `users` WHERE `id` = ? LIMIT 1",
+    [userId],
+  )
+  return rows[0]?.email || rows[0]?.name || `user #${userId}`
+}
+
 export class RoleAssignmentError extends Error {
   status: number
   constructor(message: string, status = 403) {
@@ -248,6 +266,22 @@ export async function assignPlatformRole(
     targetUserId,
     detail: { from: before.platformRole, to: role },
   })
+
+  // Granting platform staff/super-admin is the highest-privilege escalation;
+  // alert the target's tenant security admins (best-effort).
+  if (role !== "none" && before.platformRole === "none" && before.tenantId != null) {
+    const subjectLabel = await getUserLabel(targetUserId)
+    void import("@/lib/security-alerts-store").then((m) =>
+      m.onRoleEscalation({
+        tenantId: before.tenantId as number,
+        subjectUserId: targetUserId,
+        subjectLabel,
+        from: `platform:${before.platformRole}`,
+        to: `platform:${role}`,
+        actorUserId: actor.userId,
+      }),
+    )
+  }
 }
 
 /**
@@ -284,6 +318,29 @@ export async function assignTenantRole(
     targetTenantId,
     detail: { from: before.tenantRole, to: role, legacyRole: legacy },
   })
+
+  // Security-alert correlation signals (Spec22). Best-effort — a role change is
+  // authoritative regardless of whether alerting succeeds.
+  const wasAdmin = before.tenantRole === "tenant_admin" || before.tenantRole === "tenant_owner"
+  const isAdmin = role === "tenant_admin" || role === "tenant_owner"
+  const subjectLabel = await getUserLabel(targetUserId)
+  if (isAdmin && !wasAdmin) {
+    void import("@/lib/security-alerts-store").then((m) =>
+      m.onNewAdmin({ tenantId: targetTenantId, subjectUserId: targetUserId, subjectLabel, actorUserId: actor.userId }),
+    )
+  }
+  if (SEVERITY_OF_TENANT_ROLE[role] > SEVERITY_OF_TENANT_ROLE[before.tenantRole]) {
+    void import("@/lib/security-alerts-store").then((m) =>
+      m.onRoleEscalation({
+        tenantId: targetTenantId,
+        subjectUserId: targetUserId,
+        subjectLabel,
+        from: before.tenantRole,
+        to: role,
+        actorUserId: actor.userId,
+      }),
+    )
+  }
 }
 
 // ---------------------------------------------------------------------------

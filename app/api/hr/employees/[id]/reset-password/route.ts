@@ -3,6 +3,9 @@ import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { generateTempPassword, hashPassword } from "@/lib/password"
 import { assertAndHashNewPassword, recordPasswordChange, validatePasswordAgainstPolicy, getPasswordPolicy } from "@/lib/password-policy"
+import { checkPasswordBreached } from "@/lib/breached-password"
+import { onBreachedPassword } from "@/lib/security-alerts-store"
+import { getCurrentTenant } from "@/lib/tenant-context"
 
 async function requireAdmin() {
   const session = await getSession()
@@ -52,6 +55,24 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const errors = validatePasswordAgainstPolicy(custom, policy)
     if (errors.length) {
       return NextResponse.json({ error: errors[0] }, { status: 400 })
+    }
+    // Breached-password check (k-anonymity; plaintext never leaves the process).
+    // Advisory + fail-open: only a confirmed breach is rejected.
+    const breach = await checkPasswordBreached(custom)
+    if (breach.checked && breach.breached) {
+      const tenant = getCurrentTenant()
+      if (tenant && emp.login_email) {
+        void onBreachedPassword({
+          tenantId: tenant.tenantId,
+          subjectUserId: emp.user_id,
+          subjectLabel: emp.login_email,
+          count: breach.count,
+        })
+      }
+      return NextResponse.json(
+        { error: "This password has appeared in a known data breach. Choose a different password." },
+        { status: 400 },
+      )
     }
     try {
       passwordHash = await assertAndHashNewPassword(emp.user_id, custom)

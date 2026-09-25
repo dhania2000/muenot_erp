@@ -625,6 +625,16 @@ export async function recordOutboundMessage(input: OutboundMessageInput): Promis
      WHERE id = ? AND tenant_id = ?`,
     [nowSql, preview(input.messageType, input.body), input.conversationId, tenantId],
   )
+  // Meter the billable outbound WhatsApp message. Idempotent on the provider
+  // message id (wamid) so a retried record never double-bills; falls back to the
+  // row id when the provider returned no wamid.
+  meterUsage({
+    meterKey: "whatsapp_messages",
+    quantity: 1,
+    source: input.messageType,
+    refId: input.wamid ?? String(result.insertId),
+    idempotencyKey: `wa:${input.wamid ?? result.insertId}`,
+  })
   return result.insertId
 }
 

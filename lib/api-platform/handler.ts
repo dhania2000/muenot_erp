@@ -38,6 +38,7 @@ import { ApiError, isApiError } from "@/lib/api-platform/errors"
 import { API_VERSION, SUPPORTED_VERSIONS, jsonError, jsonErrorFromApiError } from "@/lib/api-platform/response"
 import { logApiRequest } from "@/lib/api-platform/audit"
 import { fingerprintRequest, lookupIdempotency, saveIdempotency } from "@/lib/api-platform/idempotency"
+import { enforceUsageIfScoped, meterUsage, UsageLimitError } from "@/lib/billing/usage-guard"
 
 export type ApiRequestContext<P = Record<string, string>> = {
   request: Request
@@ -245,6 +246,29 @@ export function withApiV1<P = Record<string, string>>(
         }
       }
 
+      // 7b. Usage quota (billable API requests). Distinct from rate limiting:
+      // the rate limit protects the platform per short window; this enforces the
+      // tenant's monthly plan allowance and overage. A hard limit fails closed
+      // with 402; a soft limit is allowed and flagged with a warning header.
+      let apiUsageLimit
+      try {
+        apiUsageLimit = await enforceUsageIfScoped("api_requests", 1, auth.tenantId)
+      } catch (err) {
+        if (err instanceof UsageLimitError) {
+          return fail(new ApiError("usage_limit_reached", err.message), rateHeaders)
+        }
+        throw err
+      }
+      // Record the metered request (idempotent on the request id).
+      meterUsage({
+        meterKey: "api_requests",
+        quantity: 1,
+        source: "api_v1",
+        refId: requestId,
+        idempotencyKey: `api:${requestId}`,
+        tenantId: auth.tenantId,
+      })
+
       // Cache the raw body once so both idempotency and the handler can read it.
       let rawBodyCache: string | null = null
       const readRaw = async (): Promise<string> => {
@@ -299,6 +323,9 @@ export function withApiV1<P = Record<string, string>>(
       // 9. Handler.
       let res = await handler(ctx)
       for (const [k, v] of Object.entries(rateHeaders)) res.headers.set(k, v)
+      if (apiUsageLimit && (apiUsageLimit.status === "warning" || apiUsageLimit.status === "over")) {
+        res.headers.set("X-Usage-Warning", `api_requests:${apiUsageLimit.status}`)
+      }
 
       // 8b. Persist idempotent responses (skip server errors so they can be retried).
       if (idempotencyEnabled && idempotencyKey && res.status < 500) {

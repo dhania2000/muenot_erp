@@ -295,6 +295,10 @@ export async function beginLargeUpload(input: {
   size: number
   contentType?: string | null
   category?: string | null
+  /** Client-declared SHA-256 of the whole file; verified/recorded at completion. */
+  checksum?: string | null
+  /** Logical ERP module the finished object belongs to (drives the metadata row). */
+  module?: string | null
   userId?: number | null
 }): Promise<
   | { ok: true; session: UploadSessionStatus; partSize: number; totalParts: number }
@@ -418,16 +422,26 @@ export async function completeLargeUpload(
           filename: session.filename,
           mimeType: session.content_type,
           size: result.size || Number(session.total_size),
-          checksum: null,
+          // Large multipart objects are never buffered server-side, so the only
+          // trustworthy whole-file hash is the one the client declared at
+          // begin-time. It is recorded here for integrity verification; when
+          // absent the object still relies on the provider's per-part ETags.
+          checksum: session.checksum ?? null,
           ownerId: opts.metadata.ownerId ?? session.created_by,
           classification: opts.metadata.classification ?? null,
           retentionPolicy: opts.metadata.retentionPolicy ?? null,
+          encryptionState: encryptionStateFor(connection),
           uploadStatus: "completed",
         })
       } catch (metaErr) {
         console.error("[v0] file metadata record failed (multipart upload succeeded):", metaErr)
       }
     }
+    // Gate the object behind a security scan just like single-shot uploads do.
+    // Large videos exceed the inline-scan limit and resolve to a fail-closed
+    // "error" state, so a private video stays quarantined until an external
+    // scanner clears it (or an admin releases it) — enforced at stream time.
+    if (recorded) enqueueScan(recorded, { requestedBy: opts.metadata?.ownerId ?? session.created_by ?? null })
     return { ok: true, key: session.storage_key, result: { ...result, file: recorded } }
   } catch (err) {
     console.error("[v0] completeLargeUpload failed:", err)

@@ -6,6 +6,17 @@ overrides:
   sharp: 0.35.4
   js-yaml: 4.3.2
   fast-uri: 3.1.8
+  # Spec23 dependency-audit remediations (transitive; see docs/ci.md).
+  brace-expansion@>=3.0.0 <5.0.9: ^5.0.9
+  ip-address@>=10.0.0 <10.3.1: ^10.3.1
+  nanoid@<3.3.18: ^3.3.18
+  browserslist@<4.28.7: ^4.28.7
+  hono@<4.13.5: ^4.13.5
+  '@hono/node-server@<1.19.15': ^1.19.15
+  qs@<6.16.0: ^6.16.0
+  baseline-browser-mapping@<2.11.0: ^2.11.0
+  body-parser@>=2.0.0 <2.3.0: ^2.3.0
+  postcss-selector-parser@>=7.1.0 <7.1.3: ^7.1.3
 
 # pnpm v11 removed onlyBuiltDependencies/ignoredBuiltDependencies in favor of allowBuilds.
 # core-js's postinstall only prints a funding banner, so it is reviewed and denied.

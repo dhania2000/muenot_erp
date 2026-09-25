@@ -52,7 +52,7 @@ Never put real gateway keys (Stripe, Razorpay, …) into CI. The checkout smoke 
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm typecheck                 # tsc ratchet (needs ~6 GB RAM)
+pnpm typecheck                 # next typegen + tsc ratchet (needs ~6 GB RAM; don't run alongside build on <16 GB)
 pnpm typecheck:baseline        # after fixing errors: lock in the lower count and commit
 pnpm test                      # full unit suite
 pnpm test:critical             # tenant/permission/billing/webhook suites only
@@ -89,8 +89,13 @@ Secret scan and SAST locally: `gitleaks detect --config .gitleaks.toml` and the 
 - takes the tenant from the session only and ignores any `tenantId` in the body; the invoice lookup is scoped to that tenant;
 - validates the provider and a `max 128 char` `Idempotency-Key` header;
 - derives a deterministic key from tenant + invoice + provider + amount when the client sends none, so double-clicks and retries reuse the pending payment instead of opening a second one. The key is also sent to the gateway;
-- enforces uniqueness with `billing_payments (tenant_id, idempotency_key)`, added by migration `2027-01-15-spec23-idempotent-checkout.sql` and the runtime schema self-heal;
+- enforces uniqueness with the `uq_billing_payments_checkout` index on `billing_payments (tenant_id, checkout_key)`, added by migration `2027-01-15-spec23-idempotent-checkout.sql` and the runtime schema self-heal;
 - writes an audit entry for every opened checkout and returns 409 for invoices that are paid/void or have no balance.
+
+## Dependency remediations
+
+- **`xlsx`** is installed from SheetJS's official tarball (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`), because the npm registry copy stops at the vulnerable 0.18.5 (GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9). To upgrade, change the URL in `package.json`. CI needs outbound access to `cdn.sheetjs.com`.
+- Transitive advisories (brace-expansion, ip-address, nanoid, browserslist, hono, @hono/node-server, qs, baseline-browser-mapping, body-parser, postcss-selector-parser) are pinned with range-scoped `overrides` in `pnpm-workspace.yaml`. Each override only matches the vulnerable range. Remove an entry once the parent package ships the fix.
 
 ## Known limits
 

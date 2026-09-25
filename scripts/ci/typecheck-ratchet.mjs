@@ -14,6 +14,16 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 const BASELINE = "scripts/ci/typecheck-baseline.json"
 const update = process.argv.includes("--update")
 
+// Route-handler globals (RouteContext, PageProps, LayoutProps) live in
+// .next/types, which a fresh CI checkout does not have. Without this step
+// local runs pass (dev server generated them) while CI reports TS2304.
+const typegen = spawnSync("node", ["node_modules/next/dist/bin/next", "typegen"], { encoding: "utf8" })
+if (typegen.status !== 0) {
+  console.error(`${typegen.stdout}${typegen.stderr}`)
+  console.error("next typegen failed; route types would be missing.")
+  process.exit(2)
+}
+
 const run = spawnSync("node", ["--max-old-space-size=6144", "node_modules/typescript/bin/tsc", "--noEmit", "--pretty", "false", "-p", "."], {
   encoding: "utf8",
   maxBuffer: 64 * 1024 * 1024,

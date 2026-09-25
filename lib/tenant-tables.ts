@@ -339,6 +339,14 @@ export const TENANT_OWNED_TABLES = [
   "ai_document_extractions",
   "ai_document_extraction_versions",
   "ai_document_extraction_audit",
+  // SPEC 20 (#75) — AI Anomaly Detection. Per-tenant risk alerts (payments,
+  // invoices, access changes, usage spikes), their append-only review audit and
+  // the scan runs that produced them. An alert is derived from a tenant's own
+  // finance/security/usage history and must never be visible to, reviewed or
+  // resolved from another tenant.
+  "ai_anomaly_alerts",
+  "ai_anomaly_alert_audit",
+  "ai_anomaly_scans",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

@@ -315,6 +315,17 @@ export const TENANT_OWNED_TABLES = [
   "tenant_connector_credentials",
   "tenant_connector_audit",
   "tenant_connector_idempotency",
+  // SPEC 16 — Integration sync & conflict resolution (#90-91). Per-tenant sync
+  // connections (provider × entity), their run history with cursor checkpoints,
+  // the normalized external↔master record mappings with baseline fingerprints,
+  // detected conflict rows awaiting resolution, and the immutable, replay-safe
+  // sync event log. Every row belongs to exactly one tenant; a connection, run,
+  // mapping, conflict or log event must never be visible to another tenant.
+  "integration_sync_connections",
+  "integration_sync_runs",
+  "integration_record_mappings",
+  "integration_sync_conflicts",
+  "integration_sync_log",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

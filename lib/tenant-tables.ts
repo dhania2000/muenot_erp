@@ -132,6 +132,11 @@ export const TENANT_OWNED_TABLES = [
   "sandbox_environments",
   "sandbox_change_requests",
   "sandbox_change_audit",
+  // SPEC 28 — customer → platform support desk with plan-based SLA. Tickets
+  // and their events belong to one tenant; platform staff access them only via
+  // lib/support-sla/store.ts with an explicit tenant_id predicate.
+  "platform_support_tickets",
+  "platform_support_ticket_events",
   // Reusable workflow definitions, execution history and owned task records.
   "erp_workflows",
   "erp_workflow_runs",

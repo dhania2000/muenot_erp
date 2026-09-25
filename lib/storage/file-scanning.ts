@@ -601,6 +601,16 @@ export function enqueueScan(file: FileObject, opts: { requestedBy?: number | nul
 export async function scanFileNow(fileId: number, requestedBy: number | null = null): Promise<ScanRecord | null> {
   const file = await getFileById(fileId)
   if (!file) return null
+  // Audit the rescan REQUEST itself (distinct from the resulting verdict, which
+  // applyOutcome records), so a forced rescan is always attributable to whoever
+  // triggered it — even when the scanner is down and the verdict is an error.
+  const previous = await getScanForFile(fileId).catch(() => null)
+  await auditFileSecurity("file.scan_requested", {
+    fileId: file.id,
+    fileRef: file.fileRef,
+    actorId: requestedBy,
+    metadata: { previousStatus: previous?.scanStatus ?? null, requestedBy },
+  })
   await recordPendingScan(file, requestedBy)
   return runScan(fileId)
 }

@@ -2,7 +2,8 @@ import "server-only"
 import { randomUUID } from "node:crypto"
 import { query } from "@/lib/db"
 import { currentTenantId, scopedWhere, tenantInsert } from "@/lib/tenant-scope"
-import { getTenantStorage, downloadFile, getSignedDownloadUrl } from "./index"
+import { getTenantStorage, downloadFile, getSignedDownloadUrl, encryptionStateFor } from "./index"
+import { enqueueScan } from "./file-scanning"
 import { tenantKey } from "./keys"
 import {
   getFileById,
@@ -264,7 +265,7 @@ export async function restoreFileVersion(versionId: number, actor: RestoreActor)
 
   const contentType = target.mimeType || "application/octet-stream"
   const newKey = tenantKey(currentTenantId(), `${target.module}/versions/${randomUUID()}-${target.filename}`)
-  const { provider } = await getTenantStorage()
+  const { provider, connection } = await getTenantStorage()
   try {
     await provider.upload(newKey, buffer, contentType)
   } catch (err) {
@@ -287,12 +288,18 @@ export async function restoreFileVersion(versionId: number, actor: RestoreActor)
       ownerId: actor.userId,
       classification: target.classification,
       retentionPolicy: target.retentionPolicy,
+      encryptionState: encryptionStateFor(connection),
       uploadStatus: "completed",
     })
   } catch (err) {
     console.error("[v0] restore: metadata record failed:", err)
     return { ok: false, error: "Could not record the restored version", status: 500 }
   }
+
+  // A restored version is a brand-new stored object: it must go through the same
+  // security scan and quarantine gate as any upload, never inheriting the
+  // source version's verdict. Fire-and-forget, exactly like the upload path.
+  enqueueScan(created, { requestedBy: actor.userId })
 
   await logFileVersionAudit("restored", {
     fileId: created.id,

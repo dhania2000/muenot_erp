@@ -81,6 +81,21 @@ export function normalizeUploadStatus(value: string | null | undefined): FileUpl
   return UPLOAD_STATUSES.includes(value as FileUploadStatus) ? (value as FileUploadStatus) : "pending"
 }
 
+/**
+ * How the stored bytes are encrypted at rest. Mirrors the connection's
+ * server-side-encryption mode ("none" | "AES256" | "aws:kms") plus an explicit
+ * "unknown" for legacy rows recorded before this was tracked. Recorded per file
+ * so every object carries its own verifiable encryption state, independent of a
+ * connection that may later be reconfigured.
+ */
+export type FileEncryptionState = "unknown" | "none" | "AES256" | "aws:kms"
+
+const ENCRYPTION_STATES: readonly FileEncryptionState[] = ["unknown", "none", "AES256", "aws:kms"]
+
+export function normalizeEncryptionState(value: string | null | undefined): FileEncryptionState {
+  return ENCRYPTION_STATES.includes(value as FileEncryptionState) ? (value as FileEncryptionState) : "unknown"
+}
+
 export type FileObjectRow = {
   id: number
   tenant_id: number
@@ -95,6 +110,7 @@ export type FileObjectRow = {
   mime_type: string | null
   size_bytes: number
   checksum_sha256: string | null
+  encryption_state: string | null
   upload_status: FileUploadStatus
   version: number
   is_current: 0 | 1
@@ -123,6 +139,7 @@ export type FileObject = {
   mimeType: string | null
   size: number
   checksum: string | null
+  encryptionState: FileEncryptionState
   uploadStatus: FileUploadStatus
   version: number
   isCurrent: boolean
@@ -148,6 +165,7 @@ export function toFileObject(row: FileObjectRow): FileObject {
     mimeType: row.mime_type,
     size: Number(row.size_bytes),
     checksum: row.checksum_sha256,
+    encryptionState: normalizeEncryptionState(row.encryption_state),
     uploadStatus: normalizeUploadStatus(row.upload_status),
     version: Number(row.version),
     isCurrent: Number(row.is_current) === 1,
@@ -189,6 +207,7 @@ async function doEnsure(): Promise<void> {
       mime_type VARCHAR(255) DEFAULT NULL,
       size_bytes BIGINT NOT NULL DEFAULT 0,
       checksum_sha256 CHAR(64) DEFAULT NULL,
+      encryption_state VARCHAR(40) NOT NULL DEFAULT 'unknown',
       upload_status VARCHAR(20) NOT NULL DEFAULT 'pending',
       version INT UNSIGNED NOT NULL DEFAULT 1,
       is_current TINYINT(1) NOT NULL DEFAULT 1,
@@ -212,6 +231,16 @@ async function doEnsure(): Promise<void> {
       KEY idx_fo_current (tenant_id, is_current)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+  // Self-heal the per-file encryption-state column on databases created before
+  // it was added (no portable "ADD COLUMN IF NOT EXISTS"; probe first).
+  try {
+    const cols = await query<{ Field: string }[]>(`SHOW COLUMNS FROM ${TABLE} LIKE 'encryption_state'`)
+    if (!Array.isArray(cols) || cols.length === 0) {
+      await query(`ALTER TABLE ${TABLE} ADD COLUMN encryption_state VARCHAR(40) NOT NULL DEFAULT 'unknown'`)
+    }
+  } catch (err) {
+    console.error("[v0] encryption_state column ensure failed:", err)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +282,7 @@ export type RecordFileInput = {
   mimeType?: string | null
   size: number
   checksum?: string | null
+  encryptionState?: FileEncryptionState | string | null
   ownerId?: number | null
   classification?: string | null
   retentionPolicy?: string | null
@@ -301,6 +331,10 @@ export async function recordFileMetadata(input: RecordFileInput): Promise<FileOb
         mime_type: mimeType,
         size_bytes: Math.max(0, Math.floor(input.size)),
         checksum_sha256: input.checksum ?? existingByKey.checksum,
+        encryption_state:
+          input.encryptionState != null
+            ? normalizeEncryptionState(input.encryptionState)
+            : existingByKey.encryptionState,
         upload_status: status,
         classification,
         retention_policy: retentionPolicy,
@@ -345,6 +379,7 @@ export async function recordFileMetadata(input: RecordFileInput): Promise<FileOb
     mime_type: mimeType,
     size_bytes: Math.max(0, Math.floor(input.size)),
     checksum_sha256: input.checksum ?? null,
+    encryption_state: normalizeEncryptionState(input.encryptionState),
     upload_status: status,
     version,
     is_current: 1,

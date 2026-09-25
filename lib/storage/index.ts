@@ -17,7 +17,15 @@ import {
   type UploadCategory,
   type UploadSessionStatus,
 } from "./multipart-store"
-import { recordFileMetadata, getByObjectKey, softDeleteFile, sha256, type FileObject } from "./file-metadata"
+import {
+  recordFileMetadata,
+  getByObjectKey,
+  softDeleteFile,
+  sha256,
+  normalizeEncryptionState,
+  type FileObject,
+  type FileEncryptionState,
+} from "./file-metadata"
 import { enqueueScan, enforceDownloadPolicyForKey } from "./file-scanning"
 import { checkStorageQuota } from "./storage-quota"
 import { meterUsage } from "@/lib/billing/usage-guard"
@@ -73,6 +81,19 @@ export type FileMetadataInput = {
 }
 
 /**
+ * Derive the per-file encryption state from the connection that stored the
+ * bytes. The connection's server-side-encryption mode ("none" | "AES256" |
+ * "aws:kms") is captured onto the file row so each object carries its own
+ * verifiable state even if the connection is later reconfigured. A null/blank
+ * connection value maps to "none"; anything unexpected is left "unknown".
+ */
+export function encryptionStateFor(connection: ResolvedConnection | null | undefined): FileEncryptionState {
+  const sse = connection?.serverSideEncryption
+  if (sse == null || sse === "") return "none"
+  return normalizeEncryptionState(sse)
+}
+
+/**
  * Validate + upload a File to the tenant's active storage under a tenant-scoped
  * key. Drop-in replacement for the ad-hoc `put(...)` calls the upload routes
  * used before, but provider-agnostic and isolated.
@@ -100,7 +121,7 @@ export async function uploadFile(
     if (!quota.allowed) return { ok: false, error: quota.reason }
   }
   const key = tenantKey(currentTenantId(), path)
-  const { provider } = await getTenantStorage()
+  const { provider, connection } = await getTenantStorage()
   const data = await toBuffer(file)
   const contentType = file.type || "application/octet-stream"
   try {
@@ -130,6 +151,7 @@ export async function uploadFile(
         ownerId: opts.metadata.ownerId ?? null,
         classification: opts.metadata.classification ?? null,
         retentionPolicy: opts.metadata.retentionPolicy ?? null,
+        encryptionState: encryptionStateFor(connection),
         uploadStatus: "completed",
       })
     } catch (metaErr) {

@@ -33,6 +33,7 @@ export function ensureWorkflowSchema() {
     const addedStatus = await ensureColumn("erp_workflows", "status", "status VARCHAR(16) NOT NULL DEFAULT 'draft'")
     await ensureColumn("erp_workflows", "published_version", "published_version INT UNSIGNED NULL")
     await ensureColumn("erp_workflows", "published_at", "published_at DATETIME NULL")
+    await ensureColumn("erp_workflow_runs", "attempts", "attempts INT NOT NULL DEFAULT 0")
     // Backfill once: pre-existing enabled workflows are treated as already published
     // so they keep running after the lifecycle is introduced.
     if (addedStatus) await query("UPDATE erp_workflows SET status='published', published_version=version, published_at=CURRENT_TIMESTAMP WHERE enabled=1")

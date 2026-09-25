@@ -14,11 +14,17 @@ export type Action =
   | { type: "email"; userId: number; subject: string; message: string }
   | { type: "whatsapp"; phone: string; message: string }
   | { type: "asset"; assetTag: string; userId: number }
+export type WorkflowTrigger = "manual" | "scheduled" | "event"
+// Only business events with a live, transactional publisher (see lib/events/model.ts)
+// may trigger workflows. Each maps to the module whose record the event carries.
+export const TRIGGER_EVENTS = { "deal.won": "sales_leads" } as const satisfies Record<string, WorkflowModule>
+export type TriggerEvent = keyof typeof TRIGGER_EVENTS
 export type Workflow = {
   name: string
   description: string
   module: WorkflowModule
-  trigger: "manual" | "scheduled"
+  trigger: WorkflowTrigger
+  eventType?: TriggerEvent
   conditions: Group
   actions: Action[]
   elseActions: Action[]
@@ -136,14 +142,16 @@ function validateActions(actions: unknown, mod: WorkflowModule, label: string): 
 }
 export function validateWorkflow(value: unknown): Workflow {
   const w = value as Workflow
-  if (!w || !text(w.name, 120) || !["sales_leads", "workflow_tasks"].includes(w.module) || !["manual", "scheduled"].includes(w.trigger)) throw new Error("Invalid workflow name, module or trigger")
+  if (!w || !text(w.name, 120) || !["sales_leads", "workflow_tasks"].includes(w.module) || !["manual", "scheduled", "event"].includes(w.trigger)) throw new Error("Invalid workflow name, module or trigger")
+  if (w.trigger === "event" && (!Object.hasOwn(TRIGGER_EVENTS, w.eventType ?? "") || TRIGGER_EVENTS[w.eventType!] !== w.module)) throw new Error("Choose a business event published by this module")
   if (!optionalText(w.description, 500)) throw new Error("Description is too long")
   const conditions = validateGroup(normalizeConditions(w.conditions), 0, w.module)
   const actions = validateActions(w.actions, w.module, "THEN")
   if (!actions.length) throw new Error("Add at least one THEN action")
   const elseActions = validateActions(w.elseActions ?? [], w.module, "ELSE")
   // Whitelist top-level fields; definitions cannot inject execution state.
-  return { name: w.name.trim(), description: (w.description ?? "").trim(), module: w.module, trigger: w.trigger, conditions, actions, elseActions }
+  const base: Workflow = { name: w.name.trim(), description: (w.description ?? "").trim(), module: w.module, trigger: w.trigger, conditions, actions, elseActions }
+  return w.trigger === "event" ? { ...base, eventType: w.eventType } : base
 }
 function evalRule(record: Record<string, unknown>, r: Rule): boolean {
   const v = String(record[r.field] ?? "")
@@ -178,13 +186,99 @@ export function approvalAllowed(requester: number, approver: number, designated:
 // already whitelists supported ("available") actions and bounds sizes; this
 // additionally rejects definitions that could form an execution cycle or an
 // unbounded timing loop once a workflow is published and allowed to run.
-export function assertPublishable(w: Workflow): void {
-  const all = [...w.actions, ...w.elseActions]
-  if (!w.actions.length) throw new Error("Publish requires at least one THEN action")
-  // Cycle guard: "create" always inserts an erp_workflow_tasks record, which is
-  // exactly what the workflow_tasks module watches — a Tasks workflow creating
-  // tasks could re-trigger itself indefinitely.
-  if (w.module === "workflow_tasks" && all.some((a) => a.type === "create")) throw new Error("Cycle detected: a Tasks workflow cannot create workflow tasks")
-  // Timing-loop guard: cap chained delays/schedules to a sane number of hops.
-  if (all.filter((a) => a.type === "delay" || a.type === "schedule").length > 10) throw new Error("Too many delay/schedule steps; possible timing loop")
+export function assertPublishable(w: Workflow, ctx?: PublishContext): void {
+  const blocking = analyzeWorkflow(w, ctx ?? OPEN_CONTEXT).filter((i) => i.severity === "error")
+  if (blocking.length) throw new Error(blocking[0].message)
+}
+
+// Everything the analyzer needs to know about the tenant's live environment.
+// Supplied by the server; the client can never assert availability itself.
+export type PublishContext = {
+  actorId: number
+  webhookTargets: string[]
+  emailConfigured: boolean
+  whatsappConfigured: boolean
+  activeMembers: number[]
+  adminMembers: number[]
+}
+const OPEN_CONTEXT: PublishContext = { actorId: 0, webhookTargets: [], emailConfigured: true, whatsappConfigured: true, activeMembers: [], adminMembers: [] }
+export type Issue = { severity: "error" | "warning"; code: string; message: string; branch?: "then" | "else"; step?: number }
+const MAX_TOTAL_WAIT_SECONDS = 90 * 86400
+// Actions a workflow on each module could perform that would publish the event
+// that triggers it. "deal.won" is only published by markLeadWon; no workflow
+// action can change a lead's status, so there is currently no event self-loop,
+// but the table keeps the guard explicit if writable fields grow.
+const EVENT_EFFECTS: Record<TriggerEvent, (a: Action) => boolean> = {
+  "deal.won": (a) => a.type === "update" && (a.field as string) === "status",
+}
+
+// Static safety analysis for the visual builder. Errors block publish; warnings
+// are surfaced in the editor. Pure: no I/O, deterministic, unit-testable.
+export function analyzeWorkflow(w: Workflow, ctx: PublishContext): Issue[] {
+  const issues: Issue[] = []
+  const checkContext = ctx !== OPEN_CONTEXT
+  const branches: ["then" | "else", Action[]][] = [["then", w.actions], ["else", w.elseActions]]
+  if (!w.actions.length) issues.push({ severity: "error", code: "empty_then", message: "Publish requires at least one THEN action" })
+  for (const [branch, actions] of branches) {
+    let waitSeconds = 0, waits = 0
+    actions.forEach((a, i) => {
+      const at = { branch, step: i + 1 }
+      // Cycle guard: "create" inserts an erp_workflow_tasks record, exactly what
+      // the workflow_tasks module watches; a Tasks workflow creating tasks could re-trigger itself.
+      if (w.module === "workflow_tasks" && a.type === "create") issues.push({ severity: "error", code: "cycle", message: "Cycle detected: a Tasks workflow cannot create workflow tasks", ...at })
+      if (w.trigger === "event" && w.eventType && EVENT_EFFECTS[w.eventType](a)) issues.push({ severity: "error", code: "cycle", message: `Cycle detected: this step would re-publish ${w.eventType}`, ...at })
+      if (a.type === "delay") { waits++; waitSeconds += a.seconds }
+      if (a.type === "schedule") { waits++; if (w.trigger !== "manual") issues.push({ severity: "warning", code: "fixed_schedule", message: "A fixed resume date is reached once; later runs will resume immediately", ...at }) }
+      if (!checkContext) return
+      if (a.type === "webhook" && !ctx.webhookTargets.includes(a.target)) issues.push({ severity: "error", code: "unavailable_action", message: `Webhook destination "${a.target}" is not configured for this tenant`, ...at })
+      // Mail may be configured through tenant settings the analyzer cannot see, so this only warns.
+      if (a.type === "email" && !ctx.emailConfigured) issues.push({ severity: "warning", code: "unavailable_action", message: "No deployment mail transport detected; email steps may fail", ...at })
+      if (a.type === "whatsapp" && !ctx.whatsappConfigured) issues.push({ severity: "error", code: "unavailable_action", message: "WhatsApp integration is not connected for this tenant", ...at })
+      if ("userId" in a) {
+        if (a.type === "approval") {
+          if (!ctx.adminMembers.includes(a.userId)) issues.push({ severity: "error", code: "permission", message: `Approver #${a.userId} must be an active tenant admin`, ...at })
+          // Event-triggered runs are requested by the publisher, so they could never approve their own run.
+          else if (a.userId === ctx.actorId) issues.push({ severity: w.trigger === "event" ? "error" : "warning", code: "self_approval", message: "The approver cannot be the person who starts the run; choose another admin", ...at })
+        } else if (!ctx.activeMembers.includes(a.userId)) issues.push({ severity: "error", code: "permission", message: `User #${a.userId} is not an active member of this tenant`, ...at })
+      }
+    })
+    // Timing-loop guard: cap chained waits and total wait time per branch.
+    if (waits > 10) issues.push({ severity: "error", code: "timing_loop", message: "Too many delay/schedule steps; possible timing loop", branch })
+    if (waitSeconds > MAX_TOTAL_WAIT_SECONDS) issues.push({ severity: "error", code: "timing_loop", message: "Total delay exceeds 90 days", branch })
+  }
+  return issues
+}
+
+export type SimulationStep = { branch: "then" | "else"; step: number; type: Action["type"]; outcome: "executes" | "pauses" | "waits" | "external" | "blocked"; detail: string }
+export type Simulation = { matched: boolean; branch: "then" | "else" | null; steps: SimulationStep[]; issues: Issue[]; completes: boolean }
+
+// Walks the chosen branch exactly as the engine would, without side effects.
+// Approvals are assumed granted so later steps are still shown; blocked steps
+// stop the walk because the engine would fail the run there.
+export function simulateWorkflow(w: Workflow, record: Record<string, unknown>, ctx: PublishContext, now = Date.now()): Simulation {
+  const issues = analyzeWorkflow(w, ctx)
+  const matched = matches(w, record)
+  const branch = matched ? "then" : w.elseActions.length ? "else" : null
+  const steps: SimulationStep[] = []
+  if (!branch) return { matched, branch, steps, issues, completes: true }
+  const blocked = new Map(issues.filter((i) => i.severity === "error" && i.branch === branch && i.step).map((i) => [i.step!, i.message]))
+  let clock = now, completes = true
+  for (const [i, a] of (branch === "then" ? w.actions : w.elseActions).entries()) {
+    const base = { branch, step: i + 1, type: a.type }
+    if (blocked.has(i + 1)) { steps.push({ ...base, outcome: "blocked", detail: blocked.get(i + 1)! }); completes = false; break }
+    switch (a.type) {
+      case "approval": steps.push({ ...base, outcome: "pauses", detail: `Waits for approval by user #${a.userId}; rejection ends the run` }); break
+      case "delay": clock += a.seconds * 1000; steps.push({ ...base, outcome: "waits", detail: `Resumes at ${new Date(clock).toISOString()}` }); break
+      case "schedule": clock = Math.max(clock, Date.parse(a.at)); steps.push({ ...base, outcome: "waits", detail: `Resumes at ${new Date(clock).toISOString()}` }); break
+      case "webhook": steps.push({ ...base, outcome: "external", detail: `Delivers to "${a.target}" once; never retried automatically` }); break
+      case "email": steps.push({ ...base, outcome: "external", detail: `Emails user #${a.userId}: "${a.subject}"` }); break
+      case "whatsapp": steps.push({ ...base, outcome: "external", detail: `Sends WhatsApp to ${a.phone}` }); break
+      case "update": steps.push({ ...base, outcome: "executes", detail: `Sets ${a.field} from "${String(record[a.field] ?? "")}" to "${a.value}"` }); break
+      case "assign": steps.push({ ...base, outcome: "executes", detail: `Reassigns from #${String(record.assigned_to ?? "none")} to #${a.userId}` }); break
+      case "create": steps.push({ ...base, outcome: "executes", detail: `Creates task "${a.title}" for user #${a.userId}` }); break
+      case "notify": steps.push({ ...base, outcome: "executes", detail: `Notifies user #${a.userId}` }); break
+      case "asset": steps.push({ ...base, outcome: "executes", detail: `Records asset ${a.assetTag} assigned to user #${a.userId}` }); break
+    }
+  }
+  return { matched, branch, steps, issues, completes }
 }

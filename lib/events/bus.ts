@@ -7,6 +7,7 @@ import { enqueueNotification } from "@/lib/notification-engine/service"
 import { ensureNotificationEngineSchema } from "@/lib/notification-engine/schema"
 import { ensureWorkflowSchema } from "@/lib/workflows/schema"
 import { validateWorkflow } from "@/lib/workflows/model"
+import { publishedDefinition } from "@/lib/workflows/published"
 import { ensureEventSchema } from "./schema"
 import { EVENT_CATALOG, retryState, validateEvent, validateSubscription, type BusinessEvent } from "./model"
 const parse=(v:any)=>typeof v==="string"?JSON.parse(v):v
@@ -48,7 +49,7 @@ export async function subscribe(tenant:number,actor:number,input:unknown) {
       if(!row) throw new Error("Workflow unavailable")
       const saved=parse(row.definition)
       const w=validateWorkflow({...saved,description:saved.description??""})
-      if(w.module!=="sales_leads" || w.trigger!=="manual") throw new Error("Select a manual Sales lead workflow")
+      if(w.module!=="sales_leads" || !["manual","event"].includes(w.trigger)) throw new Error("Select a manual or event-triggered Sales lead workflow")
       config={...s,definition:w}
     }
     const [result]=await c.query<any>("INSERT INTO erp_event_subscriptions (tenant_id,name,event_type,config,created_by) VALUES (?,?,?,?,?)",[tenant,s.name,s.eventType,JSON.stringify(config),actor])
@@ -83,11 +84,13 @@ export async function deliverEvent(id:number) {
         await member(c,Number(d.tenant_id),s.userId)
         resultId=await enqueueNotification(c,{tenantId:Number(d.tenant_id),userId:s.userId,channel:"in_app",key:`event-delivery:${id}`,title:`Business event: ${event.event_type}`,body:`Record #${event.entity_id}`,link:"/dashboard",context:{moduleKey:"events",action:"create",entityTable:"erp_business_events",entityId:String(event.id)}})
       } else if(s.handler==="workflow" && event.event_type==="deal.won") {
-        const w=validateWorkflow(s.definition)
-        if(w.module!=="sales_leads" || w.trigger!=="manual") throw new Error("Invalid workflow subscriber")
         const [lead]=await rows(c,"SELECT id FROM sales_leads WHERE tenant_id=? AND id=?",[d.tenant_id,event.entity_id])
-        const [active]=await rows(c,"SELECT id FROM erp_workflows WHERE tenant_id=? AND id=? AND enabled=1",[d.tenant_id,s.workflowId])
+        // Only enabled, published workflows run; drafts and unpublished edits never execute from events.
+        const [active]=await rows(c,"SELECT id FROM erp_workflows WHERE tenant_id=? AND id=? AND enabled=1 AND (status IS NULL OR status='published')",[d.tenant_id,s.workflowId])
         if(!lead || !active) throw new Error("Workflow or source no longer available")
+        const [live]=await rows(c,"SELECT id,definition,version,published_version FROM erp_workflows WHERE tenant_id=? AND id=?",[d.tenant_id,s.workflowId])
+        const w=live?.published_version ? await publishedDefinition(c,Number(d.tenant_id),live) : validateWorkflow(s.definition)
+        if(w.module!=="sales_leads" || !["manual","event"].includes(w.trigger)) throw new Error("Invalid workflow subscriber")
         const key=`event-${event.id}-subscriber-${d.subscriber_id}`
         const [r]=await c.query<any>("INSERT INTO erp_workflow_runs (tenant_id,workflow_id,snapshot,record_id,request_key,request_hash,requested_by,available_at) VALUES (?,?,?,?,?,?,?,UTC_TIMESTAMP())",[d.tenant_id,s.workflowId,JSON.stringify(w),event.entity_id,key,fingerprint({eventId:event.id,subscriberId:d.subscriber_id}),s.actorId])
         resultId=Number(r.insertId)

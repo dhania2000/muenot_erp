@@ -24,6 +24,7 @@ import "server-only"
  * verdicts live in the pure model/detector layer.
  */
 import { query } from "@/lib/db"
+import { ownsGlobalErpLedger } from "@/lib/global-erp-scope"
 import { scopedWhere, currentTenantIdOrNull } from "@/lib/tenant-scope"
 import { listPayments } from "@/lib/finance-payments"
 import { listSecurityEvents, type SecurityAuditEvent } from "@/lib/security-audit-store"
@@ -281,21 +282,7 @@ async function collectErpInvoices(fromDate: string, toDate: string): Promise<Mon
   }
 }
 
-/**
- * True only for the platform-owner tenant, which is the sole owner of the
- * global (tenant_id-less) ERP finance ledger. Fails closed: any error, a null
- * tenant, or a missing flag means the ledger is NOT read.
- */
-export async function ownsGlobalErpLedger(tenantId: number | null): Promise<boolean> {
-  if (tenantId == null) return false
-  try {
-    const rows = (await query("SELECT is_platform_owner FROM `tenants` WHERE id = ? LIMIT 1", [tenantId])) as any[]
-    return Number(rows[0]?.is_platform_owner ?? 0) === 1
-  } catch (err) {
-    console.error("[v0] anomaly ownsGlobalErpLedger check failed:", err)
-    return false
-  }
-}
+export { ownsGlobalErpLedger }
 
 // ---------------------------------------------------------------------------
 // Access — reuse the security-audit subsystem (tenant-aware reader).

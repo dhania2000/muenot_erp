@@ -46,7 +46,7 @@ function expenseDescriptionFor(cost: Record<string, any>, costId: string): strin
 }
 
 let sourceColumnsEnsured = false
-async function ensureExpenseSourceColumns(): Promise<void> {
+export async function ensureExpenseSourceColumns(): Promise<void> {
   if (sourceColumnsEnsured) return
   const cols = await tableColumns("expenses")
   if (!cols.has("source_module")) {

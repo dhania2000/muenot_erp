@@ -2,6 +2,11 @@ minimumReleaseAgeExclude:
   - '@next/*'
   - next
 
+overrides:
+  sharp: 0.35.4
+  js-yaml: 4.3.2
+  fast-uri: 3.1.8
+
 # pnpm v11 removed onlyBuiltDependencies/ignoredBuiltDependencies in favor of allowBuilds.
 # core-js's postinstall only prints a funding banner, so it is reviewed and denied.
 allowBuilds:

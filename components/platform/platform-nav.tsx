@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
-  LayoutDashboard, Building2, CreditCard, Gauge, Activity, ShieldAlert, Flag, Plug, Settings2, Users, Rocket, Package, SlidersHorizontal, KeyRound, MessageCircle, Archive, LifeBuoy, Database, Zap, Clock3, Cpu, ListChecks, BellRing, Store, Smartphone,
+  LayoutDashboard, Building2, CreditCard, Gauge, Activity, ShieldAlert, Flag, Plug, Settings2, Users, Rocket, Package, SlidersHorizontal, KeyRound, MessageCircle, Archive, LifeBuoy, Database, Zap, Clock3, Cpu, ListChecks, BellRing, Store, Smartphone, FlaskConical,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -13,6 +13,7 @@ const NAV: NavItem[] = [
   { href: "/platform/shopkeepers", label: "Shopkeepers", icon: Store, group: "Operate" },
   { href: "/platform/mobile-app/releases", label: "Mobile App · Releases", icon: Smartphone, group: "Operate" },
   { href: "/platform/tenants", label: "Tenants & lifecycle", icon: Building2, group: "Operate" },
+  { href: "/platform/demo-tenants", label: "Demo tenants", icon: FlaskConical, group: "Operate" },
   { href: "/platform/whatsapp", label: "WhatsApp tenants", icon: MessageCircle, group: "Operate" },
   { href: "/platform/onboarding", label: "Organization onboarding", icon: Rocket, group: "Operate" },
   { href: "/platform/plans", label: "Plans & entitlements", icon: Package, group: "Operate" },

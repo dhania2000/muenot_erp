@@ -172,6 +172,8 @@ export function assertDemoTablesSafe(): void {
 export const MIN_TTL_DAYS = 1
 export const MAX_TTL_DAYS = 90
 export const DEFAULT_TTL_DAYS = 14
+/** Upper bound on concurrently active clones — a runaway script cannot mint unbounded tenants. */
+export const MAX_ACTIVE_DEMO_CLONES = 50
 
 export type CloneInput = { label: string; ttlDays: number }
 
@@ -200,18 +202,124 @@ export function computeExpiresAt(now: Date, ttlDays: number): Date {
   return new Date(now.getTime() + clampTtlDays(ttlDays) * DAY_MS)
 }
 
+/**
+ * Parse a stored timestamp. The DB pool uses `dateStrings: true`, so DATETIMEs
+ * arrive as naive "YYYY-MM-DD HH:MM:SS" strings; the store always writes them in
+ * UTC (toSqlDatetime), so they are read back as UTC regardless of host timezone.
+ */
+export function parseDemoTime(value: string | Date | null | undefined): number {
+  if (!value) return NaN
+  if (value instanceof Date) return value.getTime()
+  const s = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return Date.parse(`${s.replace(" ", "T")}Z`)
+  return Date.parse(s)
+}
+
+/** UTC "YYYY-MM-DD HH:MM:SS" for DATETIME columns. */
+export function toSqlDatetime(d: Date): string {
+  return d.toISOString().slice(0, 19).replace("T", " ")
+}
+
 export function isDemoExpired(expiresAt: string | Date | null, now: Date = new Date()): boolean {
   if (!expiresAt) return false
-  const t = expiresAt instanceof Date ? expiresAt.getTime() : new Date(expiresAt).getTime()
+  const t = parseDemoTime(expiresAt)
   if (!Number.isFinite(t)) return false
   return t <= now.getTime()
 }
 
 export function demoDaysRemaining(expiresAt: string | Date | null, now: Date = new Date()): number {
   if (!expiresAt) return Infinity
-  const t = expiresAt instanceof Date ? expiresAt.getTime() : new Date(expiresAt).getTime()
+  const t = parseDemoTime(expiresAt)
   if (!Number.isFinite(t)) return 0
   return Math.max(0, Math.ceil((t - now.getTime()) / DAY_MS))
+}
+
+/**
+ * Validate an "extend by N days" request. Returns null for anything that is not
+ * a whole number in [MIN_TTL_DAYS, MAX_TTL_DAYS] — extension is never silently
+ * clamped because an operator typo should be rejected, not reinterpreted.
+ */
+export function parseExtendDays(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") return null
+  if (typeof value === "string" && !/^\d+$/.test(value.trim())) return null
+  const n = Number(value)
+  if (!Number.isInteger(n) || n < MIN_TTL_DAYS || n > MAX_TTL_DAYS) return null
+  return n
+}
+
+/**
+ * New expiry after extending by `days`. Extends from the later of now and the
+ * current expiry (so extending an already-expired clone restarts from now),
+ * and is hard-capped at MAX_TTL_DAYS from now so repeated extensions can never
+ * turn a demo into a permanent tenant.
+ */
+export function extendExpiry(current: string | Date | null, now: Date, days: number): Date {
+  const cur = parseDemoTime(current)
+  const base = Number.isFinite(cur) ? Math.max(cur, now.getTime()) : now.getTime()
+  const cap = now.getTime() + MAX_TTL_DAYS * DAY_MS
+  return new Date(Math.min(base + days * DAY_MS, cap))
+}
+
+// ---------------------------------------------------------------------------
+// Demo marker + idempotency scoping
+// ---------------------------------------------------------------------------
+
+function parseSettings(settings: unknown): Record<string, any> | null {
+  if (!settings) return null
+  if (typeof settings === "object") return settings as Record<string, any>
+  if (typeof settings === "string") {
+    try {
+      const parsed = JSON.parse(settings)
+      return parsed && typeof parsed === "object" ? parsed : null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/**
+ * Hard guard for every destructive purge: true only when the tenant record
+ * itself carries ALL the demo-clone markers (demo-* slug, demo plan, settings
+ * marker, not the platform owner, not the template). A registry row alone is
+ * never enough to authorize deleting a tenant.
+ */
+export function isDemoCloneTenantRecord(
+  tenant: { slug?: string | null; plan?: string | null; settings?: unknown; is_platform_owner?: boolean | number | null } | null,
+): boolean {
+  if (!tenant) return false
+  if (tenant.is_platform_owner) return false
+  const slug = String(tenant.slug ?? "")
+  if (slug === DEMO_TEMPLATE_SLUG || !slug.startsWith(`${DEMO_CLONE_SLUG_PREFIX}-`)) return false
+  if (tenant.plan !== "demo") return false
+  const marker = parseSettings(tenant.settings)?.[DEMO_SETTINGS_KEY]
+  return !!marker && marker.role === "clone" && marker.synthetic === true
+}
+
+/**
+ * Scope a client-supplied idempotency key to the acting operator so one
+ * operator's key can never replay (and reveal) another operator's clone.
+ * Returns null for a missing/blank key; rejects keys with unsafe characters.
+ */
+export function scopeIdempotencyKey(actorUserId: number, key: unknown): string | null {
+  if (key === undefined || key === null) return null
+  const trimmed = String(key).trim()
+  if (!trimmed) return null
+  if (!/^[A-Za-z0-9._:-]{1,80}$/.test(trimmed)) {
+    throw new Error("Idempotency-Key must be 1-80 characters of letters, digits, '.', '_', ':' or '-'")
+  }
+  return `${actorUserId}:${trimmed}`
+}
+
+/**
+ * Tables purged when a demo clone is cleaned up: EVERY tenant-owned table, not
+ * just the seeded ones, because a demo user may have created invoices, leads,
+ * etc. while exploring. Safe only because the purge is gated on
+ * isDemoCloneTenantRecord() for a fully synthetic tenant. `users` is removed
+ * afterwards by the shared deleteTenant() path.
+ */
+export function demoPurgeTables(ownedTables: readonly string[]): string[] {
+  return ownedTables.filter((t) => t !== "users" && t !== "tenants")
 }
 
 // ---------------------------------------------------------------------------

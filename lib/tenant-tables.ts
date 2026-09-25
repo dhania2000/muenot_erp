@@ -125,6 +125,13 @@ export const TENANT_OWNED_TABLES = [
   // keeping the legacy table available as an inherited platform baseline.
   "tenant_settings",
   "tenant_settings_audit",
+  // SPEC 27 — production sandbox & configuration change approval. Enterprise
+  // tenants get a separate sandbox environment/connection set, a sanitized
+  // production→sandbox copy, and a review → approval → promotion pipeline. Each
+  // row belongs to exactly one tenant and must never be visible to another.
+  "sandbox_environments",
+  "sandbox_change_requests",
+  "sandbox_change_audit",
   // Reusable workflow definitions, execution history and owned task records.
   "erp_workflows",
   "erp_workflow_runs",

@@ -29,8 +29,8 @@ import { onFailedLogin, onSuccessfulLogin } from "@/lib/security-alerts-store"
 import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 import { recordSecurityEvent } from "@/lib/security-audit-store"
 import { evaluateAccessPolicies } from "@/lib/access-policy-store"
-import { enforceGeoPolicy } from "@/lib/geo-policy-store"
-import { enforceManagedDevice } from "@/lib/managed-device-store"
+import { enforceSignInProtection } from "@/lib/sign-in-protection"
+import { resolveTrustedGeo } from "@/lib/geo-trust"
 import { recordAuditLog, AUDIT_ACTIONS, type AuditContext } from "@/lib/audit-log-store"
 import { monitorLogger, safeDbError } from "@/lib/system-monitoring"
 
@@ -61,7 +61,9 @@ export async function POST(request: Request) {
     // used by (IP allowlist) and (access policy) enforcement.
     const forwardedFor = request.headers.get("x-forwarded-for")
     const requestIp = forwardedFor ? forwardedFor.split(",")[0].trim() : request.headers.get("x-real-ip")
-    const requestCountry = request.headers.get("x-vercel-ip-country")
+    // Only a declared-trusted proxy's geo header is honoured (see lib/geo-trust).
+    const trustedGeo = resolveTrustedGeo(request.headers, requestIp)
+    const requestCountry = trustedGeo.country
 
     // base audit context for this sign-in attempt. The acting user is
     // resolved once the account is loaded; each call overrides actor fields.
@@ -180,6 +182,22 @@ export async function POST(request: Request) {
     // evaluate the full lifecycle gate (invited / suspended /
     // deactivated / expired temporary access / email verification) AFTER the
     // password check, so a wrong password never reveals account state.
+    // Geo (#213) + managed-device (#214) protection. Runs for EVERY password-
+    // verified sign-in (not only when the lifecycle snapshot loads) so it can
+    // never fail open. Unknown/VPN locations follow the tenant fail-safe; a
+    // denial is overridable only via audited emergency access.
+    const protection = await enforceSignInProtection({
+      tenantId: await resolveTenantIdForUser(user.id),
+      user: { id: user.id, name: user.name, email: user.email },
+      platformRole: (await getStoredRoles(user.id))?.platformRole,
+      ip: requestIp,
+      geo: trustedGeo,
+      deviceAssertion: (body as any)?.deviceAssertion ?? request.headers.get("x-device-assertion"),
+    })
+    if (!protection.ok) {
+      return NextResponse.json({ error: protection.error, code: protection.code }, { status: protection.status })
+    }
+
     const snapshot = await getLoginSnapshot(user.id)
     if (snapshot) {
       const settings = await getPublicSettings()
@@ -231,57 +249,6 @@ export async function POST(request: Request) {
           {
             error: "Sign-in is blocked by an access policy. Contact your administrator.",
             code: "ACCESS_POLICY_DENIED",
-          },
-          { status: 403 },
-        )
-      }
-
-      // Emergency access authorization: a platform Super Admin may override a
-      // geo or managed-device denial when the tenant has explicitly enabled the
-      // corresponding emergency escape hatch. Every override is audited inside
-      // the enforcement helpers. This mirrors the IP-allowlist break-glass above
-      // so a misconfigured geo/device policy can never permanently lock out the
-      // operator who has to fix it.
-      const emergencyAuthorized = policyRoles?.platformRole === "platform_super_admin"
-
-      // Geo (country) protection (#213): allow/block by TRUSTED IP geolocation.
-      // Fails safely for an unknown location (VPN/proxy/unknown IP) per tenant
-      // policy. A denial can be overridden by audited emergency access.
-      const geoResult = await enforceGeoPolicy(policyTenantId, {
-        country: requestCountry,
-        userId: user.id,
-        userName: user.name,
-        userEmail: user.email,
-        ip: requestIp,
-        emergencyAuthorized,
-      })
-      if (geoResult.denied) {
-        return NextResponse.json(
-          {
-            error: "Sign-in is not allowed from your current location. Contact your administrator.",
-            code: "GEO_BLOCKED",
-          },
-          { status: 403 },
-        )
-      }
-
-      // Managed-device protection (#214): when required, the client must present
-      // a verified device assertion for an active enrolled device. Revocation
-      // takes effect immediately. A denial can be overridden by audited
-      // emergency access.
-      const deviceResult = await enforceManagedDevice(policyTenantId, {
-        userId: user.id,
-        userName: user.name,
-        userEmail: user.email,
-        assertion: (body as any)?.deviceAssertion,
-        ip: requestIp,
-        emergencyAuthorized,
-      })
-      if (deviceResult.denied) {
-        return NextResponse.json(
-          {
-            error: "Sign-in requires a managed device. Enroll this device or contact your administrator.",
-            code: "MANAGED_DEVICE_REQUIRED",
           },
           { status: 403 },
         )

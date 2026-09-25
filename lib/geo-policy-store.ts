@@ -207,6 +207,9 @@ export async function enforceGeoPolicy(
     userEmail?: string | null
     ip?: string | null
     emergencyAuthorized?: boolean
+    emergencyVia?: string | null
+    emergencyGrantId?: number | null
+    locationMeta?: Record<string, unknown>
   },
 ): Promise<GeoEnforcementResult> {
   const policy = await getGeoPolicy(tenantId)
@@ -229,7 +232,14 @@ export async function enforceGeoPolicy(
       actorName: params.userName ?? null,
       subjectEmail: params.userEmail ?? null,
       ipAddress: params.ip ?? null,
-      detail: { reason: decision.reason, country: decision.country, unknownLocation: decision.unknownLocation },
+      detail: {
+        reason: decision.reason,
+        country: decision.country,
+        unknownLocation: decision.unknownLocation,
+        via: params.emergencyVia ?? null,
+        grantId: params.emergencyGrantId ?? null,
+        location: params.locationMeta ?? null,
+      },
     })
     return { denied: false, decision, bypassed: true }
   }
@@ -248,6 +258,7 @@ export async function enforceGeoPolicy(
       country: decision.country,
       unknownLocation: decision.unknownLocation,
       mode: policy.mode,
+      location: params.locationMeta ?? null,
     },
   })
   return { denied: true, decision, bypassed: false }

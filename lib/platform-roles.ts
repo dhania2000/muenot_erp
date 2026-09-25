@@ -82,6 +82,15 @@ async function runEnsure(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
 
+  // Supports tenant-scoped audit-separation queries: "show every platform
+  // action taken against tenant X" (Spec62, #242-244) reads the platform audit
+  // trail alone, never a customer tenant's own audit log.
+  if (!(await indexExists("platform_admin_audit", "idx_paa_target_tenant_action"))) {
+    await query(
+      "ALTER TABLE `platform_admin_audit` ADD KEY `idx_paa_target_tenant_action` (`target_tenant_id`, `action`)",
+    )
+  }
+
   // Bootstrap one platform operator if none exists (mirrors the migration).
   const [{ n } = { n: 0 }] = await query<{ n: number }[]>(
     "SELECT COUNT(*) AS n FROM `users` WHERE `platform_role` = 'platform_super_admin'",

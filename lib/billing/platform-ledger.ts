@@ -3,6 +3,7 @@ import { query } from "@/lib/db"
 import { tenantSelect, currentTenantId } from "@/lib/tenant-scope"
 import { nextRecordId } from "@/lib/record-ids"
 import { round2 } from "@/lib/billing/billing-math"
+import { assertPlatformLedgerTarget, assertPlatformSourceType } from "@/lib/billing/finance-boundary"
 import type { SessionPayload } from "@/lib/auth"
 
 /**
@@ -281,6 +282,12 @@ export async function postJournal(
   input: PostJournalInput,
   session?: SessionPayload | null,
 ): Promise<PostJournalResult> {
+  // Boundary: a SaaS seller posting may only ever target the platform ledger,
+  // never a customer's ERP finance books. Fail closed before touching the DB.
+  assertPlatformSourceType(input.sourceType)
+  assertPlatformLedgerTarget("platform_journal")
+  assertPlatformLedgerTarget("platform_journal_lines")
+
   const lines = input.lines.filter((l) => l.debit !== 0 || l.credit !== 0)
   if (lines.length === 0) return { journalId: 0, entryNo: "", posted: false }
   if (!isBalanced(lines)) {

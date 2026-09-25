@@ -63,7 +63,7 @@ describe("branding projection (SPEC 155)", () => {
 
   it("falls back to platform defaults when nothing is configured", () => {
     const b = brandingFromSettings({})
-    expect(b.companyName).toBe("Muenot Business Team")
+    expect(b.companyName).toBe("Muenot Business Suite")
     expect(b.primaryColor).toBe("#6d28d9")
     expect(b.customDomain).toBe("")
   })

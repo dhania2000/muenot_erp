@@ -47,6 +47,10 @@ export type UploadSessionRow = {
   total_parts: number
   status: "active" | "completed" | "aborted"
   category: string
+  /** Logical ERP module the finished object belongs to (drives metadata row). */
+  module: string | null
+  /** Client-declared SHA-256 of the whole file, recorded for integrity. */
+  checksum: string | null
   created_by: number | null
   created_at: string | null
   updated_at: string | null
@@ -63,6 +67,8 @@ export type UploadSessionStatus = {
   totalParts: number
   status: "active" | "completed" | "aborted"
   category: string
+  module: string | null
+  checksum: string | null
   uploadedParts: number[]
   uploadedBytes: number
   createdAt: string | null
@@ -86,6 +92,8 @@ export async function ensureUploadSchema(): Promise<void> {
       total_parts INT NOT NULL DEFAULT 0,
       status VARCHAR(20) NOT NULL DEFAULT 'active',
       category VARCHAR(40) NOT NULL DEFAULT 'other',
+      module VARCHAR(64) DEFAULT NULL,
+      checksum CHAR(64) DEFAULT NULL,
       created_by INT DEFAULT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -93,6 +101,10 @@ export async function ensureUploadSchema(): Promise<void> {
       KEY idx_sus_status (tenant_id, status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+  // Older deployments predate the module/checksum columns; add them idempotently
+  // (MySQL has no portable "ADD COLUMN IF NOT EXISTS", so tolerate the dup error).
+  await query(`ALTER TABLE ${SESSIONS} ADD COLUMN module VARCHAR(64) DEFAULT NULL`).catch(() => {})
+  await query(`ALTER TABLE ${SESSIONS} ADD COLUMN checksum CHAR(64) DEFAULT NULL`).catch(() => {})
   await query(`
     CREATE TABLE IF NOT EXISTS ${PARTS} (
       id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,

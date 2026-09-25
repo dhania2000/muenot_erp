@@ -391,3 +391,153 @@ export function isSafeTempDatabaseName(name: string): boolean {
 export function isSafeIdentifier(name: string): boolean {
   return typeof name === "string" && /^[A-Za-z0-9_]{1,64}$/.test(name)
 }
+
+// ---------------------------------------------------------------------------
+// Measured recovery posture (RPO / RTO / evidence)
+// ---------------------------------------------------------------------------
+
+/**
+ * The subset of a backup run needed to measure recovery posture. Kept
+ * structural (not tied to the store type) so this stays a pure, DB-free
+ * function that can be unit-tested with plain fixtures.
+ */
+export type RecoveryPointLike = {
+  status: string
+  createdAt: string | Date | null
+  finishedAt?: string | Date | null
+  verificationStatus?: string | null
+  verifiedAt?: string | Date | null
+  storageLocation?: string | null
+  immutable?: boolean | null
+  replicaRegion?: string | null
+}
+
+/** The subset of a restore drill needed as recovery evidence. */
+export type RestoreEvidenceLike = {
+  status: string
+  createdAt: string | Date | null
+  durationMs?: number | null
+  tempDatabase?: string | null
+  restoredRows?: number | null
+  mode?: string | null
+}
+
+export type RecoveryPosture = {
+  /** True once at least one completed backup exists, so RPO can be measured. */
+  measurable: boolean
+  /** Newest backup run of any status, ISO string. */
+  latestBackupAt: string | null
+  /** Newest completed (recoverable) backup, ISO string. */
+  latestSuccessfulBackupAt: string | null
+  /**
+   * Measured Recovery Point Objective exposure: minutes of data at risk right
+   * now = time since the newest completed backup. null when unmeasurable.
+   */
+  rpoMinutes: number | null
+  /**
+   * Measured Recovery Time Objective: how long the most recent PASSED restore
+   * drill took to rebuild the data, in minutes (ceil, min 1 when non-zero).
+   * null when no passing drill has ever run.
+   */
+  rtoMinutes: number | null
+  /** Raw duration of the RTO-defining drill, for precise UI formatting. */
+  rtoDurationMs: number | null
+  lastVerificationStatus: string | null
+  lastVerifiedAt: string | null
+  lastDrillStatus: string | null
+  lastDrillAt: string | null
+  lastDrillTempDatabase: string | null
+  lastDrillRestoredRows: number | null
+  lastDrillDurationMs: number | null
+  /** Count of completed runs whose artifact lives in off-site object storage. */
+  offsiteCount: number
+  /** Count of completed runs held under an immutable retention window. */
+  immutableCount: number
+  /** Count of completed runs copied to a second region. */
+  crossRegionCount: number
+  totalCompleted: number
+}
+
+function toDate(value: string | Date | null | undefined): Date | null {
+  if (value == null) return null
+  const d = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * Measure recovery posture from actual backup runs and restore drills — never
+ * fabricated. RPO is the live data-loss window (time since the newest completed
+ * backup); RTO is the wall-clock time the most recent passing drill needed to
+ * rebuild the data. Both stay null until there is real evidence to report.
+ */
+export function summarizeRecoveryPosture(
+  runs: RecoveryPointLike[],
+  drills: RestoreEvidenceLike[],
+  now: Date = new Date(),
+): RecoveryPosture {
+  const completed = runs.filter((r) => r.status === "completed")
+
+  let latestBackup: Date | null = null
+  for (const r of runs) {
+    const d = toDate(r.createdAt)
+    if (d && (!latestBackup || d.getTime() > latestBackup.getTime())) latestBackup = d
+  }
+
+  // Newest completed backup by its completion time (finishedAt ?? createdAt).
+  let latestGood: Date | null = null
+  let latestGoodRun: RecoveryPointLike | null = null
+  for (const r of completed) {
+    const d = toDate(r.finishedAt) ?? toDate(r.createdAt)
+    if (d && (!latestGood || d.getTime() > latestGood.getTime())) {
+      latestGood = d
+      latestGoodRun = r
+    }
+  }
+
+  const rpoMinutes =
+    latestGood != null ? Math.max(0, Math.floor((now.getTime() - latestGood.getTime()) / 60_000)) : null
+
+  // Most recent drill of any status = evidence; most recent PASSED drill = RTO.
+  let lastDrill: RestoreEvidenceLike | null = null
+  let lastPassedDrill: RestoreEvidenceLike | null = null
+  let lastDrillAt: Date | null = null
+  let lastPassedAt: Date | null = null
+  for (const t of drills) {
+    const d = toDate(t.createdAt)
+    if (!d) continue
+    if (!lastDrillAt || d.getTime() > lastDrillAt.getTime()) {
+      lastDrillAt = d
+      lastDrill = t
+    }
+    if (t.status === "passed" && (!lastPassedAt || d.getTime() > lastPassedAt.getTime())) {
+      lastPassedAt = d
+      lastPassedDrill = t
+    }
+  }
+
+  const rtoDurationMs =
+    lastPassedDrill != null && typeof lastPassedDrill.durationMs === "number" && lastPassedDrill.durationMs >= 0
+      ? Math.floor(lastPassedDrill.durationMs)
+      : null
+  const rtoMinutes = rtoDurationMs == null ? null : rtoDurationMs === 0 ? 0 : Math.max(1, Math.ceil(rtoDurationMs / 60_000))
+
+  return {
+    measurable: latestGood != null,
+    latestBackupAt: latestBackup ? latestBackup.toISOString() : null,
+    latestSuccessfulBackupAt: latestGood ? latestGood.toISOString() : null,
+    rpoMinutes,
+    rtoMinutes,
+    rtoDurationMs,
+    lastVerificationStatus: latestGoodRun?.verificationStatus ?? null,
+    lastVerifiedAt: toDate(latestGoodRun?.verifiedAt)?.toISOString() ?? null,
+    lastDrillStatus: lastDrill?.status ?? null,
+    lastDrillAt: lastDrillAt ? lastDrillAt.toISOString() : null,
+    lastDrillTempDatabase: lastDrill?.tempDatabase ?? null,
+    lastDrillRestoredRows: lastDrill && typeof lastDrill.restoredRows === "number" ? lastDrill.restoredRows : null,
+    lastDrillDurationMs: lastDrill && typeof lastDrill.durationMs === "number" ? lastDrill.durationMs : null,
+    offsiteCount: completed.filter((r) => r.storageLocation === "offsite").length,
+    immutableCount: completed.filter((r) => r.storageLocation === "offsite" && r.immutable === true).length,
+    crossRegionCount: completed.filter((r) => r.storageLocation === "offsite" && !!r.replicaRegion).length,
+    totalCompleted: completed.length,
+  }
+}

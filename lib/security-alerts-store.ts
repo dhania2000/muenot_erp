@@ -34,6 +34,7 @@ export type SecurityAlertType =
   | "api_key_created"
   | "breached_password"
   | "critical_compromise"
+  | "bulk_export"
 
 export type SecuritySeverity = "info" | "warning" | "critical"
 export type SecurityAlertStatus = "open" | "acknowledged" | "resolved"
@@ -405,6 +406,83 @@ export async function onSuccessfulLogin(params: { tenantId: number | null; userI
     )
   } catch {
     // best-effort
+  }
+}
+
+/**
+ * A data export completed (Spec25 · #216). Assess it for BULK or UNUSUAL
+ * characteristics and, when warranted, raise a deduplicated `bulk_export` alert
+ * that captures the actor, scope and destination metadata. Best-effort — never
+ * throws into the export path. The `recentExportCount` is supplied by the
+ * export store from a tenant-scoped count of the actor's recent exports.
+ */
+export async function onDataExport(params: {
+  tenantId: number | null
+  actorUserId: number
+  actorLabel: string
+  scopeLabel: string
+  datasetKey: string
+  rowCount: number
+  isFullTenant: boolean
+  recentExportCount: number
+  destination: ExportDestinationKind
+  ip?: string | null
+}): Promise<{ alerted: boolean; severity: SecuritySeverity } | null> {
+  if (params.tenantId == null) return null
+  try {
+    const assessment = assessExport({
+      rowCount: params.rowCount,
+      isFullTenant: params.isFullTenant,
+      recentExportCount: params.recentExportCount,
+      destination: params.destination,
+    })
+    if (!assessment.alert) return { alerted: false, severity: "info" }
+
+    const raised = await raiseSecurityAlert({
+      tenantId: params.tenantId,
+      type: "bulk_export",
+      severity: assessment.severity,
+      // Fold repeat exfiltration signals by the same actor into one open alert.
+      dedupeKey: `bulk-export:${params.actorUserId}`,
+      title: `Unusual data export by ${params.actorLabel}`,
+      subjectUserId: params.actorUserId,
+      subjectLabel: params.actorLabel,
+      sourceIp: params.ip ?? null,
+      // Actor, scope and destination metadata for the responder.
+      detail: {
+        actorUserId: params.actorUserId,
+        scope: params.scopeLabel,
+        datasetKey: params.datasetKey,
+        rowCount: params.rowCount,
+        isFullTenant: params.isFullTenant,
+        destination: params.destination,
+        recentExportCount: params.recentExportCount,
+        reasons: assessment.reasons,
+      },
+      // Re-notify on a repeat critical signal (active exfiltration).
+      notifyOnRepeat: assessment.severity === "critical",
+    })
+    // Mirror into the immutable audit trail under a dedicated category.
+    void recordSecurityEvent({
+      tenantId: params.tenantId,
+      category: "data_export",
+      action: "bulk_export_alert",
+      outcome: raised.isNew ? "created" : "info",
+      actorUserId: params.actorUserId,
+      subjectEmail: params.actorLabel,
+      ipAddress: params.ip ?? null,
+      detail: {
+        scope: params.scopeLabel,
+        rowCount: params.rowCount,
+        destination: params.destination,
+        severity: assessment.severity,
+        reasons: assessment.reasons,
+      },
+    })
+    return { alerted: true, severity: assessment.severity }
+  } catch (err) {
+    console.error("[v0] onDataExport alert failed (ignored):", err)
+    return null
   }
 }
 

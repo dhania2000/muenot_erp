@@ -20,6 +20,9 @@ export type SecurityEventCategory =
   | "emergency_bypass"
   | "temporary_access"
   | "break_glass"
+  | "geo_policy"
+  | "managed_device"
+  | "data_export"
 
 export type SecurityEventOutcome =
   | "allowed"

@@ -28,6 +28,8 @@ import "server-only"
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import { query, tableColumns } from "@/lib/db"
 import { recordAuditLog } from "@/lib/audit-log-store"
+import { onDataExport } from "@/lib/security-alerts-store"
+import type { ExportDestinationKind } from "@/lib/export-anomaly-core"
 import { classifiedFieldsFor, enforceExportClassification, getClearanceMatrix } from "@/lib/data-classification"
 import type { TenantRole } from "@/lib/role-model"
 import {
@@ -522,6 +524,36 @@ export async function createAndRunExport(
         actorRole: actor.role,
       },
     })
+
+    // Export anomaly detection (Spec25 · #216): assess the completed export for
+    // bulk/unusual characteristics and raise a security alert with actor, scope
+    // and destination metadata. Best-effort — never blocks the export outcome.
+    if (tenantId != null) {
+      try {
+        // Count this actor's exports in the recent window (tenant-scoped),
+        // INCLUDING this one, to detect exfiltration-by-many-small-exports.
+        const recentRows = await query<{ n: number }[]>(
+          `SELECT COUNT(*) AS n FROM data_export_jobs
+             WHERE tenant_id = ? AND requested_by = ? AND created_at >= (NOW() - INTERVAL 1 HOUR)`,
+          [tenantId, actor.userId],
+        )
+        const recentExportCount = Number(recentRows[0]?.n) || 1
+        const destination: ExportDestinationKind = triggerSource === "scheduler" ? "scheduler" : "download"
+        await onDataExport({
+          tenantId,
+          actorUserId: actor.userId,
+          actorLabel: actor.email ?? actor.name ?? `user#${actor.userId}`,
+          scopeLabel: scope.label,
+          datasetKey: input.datasetKey,
+          rowCount,
+          isFullTenant: isFullTenantScope(input.datasetKey),
+          recentExportCount,
+          destination,
+        })
+      } catch (alertErr) {
+        console.error("[v0] export anomaly assessment failed (ignored):", alertErr)
+      }
+    }
   } catch (err) {
     const message = (err as Error).message || "Export failed"
     await query(`UPDATE data_export_jobs SET status = 'failed', error = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?`, [

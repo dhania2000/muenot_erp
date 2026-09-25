@@ -305,6 +305,16 @@ export const TENANT_OWNED_TABLES = [
   "tenant_integration_secret_versions",
   "tenant_integration_secret_audit",
   "tenant_integration_secret_idempotency",
+  // SPEC 15 — Integration marketplace (#88-89). Installable connectors (Tally,
+  // Zoho, Microsoft, Google, Slack): the per-connector install/health row, the
+  // encrypted-at-rest credential store with active/revoked state, the lifecycle
+  // audit trail, and the write idempotency ledger. Every row belongs to exactly
+  // one tenant; a connector install or credential must never be visible to,
+  // resolved by, reconnected or disconnected from another tenant.
+  "tenant_connector_installations",
+  "tenant_connector_credentials",
+  "tenant_connector_audit",
+  "tenant_connector_idempotency",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

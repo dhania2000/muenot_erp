@@ -14,7 +14,13 @@ import {
   normalizeRetentionPolicy,
   retentionDays,
 } from "@/lib/storage/file-metadata-policy"
-import { checksumMatches, formatFileRef, normalizeUploadStatus, sha256 } from "@/lib/storage/file-metadata"
+import {
+  checksumMatches,
+  formatFileRef,
+  normalizeEncryptionState,
+  normalizeUploadStatus,
+  sha256,
+} from "@/lib/storage/file-metadata"
 
 /**
  * Phase 4. Pure, DB-free validation of the centralized file metadata
@@ -87,6 +93,25 @@ describe("upload status normalization", () => {
     expect(normalizeUploadStatus("garbage")).toBe("pending")
     expect(normalizeUploadStatus(null)).toBe("pending")
     expect(normalizeUploadStatus(undefined)).toBe("pending")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Encryption-at-rest state (recorded per file)
+// ---------------------------------------------------------------------------
+
+describe("encryption state normalization", () => {
+  it("passes through the four known states", () => {
+    for (const s of ["unknown", "none", "AES256", "aws:kms"] as const) {
+      expect(normalizeEncryptionState(s)).toBe(s)
+    }
+  })
+
+  it("falls back to 'unknown' for unrecognized/empty values (fail safe)", () => {
+    expect(normalizeEncryptionState("rot13")).toBe("unknown")
+    expect(normalizeEncryptionState("")).toBe("unknown")
+    expect(normalizeEncryptionState(null)).toBe("unknown")
+    expect(normalizeEncryptionState(undefined)).toBe("unknown")
   })
 })
 

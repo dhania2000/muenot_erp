@@ -8,7 +8,16 @@ vi.mock("@/lib/auth", () => ({ getSession: mock.session }))
 vi.mock("@/lib/permissions", () => ({ userHasFeature: mock.feature }))
 vi.mock("@/lib/permission-store", () => ({ hasActionGrant: mock.action }))
 vi.mock("@/lib/tenant-context", () => ({ getCurrentTenant: mock.tenant }))
-vi.mock("@/lib/api-keys-store", () => ({ findKeyByPlaintext: mock.key, touchKeyUsage: mock.touch }))
+vi.mock("@/lib/api-keys-store", () => ({
+  findKeyByPlaintext: mock.key,
+  touchKeyUsage: mock.touch,
+  // Consumed at module load by lib/oauth (transitively imported via lib/api-auth).
+  AVAILABLE_SCOPES: [
+    { value: "clients:read", label: "Read clients" },
+    { value: "clients:write", label: "Write clients" },
+  ],
+}))
+vi.mock("@/lib/db", () => ({ query: vi.fn() }))
 import { requireFeature, requireModuleAction, getTenantId, requireTenant, authenticateApiKey, hasScope } from "@/lib/api-auth"
 
 const session = { userId: 5, role: "employee", tenantId: 7 }

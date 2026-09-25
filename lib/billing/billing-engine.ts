@@ -29,6 +29,14 @@ import {
   ensureSubscriptionSchema,
 } from "@/lib/billing/subscription-engine"
 import { isBillingTerm, type BillingTerm } from "@/lib/billing/subscription-lifecycle"
+import { computeGstBreakdown } from "@/lib/billing/saas-gst"
+import { getSellerGstin, getSellerStateCode, resolvePlaceOfSupply } from "@/lib/billing/saas-seller"
+import {
+  postInvoiceAccounting,
+  postPaymentAccounting,
+  postRefundAccounting,
+  postCreditGrantAccounting,
+} from "@/lib/billing/saas-accounting"
 
 /**
  * Billing engine (data + service layer).
@@ -94,6 +102,13 @@ export type Invoice = {
   coupon_code: string | null
   tax_rate: number
   tax_total: number
+  seller_gstin: string | null
+  place_of_supply: string | null
+  place_of_supply_code: string | null
+  supply_type: "intra_state" | "inter_state" | null
+  igst_total: number
+  cgst_total: number
+  sgst_total: number
   credit_applied: number
   adjustment_total: number
   total: number
@@ -321,6 +336,14 @@ async function runEnsure(): Promise<void> {
   await ensureBillingColumn("billing_invoices", "period_start", "DATE DEFAULT NULL")
   await ensureBillingColumn("billing_invoices", "period_end", "DATE DEFAULT NULL")
   await ensureBillingColumn("billing_invoices", "memo", "VARCHAR(500) DEFAULT NULL")
+  // GST / place-of-supply on SaaS invoices (#81-83).
+  await ensureBillingColumn("billing_invoices", "seller_gstin", "VARCHAR(20) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "place_of_supply", "VARCHAR(120) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "place_of_supply_code", "VARCHAR(4) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "supply_type", "VARCHAR(16) DEFAULT NULL")
+  await ensureBillingColumn("billing_invoices", "igst_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "cgst_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureBillingColumn("billing_invoices", "sgst_total", "DECIMAL(14,2) NOT NULL DEFAULT 0")
 
   await query(`CREATE TABLE IF NOT EXISTS billing_invoice_lines (
     id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -459,6 +482,13 @@ function mapInvoice(r: any): Invoice {
     coupon_code: r.coupon_code ?? null,
     tax_rate: num(r.tax_rate),
     tax_total: num(r.tax_total),
+    seller_gstin: r.seller_gstin ?? null,
+    place_of_supply: r.place_of_supply ?? null,
+    place_of_supply_code: r.place_of_supply_code ?? null,
+    supply_type: (r.supply_type ?? null) as Invoice["supply_type"],
+    igst_total: num(r.igst_total),
+    cgst_total: num(r.cgst_total),
+    sgst_total: num(r.sgst_total),
     credit_applied: num(r.credit_applied),
     adjustment_total: num(r.adjustment_total),
     total: num(r.total),
@@ -714,6 +744,13 @@ export async function createCredit(input: CreditInput, session: SessionPayload):
     created_by: session.userId,
   })
   const created = await requireOwnedRow("billing_credits", insertId)
+  // Book granted account credit to the platform seller ledger. Only positive
+  // credit grants are booked; debits/adjustments are internal ledger movements.
+  if (entryType === "credit" && amount > 0) {
+    await postCreditGrantAccounting({ id: Number(insertId), amount }, session).catch((e) =>
+      console.log("[v0] credit accounting post failed", (e as Error).message),
+    )
+  }
   return mapCredit(created)
 }
 
@@ -863,6 +900,18 @@ export async function createInvoice(input: CreateInvoiceInput, session: SessionP
     { finalized: finalize },
   )
 
+  // GST breakdown for the SaaS invoice: place of supply from the customer's
+  // GSTIN (or billing state) drives the intra- vs inter-state split of the
+  // computed tax total into IGST or CGST+SGST.
+  const sellerGstin = getSellerGstin()
+  const placeOfSupply = resolvePlaceOfSupply({ taxId: input.bill_to_tax_id, state: input.bill_to_state })
+  const gst = computeGstBreakdown({
+    taxTotal: totals.taxTotal,
+    ratePercent: num(input.tax_rate),
+    sellerStateCode: getSellerStateCode(),
+    placeOfSupplyStateCode: placeOfSupply.code,
+  })
+
   const invoiceNo = await nextRecordId("BINV", { digits: 5, allowCustom: true })
   const { insertId } = await tenantInsert("billing_invoices", {
     invoice_no: invoiceNo,
@@ -883,6 +932,13 @@ export async function createInvoice(input: CreateInvoiceInput, session: SessionP
     coupon_code: coupon?.coupon_code ?? null,
     tax_rate: num(input.tax_rate),
     tax_total: totals.taxTotal,
+    seller_gstin: sellerGstin || null,
+    place_of_supply: placeOfSupply.name,
+    place_of_supply_code: placeOfSupply.code,
+    supply_type: gst.supplyType,
+    igst_total: gst.igst,
+    cgst_total: gst.cgst,
+    sgst_total: gst.sgst,
     credit_applied: totals.creditApplied,
     adjustment_total: totals.adjustmentTotal,
     total: totals.total,
@@ -925,6 +981,14 @@ export async function createInvoice(input: CreateInvoiceInput, session: SessionP
 
   const created = await getInvoice(insertId)
   if (!created) throw new BillingError("Failed to load the invoice just created", 500)
+  // Post to the platform seller ledger (and defer multi-month revenue).
+  // Best-effort: a ledger hiccup must never block issuing the invoice, and the
+  // posting is idempotent so a later retry still books it exactly once.
+  if (created.status !== "draft") {
+    await postInvoiceAccounting(created, session).catch((e) =>
+      console.log("[v0] invoice accounting post failed", (e as Error).message),
+    )
+  }
   return created
 }
 
@@ -1006,6 +1070,13 @@ export async function recordPayment(invoiceId: number, input: PaymentInput, sess
   })
   await recomputeInvoice(invoiceId)
   const created = await requireOwnedRow("billing_payments", insertId)
+  // Book the cash receipt to the platform seller ledger (idempotent, best-effort).
+  if (status === "succeeded") {
+    await postPaymentAccounting(
+      { id: Number(created.id), amount, paid_at: created.paid_at, invoice_no: inv.invoice_no },
+      session,
+    ).catch((e) => console.log("[v0] payment accounting post failed", (e as Error).message))
+  }
   return mapPayment(created)
 }
 
@@ -1077,6 +1148,12 @@ export async function refundInvoice(invoiceId: number, input: RefundInput, sessi
       session,
     )
   }
+
+  // Book the refund to the platform seller ledger (idempotent, best-effort).
+  await postRefundAccounting(
+    { id: Number(insertId), amount: check.amount, as_credit: Boolean(input.as_credit) },
+    session,
+  ).catch((e) => console.log("[v0] refund accounting post failed", (e as Error).message))
 
   const created = await requireOwnedRow("billing_refunds", insertId)
   return mapRefund(created)

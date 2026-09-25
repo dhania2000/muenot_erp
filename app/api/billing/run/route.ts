@@ -4,6 +4,7 @@ import { runRecurringBilling, BillingError } from "@/lib/billing/billing-engine"
 import { runRenewalCycle } from "@/lib/billing/renewal-engine"
 import { listSubscriptions } from "@/lib/billing/subscription-engine"
 import { reconcileSubscriptionUsage } from "@/lib/billing/usage-invoicing"
+import { recognizeDue } from "@/lib/billing/revenue-recognition"
 
 export const runtime = "nodejs"
 
@@ -65,7 +66,17 @@ export async function POST(request: Request) {
         sendReminders: body.sendReminders !== false,
       })
     }
-    return NextResponse.json({ ok: true, ...result, usage, renewals })
+    // Revenue recognition: post every deferred-revenue entry whose service
+    // month has started as of today to the platform seller ledger. Idempotent
+    // per entry, so re-running never double-recognizes. Pass
+    // `{ "recognize": false }` to skip.
+    let recognition: { recognizedCount: number; recognizedAmount: number } | null = null
+    if (body.recognize !== false) {
+      const asOf = typeof body.as_of === "string" ? body.as_of : new Date().toISOString().slice(0, 10)
+      recognition = await recognizeDue(asOf, session)
+    }
+
+    return NextResponse.json({ ok: true, ...result, usage, renewals, recognition })
   } catch (err) {
     if (err instanceof BillingError) {
       return NextResponse.json({ error: err.message, fields: err.fields }, { status: err.status })

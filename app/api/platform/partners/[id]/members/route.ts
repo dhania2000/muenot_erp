@@ -23,15 +23,17 @@ export async function POST(req: Request, { params }: Ctx) {
   if (!guard.ok) return NextResponse.json({ error: guard.reason }, { status: guard.status })
   try {
     const { partnerId, userId } = await parse(req, params)
-    await addMember(partnerId, userId, guard.ctx.userId)
-    await recordPlatformAudit({
-      actorUserId: guard.ctx.userId,
-      actorEmail: guard.session.email,
-      action: "partner_member_granted",
-      targetUserId: userId,
-      detail: { partnerId },
-    })
-    return NextResponse.json({ ok: true }, { status: 201 })
+    const { granted } = await addMember(partnerId, userId, guard.ctx.userId)
+    if (granted) {
+      await recordPlatformAudit({
+        actorUserId: guard.ctx.userId,
+        actorEmail: guard.session.email,
+        action: "partner_member_granted",
+        targetUserId: userId,
+        detail: { partnerId },
+      })
+    }
+    return NextResponse.json({ ok: true, granted }, { status: granted ? 201 : 200 })
   } catch (err) {
     return partnerErrorResponse(err, "Failed to add partner member")
   }

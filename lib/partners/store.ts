@@ -110,10 +110,25 @@ async function runEnsure(): Promise<void> {
     \`revoked_by\` INT UNSIGNED DEFAULT NULL,
     \`revoked_at\` DATETIME DEFAULT NULL,
     \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    \`active_user_id\` INT UNSIGNED AS (IF(\`status\` = 'active', \`user_id\`, NULL)) STORED,
     PRIMARY KEY (\`id\`),
     UNIQUE KEY \`uniq_partner_member\` (\`partner_id\`, \`user_id\`),
+    UNIQUE KEY \`uniq_partner_member_active_user\` (\`active_user_id\`),
     KEY \`idx_partner_member_user\` (\`user_id\`, \`status\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  // One ACTIVE partner membership per user, DB-enforced (closes the
+  // check-then-insert race in addMember). Pre-existing duplicates would make
+  // the ALTER fail; keep the app-level check as the fallback in that case.
+  if (!(await hasColumn("platform_partner_members", "active_user_id"))) {
+    try {
+      await query(
+        "ALTER TABLE `platform_partner_members` ADD COLUMN `active_user_id` INT UNSIGNED AS (IF(`status` = 'active', `user_id`, NULL)) STORED, ADD UNIQUE KEY `uniq_partner_member_active_user` (`active_user_id`)",
+      )
+    } catch (err) {
+      if (!isDup(err)) throw err
+      console.error("[partners] duplicate active memberships exist; resolve them to enable the unique index")
+    }
+  }
   await query(`CREATE TABLE IF NOT EXISTS \`platform_partner_referrals\` (
     \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     \`partner_id\` INT UNSIGNED NOT NULL,
@@ -360,12 +375,37 @@ export async function addMember(partnerId: number, userId: number, actorUserId: 
     [userId, partnerId],
   )
   if (other[0]) throw new PartnerError("User already belongs to another partner", "MEMBER_CONFLICT", 409)
-  await query(
-    `INSERT INTO \`platform_partner_members\` (\`partner_id\`, \`user_id\`, \`status\`, \`created_by\`)
-     VALUES (?, ?, 'active', ?)
-     ON DUPLICATE KEY UPDATE \`status\` = 'active', \`revoked_by\` = NULL, \`revoked_at\` = NULL`,
-    [partnerId, userId, actorUserId],
+  // No ON DUPLICATE KEY UPDATE: with two unique keys MySQL would update
+  // whichever row conflicted first, possibly another partner's membership.
+  const existing = await query<any[]>(
+    "SELECT `id`, `status` FROM `platform_partner_members` WHERE `partner_id` = ? AND `user_id` = ? LIMIT 1",
+    [partnerId, userId],
   )
+  if (existing[0]?.status === "active") return { granted: false }
+  try {
+    if (existing[0]) {
+      await query(
+        "UPDATE `platform_partner_members` SET `status` = 'active', `revoked_by` = NULL, `revoked_at` = NULL WHERE `id` = ? AND `status` <> 'active'",
+        [existing[0].id],
+      )
+    } else {
+      await query(
+        "INSERT INTO `platform_partner_members` (`partner_id`, `user_id`, `status`, `created_by`) VALUES (?, ?, 'active', ?)",
+        [partnerId, userId, actorUserId],
+      )
+    }
+  } catch (err) {
+    // Lost a race: the same grant landed concurrently, or the user was
+    // granted to another partner between the check and the write.
+    if (!isDup(err)) throw err
+    const again = await query<any[]>(
+      "SELECT `id` FROM `platform_partner_members` WHERE `partner_id` = ? AND `user_id` = ? AND `status` = 'active' LIMIT 1",
+      [partnerId, userId],
+    )
+    if (again[0]) return { granted: false }
+    throw new PartnerError("User already belongs to another partner", "MEMBER_CONFLICT", 409)
+  }
+  return { granted: true }
 }
 
 export async function revokeMember(partnerId: number, userId: number, actorUserId: number) {
@@ -562,31 +602,43 @@ async function settleInvoice(invoiceId: number, today: string, actorUserId: numb
  * entry (`commission:<invoiceId>`), so concurrent/repeated runs never double
  * pay. One invoice failing does not abort the batch.
  */
+export const SETTLEMENT_BATCH_SIZE = 500
+export const SETTLEMENT_MAX_BATCHES = 40
+
 export async function settleCommissions(today: string, actorUserId: number | null) {
   await ensurePartnerSchema()
-  const candidates = await query<any[]>(
-    `SELECT i.id FROM \`platform_invoices\` i
-      WHERE i.status = 'paid' AND i.paid_at IS NOT NULL
-        AND i.tenant_id IN (SELECT r.tenant_id FROM \`platform_partner_referrals\` r)
-        AND NOT EXISTS (
-          SELECT 1 FROM \`platform_partner_commissions\` c WHERE c.invoice_id = i.id AND c.kind = 'commission'
-        )
-      ORDER BY i.paid_at ASC, i.id ASC LIMIT 500`,
-  )
   const settled: { invoiceId: number; partnerId: number; amount: string }[] = []
   const skipped: { invoiceId: number; reason: string }[] = []
   const failed: { invoiceId: number }[] = []
 
-  for (const c of candidates) {
-    const invoiceId = Number(c.id)
-    try {
-      const out = await settleInvoice(invoiceId, today, actorUserId)
-      if ("settled" in out) settled.push(out.settled)
-      else skipped.push({ invoiceId, reason: out.skipped })
-    } catch (err) {
-      console.error(`[partners] settlement failed for invoice ${invoiceId}:`, err)
-      failed.push({ invoiceId })
+  // Keyset pagination by id: invoices that are permanently ineligible (never
+  // attributed, fully refunded, outside contract) never get a ledger row, so a
+  // plain LIMIT would let them crowd out newer invoices forever.
+  let cursor = 0
+  for (let batch = 0; batch < SETTLEMENT_MAX_BATCHES; batch++) {
+    const candidates = await query<any[]>(
+      `SELECT i.id FROM \`platform_invoices\` i
+        WHERE i.status = 'paid' AND i.paid_at IS NOT NULL AND i.id > ?
+          AND i.tenant_id IN (SELECT r.tenant_id FROM \`platform_partner_referrals\` r)
+          AND NOT EXISTS (
+            SELECT 1 FROM \`platform_partner_commissions\` c WHERE c.invoice_id = i.id AND c.kind = 'commission'
+          )
+        ORDER BY i.id ASC LIMIT ${SETTLEMENT_BATCH_SIZE}`,
+      [cursor],
+    )
+    for (const c of candidates) {
+      const invoiceId = Number(c.id)
+      try {
+        const out = await settleInvoice(invoiceId, today, actorUserId)
+        if ("settled" in out) settled.push(out.settled)
+        else skipped.push({ invoiceId, reason: out.skipped })
+      } catch (err) {
+        console.error(`[partners] settlement failed for invoice ${invoiceId}:`, err)
+        failed.push({ invoiceId })
+      }
     }
+    if (candidates.length < SETTLEMENT_BATCH_SIZE) break
+    cursor = Number(candidates[candidates.length - 1].id)
   }
   return { settled, skipped, failed }
 }
@@ -653,14 +705,18 @@ export async function applyInvoiceClawback(invoiceId: number, actorUserId: numbe
 
 /**
  * Resolve the partner for a user from an ACTIVE membership of an ACTIVE
- * partner. Revoked members and suspended/terminated partners get nothing.
+ * partner. Revoked members, suspended/terminated partners, deactivated users
+ * and users later promoted to platform staff (separation of duties) get
+ * nothing. Evaluated on every request, so revocation is immediate.
  */
 export async function resolvePartnerForUser(userId: number): Promise<number | null> {
   await ensurePartnerSchema()
   const rows = await query<any[]>(
     `SELECT m.partner_id FROM \`platform_partner_members\` m
        JOIN \`platform_partners\` p ON p.id = m.partner_id
+       JOIN \`users\` u ON u.id = m.user_id
       WHERE m.user_id = ? AND m.status = 'active' AND p.status = 'active'
+        AND u.status = 'active' AND COALESCE(u.platform_role, 'none') = 'none'
       LIMIT 1`,
     [userId],
   )

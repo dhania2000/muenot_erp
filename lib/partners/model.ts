@@ -213,7 +213,13 @@ export function referralOnDay(referrals: ReferralRecord[], day: string): Referra
     return from !== null && from <= day && (to === null || day < to)
   })
   if (!hits.length) return null
-  return hits.sort((a, b) => (dayOf(b.attributedAt)! > dayOf(a.attributedAt)! ? 1 : b.id - a.id))[0]
+  // Latest attribution wins; ties on the same day fall back to the newest id.
+  return hits.sort((a, b) => {
+    const da = dayOf(a.attributedAt)!
+    const db = dayOf(b.attributedAt)!
+    if (da !== db) return da < db ? 1 : -1
+    return b.id - a.id
+  })[0]
 }
 
 // ---------------------------------------------------------------------------

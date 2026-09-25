@@ -26,7 +26,7 @@ import { hasFeatureFlag, type PlanEntitlements } from "@/lib/platform/entitlemen
 export const WHITE_LABEL_FLAG = "white_label"
 
 /** The vendor whose attribution white-label removes. */
-export const VENDOR = { name: "Muenot", url: "https://muenot.com" } as const
+export const VENDOR = { name: "Muenot", url: "https://muenot.co.in" } as const
 
 export type WhiteLabelConfig = {
   /** Does the tenant's plan include the white-label entitlement? */

@@ -93,6 +93,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (err instanceof TenantRoutingError) {
       return NextResponse.json({ error: err.message }, { status: err.status })
     }
-    return NextResponse.json({ error: err?.message ?? "Operation failed" }, { status: 500 })
+    return NextResponse.json({ error: "Database operation failed", code: "UNKNOWN_ERROR" }, { status: 500 })
   }
 }

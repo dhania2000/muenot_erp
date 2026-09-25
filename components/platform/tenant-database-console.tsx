@@ -272,17 +272,17 @@ export function TenantDatabaseConsole({
                   {action === "provision" ? <Loader2 className="size-3.5 animate-spin" /> : <PlayCircle className="size-3.5" />}
                   Provision
                 </Button>
-                <Button size="sm" variant="secondary" disabled={action !== null} onClick={() => runAction("migrate")}>
+                <Button size="sm" variant="secondary" disabled title="Complete isolated ERP schema migrations are not implemented">
                   {action === "migrate" ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                  Migrate
+                  Migration unavailable
                 </Button>
                 <Button size="sm" variant="secondary" disabled={action !== null} onClick={() => runAction("health")}>
                   {action === "health" ? <Loader2 className="size-3.5 animate-spin" /> : <HeartPulse className="size-3.5" />}
                   Health check
                 </Button>
-                <Button size="sm" variant="secondary" disabled={action !== null} onClick={() => runAction("backup")}>
+                <Button size="sm" variant="secondary" disabled title="A restorable tenant backup is not implemented">
                   {action === "backup" ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
-                  Back up
+                  Backup unavailable
                 </Button>
               </div>
               {data.audit.length > 0 ? (

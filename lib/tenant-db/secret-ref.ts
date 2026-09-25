@@ -27,6 +27,8 @@ export type DbConnectionConfig = {
   database: string | undefined
   /** Region the connection physically resolves to (from DSN or shared config). */
   region: string | null
+  /** Explicitly verified TLS for mysqls://; never use rejectUnauthorized:false. */
+  ssl?: { rejectUnauthorized: true; verifyIdentity: true; minVersion: "TLSv1.2" }
 }
 
 function envInt(name: string, fallback: number): number {
@@ -85,20 +87,24 @@ export function resolveDedicatedDbConfig(ref: string): DbConnectionConfig {
   } catch {
     throw new ConnectionSecretError(`Managed secret "${ref}" is not a valid connection URI.`, 500)
   }
-  if (!/^mysql:?$/i.test(url.protocol.replace(":", "") + ":")) {
-    // Accept mysql:// (and mysqls:// for TLS-declaring DSNs).
-    if (!/^mysqls?:$/i.test(url.protocol)) {
-      throw new ConnectionSecretError(`Managed secret "${ref}" must be a mysql:// connection URI.`, 500)
-    }
+  if (url.protocol !== "mysql:" && url.protocol !== "mysqls:") {
+    throw new ConnectionSecretError(`Managed secret "${ref}" must be a MySQL connection URI.`, 500)
   }
   const database = url.pathname.replace(/^\//, "") || undefined
+  const port = url.port ? Number(url.port) : 3306
+  if (!url.hostname || !url.username || !database || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new ConnectionSecretError(`Managed secret "${ref}" has incomplete connection details.`, 500)
+  }
   const declaredRegion = toDataRegion(url.searchParams.get("region"))
   return {
     host: decodeURIComponent(url.hostname),
-    port: url.port ? Number(url.port) : 3306,
+    port,
     user: decodeURIComponent(url.username),
     password: decodeURIComponent(url.password),
     database,
     region: declaredRegion,
+    ...(url.protocol === "mysqls:" ? {
+      ssl: { rejectUnauthorized: true as const, verifyIdentity: true as const, minVersion: "TLSv1.2" as const },
+    } : {}),
   }
 }

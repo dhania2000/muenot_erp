@@ -36,9 +36,12 @@ import {
   getPoolForProfile,
   getPoolForTenant,
   queryForTenant,
+  retireTenantPools,
+  TenantPoolCapacityError,
   type RoutedPool,
 } from "@/lib/tenant-db/router"
 import type { DbConnectionConfig } from "@/lib/tenant-db/secret-ref"
+import { resolveDedicatedDbConfig } from "@/lib/tenant-db/secret-ref"
 
 type TaggedPool = RoutedPool & { __config: DbConnectionConfig }
 let created: DbConnectionConfig[] = []
@@ -227,5 +230,87 @@ describe("queryForTenant routes to the correct connection", () => {
     )
     expect(created).toHaveLength(1)
     expect(rows[0].host).toBe("host-a")
+  })
+})
+
+describe("isolated pool resource limits", () => {
+  const first: ProfileInputs = {
+    tenantId: 1, deploymentModel: "dedicated_database", schema: "tenant_a",
+    connectionRef: "TENANT_A_DSN", dbRegion: "eu-west-1",
+  }
+  const second: ProfileInputs = {
+    tenantId: 2, deploymentModel: "dedicated_database", schema: "tenant_b",
+    connectionRef: "TENANT_B_DSN", dbRegion: "eu-west-1",
+  }
+
+  it("refuses to allocate beyond the cap but continues serving an existing pool", async () => {
+    process.env.TENANT_DB_MAX_POOLS = "1"
+    try {
+      const pool = getPoolForTenant(first)
+      expect(() => getPoolForTenant(second)).toThrow(TenantPoolCapacityError)
+      expect(getPoolForTenant(first)).toBe(pool)
+      expect(cachedPoolCount()).toBe(1)
+      expect(created).toHaveLength(1)
+    } finally {
+      delete process.env.TENANT_DB_MAX_POOLS
+    }
+  })
+
+  it("rejects DSN region drift before a pool is allocated", () => {
+    process.env.TENANT_DRIFT_DSN = "mysql://ua:pa@host-a:3306/tenant_a?region=us-east-1"
+    try {
+      expect(() => getPoolForTenant({
+        tenantId: 3, deploymentModel: "dedicated_database", schema: "tenant_a",
+        connectionRef: "TENANT_DRIFT_DSN", dbRegion: "eu-west-1",
+      })).toThrow(RegionDriftError)
+      expect(created).toHaveLength(0)
+      expect(cachedPoolCount()).toBe(0)
+    } finally {
+      delete process.env.TENANT_DRIFT_DSN
+    }
+  })
+
+  it("rejects a DSN that selects another database before allocating a pool", () => {
+    process.env.TENANT_WRONG_DB_DSN = "mysqls://ua:pa@host-a:3306/other_database?region=eu-west-1"
+    try {
+      expect(() => getPoolForTenant({
+        tenantId: 3, deploymentModel: "dedicated_database", schema: "tenant_a",
+        connectionRef: "TENANT_WRONG_DB_DSN", dbRegion: "eu-west-1",
+      })).toThrow(TenantRoutingError)
+      expect(created).toHaveLength(0)
+    } finally {
+      delete process.env.TENANT_WRONG_DB_DSN
+    }
+  })
+
+  it("retires only the selected tenant's isolated pool", async () => {
+    const a = getPoolForTenant(first)
+    const b = getPoolForTenant(second)
+    expect(await retireTenantPools(first.tenantId)).toBe(1)
+    expect(a.end).toHaveBeenCalledOnce()
+    expect(b.end).not.toHaveBeenCalled()
+    expect(getPoolForTenant(second)).toBe(b)
+    expect(getPoolForTenant(first)).not.toBe(a)
+  })
+})
+
+describe("dedicated DSN transport", () => {
+  it("enables certificate and hostname verification for mysqls connections", () => {
+    process.env.TENANT_TLS_DSN = "mysqls://tenant:password@db.example.com:3306/tenant_db"
+    try {
+      const config = resolveDedicatedDbConfig("TENANT_TLS_DSN")
+      expect(config.ssl).toEqual({ rejectUnauthorized: true, verifyIdentity: true, minVersion: "TLSv1.2" })
+    } finally {
+      delete process.env.TENANT_TLS_DSN
+    }
+  })
+
+  it("rejects an incomplete DSN before opening a connection", () => {
+    process.env.TENANT_BAD_DSN = "mysqls://db.example.com/"
+    try {
+      expect(() => resolveDedicatedDbConfig("TENANT_BAD_DSN")).toThrow()
+    } finally {
+      delete process.env.TENANT_BAD_DSN
+    }
   })
 })

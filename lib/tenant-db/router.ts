@@ -24,6 +24,7 @@ import {
   assertPoolUsable,
   isolatesConnection,
   resolveConnectionProfile,
+  TenantRoutingError,
   type ProfileInputs,
 } from "./model"
 import { resolveDedicatedDbConfig, resolveSharedDbConfig, type DbConnectionConfig } from "./secret-ref"
@@ -60,15 +61,37 @@ function defaultFactory(config: DbConnectionConfig): RoutedPool {
     user: config.user,
     password: config.password,
     database: config.database,
+    ssl: config.ssl,
     waitForConnections: true,
     connectionLimit: 5,
-    queueLimit: 0,
+    // Bound both sockets and queued work for every isolated tenant. An
+    // unlimited queue lets one offline database exhaust process memory.
+    queueLimit: 100,
+    maxIdle: 5,
+    idleTimeout: 60_000,
+    connectTimeout: 10_000,
     enableKeepAlive: true,
     dateStrings: true,
   }) as unknown as RoutedPool
 }
 
 let factory: PoolFactory = defaultFactory
+
+function maxIsolatedPools(): number {
+  const configured = Number(process.env.TENANT_DB_MAX_POOLS)
+  if (!Number.isInteger(configured) || configured < 1) return 64
+  return Math.min(configured, 256)
+}
+
+export class TenantPoolCapacityError extends Error {
+  readonly code = "TENANT_DB_POOL_CAPACITY"
+  readonly status = 503
+
+  constructor() {
+    super("Tenant database pool capacity is exhausted.")
+    this.name = "TenantPoolCapacityError"
+  }
+}
 
 /** Test hook: swap the pool factory. Returns the previous one. */
 export function __setPoolFactory(next: PoolFactory): PoolFactory {
@@ -95,6 +118,9 @@ function configForProfile(profile: ConnectionProfile): DbConnectionConfig {
       return { ...resolveSharedDbConfig({ database: profile.schema }), region: profile.region }
     case "dedicated_database": {
       const cfg = resolveDedicatedDbConfig(profile.connectionRef!)
+      if (cfg.database !== profile.schema) {
+        throw new TenantRoutingError("Dedicated database name does not match the tenant routing profile.", 409)
+      }
       // The DSN's declared region (if any) is the physical truth; fall back to
       // the tenant's configured region when the DSN does not declare one.
       return { ...cfg, region: cfg.region ?? profile.region }
@@ -127,7 +153,18 @@ export function getPoolForProfile(profile: ConnectionProfile): RoutedPool {
     return entry.pool
   }
 
+  let isolatedCount = 0
+  for (const entry of cache.values()) if (!entry.shared) isolatedCount++
+  if (isolatedCount >= maxIsolatedPools()) throw new TenantPoolCapacityError()
+
   const config = configForProfile(profile)
+  // Validate the physical target before allocating sockets. A mismatched DSN
+  // must not leave a live, uncached pool behind on the failure path.
+  assertPoolUsable(profile, {
+    tenantId: profile.tenantId,
+    region: config.region,
+    deploymentModel: profile.deploymentModel,
+  })
   const pool = factory(config)
   const entry: CacheEntry = {
     pool,
@@ -136,9 +173,6 @@ export function getPoolForProfile(profile: ConnectionProfile): RoutedPool {
     deploymentModel: profile.deploymentModel,
     shared: false,
   }
-  // Re-assert against the freshly-created entry so region drift between the
-  // configured region and the physically-resolved region fails closed.
-  assertPoolUsable(profile, entry)
   cache.set(profile.poolKey, entry)
   return pool
 }
@@ -172,4 +206,20 @@ export async function queryForTenant<T = any>(
 /** Number of pools currently cached — observability / test assertions. */
 export function cachedPoolCount(): number {
   return cache.size
+}
+
+/**
+ * Explicitly retire an isolated tenant pool after routing/credential changes.
+ * Callers must first quiesce in-flight work for this tenant; this function does
+ * not silently transfer queries to another database or close the shared pool.
+ */
+export async function retireTenantPools(tenantId: number): Promise<number> {
+  const retiring: RoutedPool[] = []
+  for (const [key, entry] of cache) {
+    if (entry.shared || entry.tenantId !== tenantId) continue
+    cache.delete(key)
+    retiring.push(entry.pool)
+  }
+  await Promise.all(retiring.map((pool) => pool.end?.()))
+  return retiring.length
 }

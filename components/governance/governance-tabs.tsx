@@ -12,6 +12,7 @@ const TABS: { label: string; href: string }[] = [
   { label: "Field security", href: "/admin/governance/field-security" },
   { label: "Retention", href: "/admin/governance/retention" },
   { label: "Legal holds", href: "/admin/governance/legal-holds" },
+  { label: "Privacy", href: "/admin/governance/privacy" },
   { label: "Import center", href: "/admin/governance/import-center" },
   { label: "Export center", href: "/admin/governance/export-center" },
 ]

@@ -143,20 +143,23 @@ describe("input + cross-tenant validation", () => {
 describe("successful mutations", () => {
   beforeEach(() => mocks.guard.mockResolvedValue(AS_SUPER))
 
-  it("persists a valid routing change and audits it", async () => {
+  it("fails closed on an isolated-mode activation before writing regions or routing", async () => {
     const res = await PUT(
       req({ routing: { deploymentModel: "separate_schema", schema: "acme", dbRegion: "eu-central-1" } }) as any,
       settingsCtx,
     )
-    expect(res.status).toBe(200)
-    expect(mocks.saveRoutingSettings).toHaveBeenCalledWith(
-      5,
-      expect.objectContaining({ deploymentModel: "separate_schema", schema: "acme", region: "eu-central-1" }),
-    )
-    expect(mocks.updateTenant).toHaveBeenCalledWith(5, { deployment_model: "separate_schema" })
-    expect(mocks.recordPlatformAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "tenant_db_settings_update", targetTenantId: 5, actorUserId: 42 }),
-    )
+    expect(res.status).toBe(409)
+    expect((await res.json()).code).toBe("HOSTING_MODE_NOT_READY")
+    expect(mocks.saveRoutingSettings).not.toHaveBeenCalled()
+    expect(mocks.saveRegionSettings).not.toHaveBeenCalled()
+    expect(mocks.updateTenant).not.toHaveBeenCalled()
+  })
+
+  it("blocks edits when a legacy routing registry is isolated even if the tenant directory says shared", async () => {
+    mocks.getTenantDbRecord.mockResolvedValue({ tenantId: 5, deploymentModel: "dedicated_database" })
+    const res = await PUT(req({ regions: { dataRegion: "eu-west-1", dbRegion: "eu-west-1" } }) as any, settingsCtx)
+    expect(res.status).toBe(409)
+    expect(mocks.saveRegionSettings).not.toHaveBeenCalled()
   })
 
   it("persists valid region settings", async () => {

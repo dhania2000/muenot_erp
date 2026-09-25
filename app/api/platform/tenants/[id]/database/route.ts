@@ -3,6 +3,7 @@ import { requirePlatformSuperAdmin } from "@/lib/platform-guard"
 import { getTenantById, updateTenant } from "@/lib/tenant-service"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 import { validateRoutingSettings, toDeploymentModel, type RoutingSettingsInput } from "@/lib/tenant-db/model"
+import { assertSafeHostingModeUpdate, HostingModeNotReadyError } from "@/lib/tenant-db/activation"
 import {
   DATA_REGIONS,
   allowedRegionsFor,
@@ -137,6 +138,33 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (errors.length > 0) {
       return NextResponse.json({ error: "Invalid routing settings", errors }, { status: 400 })
     }
+    // This console may inspect existing isolated configurations, but must not
+    // activate or reconfigure one until business repositories are routed.
+    try {
+      const requested = toDeploymentModel(routing.deploymentModel) ?? tenant.deployment_model
+      assertSafeHostingModeUpdate(tenant.deployment_model, requested)
+      if (
+        requested !== "shared_database" ||
+        (routing.schema !== undefined && routing.schema !== tenant.db_schema) ||
+        (routing.connectionRef !== undefined && routing.connectionRef !== tenant.db_connection_ref)
+      ) {
+        throw new HostingModeNotReadyError()
+      }
+    } catch (error) {
+      if (error instanceof HostingModeNotReadyError) {
+        return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
+      }
+      throw error
+    }
+  }
+
+  // A legacy registry may disagree with the tenant directory. Never let an
+  // apparently shared request mutate such an isolated target or its region.
+  const currentRouting = await getTenantDbRecord(tenantId)
+  if (tenant.deployment_model !== "shared_database" ||
+      currentRouting?.deploymentModel && currentRouting.deploymentModel !== "shared_database") {
+    const error = new HostingModeNotReadyError()
+    return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
   }
 
   // ---- Persist -------------------------------------------------------------

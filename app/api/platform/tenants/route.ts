@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { requirePlatformStaff, requirePlatformSuperAdmin } from "@/lib/platform-guard"
 import { createTenant, listTenants } from "@/lib/tenant-service"
 import { recordPlatformAudit } from "@/lib/platform-roles"
+import { HostingModeNotReadyError } from "@/lib/tenant-db/activation"
 
 /**
  * Platform tenant directory. This is a PLATFORM-axis surface: only
@@ -45,6 +46,9 @@ export async function POST(req: NextRequest) {
     })
     return NextResponse.json({ tenant }, { status: 201 })
   } catch (err: any) {
+    if (err instanceof HostingModeNotReadyError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
+    }
     return NextResponse.json({ error: err?.message ?? "Failed to create tenant" }, { status: 400 })
   }
 }

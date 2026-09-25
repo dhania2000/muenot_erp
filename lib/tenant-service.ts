@@ -1,6 +1,7 @@
 import "server-only"
 import { query, withTransaction } from "@/lib/db"
 import { ensureShopkeeperSchema } from "@/lib/shopkeeper"
+import { assertSafeHostingModeCreate, assertSafeHostingModeUpdate } from "@/lib/tenant-db/activation"
 
 /**
  * Tenant service — the single source of truth for tenant records and secure
@@ -234,6 +235,7 @@ export type CreateTenantInput = {
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,98}[a-z0-9])?$/
 
 export async function createTenant(input: CreateTenantInput): Promise<Tenant> {
+  assertSafeHostingModeCreate(input.deployment_model ?? "shared_database")
   await ensureTenantSchema()
   const name = input.name?.trim()
   const slug = input.slug?.toLowerCase().trim()
@@ -330,6 +332,7 @@ export async function updateTenant(id: number, input: UpdateTenantInput): Promis
   }
   if (input.deployment_model !== undefined) {
     if (!DEPLOYMENT_MODELS.includes(input.deployment_model)) throw new Error("Invalid deployment model")
+    assertSafeHostingModeUpdate(tenant.deployment_model, input.deployment_model)
     sets.push("`deployment_model` = ?")
     values.push(input.deployment_model)
   }

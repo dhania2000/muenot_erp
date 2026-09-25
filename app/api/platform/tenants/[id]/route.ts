@@ -8,6 +8,7 @@ import {
   type DeploymentModel,
 } from "@/lib/tenant-service"
 import { recordPlatformAudit } from "@/lib/platform-roles"
+import { HostingModeNotReadyError } from "@/lib/tenant-db/activation"
 
 /**
  * Tenant lifecycle and management. Changing a customer tenant's status, editing
@@ -79,6 +80,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 })
   } catch (err: any) {
+    if (err instanceof HostingModeNotReadyError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
+    }
     return NextResponse.json({ error: err?.message ?? "Failed to update tenant" }, { status: 400 })
   }
 }

@@ -182,9 +182,9 @@ export function TenantDatabaseConsole({
             Database &amp; regions — {tenantName}
           </DialogTitle>
           <DialogDescription>
-            Route this tenant to shared, separate-schema or dedicated storage, enforce data residency, and run
-            independent lifecycle operations. Connection credentials are never entered here — only a managed secret
-            reference.
+            Review database routing and residency. Isolated hosting activation is paused until ERP business queries,
+            jobs and migrations have been verified against the tenant router. Existing tenants remain on their current
+            mode; this screen does not move data.
           </DialogDescription>
         </DialogHeader>
 
@@ -219,8 +219,8 @@ export function TenantDatabaseConsole({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="shared_database">Shared database</SelectItem>
-                    <SelectItem value="separate_schema">Separate schema</SelectItem>
-                    <SelectItem value="dedicated_database">Dedicated database</SelectItem>
+                    <SelectItem value="separate_schema" disabled={deployment !== "separate_schema"}>Separate schema (activation unavailable)</SelectItem>
+                    <SelectItem value="dedicated_database" disabled={deployment !== "dedicated_database"}>Dedicated database (activation unavailable)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

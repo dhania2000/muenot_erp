@@ -201,6 +201,16 @@ export const CONFIG_REGISTRY: ConfigDescriptor[] = [
     secret: false,
     default: "disabled",
   },
+  {
+    key: "flag.ai_anomaly_model_scoring",
+    label: "AI anomaly model scoring",
+    description:
+      "Enrich rule-based anomaly alerts with optional model scoring. Explainable rules always run; this only layers an additional score and never makes automatic decisions.",
+    category: "feature_flags",
+    scope: "platform",
+    secret: false,
+    default: "disabled",
+  },
 
   // --- Integration configuration --------------------------------------------
   {

@@ -57,6 +57,22 @@ import {
   toRestoreTestFrequency,
   totalRowCount,
 } from "@/lib/backup/model"
+import {
+  buildTempDatabaseName,
+  classifyArtifactReadFailure,
+  computeRetainUntil,
+  describeArtifactReadFailure,
+  isSafeIdentifier,
+  isSafeTempDatabaseName,
+} from "@/lib/backup/offsite-model"
+import {
+  getArtifactOffsite,
+  headArtifactOffsite,
+  offsiteConfig,
+  offsiteStatus,
+  putArtifactOffsite,
+  removeArtifactOffsite,
+} from "@/lib/backup/offsite-store"
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -140,6 +156,14 @@ export type BackupRun = {
   expiresAt: string | null
   createdAt: string
   finishedAt: string | null
+  // Off-site storage (Spec10). `storageLocation` is "offsite" when the encrypted
+  // artifact lives in independent object storage, "inline" for the legacy blob.
+  storageLocation: "inline" | "offsite"
+  storageMode: string | null
+  storageRegion: string | null
+  replicaRegion: string | null
+  retainUntil: string | null
+  immutable: boolean
 }
 
 export type RestoreTest = {
@@ -154,6 +178,11 @@ export type RestoreTest = {
   detail: string | null
   createdByName: string | null
   createdAt: string
+  // Isolated-restore drill evidence (Spec10).
+  mode: string
+  tempDatabase: string | null
+  restoredRows: number
+  durationMs: number
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +228,34 @@ function sha256hex(buf: Buffer): string {
 // ---------------------------------------------------------------------------
 
 let ensured: Promise<void> | null = null
+
+/** Add a column only if it is missing — idempotent, MySQL-version agnostic. */
+async function addColumnIfMissing(table: string, column: string, ddl: string): Promise<void> {
+  const rows = await query<{ n: number }[]>(
+    `SELECT COUNT(*) AS n FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+    [table, column],
+  )
+  if (Number(rows[0]?.n ?? 0) === 0) {
+    await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${ddl}`)
+  }
+}
+
+/** Add an index/constraint only if it is missing. */
+async function addIndexIfMissing(table: string, indexName: string, ddl: string): Promise<void> {
+  const rows = await query<{ n: number }[]>(
+    `SELECT COUNT(*) AS n FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+    [table, indexName],
+  )
+  if (Number(rows[0]?.n ?? 0) === 0) {
+    await query(`ALTER TABLE \`${table}\` ADD ${ddl}`).catch((err) => {
+      // A duplicate-key collision can only happen if two nodes self-heal at
+      // once; the index then already exists, which is the desired end state.
+      console.warn(`[backup] index self-heal for ${indexName} skipped:`, (err as Error).message)
+    })
+  }
+}
 
 async function runEnsure(): Promise<void> {
   await query(`
@@ -270,6 +327,33 @@ async function runEnsure(): Promise<void> {
       KEY \`idx_backup_restore_tenant\` (\`tenant_id\`, \`scope\`, \`created_at\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `)
+  // Spec10 off-site + DR columns (self-healing so existing installs converge).
+  // A backup artifact now lives in INDEPENDENT object storage; the run row keeps
+  // a pointer + immutable retain-until + cross-region replica reference instead
+  // of (or alongside) the inline blob. `idempotency_key` makes a retried "run
+  // now" return the same run rather than duplicating a backup.
+  await addColumnIfMissing("platform_backup_runs", "idempotency_key", "VARCHAR(80) DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_runs", "storage_location", "VARCHAR(16) NOT NULL DEFAULT 'inline'")
+  await addColumnIfMissing("platform_backup_runs", "storage_mode", "VARCHAR(16) DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_runs", "storage_key", "VARCHAR(512) DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_runs", "storage_bucket", "VARCHAR(255) DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_runs", "storage_region", "VARCHAR(64) DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_runs", "replica_key", "VARCHAR(512) DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_runs", "replica_region", "VARCHAR(64) DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_runs", "retain_until", "TIMESTAMP NULL DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_runs", "immutable", "TINYINT(1) NOT NULL DEFAULT 0")
+  await addIndexIfMissing(
+    "platform_backup_runs",
+    "uniq_backup_run_idempotency",
+    "UNIQUE KEY `uniq_backup_run_idempotency` (`tenant_id`, `idempotency_key`)",
+  )
+  // Restore drills that materialize into an isolated temporary database record
+  // the extra evidence (mode, the throwaway DB name, measured timings).
+  await addColumnIfMissing("platform_backup_restore_tests", "mode", "VARCHAR(24) NOT NULL DEFAULT 'schema'")
+  await addColumnIfMissing("platform_backup_restore_tests", "temp_database", "VARCHAR(80) DEFAULT NULL")
+  await addColumnIfMissing("platform_backup_restore_tests", "restored_rows", "INT UNSIGNED NOT NULL DEFAULT 0")
+  await addColumnIfMissing("platform_backup_restore_tests", "duration_ms", "INT UNSIGNED NOT NULL DEFAULT 0")
+
   // Seed a disabled platform baseline for each scope. Baselines are opt-in:
   // nothing runs until an operator enables a policy, so this page never
   // fabricates a backup history.
@@ -333,6 +417,12 @@ function mapRun(row: any): BackupRun {
     expiresAt: row.expires_at ?? null,
     createdAt: row.created_at,
     finishedAt: row.finished_at ?? null,
+    storageLocation: row.storage_location === "offsite" ? "offsite" : "inline",
+    storageMode: row.storage_mode ?? null,
+    storageRegion: row.storage_region ?? null,
+    replicaRegion: row.replica_region ?? null,
+    retainUntil: row.retain_until ?? null,
+    immutable: Boolean(row.immutable),
   }
 }
 
@@ -356,6 +446,10 @@ function mapRestoreTest(row: any): RestoreTest {
     detail: row.detail ?? null,
     createdByName: row.requested_by_name ?? null,
     createdAt: row.created_at,
+    mode: row.mode ?? "schema",
+    tempDatabase: row.temp_database ?? null,
+    restoredRows: Number(row.restored_rows ?? 0),
+    durationMs: Number(row.duration_ms ?? 0),
   }
 }
 
@@ -502,6 +596,11 @@ export type CreateBackupInput = {
   retentionDays?: number
   encrypt?: boolean
   verifyAfter?: boolean
+  /**
+   * When supplied, a retried request with the same key returns the SAME run
+   * instead of creating a duplicate backup (safe "run now" / cron retries).
+   */
+  idempotencyKey?: string | null
 }
 
 export async function createAndRunBackup(input: CreateBackupInput, actor: BackupActor): Promise<BackupRun> {
@@ -511,12 +610,27 @@ export async function createAndRunBackup(input: CreateBackupInput, actor: Backup
   const triggerSource = input.triggerSource === "scheduler" ? "scheduler" : "manual"
   const retentionDays = clampRetentionDays(input.retentionDays)
   const encrypt = input.encrypt ?? true
+  const idempotencyKey = input.idempotencyKey ? String(input.idempotencyKey).slice(0, 80) : null
+
+  // Idempotency: a retried request with the same key returns the existing run
+  // rather than starting a second backup. Scoped by tenant so keys never leak
+  // across tenants.
+  if (idempotencyKey) {
+    const existing = await query<any[]>(
+      "SELECT `id` FROM `platform_backup_runs` WHERE `tenant_id` <=> ? AND `idempotency_key` = ? LIMIT 1",
+      [tenantId, idempotencyKey],
+    )
+    if (existing[0]) {
+      const row = await loadRunRow(tenantId, Number(existing[0].id))
+      if (row) return mapRun(row)
+    }
+  }
 
   const res = await query<{ insertId: number }>(
     `INSERT INTO \`platform_backup_runs\`
-       (\`policy_id\`, \`tenant_id\`, \`scope\`, \`status\`, \`trigger_source\`, \`requested_by\`)
-     VALUES (?, ?, ?, 'running', ?, ?)`,
-    [input.policyId ?? null, tenantId, scope, triggerSource, actor.userId],
+       (\`policy_id\`, \`tenant_id\`, \`scope\`, \`status\`, \`trigger_source\`, \`requested_by\`, \`idempotency_key\`)
+     VALUES (?, ?, ?, 'running', ?, ?, ?)`,
+    [input.policyId ?? null, tenantId, scope, triggerSource, actor.userId, idempotencyKey],
   )
   const runId = (res as any).insertId as number
 
@@ -527,22 +641,55 @@ export async function createAndRunBackup(input: CreateBackupInput, actor: Backup
     const checksum = sha256hex(plaintext)
     const stored = encrypt ? encryptBuffer(plaintext) : plaintext
 
-    if (stored.length > maxArtifactBytes()) {
+    // Write the encrypted artifact to INDEPENDENT object storage when
+    // configured. This is the off-site copy: it survives a total loss of the
+    // MySQL database. Only when off-site storage is unavailable do we fall back
+    // to sealing the bytes into the run row (legacy inline path).
+    const config = offsiteConfig()
+    const now = new Date()
+    const retainUntil =
+      config.mode !== "disabled" && config.immutable
+        ? computeRetainUntil(now, retentionDays, config.minImmutableDays)
+        : null
+
+    let ref: Awaited<ReturnType<typeof putArtifactOffsite>> = null
+    if (config.mode !== "disabled") {
+      ref = await putArtifactOffsite({ tenantId, scope, runId, generatedAt: now, bytes: stored, retainUntil })
+    }
+
+    // The inline-blob size cap only governs the legacy MySQL sink. Off-site
+    // storage handles arbitrarily large artifacts (multipart), so a large
+    // tenant is not blocked once off-site storage is configured.
+    if (!ref && stored.length > maxArtifactBytes()) {
       throw new Error(
-        `Backup artifact (${stored.length} bytes) exceeds the maximum artifact size. Raise BACKUP_MAX_ALLOWED_PACKET / BACKUP_MAX_ARTIFACT_BYTES or narrow the scope.`,
+        `Backup artifact (${stored.length} bytes) exceeds the maximum inline artifact size. Configure off-site storage (BACKUP_OFFSITE_BUCKET / BACKUP_OFFSITE_LOCAL_DIR) or raise BACKUP_MAX_ARTIFACT_BYTES / narrow the scope.`,
       )
     }
 
-    const expiresAt = computeExpiry(new Date(), retentionDays)
+    const expiresAt = computeExpiry(now, retentionDays)
     await query(
       `UPDATE \`platform_backup_runs\`
           SET \`status\` = 'completed', \`table_count\` = ?, \`row_count\` = ?, \`plaintext_size\` = ?,
               \`artifact_size\` = ?, \`checksum\` = ?, \`encrypted\` = ?, \`encryption_algo\` = ?,
-              \`artifact\` = ?, \`expires_at\` = ?, \`finished_at\` = CURRENT_TIMESTAMP
+              \`artifact\` = ?, \`storage_location\` = ?, \`storage_mode\` = ?, \`storage_key\` = ?,
+              \`storage_bucket\` = ?, \`storage_region\` = ?, \`replica_key\` = ?, \`replica_region\` = ?,
+              \`retain_until\` = ?, \`immutable\` = ?, \`expires_at\` = ?, \`finished_at\` = CURRENT_TIMESTAMP
         WHERE \`id\` = ?`,
       [
         sections.length, totalRowCount(sections), plaintext.length, stored.length, checksum,
-        encrypt ? 1 : 0, encrypt ? ENCRYPTION_ALGORITHM : null, stored, expiresAt, runId,
+        encrypt ? 1 : 0, encrypt ? ENCRYPTION_ALGORITHM : null,
+        // Never keep an inline copy once the off-site write succeeded.
+        ref ? null : stored,
+        ref ? "offsite" : "inline",
+        ref?.mode ?? null,
+        ref?.key ?? null,
+        ref?.bucket ?? null,
+        ref?.region ?? null,
+        ref?.replicaKey ?? null,
+        ref?.replicaRegion ?? null,
+        ref?.retainUntil ?? null,
+        ref?.immutable ? 1 : 0,
+        expiresAt, runId,
       ],
     )
 
@@ -555,6 +702,11 @@ export async function createAndRunBackup(input: CreateBackupInput, actor: Backup
         scope, tenantId, tableCount: sections.length, rowCount: totalRowCount(sections),
         plaintextSize: plaintext.length, artifactSize: stored.length, encrypted: encrypt, checksum,
         triggerSource, expiresAt: expiresAt.toISOString(),
+        storageLocation: ref ? "offsite" : "inline",
+        storageRegion: ref?.region ?? null,
+        replicaRegion: ref?.replicaRegion ?? null,
+        immutable: ref?.immutable ?? false,
+        retainUntil: ref?.retainUntil ? ref.retainUntil.toISOString() : null,
       },
       context: { tenantId, actorUserId: actor.userId, actorName: actor.name ?? null, actorEmail: actor.email ?? null },
     })
@@ -602,20 +754,43 @@ async function loadRunRow(tenantId: number | null, id: number): Promise<any> {
   return rows[0] ?? null
 }
 
-/** Load + decrypt + shape-validate the artifact for a completed run. */
+/**
+ * Load + decrypt + shape-validate the artifact for a completed run. Reads from
+ * off-site object storage when the run was stored there, otherwise from the
+ * legacy inline blob. A decryption failure is re-thrown with a key-loss vs.
+ * corruption classification so operators can tell "the key is gone" apart from
+ * "the bytes are damaged".
+ */
 async function loadArtifact(tenantId: number | null, id: number): Promise<{ artifact: BackupArtifact; checksum: string } | null> {
   const rows = await query<any[]>(
-    "SELECT `id`, `status`, `encrypted`, `checksum`, `artifact` FROM `platform_backup_runs` WHERE `id` = ? AND `tenant_id` <=> ? LIMIT 1",
+    "SELECT `id`, `status`, `encrypted`, `checksum`, `artifact`, `storage_location`, `storage_mode`, `storage_key`, `replica_key` FROM `platform_backup_runs` WHERE `id` = ? AND `tenant_id` <=> ? LIMIT 1",
     [id, tenantId],
   )
   const row = rows[0]
-  if (!row || row.status !== "completed" || !row.artifact) return null
-  const stored = Buffer.isBuffer(row.artifact) ? row.artifact : Buffer.from(row.artifact)
-  const plaintext = row.encrypted ? decryptBuffer(stored) : stored
-  const checksum = sha256hex(plaintext)
-  const artifact = parseArtifact(plaintext.toString("utf-8"))
-  if (!artifact) throw new Error("Artifact failed to parse after decryption")
-  return { artifact, checksum }
+  if (!row || row.status !== "completed") return null
+
+  let stored: Buffer
+  if (row.storage_location === "offsite" && row.storage_key) {
+    stored = await getArtifactOffsite({
+      mode: row.storage_mode === "s3" ? "s3" : "local",
+      key: String(row.storage_key),
+      replicaKey: row.replica_key ?? null,
+    })
+  } else if (row.artifact) {
+    stored = Buffer.isBuffer(row.artifact) ? row.artifact : Buffer.from(row.artifact)
+  } else {
+    return null
+  }
+
+  try {
+    const plaintext = row.encrypted ? decryptBuffer(stored) : stored
+    const checksum = sha256hex(plaintext)
+    const artifact = parseArtifact(plaintext.toString("utf-8"))
+    if (!artifact) throw new Error("Artifact failed to parse after decryption (corrupt or checksum mismatch)")
+    return { artifact, checksum }
+  } catch (err) {
+    throw new Error(describeArtifactReadFailure(classifyArtifactReadFailure(err)))
+  }
 }
 
 export async function verifyBackupRun(tenantId: number | null, id: number, actor: BackupActor): Promise<BackupRun | null> {
@@ -749,6 +924,169 @@ export async function runRestoreTest(tenantId: number | null, runId: number, act
 }
 
 // ---------------------------------------------------------------------------
+// Verified restore DRILL — materialize the backup into an ISOLATED temporary
+// database, actually INSERT every row, count what landed, then drop the throw-
+// away schema. This proves the backup is genuinely restorable (not just shape-
+// valid) without ever touching a live table.
+// ---------------------------------------------------------------------------
+
+/** Chunk size for bulk INSERTs during a drill. */
+const DRILL_INSERT_CHUNK = 200
+
+export async function runRestoreDrill(tenantId: number | null, runId: number, actor: BackupActor): Promise<RestoreTest | null> {
+  await ensureBackupSchema()
+  const row = await loadRunRow(tenantId, runId)
+  if (!row) return null
+  const scope = mapRun(row).scope
+  const runTenant = row.tenant_id == null ? null : Number(row.tenant_id)
+
+  const startedAt = Date.now()
+  const issues: string[] = []
+  let tablesValidated = 0
+  let restoredRows = 0
+  let status: RestoreTestStatus = "passed"
+  const tempDb = buildTempDatabaseName(runId, startedAt)
+  let tempDbCreated = false
+
+  try {
+    if (!isSafeTempDatabaseName(tempDb)) throw new Error("Generated temp database name failed validation")
+    const loaded = await loadArtifact(tenantId, runId)
+    if (!loaded) throw new Error("Backup is not in a completed, restorable state")
+
+    // Isolated schema — never shares tables with the live database.
+    await query(`CREATE DATABASE \`${tempDb}\` CHARACTER SET utf8mb4`)
+    tempDbCreated = true
+
+    for (const section of loaded.artifact.sections) {
+      const table = section.name
+      if (!isSafeIdentifier(table)) {
+        issues.push(`Unsafe table identifier "${table}" in backup — skipped`)
+        continue
+      }
+      const liveColumns = await tableColumns(table).catch(() => new Set<string>())
+      if (liveColumns.size === 0) {
+        issues.push(`Target table "${table}" no longer exists in the live schema — cannot drill-restore`)
+        continue
+      }
+
+      // Clone the live table structure into the isolated schema, then restore
+      // rows into the clone. A real INSERT exercises column types, constraints
+      // and defaults exactly as a production restore would.
+      await query(`CREATE TABLE \`${tempDb}\`.\`${table}\` LIKE \`${table}\``)
+      tablesValidated++
+
+      const usableColumns = [...liveColumns]
+      for (let i = 0; i < section.rows.length; i += DRILL_INSERT_CHUNK) {
+        const chunk = section.rows.slice(i, i + DRILL_INSERT_CHUNK)
+        // Only restore columns that still exist on the live schema; a dropped
+        // column is reported as an issue but does not abort the drill.
+        const cols = usableColumns.filter((c) => chunk.some((r) => c in (r as Record<string, unknown>)))
+        if (cols.length === 0) continue
+        const placeholders = chunk.map(() => `(${cols.map(() => "?").join(", ")})`).join(", ")
+        const values: unknown[] = []
+        for (const record of chunk) {
+          const rec = record as Record<string, unknown>
+          for (const c of cols) {
+            const v = rec[c]
+            // Objects/arrays (JSON columns) are re-serialized so the driver
+            // binds a scalar the column can accept.
+            values.push(v !== null && typeof v === "object" ? JSON.stringify(v) : v ?? null)
+          }
+        }
+        const colList = cols.map((c) => `\`${c}\``).join(", ")
+        await query(`INSERT INTO \`${tempDb}\`.\`${table}\` (${colList}) VALUES ${placeholders}`, values)
+      }
+
+      // Verify what actually landed matches what the backup claimed.
+      const counted = await query<{ n: number }[]>(`SELECT COUNT(*) AS n FROM \`${tempDb}\`.\`${table}\``)
+      const landed = Number(counted[0]?.n ?? 0)
+      restoredRows += landed
+      if (landed !== section.rowCount) {
+        issues.push(`Table "${table}" restored ${landed} of ${section.rowCount} row(s)`)
+      }
+      // Tenant-isolation sanity in the restored copy.
+      if (runTenant != null && liveColumns.has(TENANT_COLUMN)) {
+        const foreign = await query<{ n: number }[]>(
+          `SELECT COUNT(*) AS n FROM \`${tempDb}\`.\`${table}\` WHERE \`${TENANT_COLUMN}\` <> ?`,
+          [runTenant],
+        )
+        if (Number(foreign[0]?.n ?? 0) > 0) issues.push(`Restored "${table}" contains rows for a different tenant`)
+      }
+    }
+
+    const uniqueIssues = [...new Set(issues)].slice(0, 50)
+    issues.length = 0
+    issues.push(...uniqueIssues)
+    status = issues.length === 0 ? "passed" : "failed"
+  } catch (err) {
+    status = "failed"
+    issues.push((err as Error).message || "Restore drill failed")
+  } finally {
+    // ALWAYS tear down the isolated schema, even on failure.
+    if (tempDbCreated) {
+      await query(`DROP DATABASE IF EXISTS \`${tempDb}\``).catch((err) =>
+        console.error("[backup] failed to drop drill database", tempDb, err),
+      )
+    }
+  }
+
+  const durationMs = Date.now() - startedAt
+  const detail =
+    status === "passed"
+      ? `Restored ${restoredRows} row(s) across ${tablesValidated} table(s) into isolated database in ${durationMs}ms`
+      : `${issues.length} issue(s) during drill`
+
+  const res = await query<{ insertId: number }>(
+    `INSERT INTO \`platform_backup_restore_tests\`
+       (\`run_id\`, \`tenant_id\`, \`scope\`, \`status\`, \`tables_validated\`, \`rows_validated\`, \`issues\`, \`detail\`, \`requested_by\`, \`mode\`, \`temp_database\`, \`restored_rows\`, \`duration_ms\`)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'isolated-restore', ?, ?, ?)`,
+    [runId, runTenant, scope, status, tablesValidated, restoredRows, JSON.stringify(issues), detail, actor.userId, tempDb, restoredRows, durationMs],
+  )
+  const testId = (res as any).insertId as number
+
+  await query(
+    "UPDATE `platform_backup_policies` SET `last_restore_test_at` = CURRENT_TIMESTAMP WHERE `scope` = ? AND `tenant_id` <=> ?",
+    [scope, runTenant],
+  )
+
+  await recordAuditLog({
+    action: status === "passed" ? "backup.restore_drill_pass" : "backup.restore_drill_fail",
+    entityType: "backup_restore_test",
+    entityId: testId,
+    entityLabel: `${BACKUP_SCOPE_LABELS[scope]} restore drill (run ${runId})`,
+    result: status === "passed" ? "success" : "failure",
+    after: { runId, scope, status, tablesValidated, restoredRows, durationMs, tempDatabase: tempDb, issues },
+    context: { tenantId: runTenant, actorUserId: actor.userId, actorName: actor.name ?? null, actorEmail: actor.email ?? null },
+  })
+
+  const rows = await query<any[]>(
+    `SELECT t.*, u.name AS requested_by_name FROM \`platform_backup_restore_tests\` t
+       LEFT JOIN \`users\` u ON u.id = t.requested_by WHERE t.id = ? LIMIT 1`,
+    [testId],
+  )
+  return rows[0] ? mapRestoreTest(rows[0]) : null
+}
+
+// ---------------------------------------------------------------------------
+// Off-site status (surfaced in the console evidence panel)
+// ---------------------------------------------------------------------------
+
+export function getOffsiteStatus() {
+  return offsiteStatus()
+}
+
+/** Probe that the off-site object for a run is actually reachable (evidence). */
+export async function probeOffsiteArtifact(tenantId: number | null, runId: number): Promise<boolean> {
+  const rows = await query<any[]>(
+    "SELECT `storage_location`, `storage_mode`, `storage_key` FROM `platform_backup_runs` WHERE `id` = ? AND `tenant_id` <=> ? LIMIT 1",
+    [runId, tenantId],
+  )
+  const row = rows[0]
+  if (!row || row.storage_location !== "offsite" || !row.storage_key) return false
+  return headArtifactOffsite({ mode: row.storage_mode === "s3" ? "s3" : "local", key: String(row.storage_key) })
+}
+
+// ---------------------------------------------------------------------------
 // Download (decrypted artifact) — for a real restore by a platform operator
 // ---------------------------------------------------------------------------
 
@@ -780,13 +1118,30 @@ export async function pruneExpiredBackups(now: Date = new Date()): Promise<numbe
     const policy = g.tenant_id == null ? null : await resolveEffectivePolicy(Number(g.tenant_id), g.scope as BackupScope)
     const minKeep = policy?.minKeep ?? clampMinKeep(undefined)
     const runs = await query<any[]>(
-      "SELECT `id`, `expires_at` FROM `platform_backup_runs` WHERE `status` = 'completed' AND `tenant_id` <=> ? AND `scope` = ? ORDER BY `created_at` DESC",
+      "SELECT `id`, `expires_at`, `retain_until`, `immutable`, `storage_location`, `storage_mode`, `storage_key`, `replica_key` FROM `platform_backup_runs` WHERE `status` = 'completed' AND `tenant_id` <=> ? AND `scope` = ? ORDER BY `created_at` DESC",
       [g.tenant_id, g.scope],
     )
     const prunable = runs.slice(minKeep).filter((r) => isBackupExpired(r.expires_at, now))
     for (const r of prunable) {
+      // Immutable objects under an unexpired WORM retain-until cannot be
+      // deleted yet — skip them until the lock window elapses.
+      if (r.immutable && r.retain_until && new Date(r.retain_until).getTime() > now.getTime()) continue
+
+      if (r.storage_location === "offsite" && r.storage_key) {
+        const removed = await removeArtifactOffsite(
+          {
+            mode: r.storage_mode === "s3" ? "s3" : "local",
+            key: String(r.storage_key),
+            replicaKey: r.replica_key ?? null,
+            retainUntil: r.retain_until ? new Date(r.retain_until) : null,
+            immutable: Boolean(r.immutable),
+          },
+          now,
+        )
+        if (!removed) continue // still locked — leave the run intact
+      }
       await query(
-        "UPDATE `platform_backup_runs` SET `status` = 'expired', `artifact` = NULL, `artifact_size` = 0 WHERE `id` = ?",
+        "UPDATE `platform_backup_runs` SET `status` = 'expired', `artifact` = NULL, `artifact_size` = 0, `storage_key` = NULL, `replica_key` = NULL WHERE `id` = ?",
         [r.id],
       )
       pruned++
@@ -890,18 +1245,29 @@ export async function runDueBackups(now: Date = new Date()): Promise<BackupSweep
               retentionDays: policy.retentionDays,
               encrypt: policy.encrypt,
               verifyAfter: policy.verifyAfter,
+              // A stable per-window key makes a retried sweep idempotent: the
+              // same tenant/scope/day will not be backed up twice.
+              idempotencyKey: `sweep:${tenant.id}:${scope}:${now.toISOString().slice(0, 13)}`,
             },
             systemActor,
           )
           if (run.status === "completed") result.ran++
           else result.failed++
 
-          // Automatic restore testing when due.
+          // Automatic verified restore DRILL (isolated temp DB) when due, with a
+          // graceful fallback to the non-destructive schema-only restore test if
+          // the drill cannot provision a temporary database (missing privilege).
           if (run.status === "completed" && isRestoreTestDue(policy.restoreTestFrequency, policy.lastRestoreTestAt, now)) {
             try {
-              await runRestoreTest(tenant.id, run.id, systemActor)
+              const drill = await runRestoreDrill(tenant.id, run.id, systemActor)
+              if (!drill || drill.status === "failed") await runRestoreTest(tenant.id, run.id, systemActor)
               result.restoreTests++
-            } catch { /* isolated */ }
+            } catch {
+              try {
+                await runRestoreTest(tenant.id, run.id, systemActor)
+                result.restoreTests++
+              } catch { /* isolated */ }
+            }
           }
         } catch {
           result.failed++

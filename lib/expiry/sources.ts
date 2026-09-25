@@ -205,7 +205,76 @@ const legalContracts: ExpirySource = {
   },
 }
 
-export const EXPIRY_SOURCES: readonly ExpirySource[] = [employeeDocuments, passportVisa, legalContracts]
+/** Asset warranties — coverage on company fixed assets (Spec61 #234-239). */
+const assetWarranties: ExpirySource = {
+  id: "asset_warranty",
+  label: "Asset Warranty",
+  async fetch() {
+    const { fetchWarrantyExpiryRows } = await import("@/lib/asset-lifecycle")
+    const rows = await fetchWarrantyExpiryRows().catch(() => [])
+    return rows.flatMap((r: any) => {
+      const expiryDate = toISODate(r.expiry_date)
+      if (!expiryDate) return []
+      const assetLabel = r.asset_name || r.finance_fixed_asset_id
+      const typeLabel = r.warranty_type ? `${r.warranty_type} Warranty` : "Warranty"
+      return [
+        {
+          sourceId: this.id,
+          sourceLabel: this.label,
+          category: "Warranty",
+          entityId: String(r.warranty_id),
+          title: `${typeLabel} — ${assetLabel}`,
+          subtitle: r.provider ?? assetLabel,
+          expiryDate,
+          issueDate: toISODate(r.start_date),
+          documentNumber: r.reference_no ?? null,
+          warnDays: Number(r.reminder_days ?? DEFAULT_EXPIRY_WARN_DAYS) || DEFAULT_EXPIRY_WARN_DAYS,
+          link: "/modules/assets/asset-lifecycle",
+          ownerUserId: r.owner_user_id != null ? Number(r.owner_user_id) : null,
+        } satisfies ExpirySourceRow,
+      ]
+    })
+  },
+}
+
+/** Asset maintenance — upcoming/overdue scheduled service (Spec61 #234-239). */
+const assetMaintenance: ExpirySource = {
+  id: "asset_maintenance",
+  label: "Asset Maintenance",
+  async fetch() {
+    const { fetchMaintenanceDueRows } = await import("@/lib/asset-lifecycle")
+    const rows = await fetchMaintenanceDueRows().catch(() => [])
+    return rows.flatMap((r: any) => {
+      const dueDate = toISODate(r.next_service_date)
+      if (!dueDate) return []
+      const assetLabel = r.asset_name || r.finance_fixed_asset_id
+      return [
+        {
+          sourceId: this.id,
+          sourceLabel: this.label,
+          category: "Maintenance",
+          entityId: String(r.maintenance_id),
+          title: `${r.maintenance_type ?? "Service"} due — ${assetLabel}`,
+          subtitle: assetLabel,
+          expiryDate: dueDate,
+          issueDate: null,
+          documentNumber: null,
+          warnDays: Number(r.reminder_days ?? DEFAULT_EXPIRY_WARN_DAYS) || DEFAULT_EXPIRY_WARN_DAYS,
+          link: "/modules/assets/asset-lifecycle",
+          ownerUserId: r.owner_user_id != null ? Number(r.owner_user_id) : null,
+        } satisfies ExpirySourceRow,
+      ]
+    })
+  },
+}
+
+export const EXPIRY_SOURCES: readonly ExpirySource[] = [
+  employeeDocuments,
+  passportVisa,
+  assetWarranties,
+  assetMaintenance,
+  legalContracts,
+]
 
 /** Fetch and normalise every source row (unclassified). */
 export async function fetchAllExpiryRows(): Promise<ExpirySourceRow[]> {

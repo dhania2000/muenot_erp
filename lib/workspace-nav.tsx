@@ -375,9 +375,10 @@ const LEGAL_CHILDREN = [
 
 const ASSETS_CHILDREN = [
   { label: "Employee Assets", href: "/modules/assets/employee-assets" },
-  { label: "Company Subscriptions", href: "/modules/assets/company-subscriptions" },
+    { label: "Company Subscriptions", href: "/modules/assets/company-subscriptions" },
   { label: "Software Licenses", href: "/modules/assets/software-licenses" },
-]
+  { label: "Warranty & Maintenance", href: "/modules/assets/asset-lifecycle" },
+  ]
 
 const SALES_CHILDREN: { label: string; href: string; feature: string }[] = [
   { label: "Dashboard", href: "/modules/sales/dashboard", feature: "sales.view_dashboard" },

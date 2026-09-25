@@ -11,6 +11,8 @@ export const EXPIRY_CATEGORIES = [
   "Insurance",
   "Compliance",
   "Identity",
+  "Warranty",
+  "Maintenance",
   "Employee Document",
 ] as const
 

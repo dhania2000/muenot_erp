@@ -29,6 +29,8 @@ import { onFailedLogin, onSuccessfulLogin } from "@/lib/security-alerts-store"
 import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 import { recordSecurityEvent } from "@/lib/security-audit-store"
 import { evaluateAccessPolicies } from "@/lib/access-policy-store"
+import { enforceGeoPolicy } from "@/lib/geo-policy-store"
+import { enforceManagedDevice } from "@/lib/managed-device-store"
 import { recordAuditLog, AUDIT_ACTIONS, type AuditContext } from "@/lib/audit-log-store"
 import { monitorLogger, safeDbError } from "@/lib/system-monitoring"
 
@@ -229,6 +231,57 @@ export async function POST(request: Request) {
           {
             error: "Sign-in is blocked by an access policy. Contact your administrator.",
             code: "ACCESS_POLICY_DENIED",
+          },
+          { status: 403 },
+        )
+      }
+
+      // Emergency access authorization: a platform Super Admin may override a
+      // geo or managed-device denial when the tenant has explicitly enabled the
+      // corresponding emergency escape hatch. Every override is audited inside
+      // the enforcement helpers. This mirrors the IP-allowlist break-glass above
+      // so a misconfigured geo/device policy can never permanently lock out the
+      // operator who has to fix it.
+      const emergencyAuthorized = policyRoles?.platformRole === "platform_super_admin"
+
+      // Geo (country) protection (#213): allow/block by TRUSTED IP geolocation.
+      // Fails safely for an unknown location (VPN/proxy/unknown IP) per tenant
+      // policy. A denial can be overridden by audited emergency access.
+      const geoResult = await enforceGeoPolicy(policyTenantId, {
+        country: requestCountry,
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        ip: requestIp,
+        emergencyAuthorized,
+      })
+      if (geoResult.denied) {
+        return NextResponse.json(
+          {
+            error: "Sign-in is not allowed from your current location. Contact your administrator.",
+            code: "GEO_BLOCKED",
+          },
+          { status: 403 },
+        )
+      }
+
+      // Managed-device protection (#214): when required, the client must present
+      // a verified device assertion for an active enrolled device. Revocation
+      // takes effect immediately. A denial can be overridden by audited
+      // emergency access.
+      const deviceResult = await enforceManagedDevice(policyTenantId, {
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        assertion: (body as any)?.deviceAssertion,
+        ip: requestIp,
+        emergencyAuthorized,
+      })
+      if (deviceResult.denied) {
+        return NextResponse.json(
+          {
+            error: "Sign-in requires a managed device. Enroll this device or contact your administrator.",
+            code: "MANAGED_DEVICE_REQUIRED",
           },
           { status: 403 },
         )

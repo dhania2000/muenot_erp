@@ -1,7 +1,10 @@
 import "server-only"
 
-import { query, withTransaction } from "@/lib/db"
+import { query } from "@/lib/db"
 import { recordAuditLog } from "@/lib/audit-log-store"
+import { validateCronExpression } from "@/lib/cron-expression"
+import { nextRunAt } from "@/lib/tenant-jobs/model"
+import { runWithTenant } from "@/lib/tenant-context"
 import { getMaster, upsertMaster } from "@/lib/master-data/service"
 import type { MasterRow } from "@/lib/master-data/types"
 import {
@@ -125,6 +128,7 @@ export type SyncRun = {
   startedAt: string | null
   finishedAt: string | null
   createdAt: string
+  updatedAt: string
 }
 
 export type SyncConflict = {
@@ -148,6 +152,40 @@ export class SyncConnectionNotFound extends Error {}
 export class SyncConflictNotFound extends Error {}
 export class SyncConflictAlreadyResolved extends Error {}
 export class SyncVersionConflict extends Error {}
+/** Another run holds this connection's lease (simultaneous sync attempt). */
+export class SyncBusy extends Error {}
+/** The ERP record changed again after the conflict snapshot was taken. */
+export class SyncConflictStale extends Error {}
+
+/** How long a run may hold a connection before another worker may take over. */
+const LEASE_SECONDS = 15 * 60
+
+type AuditInput = Parameters<typeof recordAuditLog>[0]
+
+/** Audit with the tenant + actor bound, so entries are attributable even from
+ * the unattended scheduler where no request context exists. */
+function audit(tenantId: number, actorId: number | null, input: AuditInput) {
+  return recordAuditLog({ ...input, context: { tenantId, actorUserId: actorId, ...(input.context ?? {}) } })
+}
+
+function validateCron(expression: string | null | undefined): string | null {
+  const trimmed = expression?.trim() || null
+  if (!trimmed) return null
+  const check = validateCronExpression(trimmed)
+  if (check.ok === false) throw new SyncError(`Invalid cron expression: ${check.error}`, "validation")
+  return trimmed
+}
+
+function computeNextRun(cronExpression: string | null, enabled: boolean, after: Date): string | null {
+  if (!cronExpression || !enabled) return null
+  const next = nextRunAt(cronExpression, "UTC", after)
+  return next ? toSqlUtc(next) : null
+}
+
+/** Business-field equality (ignores meta, which masters may not persist). */
+function sameBusinessFields(a: NormalizedRecord, b: NormalizedRecord): boolean {
+  return a.code === b.code && a.name === b.name && a.active === b.active && (a.parent ?? null) === (b.parent ?? null)
+}
 
 // ---------------------------------------------------------------------------
 // Schema (self-heal; migration is the authoritative source of record)
@@ -172,6 +210,7 @@ async function runEnsure() {
     last_run_id BIGINT UNSIGNED NULL,
     last_synced_at DATETIME NULL,
     next_run_at DATETIME NULL,
+    lease_until DATETIME NULL,
     version INT UNSIGNED NOT NULL DEFAULT 1,
     created_by BIGINT UNSIGNED NULL,
     updated_by BIGINT UNSIGNED NULL,
@@ -240,6 +279,7 @@ async function runEnsure() {
     master_kind VARCHAR(64) NOT NULL,
     code VARCHAR(64) NOT NULL,
     status ENUM('open','resolved') NOT NULL DEFAULT 'open',
+    open_marker VARCHAR(191) NULL,
     resolution ENUM('erp_wins','external_wins','manual') NULL,
     external_record JSON NULL,
     local_record JSON NULL,
@@ -249,7 +289,7 @@ async function runEnsure() {
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    UNIQUE KEY uniq_conflict_open (tenant_id, connection_id, external_id, status),
+    UNIQUE KEY uniq_conflict_open (tenant_id, connection_id, open_marker),
     KEY idx_conflict_tenant (tenant_id, status, created_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
@@ -323,6 +363,7 @@ function mapRun(row: any): SyncRun {
     startedAt: fromSqlUtc(row.started_at),
     finishedAt: fromSqlUtc(row.finished_at),
     createdAt: fromSqlUtc(row.created_at) ?? "",
+    updatedAt: fromSqlUtc(row.updated_at) ?? "",
   }
 }
 
@@ -384,26 +425,29 @@ export async function createSyncConnection(
   await ensureIntegrationSyncSchema()
   const source = requireSyncSource(input.providerKey, input.entityKind)
   const label = (input.label?.trim() || source.label).slice(0, 160)
+  const cronExpression = validateCron(input.cronExpression)
+  const enabled = input.enabled !== false
   try {
     const res = await query<any>(
       `INSERT INTO integration_sync_connections
-        (tenant_id, provider_key, entity_kind, master_kind, label, enabled, cron_expression, config, created_by, updated_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        (tenant_id, provider_key, entity_kind, master_kind, label, enabled, cron_expression, config, next_run_at, created_by, updated_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       [
         tenantId,
         source.providerKey,
         source.entityKind,
         source.masterKind,
         label,
-        input.enabled === false ? 0 : 1,
-        input.cronExpression?.trim() || null,
+        enabled ? 1 : 0,
+        cronExpression,
         JSON.stringify(input.config ?? {}),
+        computeNextRun(cronExpression, enabled, new Date()),
         actorId,
         actorId,
       ],
     )
     const created = (await getSyncConnection(tenantId, Number(res.insertId)))!
-    await recordAuditLog({
+    await audit(tenantId, actorId, {
       action: "integration_sync.connection.create",
       entityType: "integration_sync_connection",
       entityId: created.id,
@@ -429,15 +473,18 @@ export async function updateSyncConnection(
   await ensureIntegrationSyncSchema()
   const current = await getSyncConnection(tenantId, id)
   if (!current) throw new SyncConnectionNotFound("Sync connection not found")
+  const enabled = patch.enabled === undefined ? current.enabled : patch.enabled
+  const cronExpression = patch.cronExpression === undefined ? current.cronExpression : validateCron(patch.cronExpression)
   const res = await query<any>(
     `UPDATE integration_sync_connections
-       SET label=?, enabled=?, cron_expression=?, config=?, updated_by=?, version=version+1
+       SET label=?, enabled=?, cron_expression=?, config=?, next_run_at=?, updated_by=?, version=version+1
      WHERE tenant_id=? AND id=? AND version=?`,
     [
       (patch.label?.trim() || current.label).slice(0, 160),
-      patch.enabled === undefined ? (current.enabled ? 1 : 0) : patch.enabled ? 1 : 0,
-      patch.cronExpression === undefined ? current.cronExpression : patch.cronExpression?.trim() || null,
+      enabled ? 1 : 0,
+      cronExpression,
       JSON.stringify(patch.config ?? current.config),
+      computeNextRun(cronExpression, enabled, new Date()),
       actorId,
       tenantId,
       id,
@@ -447,12 +494,12 @@ export async function updateSyncConnection(
   if (Number(res.affectedRows) !== 1) {
     throw new SyncVersionConflict("This connection was changed by someone else. Refresh and try again.")
   }
-  await recordAuditLog({
+  await audit(tenantId, actorId, {
     action: "integration_sync.connection.update",
     entityType: "integration_sync_connection",
     entityId: id,
     before: { enabled: current.enabled, cronExpression: current.cronExpression },
-    after: { enabled: patch.enabled ?? current.enabled },
+    after: { enabled, cronExpression },
   })
   return (await getSyncConnection(tenantId, id))!
 }
@@ -467,12 +514,15 @@ export async function resetSyncBaseline(tenantId: number, actorId: number, id: n
   await ensureIntegrationSyncSchema()
   const res = await query<any>(
     `UPDATE integration_sync_connections
-       SET generation=generation+1, cursor_position=NULL, status='idle', last_error=NULL, updated_by=?, version=version+1
-     WHERE tenant_id=? AND id=?`,
+       SET generation=generation+1, cursor_position=NULL, last_error=NULL, updated_by=?, version=version+1
+     WHERE tenant_id=? AND id=? AND (status<>'syncing' OR lease_until IS NULL OR lease_until<UTC_TIMESTAMP())`,
     [actorId, tenantId, id],
   )
-  if (Number(res.affectedRows) !== 1) throw new SyncConnectionNotFound("Sync connection not found")
-  await recordAuditLog({
+  if (Number(res.affectedRows) !== 1) {
+    if (!(await getSyncConnection(tenantId, id))) throw new SyncConnectionNotFound("Sync connection not found")
+    throw new SyncBusy("A sync is running for this connection. Wait for it to finish before resetting.")
+  }
+  await audit(tenantId, actorId, {
     action: "integration_sync.connection.reset_baseline",
     entityType: "integration_sync_connection",
     entityId: id,
@@ -671,7 +721,10 @@ async function applyRecord(
   rec: ProviderRecord,
 ): Promise<RecordOutcome> {
   const { tenantId, id: connectionId } = conn
-  const externalFp = fingerprintNormalized(rec.normalized)
+  // A provider tombstone is a deactivation; fold it into the normalized record
+  // so the fingerprint (and therefore replay detection) reflects it.
+  const normalized: NormalizedRecord = rec.deleted ? { ...rec.normalized, active: false } : rec.normalized
+  const externalFp = fingerprintNormalized(normalized)
   const eventKey = recordEventKey({ connectionId, externalId: rec.externalId, externalFingerprint: externalFp })
 
   // Replay guard: if we have already recorded this exact (record, fingerprint)
@@ -680,12 +733,15 @@ async function applyRecord(
   if (await logExists(tenantId, connectionId, eventKey)) return "skipped"
 
   const mapping = await getMapping(tenantId, connectionId, rec.externalId)
-  const code = mapping?.code ?? rec.normalized.code
+  const code = mapping?.code ?? normalized.code
   const localRow = await getMaster(masterKind as any, code, { tenantId })
   const localNormalized = localToNormalized(localRow)
   const localFp = localNormalized ? fingerprintNormalized(localNormalized) : null
 
-  const change = classifyChange(mapping?.baseline ?? null, externalFp, localFp)
+  let change = classifyChange(mapping?.baseline ?? null, externalFp, localFp)
+  // First contact with a code the ERP already owns: never silently overwrite a
+  // differing ERP record — surface it as a conflict for an explicit decision.
+  if (change === "new" && localNormalized && !sameBusinessFields(localNormalized, normalized)) change = "both"
 
   if (change === "unchanged") {
     await appendLog({ tenantId, connectionId, runId, eventKey, externalId: rec.externalId, action: "unchanged" })
@@ -708,19 +764,28 @@ async function applyRecord(
     // resolution and mark the mapping. Baseline is intentionally left as-is.
     await query(
       `INSERT INTO integration_sync_conflicts
-         (tenant_id, connection_id, external_id, master_kind, code, status, external_record, local_record, detected_run_id)
-       VALUES (?,?,?,?,?, 'open', ?, ?, ?)
+         (tenant_id, connection_id, external_id, master_kind, code, status, open_marker, external_record, local_record, detected_run_id)
+       VALUES (?,?,?,?,?, 'open', ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE external_record=VALUES(external_record), local_record=VALUES(local_record),
          detected_run_id=VALUES(detected_run_id), updated_at=CURRENT_TIMESTAMP`,
       [
-        tenantId, connectionId, rec.externalId.slice(0, 191), masterKind, code,
-        JSON.stringify(rec.normalized), JSON.stringify(localNormalized), runId,
+        tenantId, connectionId, rec.externalId.slice(0, 191), masterKind, code, rec.externalId.slice(0, 191),
+        JSON.stringify(normalized), JSON.stringify(localNormalized), runId,
       ],
     )
-    await query(
-      "UPDATE integration_record_mappings SET status='conflict' WHERE tenant_id=? AND connection_id=? AND external_id=?",
-      [tenantId, connectionId, rec.externalId],
-    )
+    if (mapping) {
+      await query(
+        "UPDATE integration_record_mappings SET status='conflict' WHERE tenant_id=? AND connection_id=? AND external_id=?",
+        [tenantId, connectionId, rec.externalId],
+      )
+    } else {
+      // Pre-existing ERP row: record the mapping with an empty external baseline
+      // so a later ERP-wins resolution has something to advance.
+      await upsertMapping({
+        tenantId, connectionId, externalId: rec.externalId, masterKind, code,
+        externalFingerprint: "", localFingerprint: localFp ?? "", status: "conflict",
+      })
+    }
     await appendLog({
       tenantId, connectionId, runId, eventKey, externalId: rec.externalId, action: "conflict_detected",
       detail: { code, masterKind },
@@ -730,8 +795,8 @@ async function applyRecord(
 
   // change === "new" || "external_only": apply the external record.
   await upsertMaster(masterKind as any, {
-    code, name: rec.normalized.name, active: rec.deleted ? false : rec.normalized.active,
-    parent: rec.normalized.parent ?? null, meta: rec.normalized.meta ?? {},
+    code, name: normalized.name, active: normalized.active,
+    parent: normalized.parent ?? null, meta: normalized.meta ?? {},
   }, { tenantId, userId: actorId ?? undefined })
 
   const applied = await getMaster(masterKind as any, code, { tenantId })
@@ -742,7 +807,7 @@ async function applyRecord(
   })
   await appendLog({
     tenantId, connectionId, runId, eventKey, externalId: rec.externalId,
-    action: change === "new" ? "created" : "updated", detail: { code },
+    action: rec.deleted ? "deactivated" : change === "new" ? "created" : "updated", detail: { code },
   })
   return "applied"
 }
@@ -817,48 +882,84 @@ export async function runConnectionSync(
   const pageSize = clampPageSize(options.pageSize ?? SYNC_LIMITS.defaultPageSize)
   const slot = options.slot ?? now.toISOString()
 
-  const { run, replayed } = await createOrReuseRun(
-    tenantId, connectionId, mode, SYNC_LIMITS.maxAttempts,
-    options.triggerSource ?? "manual", actorId, slot,
+  // Lease the connection BEFORE creating/resuming a run so two simultaneous
+  // triggers (manual + scheduler, two admins, overlapping ticks) can never
+  // page the same provider cursor concurrently. An expired lease (crashed
+  // worker) may be taken over.
+  const leaseUntil = toSqlUtc(new Date(now.getTime() + LEASE_SECONDS * 1000))
+  const lease = await query<any>(
+    `UPDATE integration_sync_connections SET status='syncing', lease_until=?
+     WHERE tenant_id=? AND id=? AND (status<>'syncing' OR lease_until IS NULL OR lease_until<?)`,
+    [leaseUntil, tenantId, connectionId, toSqlUtc(now)],
   )
-  if (replayed && (run.status === "succeeded" || run.status === "running")) return run
+  if (Number(lease.affectedRows) !== 1) throw new SyncBusy("A sync is already running for this connection.")
+  const releaseLease = (status: "idle" | "error") =>
+    query("UPDATE integration_sync_connections SET status=?, lease_until=NULL WHERE tenant_id=? AND id=?", [status, tenantId, connectionId])
 
-  // Determine the starting cursor. Initial mode always starts clean; incremental
-  // resumes from the run checkpoint (crash recovery) or the connection position.
-  // A stale checkpoint (older generation) is discarded and we restart clean.
-  let cursor: Cursor
-  if (mode === "initial") {
-    cursor = emptyCursor(conn.generation)
-  } else {
-    const checkpoint = run.checkpointCursor
-    if (checkpoint && !isStaleCursor(checkpoint, conn.generation)) {
-      cursor = decodeCursor(checkpoint) ?? emptyCursor(conn.generation)
-    } else if (checkpoint) {
-      // Stale checkpoint → restart from the connection baseline.
-      cursor = { position: conn.cursorPosition, page: 0, generation: conn.generation }
-      await appendLog({
-        tenantId, connectionId, runId: run.id, eventKey: `cursor_reset:${run.id}`,
-        externalId: "-", action: "cursor_reset", detail: { reason: "stale_checkpoint" },
-      })
-    } else {
-      cursor = { position: conn.cursorPosition, page: 0, generation: conn.generation }
+  let run: SyncRun
+  try {
+    const created = await createOrReuseRun(
+      tenantId, connectionId, mode, SYNC_LIMITS.maxAttempts,
+      options.triggerSource ?? "manual", actorId, slot,
+    )
+    run = created.run
+    if (created.replayed && run.status === "succeeded") {
+      await releaseLease(conn.lastError ? "error" : "idle")
+      return run
     }
+  } catch (error) {
+    await releaseLease("error")
+    throw error
+  }
+
+  // Starting cursor: resume from the run checkpoint (crash/outage recovery) in
+  // either mode; otherwise initial starts clean and incremental starts from the
+  // connection position. A checkpoint from an older generation is discarded.
+  const baseCursor: Cursor =
+    mode === "initial" ? emptyCursor(conn.generation) : { position: conn.cursorPosition, page: 0, generation: conn.generation }
+  let cursor: Cursor = baseCursor
+  const checkpoint = run.checkpointCursor
+  if (checkpoint && !isStaleCursor(checkpoint, conn.generation)) {
+    cursor = decodeCursor(checkpoint) ?? baseCursor
+  } else if (checkpoint) {
+    cursor = mode === "initial" ? baseCursor : { position: conn.cursorPosition, page: 0, generation: conn.generation }
+    await appendLog({
+      tenantId, connectionId, runId: run.id, eventKey: `cursor_reset:${run.id}:checkpoint`,
+      externalId: "-", action: "cursor_reset", detail: { reason: "stale_checkpoint" },
+    })
   }
 
   await query(
     "UPDATE integration_sync_runs SET status='running', attempts=attempts+1, started_at=COALESCE(started_at, ?), next_retry_at=NULL WHERE tenant_id=? AND id=?",
     [toSqlUtc(now), tenantId, run.id],
   )
-  await query("UPDATE integration_sync_connections SET status='syncing' WHERE tenant_id=? AND id=?", [tenantId, connectionId])
 
   const counts = { pages: run.pages, fetched: run.fetched, applied: run.applied, skipped: run.skipped, conflicts: run.conflicts, errors: run.errors }
   let processed = 0
+  let providerCursorReset = false
 
   try {
     let pagesThisRun = 0
     for (;;) {
       if (pagesThisRun >= SYNC_LIMITS.maxPagesPerRun) break
-      const page = await fetcher({ tenantId, cursor: cursor.position, limit: pageSize, config: conn.config, signal: options.signal })
+      let page
+      try {
+        page = await fetcher({ tenantId, cursor: cursor.position, limit: pageSize, config: conn.config, signal: options.signal })
+      } catch (error) {
+        // Provider rejected our cursor (expired token / compacted change feed).
+        // Restart once from the beginning: per-record fingerprints make the
+        // full re-read replay-safe, so nothing is duplicated.
+        if (error instanceof SyncError && error.kind === "stale_cursor" && !providerCursorReset && cursor.position != null) {
+          providerCursorReset = true
+          cursor = emptyCursor(conn.generation)
+          await appendLog({
+            tenantId, connectionId, runId: run.id, eventKey: `cursor_reset:${run.id}:provider`,
+            externalId: "-", action: "cursor_reset", detail: { reason: "provider_stale_cursor" },
+          })
+          continue
+        }
+        throw error
+      }
       pagesThisRun++
       counts.pages++
       counts.fetched += page.records.length
@@ -877,9 +978,13 @@ export async function runConnectionSync(
         } catch (error) {
           counts.errors++
           if (error instanceof SyncError && error.kind === "outage") throw error // provider outage aborts the page loop
-          console.error("[integration-sync] record failed", {
-            connectionId, externalId: rec.externalId, error: error instanceof Error ? error.message : error,
-          })
+          const message = error instanceof Error ? error.message : String(error)
+          // Logged under a run-scoped key (not the record event key), so a
+          // replay still re-attempts the record rather than treating it as done.
+          await appendLog({
+            tenantId, connectionId, runId: run.id, eventKey: `error:${run.id}:${rec.externalId}`,
+            externalId: rec.externalId, action: "error", detail: { error: message.slice(0, 300) },
+          }).catch(() => undefined)
         }
       }
 
@@ -896,11 +1001,15 @@ export async function runConnectionSync(
     await finishRun(tenantId, run.id, status, counts, null, cursor)
     await query(
       `UPDATE integration_sync_connections
-         SET status=?, cursor_position=?, last_run_id=?, last_synced_at=?, last_error=NULL, version=version+1
+         SET status=?, lease_until=NULL, cursor_position=?, last_run_id=?, last_synced_at=?, last_error=NULL,
+             next_run_at=?, version=version+1
        WHERE tenant_id=? AND id=?`,
-      [status === "failed" ? "error" : "idle", cursor.position, run.id, toSqlUtc(now), tenantId, connectionId],
+      [
+        status === "failed" ? "error" : "idle", cursor.position, run.id, toSqlUtc(now),
+        computeNextRun(conn.cronExpression, conn.enabled, now), tenantId, connectionId,
+      ],
     )
-    await recordAuditLog({
+    await audit(tenantId, actorId, {
       action: "integration_sync.run.finished",
       result: status === "failed" ? "failure" : "success",
       entityType: "integration_sync_run",
@@ -915,10 +1024,11 @@ export async function runConnectionSync(
     const nextRetryAt = retryable ? new Date(now.getTime() + backoffSeconds(attempts) * 1000) : null
     await finishRun(tenantId, run.id, retryable ? "pending" : "failed", counts, message, cursor, nextRetryAt)
     await query(
-      "UPDATE integration_sync_connections SET status='error', last_error=?, last_run_id=?, version=version+1 WHERE tenant_id=? AND id=?",
-      [message.slice(0, 500), run.id, tenantId, connectionId],
+      `UPDATE integration_sync_connections SET status='error', lease_until=NULL, last_error=?, last_run_id=?,
+         next_run_at=?, version=version+1 WHERE tenant_id=? AND id=?`,
+      [message.slice(0, 500), run.id, computeNextRun(conn.cronExpression, conn.enabled, now), tenantId, connectionId],
     )
-    await recordAuditLog({
+    await audit(tenantId, actorId, {
       action: "integration_sync.run.error",
       result: "failure",
       entityType: "integration_sync_run",
@@ -976,14 +1086,29 @@ export async function resolveSyncConflict(
   if (conflict.status === "resolved") throw new SyncConflictAlreadyResolved("Conflict already resolved")
   if (!conflict.externalRecord) throw new SyncError("Conflict is missing its external snapshot", "validation")
 
+  // Validate BEFORE claiming so a bad request leaves the conflict open.
+  const outcome = resolveConflict(resolution, conflict.externalRecord, conflict.localRecord, mergePatch)
+
+  // Simultaneous edit guard: if the ERP record changed after the snapshot the
+  // reviewer looked at, refresh the snapshot and refuse — the reviewer must
+  // decide against the current ERP value, not overwrite an unseen edit.
+  const currentLocal = localToNormalized(await getMaster(conflict.masterKind as any, conflict.code, { tenantId }))
+  const snapshotFp = conflict.localRecord ? fingerprintNormalized(conflict.localRecord) : null
+  const currentFp = currentLocal ? fingerprintNormalized(currentLocal) : null
+  if (snapshotFp !== currentFp) {
+    await query(
+      "UPDATE integration_sync_conflicts SET local_record=? WHERE tenant_id=? AND id=? AND status='open'",
+      [JSON.stringify(currentLocal), tenantId, conflictId],
+    )
+    throw new SyncConflictStale("The ERP record changed since this conflict was loaded. Review the refreshed values and resolve again.")
+  }
+
   // Atomically claim the conflict so concurrent resolves cannot both apply.
   const claim = await query<any>(
-    "UPDATE integration_sync_conflicts SET status='resolved', resolution=?, resolved_by=?, resolved_at=UTC_TIMESTAMP() WHERE tenant_id=? AND id=? AND status='open'",
+    "UPDATE integration_sync_conflicts SET status='resolved', open_marker=NULL, resolution=?, resolved_by=?, resolved_at=UTC_TIMESTAMP() WHERE tenant_id=? AND id=? AND status='open'",
     [resolution, actorId, tenantId, conflictId],
   )
   if (Number(claim.affectedRows) !== 1) throw new SyncConflictAlreadyResolved("Conflict already resolved")
-
-  const outcome = resolveConflict(resolution, conflict.externalRecord, conflict.localRecord, mergePatch)
 
   if (outcome.writeMaster && outcome.record) {
     await upsertMaster(conflict.masterKind as any, {
@@ -1003,11 +1128,13 @@ export async function resolveSyncConflict(
     eventKey: `conflict_resolved:${conflictId}:${resolution}`,
     externalId: conflict.externalId, action: "conflict_resolved", detail: { resolution, code: conflict.code },
   })
-  await recordAuditLog({
+  await audit(tenantId, actorId, {
     action: "integration_sync.conflict.resolve",
     entityType: "integration_sync_conflict",
     entityId: conflictId,
-    after: { resolution, writeMaster: outcome.writeMaster },
+    entityLabel: conflict.code,
+    before: { local: conflict.localRecord, external: conflict.externalRecord },
+    after: { resolution, writeMaster: outcome.writeMaster, record: outcome.record },
   })
   return (await getSyncConflict(tenantId, conflictId))!
 }
@@ -1044,9 +1171,11 @@ export async function dispatchDueSyncs(now = new Date(), limit = 100): Promise<D
       // Reuse the same idempotency slot so this resumes the SAME run row.
       const idem = row.idempotency_key as string
       const slot = idem.split(":").slice(4).join(":")
-      await runConnectionSync(run.tenantId, row.triggered_by ? Number(row.triggered_by) : null, run.connectionId, run.mode, {
-        now, triggerSource: "scheduler", slot,
-      })
+      await runWithTenant({ tenantId: run.tenantId }, () =>
+        runConnectionSync(run.tenantId, row.triggered_by ? Number(row.triggered_by) : null, run.connectionId, run.mode, {
+          now, triggerSource: "scheduler", slot,
+        }),
+      )
       summary.retried++
     } catch (error) {
       summary.errors++
@@ -1056,19 +1185,24 @@ export async function dispatchDueSyncs(now = new Date(), limit = 100): Promise<D
 
   // (b) Due connections for scheduled incremental sync.
   const due = await query<any[]>(
-    `SELECT * FROM integration_sync_connections WHERE enabled=1 AND status<>'syncing' AND next_run_at IS NOT NULL AND next_run_at<=? ORDER BY next_run_at ASC LIMIT ?`,
-    [toSqlUtc(now), limit],
+    `SELECT * FROM integration_sync_connections
+      WHERE enabled=1 AND (status<>'syncing' OR lease_until IS NULL OR lease_until<?)
+        AND next_run_at IS NOT NULL AND next_run_at<=? ORDER BY next_run_at ASC LIMIT ?`,
+    [toSqlUtc(now), toSqlUtc(now), limit],
   )
   for (const row of due) {
     summary.considered++
     const conn = mapConnection(row)
     try {
       const mode: SyncMode = conn.cursorPosition ? "incremental" : "initial"
-      await runConnectionSync(conn.tenantId, null, conn.id, mode, {
-        now, triggerSource: "scheduler", slot: `sched:${toSqlUtc(now)}`,
-      })
+      await runWithTenant({ tenantId: conn.tenantId }, () =>
+        runConnectionSync(conn.tenantId, null, conn.id, mode, {
+          now, triggerSource: "scheduler", slot: `sched:${row.next_run_at instanceof Date ? toSqlUtc(row.next_run_at) : String(row.next_run_at)}`,
+        }),
+      )
       summary.started++
     } catch (error) {
+      if (error instanceof SyncBusy) continue
       summary.errors++
       console.error("[integration-sync] scheduled dispatch failed", { connectionId: conn.id, error: error instanceof Error ? error.message : error })
     }

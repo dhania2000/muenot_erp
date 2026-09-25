@@ -92,3 +92,29 @@ describe("sign-in protection orchestration", () => {
     expect(await resolveEmergencyAuthorization(null, 5, "tenant_admin")).toMatchObject({ authorized: false })
   })
 })
+
+describe("platform security context (server-authoritative)", () => {
+  it("classifies only from the DB role and break-glass config", async () => {
+    const { resolvePlatformSecurityContext } = await import("@/lib/sign-in-protection")
+    const prev = process.env.PLATFORM_BREAK_GLASS_USER_IDS
+    process.env.PLATFORM_BREAK_GLASS_USER_IDS = "42"
+    try {
+      expect(resolvePlatformSecurityContext(1, "platform_super_admin")).toMatchObject({
+        accountClass: "platform_super_admin",
+        policyLevel: "platform_admin",
+        exemptFromTenantDevicePolicy: true,
+      })
+      expect(resolvePlatformSecurityContext(42, "none")).toMatchObject({
+        accountClass: "break_glass_platform_admin",
+        policyLevel: "platform_emergency",
+      })
+      expect(resolvePlatformSecurityContext(2, "tenant_owner")).toMatchObject({
+        accountClass: "normal",
+        exemptFromTenantDevicePolicy: false,
+      })
+    } finally {
+      if (prev === undefined) delete process.env.PLATFORM_BREAK_GLASS_USER_IDS
+      else process.env.PLATFORM_BREAK_GLASS_USER_IDS = prev
+    }
+  })
+})

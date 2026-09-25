@@ -67,13 +67,89 @@ export function isPlatformAdminClass(cls: PlatformAccountClass): boolean {
 }
 
 /**
- * Whether the account is exempt from TENANT-owned managed-device (and geo)
- * enforcement. Only platform admins / break-glass admins are exempt — a normal
- * user, INCLUDING a tenant_admin / tenant_owner, is never exempt and continues
- * to follow their tenant's managed-device policy.
+ * Whether the account is exempt from TENANT-owned managed-device enforcement.
+ * Only platform admins / break-glass admins are exempt — a normal user,
+ * INCLUDING a tenant_admin / tenant_owner, is never exempt and continues to
+ * follow their tenant's managed-device policy.
  */
 export function isExemptFromTenantDevicePolicy(cls: PlatformAccountClass): boolean {
   return isPlatformAdminClass(cls)
+}
+
+/**
+ * Which TENANT-owned controls are skipped for an account class. Precedence is
+ * encoded here once so the login route and sign-in protection cannot drift:
+ *
+ *   - normal (incl. tenant admins): nothing skipped.
+ *   - platform_super_admin: ONLY the tenant managed-device requirement. Geo,
+ *     access-policy, IP allowlist and tenant MFA still apply (with their own
+ *     existing, audited emergency paths) — "exempt from managed device" is not
+ *     "exempt from all security".
+ *   - break_glass_platform_admin: every tenant control that could cause a
+ *     platform lockout (device, geo, IP allowlist, access-policy deny, tenant
+ *     MFA / security-key ENROLLMENT blocks). An enrolled MFA factor is still
+ *     challenged by the platform policy.
+ */
+export type TenantPolicyExemptions = {
+  managedDevice: boolean
+  geo: boolean
+  ipAllowlist: boolean
+  accessPolicyDeny: boolean
+  tenantMfaEnrollment: boolean
+  tenantPhishingResistantMfa: boolean
+}
+
+export function tenantPolicyExemptionsFor(cls: PlatformAccountClass): TenantPolicyExemptions {
+  const breakGlass = cls === "break_glass_platform_admin"
+  return {
+    managedDevice: isExemptFromTenantDevicePolicy(cls),
+    geo: breakGlass,
+    ipAllowlist: breakGlass,
+    accessPolicyDeny: breakGlass,
+    tenantMfaEnrollment: breakGlass,
+    tenantPhishingResistantMfa: breakGlass,
+  }
+}
+
+/**
+ * Dedicated platform-admin security settings. Sourced ONLY from platform
+ * deployment configuration (env), never from tenant settings, so no tenant
+ * admin can weaken or disable them.
+ *
+ *   PLATFORM_ADMIN_REQUIRE_MFA                     "true" ⇒ super admins must use MFA
+ *   PLATFORM_ADMIN_REQUIRE_PHISHING_RESISTANT_MFA  "true" ⇒ super admins must use a security key
+ *   PLATFORM_ADMIN_SESSION_TIMEOUT_MINUTES         cap on platform-admin session lifetime
+ *
+ * MFA defaults to OFF-by-mandate (an enrolled factor is still always challenged)
+ * so switching this policy on can never lock out an un-enrolled operator before
+ * a break-glass account exists. Enable it once recovery is verified.
+ */
+export type PlatformAdminSecurityPolicy = {
+  requireMfa: boolean
+  requirePhishingResistantMfa: boolean
+  sessionTimeoutMinutes: number | null
+}
+
+export function parsePlatformAdminSecurityPolicy(
+  env: Record<string, string | undefined>,
+): PlatformAdminSecurityPolicy {
+  const flag = (v: string | undefined) => String(v ?? "").trim().toLowerCase() === "true"
+  const timeout = Number(env.PLATFORM_ADMIN_SESSION_TIMEOUT_MINUTES)
+  return {
+    requireMfa: flag(env.PLATFORM_ADMIN_REQUIRE_MFA),
+    requirePhishingResistantMfa: flag(env.PLATFORM_ADMIN_REQUIRE_PHISHING_RESISTANT_MFA),
+    sessionTimeoutMinutes: Number.isFinite(timeout) && timeout >= 1 ? Math.floor(timeout) : null,
+  }
+}
+
+/** Session lifetime for the account: platform admins are capped by the platform policy. */
+export function effectiveSessionMinutes(
+  cls: PlatformAccountClass,
+  tenantMinutes: number,
+  policy: PlatformAdminSecurityPolicy,
+): number {
+  if (!isPlatformAdminClass(cls) || policy.sessionTimeoutMinutes == null) return tenantMinutes
+  return Math.min(tenantMinutes, policy.sessionTimeoutMinutes)
 }
 
 /**

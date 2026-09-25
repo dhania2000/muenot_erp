@@ -29,7 +29,14 @@ import { onFailedLogin, onSuccessfulLogin } from "@/lib/security-alerts-store"
 import { checkIpAllowlist } from "@/lib/ip-allowlist-store"
 import { recordSecurityEvent } from "@/lib/security-audit-store"
 import { evaluateAccessPolicies } from "@/lib/access-policy-store"
-import { enforceSignInProtection } from "@/lib/sign-in-protection"
+import { enforceSignInProtection, resolvePlatformSecurityContext } from "@/lib/sign-in-protection"
+import {
+  effectiveSessionMinutes,
+  evaluatePlatformAdminAuth,
+  isPlatformAdminClass,
+  parsePlatformAdminSecurityPolicy,
+  tenantPolicyExemptionsFor,
+} from "@/lib/platform-admin-policy"
 import { resolveTrustedGeo } from "@/lib/geo-trust"
 import { recordAuditLog, AUDIT_ACTIONS, type AuditContext } from "@/lib/audit-log-store"
 import { monitorLogger, safeDbError } from "@/lib/system-monitoring"
@@ -98,6 +105,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 })
     }
 
+    // Platform identity is resolved ONLY from server-authoritative state: the
+    // DB platform role (users.platform_role) and the platform break-glass
+    // allow-list (deployment config). Nothing from the request body, cookie,
+    // query string or client JWT participates, so `role=SUPER_ADMIN` in a
+    // request can never select the platform policy.
+    const storedPlatformRole = (await getStoredRoles(user.id))?.platformRole ?? null
+    const platformCtx = resolvePlatformSecurityContext(user.id, storedPlatformRole)
+    const exemptions = tenantPolicyExemptionsFor(platformCtx.accountClass)
+    const platformPolicy = parsePlatformAdminSecurityPolicy(process.env)
+    const isPlatformAdmin = isPlatformAdminClass(platformCtx.accountClass)
+    let mfaResult: "not_required" | "totp_or_backup" | "webauthn" | "webauthn_recovery_code" = "not_required"
+
     // IP allowlist: evaluated before the password check (like the
     // lockout check below) so a blocked network never learns whether the
     // credentials were otherwise valid.
@@ -107,22 +126,23 @@ export async function POST(request: Request) {
       const ipCheck = await checkIpAllowlist(tenantIdForIp, requestIp, user.role === "admin" ? "admin" : "all")
       if (!ipCheck.allowed) {
         // Emergency break-glass: an authorized platform Super Admin can sign in
-        // from a blocked network when the tenant has explicitly enabled it, so
-        // a misconfigured allowlist can never permanently lock out the
-        // operator who has to fix it. Every bypass is audited.
+        // from a blocked network when the tenant has explicitly enabled it, and
+        // a platform break-glass account always can (platform emergency policy
+        // outranks tenant policy), so a misconfigured allowlist can never
+        // permanently lock out the operator who has to fix it. Every bypass is
+        // audited; the password is still verified below.
         const emergencyBypass = await getBool("security.ip_allowlist_emergency_bypass", false)
-        const roles = emergencyBypass ? await getStoredRoles(user.id) : null
-        if (emergencyBypass && roles?.platformRole === "platform_super_admin") {
+        if (exemptions.ipAllowlist || (emergencyBypass && storedPlatformRole === "platform_super_admin")) {
           await recordSecurityEvent({
             tenantId: tenantIdForIp,
-            category: "emergency_bypass",
+            category: exemptions.ipAllowlist ? "break_glass" : "emergency_bypass",
             action: "ip_allowlist_bypass",
             outcome: "bypassed",
             actorUserId: user.id,
             actorName: user.name,
             subjectEmail: user.email,
             ipAddress: requestIp,
-            detail: { scope: user.role === "admin" ? "admin" : "all" },
+            detail: { scope: user.role === "admin" ? "admin" : "all", accountClass: platformCtx.accountClass },
           })
         } else {
           await recordSecurityEvent({
@@ -189,7 +209,7 @@ export async function POST(request: Request) {
     const protection = await enforceSignInProtection({
       tenantId: await resolveTenantIdForUser(user.id),
       user: { id: user.id, name: user.name, email: user.email },
-      platformRole: (await getStoredRoles(user.id))?.platformRole,
+      platformRole: storedPlatformRole,
       ip: requestIp,
       geo: trustedGeo,
       deviceAssertion: (body as any)?.deviceAssertion ?? request.headers.get("x-device-assertion"),
@@ -233,7 +253,19 @@ export async function POST(request: Request) {
         mfaEnabled: snapshot.mfaEnabled,
         deviceTrusted,
       })
-      if (policyDecision.denied) {
+      if (policyDecision.denied && exemptions.accessPolicyDeny) {
+        await recordSecurityEvent({
+          tenantId: policyTenantId,
+          category: "break_glass",
+          action: "access_policy_bypass",
+          outcome: "bypassed",
+          actorUserId: user.id,
+          actorName: user.name,
+          subjectEmail: user.email,
+          ipAddress: requestIp,
+          detail: { policy: policyDecision.deniedByPolicy, accountClass: platformCtx.accountClass, critical: true },
+        })
+      } else if (policyDecision.denied) {
         await recordSecurityEvent({
           tenantId: policyTenantId,
           category: "access_policy",
@@ -260,7 +292,34 @@ export async function POST(request: Request) {
       const policyRequiresMfa =
         requiresMfaByPolicy({ role: user.role, mfaEnabled: snapshot.mfaEnabled, settings }) ||
         policyDecision.requireMfa
-      if (policyRequiresMfa && !snapshot.mfaEnabled) {
+      // Dedicated platform-admin strong-auth policy. Applied instead of (not in
+      // addition to removing) the tenant device rule: a platform admin exempt
+      // from the managed-device requirement still has to satisfy platform MFA.
+      const platformAuth = evaluatePlatformAdminAuth({
+        accountClass: platformCtx.accountClass,
+        requireMfa: platformPolicy.requireMfa,
+        mfaEnabled: snapshot.mfaEnabled,
+        mfaVerified: false,
+      })
+      if (platformAuth.code === "MFA_ENROLLMENT_REQUIRED") {
+        await recordSecurityEvent({
+          tenantId: await resolveTenantIdForUser(user.id),
+          category: "platform_admin",
+          action: "platform_admin_login_blocked",
+          outcome: "blocked",
+          actorUserId: user.id,
+          actorName: user.name,
+          subjectEmail: user.email,
+          ipAddress: requestIp,
+          detail: { reason: platformAuth.reason, accountClass: platformCtx.accountClass },
+        })
+        return NextResponse.json(
+          { error: "Platform administrator accounts require MFA enrollment before access is granted", code: "MFA_ENROLLMENT_REQUIRED" },
+          { status: 403 },
+        )
+      }
+
+      if (policyRequiresMfa && !snapshot.mfaEnabled && !exemptions.tenantMfaEnrollment) {
         return NextResponse.json({ error: "Your organization requires MFA enrollment before access is granted", code: "MFA_ENROLLMENT_REQUIRED" }, { status: 403 })
       }
 
@@ -268,8 +327,17 @@ export async function POST(request: Request) {
       // security key for this role, a TOTP code is NOT sufficient: the user must
       // complete a WebAuthn assertion, or use an audited backup-code recovery to
       // get back in and re-enrol. This runs BEFORE the generic MFA branch so a
-      // TOTP code can never satisfy a phishing-resistant requirement.
-      const phishingResistantRequired = requiresPhishingResistantMfa({ role: user.role, settings })
+      // TOTP code can never satisfy a phishing-resistant requirement. Platform
+      // super admins can additionally be held to it by the platform policy;
+      // break-glass is never blocked on a tenant security-key requirement.
+      const phishingResistantRequired =
+        (!exemptions.tenantPhishingResistantMfa && requiresPhishingResistantMfa({ role: user.role, settings })) ||
+        (platformCtx.accountClass === "platform_super_admin" && platformPolicy.requirePhishingResistantMfa)
+      // Break-glass ignores tenant MFA mandates it cannot satisfy, but an
+      // enrolled factor is always challenged.
+      const mfaChallengeRequired = exemptions.tenantMfaEnrollment
+        ? snapshot.mfaEnabled
+        : decision.requiresMfa || policyDecision.requireMfa || platformAuth.code === "MFA_REQUIRED"
       if (phishingResistantRequired) {
         const waTenantId = (await resolveTenantIdForUser(user.id)) ?? 0
         // Per-user WebAuthn lockout stops a cloned-key / replay probe.
@@ -405,8 +473,9 @@ export async function POST(request: Request) {
             ipAddress: requestIp,
             detail: { credential: credentialFingerprint(rawId), userVerified: verified.userVerified },
           })
+          mfaResult = "webauthn"
         }
-      } else if (decision.requiresMfa || policyDecision.requireMfa) {
+      } else if (mfaChallengeRequired) {
         if (!mfaCode) {
           return NextResponse.json({ mfaRequired: true }, { status: 200 })
         }
@@ -415,7 +484,15 @@ export async function POST(request: Request) {
           await recordFailedLogin(user.id)
           return NextResponse.json({ error: "Invalid authentication code", mfaRequired: true }, { status: 401 })
         }
+        mfaResult = "totp_or_backup"
       }
+    } else if (platformCtx.accountClass === "platform_super_admin" && platformPolicy.requireMfa) {
+      // Fail closed: without the lifecycle snapshot the platform MFA state
+      // cannot be verified. Break-glass remains the recovery path.
+      return NextResponse.json(
+        { error: "Unable to verify platform administrator MFA right now. Try again shortly.", code: "MFA_REQUIRED" },
+        { status: 503 },
+      )
     } else if (user.status !== "active") {
       // Defensive fallback if the lifecycle snapshot is unavailable.
       return NextResponse.json({ error: "This account has been deactivated" }, { status: 403 })
@@ -441,7 +518,12 @@ export async function POST(request: Request) {
     const roles = await getStoredRoles(user.id)
 
     // Session lifetime is configurable in Settings → Security (minutes).
-    const timeoutMinutes = await getNum("security.session_timeout", 480)
+    // Platform admins are additionally capped by the platform policy.
+    const timeoutMinutes = effectiveSessionMinutes(
+      platformCtx.accountClass,
+      await getNum("security.session_timeout", 480),
+      platformPolicy,
+    )
     const durationSeconds = Math.max(60, Math.round(timeoutMinutes * 60))
     const sid = newSessionId()
     const token = await createSessionToken(
@@ -488,7 +570,13 @@ export async function POST(request: Request) {
         entityType: "user",
         entityId: user.id,
         entityLabel: user.email,
-        metadata: { loginMethod: "password" },
+        metadata: {
+          loginMethod: "password",
+          mfaResult,
+          accountClass: platformCtx.accountClass,
+          securityPolicyLevel: platformCtx.policyLevel,
+          managedDeviceExemption: exemptions.managedDevice,
+        },
         context: {
           tenantId: tenantId ?? null,
           actorUserId: user.id,
@@ -500,6 +588,36 @@ export async function POST(request: Request) {
       },
       auditBase,
     )
+
+    // Privileged sign-in: a dedicated security event so platform-admin and
+    // break-glass logins are reviewable separately from ordinary logins.
+    if (isPlatformAdmin) {
+      const breakGlass = platformCtx.accountClass === "break_glass_platform_admin"
+      try {
+        await recordSecurityEvent({
+          tenantId: tenantId ?? null,
+          category: breakGlass ? "break_glass" : "platform_admin",
+          action: breakGlass ? "platform_break_glass_login_success" : "platform_admin_login_success",
+          outcome: "allowed",
+          actorUserId: user.id,
+          actorName: user.name,
+          subjectEmail: user.email,
+          ipAddress: requestIp,
+          detail: {
+            accountClass: platformCtx.accountClass,
+            securityPolicyLevel: platformCtx.policyLevel,
+            mfaResult,
+            platformMfaRequired: platformPolicy.requireMfa,
+            sessionMinutes: timeoutMinutes,
+            exemptions: Object.entries(exemptions).filter(([, v]) => v).map(([k]) => k),
+            userAgent: request.headers.get("user-agent"),
+            critical: breakGlass,
+          },
+        })
+      } catch (err) {
+        console.error("[v0] privileged login audit failed:", err)
+      }
+    }
 
     // Notify full-access users (admins) that this account signed in.
     void recordActivity({

@@ -90,6 +90,7 @@ export const CRON_JOB_DEFINITIONS: readonly CronJobDefinition[] = [
   ["backups", "Tenant backup engine", "/api/cron/backups", "0 2 * * *"],
   ["background_queue", "Background queue worker", "/api/cron/background-queue", "* * * * *"],
   ["api_rate_limit_cleanup", "API rate-limit counter cleanup", "/api/cron/api-rate-limit-cleanup", "0 4 * * *"],
+  ["demo_tenant_cleanup", "Demo tenant expiry & cleanup", "/api/cron/demo-tenant-cleanup", "0 * * * *"],
   ["workflow_worker", "ERP workflow worker", "/api/cron/workflows", "* * * * *"],
   ["business_events", "Business event deliveries", "/api/cron/business-events", "* * * * *"],
   ["notification_delivery", "Notification delivery worker", "/api/cron/notification-delivery", "* * * * *"],

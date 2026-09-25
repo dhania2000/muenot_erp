@@ -1,21 +1,34 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { requirePlatformStaff, requirePlatformSuperAdmin } from "@/lib/platform-guard"
-import { cloneDemoTenant, listDemoTenants, DemoTenantError } from "@/lib/demo-tenant-store"
+import {
+  cloneDemoTenant,
+  cleanupExpiredDemoTenants,
+  ensureDemoTemplate,
+  listDemoTenants,
+  DemoTenantError,
+} from "@/lib/demo-tenant-store"
 
 /**
- * Spec26 — Demo tenant directory + clone.
+ * Spec26 — Demo tenant directory, template, clone and sweep.
  *
  * PLATFORM-axis surface: a customer tenant admin/owner is denied regardless of
- * tenant authority. Listing is staff-readable; provisioning a clone creates a
- * real tenant + admin credentials and is therefore super-admin only.
+ * tenant authority. Listing is staff-readable; everything that creates or
+ * destroys tenants is super-admin only.
+ *   GET                                 → list demo tenants
+ *   POST { action: "clone", label, ttlDays }  (Idempotency-Key header honored)
+ *   POST { action: "ensure_template" }
+ *   POST { action: "cleanup" }          → expire overdue + purge expired clones
  */
 export const dynamic = "force-dynamic"
 
 export async function GET() {
   const guard = await requirePlatformStaff()
   if (!guard.ok) return NextResponse.json({ error: guard.reason }, { status: guard.status })
-  const demoTenants = await listDemoTenants()
-  return NextResponse.json({ demoTenants })
+  try {
+    return NextResponse.json({ demoTenants: await listDemoTenants() })
+  } catch (err: any) {
+    return NextResponse.json({ error: err?.message ?? "Failed to list demo tenants" }, { status: 500 })
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -26,20 +39,26 @@ export async function POST(req: NextRequest) {
   try {
     body = await req.json()
   } catch {
-    body = {}
+    return NextResponse.json({ error: "Request body must be JSON" }, { status: 400 })
   }
-
-  const idempotencyKey = req.headers.get("idempotency-key") ?? body?.idempotencyKey ?? null
+  const action = typeof body?.action === "string" ? body.action : "clone"
+  const actor = { userId: guard.ctx.userId, email: guard.session.email }
 
   try {
-    const result = await cloneDemoTenant(
-      { userId: guard.ctx.userId, email: guard.session.email },
-      body,
-      idempotencyKey,
-    )
-    return NextResponse.json(result, { status: 201 })
+    if (action === "clone") {
+      const idempotencyKey = req.headers.get("idempotency-key") ?? body?.idempotencyKey ?? null
+      const result = await cloneDemoTenant(actor, body, idempotencyKey)
+      return NextResponse.json(result, { status: result.replayed ? 200 : 201 })
+    }
+    if (action === "ensure_template") {
+      return NextResponse.json({ template: await ensureDemoTemplate(actor) })
+    }
+    if (action === "cleanup") {
+      return NextResponse.json({ summary: await cleanupExpiredDemoTenants(actor) })
+    }
+    return NextResponse.json({ error: 'action must be one of "clone", "ensure_template", "cleanup"' }, { status: 400 })
   } catch (err: any) {
-    const status = err instanceof DemoTenantError ? err.status : 400
-    return NextResponse.json({ error: err?.message ?? "Failed to clone demo tenant" }, { status })
+    const status = err instanceof DemoTenantError ? err.status : 500
+    return NextResponse.json({ error: err?.message ?? "Demo tenant request failed" }, { status })
   }
 }

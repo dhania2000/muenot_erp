@@ -9,6 +9,7 @@ import {
 } from "@/lib/tenant-service"
 import { recordPlatformAudit } from "@/lib/platform-roles"
 import { HostingModeNotReadyError } from "@/lib/tenant-db/activation"
+import { isActiveDemoTemplateTenant } from "@/lib/demo-tenant-store"
 
 /**
  * Tenant lifecycle and management. Changing a customer tenant's status, editing
@@ -98,6 +99,12 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   }
 
   try {
+    if (await isActiveDemoTemplateTenant(tenantId)) {
+      return NextResponse.json(
+        { error: "This is the active demo template; demo clones depend on it and it cannot be deleted here" },
+        { status: 409 },
+      )
+    }
     const tenant = await deleteTenant(tenantId)
     await recordPlatformAudit({
       actorUserId: guard.ctx.userId,

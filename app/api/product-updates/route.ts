@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
 import { captureAuditContext } from "@/lib/audit-log-store"
-import { validateUpdateInput, type UpdateStatus } from "@/lib/product-updates/model"
+import { normalizeIdempotencyKey, validateUpdateInput, type UpdateStatus } from "@/lib/product-updates/model"
 import { createUpdate, publishUpdate, listAll, listForViewer } from "@/lib/product-updates/store"
 import { resolveViewer, isProductUpdateAuthor } from "@/lib/product-updates/guard"
 import { NO_STORE, readJson, errorResponse } from "@/lib/spec32-http"
@@ -41,10 +41,14 @@ export async function POST(request: Request) {
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: NO_STORE })
     if (!(await isProductUpdateAuthor(session))) return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE })
 
+    const idempotencyKey = normalizeIdempotencyKey(request.headers.get("idempotency-key"))
     const body = (await readJson(request)) as Record<string, unknown>
     const input = validateUpdateInput(body)
     const ctx = await captureAuditContext(request)
-    const created = await createUpdate({ userId: session.userId, name: session.email }, input, ctx)
+    const { update: created, replayed } = await createUpdate({ userId: session.userId, name: session.email }, input, ctx, { idempotencyKey })
+    if (replayed) {
+      return NextResponse.json({ update: created, replayed: true }, { status: 200, headers: { ...NO_STORE, "Idempotent-Replayed": "true" } })
+    }
     if (body.publish === true) {
       const res = await publishUpdate(created.id, ctx)
       return NextResponse.json({ update: res.update }, { status: 201, headers: NO_STORE })

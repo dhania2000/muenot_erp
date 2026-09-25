@@ -388,7 +388,7 @@ async function notifyAdminsOfAlerts(alerts: AlertRow[]): Promise<void> {
           key: `anomaly-alert:${alert.id}:${userId}`,
           title: `${alert.severity.toUpperCase()} risk alert: ${alert.title}`.slice(0, 255),
           body: (alert.summary ?? "A new anomaly requires review.").slice(0, 4000),
-          link: `/dashboard/security/anomalies?alert=${alert.id}`,
+          link: `/admin/security/anomalies?alert=${alert.id}`,
           priority: alert.severity === "critical" ? 10 : 5,
           context: {
             moduleKey: "security",
@@ -414,7 +414,7 @@ async function notifyOwner(alert: AlertRow, ownerId: number): Promise<void> {
       key: `anomaly-owner:${alert.id}:${ownerId}`,
       title: `You were assigned a risk alert: ${alert.title}`.slice(0, 255),
       body: (alert.summary ?? "You now own this anomaly alert.").slice(0, 4000),
-      link: `/dashboard/security/anomalies?alert=${alert.id}`,
+      link: `/admin/security/anomalies?alert=${alert.id}`,
       priority: 5,
       context: {
         moduleKey: "security",

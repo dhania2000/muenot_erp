@@ -82,3 +82,12 @@ CREATE TABLE IF NOT EXISTS ai_anomaly_scans (
   PRIMARY KEY (id),
   KEY idx_ai_anomaly_scan_tenant (tenant_id, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Grantable RBAC features for non-admin reviewers (admins always pass).
+-- No-op when the host module row is absent; idempotent on the unique slug.
+INSERT IGNORE INTO features (module_id,name,slug,description,sort_order)
+  SELECT id,'View Risk Queue','ai.anomaly_detection','View AI anomaly alerts, evidence and review history',200
+    FROM modules WHERE slug IN ('settings','admin','security') ORDER BY FIELD(slug,'security','settings','admin') LIMIT 1;
+INSERT IGNORE INTO features (module_id,name,slug,description,sort_order)
+  SELECT id,'Manage Risk Queue','ai.anomaly_detection.manage','Run anomaly scans and record human review decisions',201
+    FROM modules WHERE slug IN ('settings','admin','security') ORDER BY FIELD(slug,'security','settings','admin') LIMIT 1;

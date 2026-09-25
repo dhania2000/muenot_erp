@@ -17,6 +17,7 @@ const TABS: { label: string; href: string }[] = [
   { label: "Temporary access", href: "/admin/security/temporary-access" },
   { label: "Emergency access", href: "/admin/security/emergency-access" },
   { label: "Access reviews", href: "/admin/security/access-reviews" },
+  { label: "Risk queue", href: "/admin/security/anomalies" },
   { label: "Audit log", href: "/admin/security/audit-log" },
   { label: "Audit retention", href: "/admin/security/audit-retention" },
 ]

@@ -15,6 +15,7 @@ export type ApiRequestLogRow = {
   id: number
   tenant_id: number | null
   key_id: number | null
+  actor_id: string | null
   request_id: string
   method: string
   path: string
@@ -35,6 +36,7 @@ async function runEnsure(): Promise<void> {
       \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
       \`tenant_id\` INT UNSIGNED DEFAULT NULL,
       \`key_id\` INT UNSIGNED DEFAULT NULL,
+      \`actor_id\` VARCHAR(64) DEFAULT NULL,
       \`request_id\` VARCHAR(48) NOT NULL,
       \`method\` VARCHAR(8) NOT NULL,
       \`path\` VARCHAR(512) NOT NULL,
@@ -48,10 +50,25 @@ async function runEnsure(): Promise<void> {
       PRIMARY KEY (\`id\`),
       KEY \`idx_api_audit_tenant\` (\`tenant_id\`),
       KEY \`idx_api_audit_key\` (\`key_id\`),
+      KEY \`idx_api_audit_actor\` (\`actor_id\`),
       KEY \`idx_api_audit_created\` (\`created_at\`),
       KEY \`idx_api_audit_request\` (\`request_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+  // Self-heal: add actor_id to audit tables created before tracing existed.
+  await ensureActorColumn()
+}
+
+/** Adds the `actor_id` column (and its index) to a pre-existing table. */
+async function ensureActorColumn(): Promise<void> {
+  const cols = await query<any[]>(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'api_request_audit' AND COLUMN_NAME = 'actor_id'`,
+  )
+  if (cols.length === 0) {
+    await query("ALTER TABLE `api_request_audit` ADD COLUMN `actor_id` VARCHAR(64) DEFAULT NULL AFTER `key_id`")
+    await query("ALTER TABLE `api_request_audit` ADD KEY `idx_api_audit_actor` (`actor_id`)")
+  }
 }
 
 export function ensureApiAuditSchema(): Promise<void> {
@@ -65,6 +82,7 @@ export function ensureApiAuditSchema(): Promise<void> {
 export async function logApiRequest(entry: {
   tenantId: number | null
   keyId: number | null
+  actorId?: string | null
   requestId: string
   method: string
   path: string
@@ -79,11 +97,12 @@ export async function logApiRequest(entry: {
     await ensureApiAuditSchema()
     await query(
       `INSERT INTO \`api_request_audit\`
-         (\`tenant_id\`, \`key_id\`, \`request_id\`, \`method\`, \`path\`, \`status\`, \`error_code\`, \`api_version\`, \`environment\`, \`ip\`, \`duration_ms\`)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (\`tenant_id\`, \`key_id\`, \`actor_id\`, \`request_id\`, \`method\`, \`path\`, \`status\`, \`error_code\`, \`api_version\`, \`environment\`, \`ip\`, \`duration_ms\`)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.tenantId,
         entry.keyId,
+        entry.actorId ?? null,
         entry.requestId,
         entry.method,
         entry.path.slice(0, 512),

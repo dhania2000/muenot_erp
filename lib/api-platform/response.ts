@@ -11,10 +11,18 @@ import "server-only"
  */
 import { NextResponse } from "next/server"
 import { ApiError, type ApiErrorCode } from "@/lib/api-platform/errors"
+import { DEFAULT_API_VERSION, SUPPORTED_API_VERSIONS } from "@/lib/api-platform/versioning"
 
-/** The version string advertised on every response and accepted by the router. */
-export const API_VERSION = "2024-10-01"
-export const SUPPORTED_VERSIONS = new Set([API_VERSION])
+/**
+ * The default version advertised when no `X-API-Version` is negotiated, plus
+ * the full supported set. Both derive from the single source of truth in
+ * lib/api-platform/versioning.ts so the version surface is defined once.
+ */
+export const API_VERSION = DEFAULT_API_VERSION
+export const SUPPORTED_VERSIONS = SUPPORTED_API_VERSIONS
+
+/** Trace fields stamped onto error envelopes for correlation with logs. */
+export type ErrorTrace = { tenantId?: number | null; actorId?: string | null }
 
 export type PageMeta = {
   page: number
@@ -47,10 +55,20 @@ export function jsonOk<T>(
 export function jsonError(
   code: ApiErrorCode,
   message: string,
-  opts: { requestId: string; status: number; details?: unknown; headers?: Record<string, string> },
+  opts: {
+    requestId: string
+    status: number
+    details?: unknown
+    headers?: Record<string, string>
+    trace?: ErrorTrace
+  },
 ): NextResponse {
   const error: Record<string, unknown> = { code, message, request_id: opts.requestId }
   if (opts.details !== undefined) error.details = opts.details
+  // Stamp the correlating trace fields so a client's error report alone is
+  // enough to locate the exact server-side audit record.
+  if (opts.trace?.tenantId != null) error.tenant_id = opts.trace.tenantId
+  if (opts.trace?.actorId != null) error.actor_id = opts.trace.actorId
   return NextResponse.json(
     { error },
     { status: opts.status, headers: baseHeaders(opts.requestId, opts.headers) },
@@ -61,11 +79,13 @@ export function jsonErrorFromApiError(
   err: ApiError,
   requestId: string,
   headers?: Record<string, string>,
+  trace?: ErrorTrace,
 ): NextResponse {
   return jsonError(err.code, err.message, {
     requestId,
     status: err.status,
     details: err.details,
     headers,
+    trace,
   })
 }

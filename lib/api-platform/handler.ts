@@ -35,7 +35,9 @@ import { applicableRateBudgets } from "@/lib/api-platform/rate-limit-policies"
 import { getTenantById } from "@/lib/tenant-service"
 import { createCache } from "@/lib/cache"
 import { ApiError, isApiError } from "@/lib/api-platform/errors"
-import { API_VERSION, SUPPORTED_VERSIONS, jsonError, jsonErrorFromApiError } from "@/lib/api-platform/response"
+import { API_VERSION, jsonError, jsonErrorFromApiError, type ErrorTrace } from "@/lib/api-platform/response"
+import { resolveApiVersion, type ApiVersion } from "@/lib/api-platform/versioning"
+import { actorFromAuth } from "@/lib/api-platform/trace"
 import { logApiRequest } from "@/lib/api-platform/audit"
 import { fingerprintRequest, lookupIdempotency, saveIdempotency } from "@/lib/api-platform/idempotency"
 import { enforceUsageIfScoped, meterUsage, UsageLimitError } from "@/lib/billing/usage-guard"
@@ -47,6 +49,10 @@ export type ApiRequestContext<P = Record<string, string>> = {
   requestId: string
   auth: ApiKeyAuth
   clientIp: string | null
+  /** The effective API version negotiated from `X-API-Version` (or the default). */
+  apiVersion: ApiVersion
+  /** Namespaced actor id (`apikey:<id>` / `oauth:<id>`) for handler-side logging. */
+  actorId: string | null
   /** Parsed JSON body for mutating methods, or null. Throws ApiError on invalid JSON. */
   json: <T = any>() => Promise<T>
 }
@@ -61,8 +67,14 @@ export type ApiV1Options = {
    * Pass `false` to disable rate limiting for this endpoint entirely.
    */
   rateLimit?: Partial<RateLimitTier> | false
-  /** Enable Idempotency-Key handling (only meaningful for mutating methods). */
-  idempotency?: boolean
+  /**
+   * Idempotency-Key handling (only meaningful for mutating methods):
+   *   - `true`       → honor Idempotency-Key when present (replay / conflict).
+   *   - `"required"` → additionally REJECT mutating requests that omit the
+   *     header with `idempotency_key_required` (400). Use for create and
+   *     payment mutations where an accidental retry must never double-write.
+   */
+  idempotency?: boolean | "required"
   /** Require the key to belong to a specific environment. */
   requireEnvironment?: ApiKeyEnvironment
 }
@@ -97,9 +109,10 @@ function newRequestId(): string {
   return `req_${crypto.randomBytes(12).toString("hex")}`
 }
 
-function applyStandardHeaders(res: NextResponse, requestId: string): NextResponse {
+function applyStandardHeaders(res: NextResponse, requestId: string, version: string): NextResponse {
   res.headers.set("X-Request-Id", requestId)
-  res.headers.set("X-API-Version", API_VERSION)
+  // Echo the EFFECTIVE negotiated version so callers can assert the contract.
+  res.headers.set("X-API-Version", version)
   return res
 }
 
@@ -118,22 +131,26 @@ export function withApiV1<P = Record<string, string>>(
     const method = request.method.toUpperCase()
     const path = url.pathname
 
-    // Auth outcome context for audit logging in every exit path.
+    // Auth outcome + trace context for audit logging in every exit path.
     let auditKeyId: number | null = null
     let auditTenantId: number | null = null
+    let auditActorId: string | null = null
     let auditEnv: string | null = null
+    // Effective negotiated version; echoed on responses + stamped on logs.
+    let effectiveVersion: ApiVersion = API_VERSION
 
     const finalize = (res: NextResponse, errorCode: string | null): NextResponse => {
-      applyStandardHeaders(res, requestId)
+      applyStandardHeaders(res, requestId, effectiveVersion)
       void logApiRequest({
         tenantId: auditTenantId,
         keyId: auditKeyId,
+        actorId: auditActorId,
         requestId,
         method,
         path,
         status: res.status,
         errorCode,
-        apiVersion: API_VERSION,
+        apiVersion: effectiveVersion,
         environment: auditEnv,
         ip: clientIp,
         durationMs: Date.now() - started,
@@ -141,17 +158,25 @@ export function withApiV1<P = Record<string, string>>(
       return res
     }
 
+    // The trace triple (request_id + tenant_id + actor_id) is stamped onto
+    // every error envelope so a client error report maps to one audit row.
+    const currentTrace = (): ErrorTrace => ({ tenantId: auditTenantId, actorId: auditActorId })
+
     const fail = (err: ApiError, extraHeaders?: Record<string, string>): NextResponse =>
-      finalize(jsonErrorFromApiError(err, requestId, extraHeaders), err.code)
+      finalize(jsonErrorFromApiError(err, requestId, extraHeaders, currentTrace()), err.code)
 
     try {
       // 2. Version negotiation (opt-in header pin).
-      const requested = request.headers.get("x-api-version")
-      if (requested && !SUPPORTED_VERSIONS.has(requested)) {
+      const negotiated = resolveApiVersion(request.headers.get("x-api-version"))
+      if (!negotiated.ok) {
         return fail(
-          new ApiError("unsupported_version", `Unsupported API version "${requested}". Current: ${API_VERSION}`),
+          new ApiError(
+            "unsupported_version",
+            `Unsupported API version "${negotiated.requested}". Current: ${API_VERSION}`,
+          ),
         )
       }
+      effectiveVersion = negotiated.version
 
       // 3. Authentication.
       const authResult = await authenticateApiKeyResult(request)
@@ -179,6 +204,7 @@ export function withApiV1<P = Record<string, string>>(
       const auth = authResult.auth
       auditKeyId = auth.keyId
       auditTenantId = auth.tenantId
+      auditActorId = actorFromAuth(auth)
       auditEnv = auth.environment
 
       // 4. IP restrictions.
@@ -286,6 +312,8 @@ export function withApiV1<P = Record<string, string>>(
         requestId,
         auth,
         clientIp,
+        apiVersion: effectiveVersion,
+        actorId: auditActorId,
         json: async <T,>() => {
           const raw = await readRaw()
           if (!raw) throw new ApiError("bad_request", "Request body is required")
@@ -299,6 +327,17 @@ export function withApiV1<P = Record<string, string>>(
 
       // 8. Idempotency (mutating methods only).
       const idempotencyKey = request.headers.get("idempotency-key")?.trim() || null
+      // For create/payment mutations the key is mandatory: reject a mutating
+      // request that omits it rather than silently allowing a double-write.
+      if (options.idempotency === "required" && MUTATING.has(method) && !idempotencyKey) {
+        return fail(
+          new ApiError(
+            "idempotency_key_required",
+            "This endpoint requires an Idempotency-Key header for safe retries",
+          ),
+          rateHeaders,
+        )
+      }
       const idempotencyEnabled = Boolean(options.idempotency) && MUTATING.has(method) && Boolean(idempotencyKey)
       let fingerprint = ""
       if (idempotencyEnabled && idempotencyKey) {

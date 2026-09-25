@@ -62,7 +62,7 @@ export type InvoiceType = "recurring" | "one_time" | "credit_note"
 export type InvoiceLine = {
   id: number
   invoice_id: number
-  line_type: "subscription" | "one_time" | "proration" | "adjustment"
+  line_type: "subscription" | "one_time" | "proration" | "adjustment" | "usage"
   description: string
   quantity: number
   unit_amount: number

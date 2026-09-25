@@ -131,6 +131,33 @@ export const METER_CATALOG: MeterDef[] = [
     decimals: 0,
   },
   {
+    key: "whatsapp_messages",
+    label: "WhatsApp messages",
+    description: "WhatsApp Business messages sent to contacts and campaigns.",
+    unit: "messages",
+    kind: "counter",
+    category: "communication",
+    decimals: 0,
+  },
+  {
+    key: "sms_messages",
+    label: "SMS messages",
+    description: "Outbound SMS text messages dispatched.",
+    unit: "messages",
+    kind: "counter",
+    category: "communication",
+    decimals: 0,
+  },
+  {
+    key: "voice_calls",
+    label: "Voice calls",
+    description: "Outbound / metered voice call minutes placed.",
+    unit: "minutes",
+    kind: "counter",
+    category: "communication",
+    decimals: 0,
+  },
+  {
     key: "automation_runs",
     label: "Automation runs",
     description: "Workflow / automation executions triggered.",
@@ -187,13 +214,26 @@ export async function ensureUsageSchema(): Promise<void> {
       source VARCHAR(60) NULL,
       ref_id VARCHAR(80) NULL,
       metadata JSON NULL,
+      event_key VARCHAR(120) NULL,
       occurred_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       KEY idx_usage_events_meter (tenant_id, meter_key, occurred_at),
-      KEY idx_usage_events_time (tenant_id, occurred_at)
+      KEY idx_usage_events_time (tenant_id, occurred_at),
+      UNIQUE KEY uq_usage_events_idem (tenant_id, meter_key, event_key)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   )
+  // Self-heal older installs that predate the idempotency key: add the column
+  // and its unique index if they are missing. A NULL event_key is exempt from
+  // the unique constraint (MySQL allows multiple NULLs), so unkeyed events keep
+  // working exactly as before.
+  const eventCols = await tableColumns("usage_events")
+  if (eventCols.size > 0 && !eventCols.has("event_key")) {
+    await query(`ALTER TABLE usage_events ADD COLUMN event_key VARCHAR(120) NULL`).catch(() => {})
+    await query(
+      `ALTER TABLE usage_events ADD UNIQUE KEY uq_usage_events_idem (tenant_id, meter_key, event_key)`,
+    ).catch(() => {})
+  }
   await query(
     `CREATE TABLE IF NOT EXISTS usage_daily (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -236,6 +276,13 @@ export type RecordUsageInput = {
   source?: string | null
   refId?: string | null
   metadata?: Record<string, unknown> | null
+  /**
+   * Optional idempotency key. When supplied, a second event with the same
+   * (tenant, meter, key) is silently ignored — the daily rollup is NOT
+   * double-counted. Use the natural id of the metered thing (message id, call
+   * sid, request id) so retries and at-least-once delivery cannot over-bill.
+   */
+  idempotencyKey?: string | null
   /** Defaults to now. */
   occurredAt?: Date
 }
@@ -258,10 +305,15 @@ export async function recordUsage(input: RecordUsageInput): Promise<boolean> {
 
   const occurredAt = input.occurredAt ?? new Date()
   const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null
+  const eventKey = input.idempotencyKey ? String(input.idempotencyKey).slice(0, 120) : null
 
-  await query(
-    `INSERT INTO usage_events (tenant_id, meter_key, quantity, unit, source, ref_id, metadata, occurred_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  // With an idempotency key, INSERT IGNORE lets the unique (tenant, meter, key)
+  // index dedupe retries: a duplicate inserts 0 rows, so we skip the rollup and
+  // report "not recorded" without erroring. Unkeyed events insert unconditionally.
+  const insertResult = (await query(
+    `INSERT ${eventKey ? "IGNORE " : ""}INTO usage_events
+       (tenant_id, meter_key, quantity, unit, source, ref_id, metadata, event_key, occurred_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       tenantId,
       meter.key,
@@ -270,9 +322,13 @@ export async function recordUsage(input: RecordUsageInput): Promise<boolean> {
       input.source ?? null,
       input.refId ?? null,
       metadataJson,
+      eventKey,
       occurredAt,
     ],
-  )
+  )) as { affectedRows?: number }
+
+  // A duplicate keyed event affected 0 rows — do not fold it into the rollup.
+  if (eventKey && insertResult && insertResult.affectedRows === 0) return false
 
   await query(
     `INSERT INTO usage_daily (tenant_id, meter_key, usage_date, quantity, event_count)
@@ -613,4 +669,49 @@ export async function checkUsageLimit(meterKey: string, amount = 1): Promise<Lim
   const allowed = hardLimit ? projected <= limit : true
 
   return { allowed, used, limit, remaining, hardLimit, status }
+}
+
+/**
+ * Thrown by enforceUsageLimit when a HARD quota would be exceeded. Carries the
+ * limit check so a route handler can surface a precise 429 with usage details.
+ */
+export class UsageLimitError extends Error {
+  readonly meterKey: string
+  readonly check: LimitCheck
+  constructor(meterKey: string, check: LimitCheck) {
+    const meter = METER_BY_KEY.get(meterKey)
+    super(
+      `Usage limit reached for ${meter?.label ?? meterKey}: ${check.used}/${check.limit} ${meter?.unit ?? "units"}`,
+    )
+    this.name = "UsageLimitError"
+    this.meterKey = meterKey
+    this.check = check
+  }
+}
+
+/**
+ * Enforce a HARD quota before a metered backend action. Throws UsageLimitError
+ * when the action would push the tenant over a hard limit; returns the limit
+ * check (with warning/over status) otherwise so callers can still surface a
+ * soft-limit warning. Soft limits never throw.
+ */
+export async function enforceUsageLimit(meterKey: string, amount = 1): Promise<LimitCheck> {
+  const check = await checkUsageLimit(meterKey, amount)
+  if (!check.allowed) throw new UsageLimitError(meterKey, check)
+  return check
+}
+
+/**
+ * Sum recorded usage for a counter meter across an explicit period, keyed by
+ * meter. Used by the usage-invoicing reconciliation to bill a subscription's
+ * exact billing period (not just the calendar month). Dates are inclusive-start,
+ * exclusive-end YYYY-MM-DD strings.
+ */
+export async function getPeriodUsage(
+  fromDateInclusive: string,
+  toDateExclusive: string,
+): Promise<Map<string, number>> {
+  const tenantId = currentTenantId()
+  await ensureUsageSchema()
+  return counterTotals(tenantId, fromDateInclusive, toDateExclusive)
 }

@@ -5,6 +5,7 @@ import { emitWebhookEvent } from "@/lib/webhooks/dispatcher"
 import { withApiV1 } from "@/lib/api-platform/handler"
 import { jsonOk } from "@/lib/api-platform/response"
 import { validationError } from "@/lib/api-platform/errors"
+import { projectResource, projectResources } from "@/lib/api-platform/versioning"
 import { parseListQuery, buildWhere, buildOrderBy } from "@/lib/api-platform/query"
 import {
   ensureClientTables,
@@ -65,7 +66,7 @@ export const GET = withApiV1({ scopes: "clients:read" }, async (ctx) => {
   )
   const total = Number(countRow?.total ?? 0)
 
-  return jsonOk(rows, {
+  return jsonOk(projectResources(ctx.apiVersion, "client", rows, "client_code"), {
     requestId: ctx.requestId,
     meta: {
       page: pagination.page,
@@ -87,7 +88,7 @@ function validate(body: Record<string, any>): Record<string, string> {
   return errors
 }
 
-export const POST = withApiV1({ scopes: "clients:write", idempotency: true }, async (ctx) => {
+export const POST = withApiV1({ scopes: "clients:write", idempotency: "required" }, async (ctx) => {
   await ensureClientTables()
   const body = await ctx.json<Record<string, any>>()
 

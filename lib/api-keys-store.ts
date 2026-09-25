@@ -65,6 +65,8 @@ export const AVAILABLE_SCOPES = [
   { value: "clients:read", label: "Read clients" },
   { value: "clients:write", label: "Create / update clients" },
   { value: "events:read", label: "Read webhook event log" },
+  { value: "sandbox:read", label: "Read API sandbox state and test data" },
+  { value: "sandbox:write", label: "Reset the sandbox and create disposable test data" },
 ] as const
 
 export const API_KEY_ENVIRONMENTS: { value: ApiKeyEnvironment; label: string }[] = [

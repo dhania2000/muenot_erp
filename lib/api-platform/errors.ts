@@ -23,6 +23,7 @@ export type ApiErrorCode =
   | "validation_failed"
   | "conflict"
   | "idempotency_conflict"
+  | "idempotency_key_required"
   | "unsupported_version"
   | "rate_limited"
   | "rate_limit_unavailable"
@@ -38,6 +39,7 @@ export const ERROR_STATUS: Record<ApiErrorCode, number> = {
   validation_failed: 422,
   conflict: 409,
   idempotency_conflict: 409,
+  idempotency_key_required: 400,
   unsupported_version: 400,
   rate_limited: 429,
   rate_limit_unavailable: 503,

@@ -39,6 +39,8 @@ export async function GET(req: NextRequest) {
       policies,
       runs,
       restoreTests,
+      offsite: getOffsiteStatus(),
+      recoveryPosture: summarizeRecoveryPosture(runs, restoreTests),
       tenants: tenants.map((t) => ({ id: t.id, name: t.name, slug: t.slug, status: t.status })),
     })
   } catch (error) {

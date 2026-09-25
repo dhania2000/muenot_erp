@@ -94,11 +94,58 @@ type RestoreTest = {
 
 type TenantOption = { id: number; name: string; slug: string; status: string }
 
+type OffsiteStatus = {
+  mode: string
+  enabled: boolean
+  disabledReason: string | null
+  immutable: boolean
+  lockMode: string
+  crossRegion: boolean
+  primaryRegion: string | null
+  replicaRegion: string | null
+  minImmutableDays: number
+}
+
+type RecoveryPosture = {
+  measurable: boolean
+  latestBackupAt: string | null
+  latestSuccessfulBackupAt: string | null
+  rpoMinutes: number | null
+  rtoMinutes: number | null
+  rtoDurationMs: number | null
+  lastVerificationStatus: string | null
+  lastVerifiedAt: string | null
+  lastDrillStatus: string | null
+  lastDrillAt: string | null
+  lastDrillTempDatabase: string | null
+  lastDrillRestoredRows: number | null
+  lastDrillDurationMs: number | null
+  offsiteCount: number
+  immutableCount: number
+  crossRegionCount: number
+  totalCompleted: number
+}
+
 const BASELINE = "baseline"
 
 function fmtDate(value: string | null): string {
   if (!value) return "—"
   return String(value).replace("T", " ").slice(0, 19)
+}
+
+function fmtDuration(minutes: number | null): string {
+  if (minutes == null) return "—"
+  if (minutes <= 0) return "under 1 min"
+  if (minutes < 60) return `${minutes} min`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return m ? `${h}h ${m}m` : `${h}h`
+}
+
+function fmtMs(ms: number | null): string {
+  if (ms == null) return "—"
+  if (ms < 1000) return `${ms} ms`
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`
 }
 
 export function BackupsConsole({ canManage }: { canManage: boolean }) {
@@ -107,6 +154,8 @@ export function BackupsConsole({ canManage }: { canManage: boolean }) {
   const [policies, setPolicies] = useState<Policy[]>([])
   const [runs, setRuns] = useState<Run[]>([])
   const [restoreTests, setRestoreTests] = useState<RestoreTest[]>([])
+  const [offsite, setOffsite] = useState<OffsiteStatus | null>(null)
+  const [posture, setPosture] = useState<RecoveryPosture | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -123,6 +172,8 @@ export function BackupsConsole({ canManage }: { canManage: boolean }) {
       setPolicies(data.policies ?? [])
       setRuns(data.runs ?? [])
       setRestoreTests(data.restoreTests ?? [])
+      setOffsite(data.offsite ?? null)
+      setPosture(data.recoveryPosture ?? null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to load backups")
     } finally {
@@ -298,6 +349,107 @@ export function BackupsConsole({ canManage }: { canManage: boolean }) {
           </Button>
         </div>
       </div>
+
+      {/* Off-site storage & measured recovery posture */}
+      <section className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-4">
+          <ShieldCheck className="size-4 text-muted-foreground" />
+          <h2 className="font-semibold">Recovery posture &amp; off-site storage</h2>
+          {offsite ? (
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <Badge variant={offsite.enabled ? "default" : "secondary"} className="text-[10px]">
+                {offsite.enabled ? `Off-site: ${offsite.mode}` : "Off-site disabled"}
+              </Badge>
+              {offsite.crossRegion ? (
+                <Badge variant="outline" className="text-[10px]">
+                  Cross-region → {offsite.replicaRegion}
+                </Badge>
+              ) : null}
+              {offsite.immutable ? (
+                <Badge variant="outline" className="text-[10px]">
+                  <Lock className="mr-1 size-3" /> Immutable {offsite.lockMode} · {offsite.minImmutableDays}d
+                </Badge>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {offsite && !offsite.enabled && offsite.disabledReason ? (
+          <p className="border-b border-border px-5 py-2 text-xs text-muted-foreground">
+            {offsite.disabledReason} Backups still store an encrypted artifact inline until off-site storage is
+            configured.
+          </p>
+        ) : null}
+        <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
+          <div className="bg-card p-5">
+            <p className="text-xs font-medium text-muted-foreground">Measured RPO (data at risk)</p>
+            <p className="mt-1 text-2xl font-semibold tracking-tight">
+              {posture?.measurable ? fmtDuration(posture.rpoMinutes) : "—"}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {posture?.measurable
+                ? `Since last good backup · ${fmtDate(posture.latestSuccessfulBackupAt)}`
+                : "No completed backup yet"}
+            </p>
+          </div>
+          <div className="bg-card p-5">
+            <p className="text-xs font-medium text-muted-foreground">Measured RTO (restore time)</p>
+            <p className="mt-1 text-2xl font-semibold tracking-tight">
+              {posture?.rtoMinutes != null ? fmtDuration(posture.rtoMinutes) : "—"}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {posture?.rtoDurationMs != null
+                ? `Last passed drill · ${fmtMs(posture.rtoDurationMs)}`
+                : "No passing drill yet"}
+            </p>
+          </div>
+          <div className="bg-card p-5">
+            <p className="text-xs font-medium text-muted-foreground">Latest verification</p>
+            <p className="mt-1 flex items-center gap-2">
+              <Badge
+                variant={
+                  posture?.lastVerificationStatus === "passed"
+                    ? "default"
+                    : posture?.lastVerificationStatus === "failed"
+                      ? "destructive"
+                      : "outline"
+                }
+                className="text-[10px]"
+              >
+                {posture?.lastVerificationStatus ?? "none"}
+              </Badge>
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{fmtDate(posture?.lastVerifiedAt ?? null)}</p>
+          </div>
+          <div className="bg-card p-5">
+            <p className="text-xs font-medium text-muted-foreground">Latest restore drill</p>
+            <p className="mt-1 flex items-center gap-2">
+              <Badge
+                variant={
+                  posture?.lastDrillStatus === "passed"
+                    ? "default"
+                    : posture?.lastDrillStatus === "failed"
+                      ? "destructive"
+                      : "outline"
+                }
+                className="text-[10px]"
+              >
+                {posture?.lastDrillStatus ?? "none"}
+              </Badge>
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {posture?.lastDrillTempDatabase
+                ? `${posture.lastDrillRestoredRows ?? 0} rows → ${posture.lastDrillTempDatabase}`
+                : "No isolated drill yet"}
+            </p>
+          </div>
+        </div>
+        {posture && posture.totalCompleted > 0 ? (
+          <p className="border-t border-border px-5 py-3 text-[11px] text-muted-foreground">
+            {posture.offsiteCount}/{posture.totalCompleted} completed backups stored off-site ·{" "}
+            {posture.immutableCount} under immutable retention · {posture.crossRegionCount} copied cross-region.
+          </p>
+        ) : null}
+      </section>
 
       {/* Policies */}
       <div className="grid gap-4 lg:grid-cols-3">

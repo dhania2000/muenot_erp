@@ -17,10 +17,19 @@ export const HEALTH_CHECK_LABELS: Record<HealthCheckId, string> = {
   read: "Read",
   delete: "Delete",
   multipart: "Multipart uploads",
+  identity: "Identity",
+  ownership: "Bucket ownership",
+  region: "Region",
+  encryption: "Encryption",
+  scope: "Permission scope",
 }
 
 /** Canonical display order regardless of the order probes actually ran. */
 const HEALTH_CHECK_ORDER: HealthCheckId[] = [
+  "identity",
+  "region",
+  "ownership",
+  "encryption",
   "connectivity",
   "credentials",
   "bucket",
@@ -28,6 +37,7 @@ const HEALTH_CHECK_ORDER: HealthCheckId[] = [
   "read",
   "delete",
   "multipart",
+  "scope",
 ]
 
 /**

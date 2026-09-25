@@ -4,13 +4,17 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
   HeadBucketCommand,
+  GetBucketLocationCommand,
+  GetBucketEncryptionCommand,
   CreateMultipartUploadCommand,
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  ListPartsCommand,
 } from "@aws-sdk/client-s3"
 import type {
   StorageProvider,
@@ -22,20 +26,35 @@ import type {
   HealthReport,
   MultipartHandle,
   MultipartPart,
+  PresignUploadOptions,
+  PresignedRequest,
 } from "./types"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { HealthReportBuilder, describeError } from "./health"
 import { getProviderDefinition, type ServerSideEncryptionMode } from "./providers"
 import { clampTtl } from "./signing"
+import {
+  clampTtlToCredentialExpiry,
+  expectedBucketOwnerFor,
+  normalizeAuthMode,
+  normalizeBucketRegion,
+  parseRoleArn,
+  sanitizeProviderMessage,
+  tenantObjectPrefix,
+  type AuthMode,
+} from "./credentials"
+import { credentialProviderFor, resolveCredentials, callerIdentity, StorageCredentialError } from "./iam"
+import { MAX_UPLOAD_URL_TTL_SECONDS } from "./presign-policy"
 
 /**
- * Classify a failure from the initial HeadBucket probe so the report
- * can attribute it to the right stage. An HTTP status means we reached the
- * service (so connectivity is fine) and the problem is auth vs. bucket; no
- * status means the request never completed the round trip (network) unless the
- * SDK rejected the credentials before sending anything.
+ * Classify a failure from the initial bucket probe so the report can attribute
+ * it to the right stage. An HTTP status means we reached the service (so
+ * connectivity is fine) and the problem is auth vs. bucket; no status means the
+ * request never completed the round trip (network) unless the SDK rejected the
+ * credentials before sending anything.
  */
 function classifyBucketError(err: unknown): "network" | "credentials" | "bucket" {
+  if (err instanceof StorageCredentialError) return "credentials"
   const e = err as any
   const name: string = e?.name || e?.Code || ""
   const status: number | undefined = e?.$metadata?.httpStatusCode
@@ -48,22 +67,35 @@ function classifyBucketError(err: unknown): "network" | "credentials" | "bucket"
     "AuthorizationHeaderMalformed",
   ])
   if (status) return credNames.has(name) || status === 401 ? "credentials" : "bucket"
-  // No HTTP status: either creds rejected locally, or a transport failure.
   return credNames.has(name) ? "credentials" : "network"
+}
+
+function isAccessDenied(err: unknown): boolean {
+  const e = err as any
+  return e?.name === "AccessDenied" || e?.Code === "AccessDenied" || e?.$metadata?.httpStatusCode === 403
+}
+
+function isNotFound(err: unknown): boolean {
+  const e = err as any
+  return e?.name === "NotFound" || e?.name === "NoSuchKey" || e?.$metadata?.httpStatusCode === 404
+}
+
+/** describeError with secrets scrubbed — every detail may end up in the audit log. */
+function safeDetail(err: unknown): string {
+  if (err instanceof StorageCredentialError) return err.message
+  return sanitizeProviderMessage(describeError(err))
 }
 
 /**
  * A single S3 implementation that serves EVERY S3-compatible backend — AWS S3,
  * Cloudflare R2, Wasabi, Backblaze B2, DigitalOcean Spaces, MinIO and any other
- * S3 gateway. The vendor differences (endpoint, region, path-style addressing)
- * come entirely from the resolved connection + provider catalog, so there is no
- * per-vendor code to maintain.
+ * S3 gateway. Vendor differences come from the resolved connection + catalog.
  *
- * The customer's credentials are read from their stored connection and used ONLY
- * on the server; they are never sent to the client. Uploads are private by
- * default and served back through the app's tenant-scoped download proxy, so a
- * bucket does not need to be public and objects can never be listed across
- * tenants.
+ * Credentials are resolved lazily per request through lib/storage/iam.ts
+ * (static keys, temporary session credentials, or an assumed IAM role scoped to
+ * this tenant's prefix) and never leave the server. On AWS, every server-side
+ * call carries ExpectedBucketOwner so a bucket that changed hands (deleted and
+ * re-created by someone else under the same name) is refused.
  */
 export class S3StorageProvider implements StorageProvider {
   readonly id
@@ -72,35 +104,57 @@ export class S3StorageProvider implements StorageProvider {
   private readonly publicBaseUrl: string | null
   /** bucket-level key prefix, applied transparently to every key. */
   private readonly prefix: string
-  /** server-side encryption applied to uploaded objects. */
   private readonly sse: ServerSideEncryptionMode
+  private readonly conn: ResolvedConnection
+  private readonly authMode: AuthMode
+  private readonly isAws: boolean
+  private readonly owner: string | null
 
   constructor(conn: ResolvedConnection) {
     this.id = conn.provider
+    this.conn = conn
     this.bucket = conn.bucket
     this.publicBaseUrl = conn.publicBaseUrl?.replace(/\/+$/, "") || null
     this.prefix = (conn.pathPrefix ?? "").replace(/^\/+|\/+$/g, "")
     this.sse = conn.serverSideEncryption ?? "none"
+    this.authMode = normalizeAuthMode(conn.authMode)
+    this.isAws = conn.provider === "aws_s3"
+    this.owner = this.isAws ? expectedBucketOwnerFor(conn) : null
+
+    if (this.authMode === "iam_role" && !this.isAws) {
+      throw new Error("IAM role credentials are only supported for Amazon S3")
+    }
+    if (this.authMode !== "iam_role" && (!conn.accessKeyId || !conn.secretAccessKey)) {
+      throw new Error("Storage connection is missing access credentials")
+    }
 
     const def = getProviderDefinition(conn.provider)
     const region = conn.region || def?.defaultRegion || "us-east-1"
-    if (!conn.accessKeyId || !conn.secretAccessKey) {
-      throw new Error("Storage connection is missing access credentials")
-    }
     this.client = new S3Client({
       region,
       endpoint: conn.endpoint || undefined,
       forcePathStyle: conn.forcePathStyle ?? def?.forcePathStyle ?? false,
-      credentials: {
-        accessKeyId: conn.accessKeyId,
-        secretAccessKey: conn.secretAccessKey,
-      },
+      credentials: credentialProviderFor(conn),
     })
   }
 
   /** Map a tenant-scoped key to the physical bucket key (with the prefix). */
   private full(key: string): string {
     return this.prefix ? `${this.prefix}/${key}` : key
+  }
+
+  /** ExpectedBucketOwner for server-side calls (never on presigned URLs). */
+  private ownerParam(): { ExpectedBucketOwner?: string } {
+    return this.owner ? { ExpectedBucketOwner: this.owner } : {}
+  }
+
+  private sseParam(): { ServerSideEncryption?: ServerSideEncryptionMode } {
+    return this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}
+  }
+
+  /** The key prefix this tenant's credentials are scoped to. */
+  private tenantPhysicalPrefix(): string {
+    return tenantObjectPrefix(this.prefix, this.conn.tenantId)
   }
 
   async upload(
@@ -115,11 +169,10 @@ export class S3StorageProvider implements StorageProvider {
         Key: this.full(key),
         Body: data,
         ContentType: contentType || "application/octet-stream",
-        ...(this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}),
+        ...this.sseParam(),
+        ...this.ownerParam(),
       }),
     )
-    // For public buckets with a configured CDN base, hand back a direct link;
-    // otherwise the caller stores the (tenant) key and serves via the proxy.
     const url = opts.public && this.publicBaseUrl ? `${this.publicBaseUrl}/${this.full(key)}` : proxyUrl(key)
     return { url, key, provider: this.id, size: data.length, contentType: contentType || null }
   }
@@ -129,15 +182,13 @@ export class S3StorageProvider implements StorageProvider {
       new GetObjectCommand({
         Bucket: this.bucket,
         Key: this.full(key),
-        // forward the raw Range so S3 returns a 206 byte slice.
         ...(opts.range ? { Range: opts.range } : {}),
+        ...this.ownerParam(),
       }),
     )
     const body = res.Body as unknown as ReadableStream<Uint8Array>
     if (!body) throw new Error("Object not found")
     const contentRange = res.ContentRange ?? null
-    // With a Range, ContentLength is the slice length and ContentRange carries
-    // the "bytes a-b/total" from which we recover the true object size.
     const total = contentRange
       ? Number(contentRange.split("/").pop()) || null
       : typeof res.ContentLength === "number"
@@ -155,6 +206,18 @@ export class S3StorageProvider implements StorageProvider {
     }
   }
 
+  async stat(key: string): Promise<{ size: number; contentType: string | null; etag: string | null } | null> {
+    try {
+      const res = await this.client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: this.full(key), ...this.ownerParam() }),
+      )
+      return { size: Number(res.ContentLength ?? 0), contentType: res.ContentType ?? null, etag: res.ETag ?? null }
+    } catch (err) {
+      if (isNotFound(err)) return null
+      throw err
+    }
+  }
+
   async list(prefix: string, opts: { limit?: number } = {}): Promise<StorageObjectMeta[]> {
     const out: StorageObjectMeta[] = []
     const physicalPrefix = this.full(prefix)
@@ -167,11 +230,11 @@ export class S3StorageProvider implements StorageProvider {
           Prefix: physicalPrefix,
           ContinuationToken: token,
           MaxKeys: opts.limit,
+          ...this.ownerParam(),
         }),
       )
       for (const obj of res.Contents ?? []) {
         if (!obj.Key) continue
-        // Strip the connection prefix so callers keep seeing tenant-scoped keys.
         out.push({
           key: stripLen ? obj.Key.slice(stripLen) : obj.Key,
           size: obj.Size ?? 0,
@@ -185,28 +248,98 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   async delete(key: string): Promise<void> {
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.full(key) }))
+    await this.client.send(
+      new DeleteObjectCommand({ Bucket: this.bucket, Key: this.full(key), ...this.ownerParam() }),
+    )
   }
 
   /**
-   * Native S3 presigned GET URL. The URL is time-limited and scoped
-   * to the single object; the bucket stays private (no public ACL needed).
-   * The caller is responsible for having validated session + tenant ownership
-   * of `key` before requesting this.
+   * Resolve how long a presigned URL may live: the requested TTL, capped by the
+   * lifetime of the credentials that sign it. Throws when they are expired.
    */
+  private async effectiveTtl(requested: number): Promise<number> {
+    const creds = await resolveCredentials(this.conn)
+    const ttl = clampTtlToCredentialExpiry(requested, creds.expiration ?? null)
+    if (ttl <= 0) throw new StorageCredentialError("expired", "The storage credentials are about to expire")
+    return ttl
+  }
+
+  /** Native S3 presigned GET URL (caller has already authorized the key). */
   async presign(key: string, opts: { expiresIn?: number } = {}): Promise<string> {
-    const expiresIn = clampTtl(opts.expiresIn)
+    const expiresIn = await this.effectiveTtl(clampTtl(opts.expiresIn))
     return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: this.full(key) }), {
       expiresIn,
     })
   }
 
   /**
-   * Native S3 multipart upload. The upload ID returned by the service
-   * is stable across requests, so each chunk arrives as its own stateless HTTP
-   * request and is streamed straight to the bucket without buffering the whole
-   * file server-side.
+   * Presigned single-request PUT. Content-Type and Content-Length are part of
+   * the signature, so the browser cannot upload a larger or different-typed
+   * object than the server authorized. SSE is left as a signed header the
+   * client must echo, so the bucket enforces encryption on the object.
    */
+  async presignUpload(key: string, opts: PresignUploadOptions): Promise<PresignedRequest> {
+    const requested = Math.min(opts.expiresIn ?? 300, MAX_UPLOAD_URL_TTL_SECONDS)
+    const expiresIn = await this.effectiveTtl(requested)
+    const contentType = opts.contentType || "application/octet-stream"
+    const url = await getSignedUrl(
+      this.client,
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: this.full(key),
+        ContentType: contentType,
+        ContentLength: opts.contentLength,
+        ...this.sseParam(),
+      }),
+      {
+        expiresIn,
+        signableHeaders: new Set(["content-type", "content-length"]),
+        unhoistableHeaders: new Set(["x-amz-server-side-encryption"]),
+      },
+    )
+    const headers: Record<string, string> = { "Content-Type": contentType }
+    if (this.sse !== "none") headers["x-amz-server-side-encryption"] = this.sse
+    return { url, method: "PUT", headers, expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString() }
+  }
+
+  /** Presigned URL for one multipart chunk (direct browser → bucket). */
+  async presignUploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    expiresIn = 300,
+  ): Promise<PresignedRequest> {
+    const ttl = await this.effectiveTtl(Math.min(expiresIn, MAX_UPLOAD_URL_TTL_SECONDS))
+    const url = await getSignedUrl(
+      this.client,
+      new UploadPartCommand({ Bucket: this.bucket, Key: this.full(key), UploadId: uploadId, PartNumber: partNumber }),
+      { expiresIn: ttl },
+    )
+    return { url, method: "PUT", headers: {}, expiresAt: new Date(Date.now() + ttl * 1000).toISOString() }
+  }
+
+  async listUploadedParts(key: string, uploadId: string): Promise<MultipartPart[]> {
+    const out: MultipartPart[] = []
+    let marker: string | undefined
+    for (let page = 0; page < 20; page++) {
+      const res = await this.client.send(
+        new ListPartsCommand({
+          Bucket: this.bucket,
+          Key: this.full(key),
+          UploadId: uploadId,
+          PartNumberMarker: marker,
+          ...this.ownerParam(),
+        }),
+      )
+      for (const p of res.Parts ?? []) {
+        if (p.PartNumber && p.ETag) out.push({ partNumber: p.PartNumber, etag: p.ETag })
+      }
+      if (!res.IsTruncated || !res.NextPartNumberMarker) break
+      marker = String(res.NextPartNumberMarker)
+    }
+    return out
+  }
+
   async createMultipart(
     key: string,
     contentType: string,
@@ -217,7 +350,8 @@ export class S3StorageProvider implements StorageProvider {
         Bucket: this.bucket,
         Key: this.full(key),
         ContentType: contentType || "application/octet-stream",
-        ...(this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}),
+        ...this.sseParam(),
+        ...this.ownerParam(),
       }),
     )
     if (!created.UploadId) throw new Error("Provider did not return a multipart upload ID")
@@ -232,6 +366,7 @@ export class S3StorageProvider implements StorageProvider {
         UploadId: uploadId,
         PartNumber: partNumber,
         Body: data,
+        ...this.ownerParam(),
       }),
     )
     if (!res.ETag) throw new Error("Provider did not return a part ETag")
@@ -248,6 +383,7 @@ export class S3StorageProvider implements StorageProvider {
         MultipartUpload: {
           Parts: ordered.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
         },
+        ...this.ownerParam(),
       }),
     )
     return { url: proxyUrl(key), key, provider: this.id, size: 0, contentType: null }
@@ -255,32 +391,56 @@ export class S3StorageProvider implements StorageProvider {
 
   async abortMultipart(key: string, uploadId: string): Promise<void> {
     await this.client
-      .send(new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: this.full(key), UploadId: uploadId }))
+      .send(
+        new AbortMultipartUploadCommand({
+          Bucket: this.bucket,
+          Key: this.full(key),
+          UploadId: uploadId,
+          ...this.ownerParam(),
+        }),
+      )
       .catch(() => {})
   }
 
+  /**
+   * Bucket reachability probe. A role session is scoped to the tenant prefix,
+   * so it cannot HeadBucket (which needs unconditioned s3:ListBucket); it lists
+   * its own prefix instead.
+   */
+  private async probeBucket(): Promise<void> {
+    if (this.authMode === "iam_role") {
+      await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: this.tenantPhysicalPrefix(),
+          MaxKeys: 1,
+          ...this.ownerParam(),
+        }),
+      )
+      return
+    }
+    await this.client.send(new HeadBucketCommand({ Bucket: this.bucket, ...this.ownerParam() }))
+  }
+
   async healthCheck(): Promise<void> {
-    // HeadBucket verifies both connectivity and that the credentials can reach
-    // the target bucket, without needing any object to exist.
-    await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }))
+    await this.probeBucket()
   }
 
   /**
-   * Full diagnostic run. Probes every storage capability in order and
-   * reports each as pass/fail/skip. Later probes are skipped (never run) once a
-   * prerequisite fails, so an admin sees exactly where the chain breaks without
-   * a cascade of misleading errors. A temporary object is written under a
-   * `.v0-healthcheck/` prefix and always cleaned up.
+   * Capability diagnostics. Probes write/read/delete/multipart under the
+   * TENANT's prefix (the only place a scoped role may write), always cleaning up.
    */
   async diagnose(): Promise<HealthReport> {
     const b = new HealthReportBuilder()
+    await this.runCapabilityChecks(b)
+    return b.build()
+  }
 
-    // 1-3. One HeadBucket call covers connectivity, credentials and bucket
-    // access; we attribute a failure to the correct stage and skip the rest.
+  private async runCapabilityChecks(b: HealthReportBuilder): Promise<boolean> {
     let bucketOk = false
     const start = Date.now()
     try {
-      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }))
+      await this.probeBucket()
       b.pass("connectivity", "Reached the storage endpoint", Date.now() - start)
       b.pass("credentials", "Credentials accepted")
       b.pass("bucket", `Bucket "${this.bucket}" is reachable`)
@@ -288,7 +448,7 @@ export class S3StorageProvider implements StorageProvider {
     } catch (err) {
       const duration = Date.now() - start
       const kind = classifyBucketError(err)
-      const detail = describeError(err)
+      const detail = safeDetail(err)
       if (kind === "network") {
         b.fail("connectivity", detail, duration)
         b.skip("credentials", "Skipped — could not reach the endpoint")
@@ -305,15 +465,13 @@ export class S3StorageProvider implements StorageProvider {
     }
 
     if (!bucketOk) {
-      b.skip("write", "Skipped — bucket is not accessible")
-      b.skip("read", "Skipped — bucket is not accessible")
-      b.skip("delete", "Skipped — bucket is not accessible")
-      b.skip("multipart", "Skipped — bucket is not accessible")
-      return b.build()
+      for (const id of ["write", "read", "delete", "multipart"] as const) {
+        b.skip(id, "Skipped — bucket is not accessible")
+      }
+      return false
     }
 
-    // 4-6. Write → read → delete a single throwaway object.
-    const key = this.full(`.v0-healthcheck/${randomUUID()}.txt`)
+    const key = `${this.tenantPhysicalPrefix()}.v0-healthcheck/${randomUUID()}.txt`
     const payload = Buffer.from(`v0 storage health check ${new Date().toISOString()}`)
     const wrote = await b.run("write", async () => {
       await this.client.send(
@@ -322,7 +480,8 @@ export class S3StorageProvider implements StorageProvider {
           Key: key,
           Body: payload,
           ContentType: "text/plain",
-          ...(this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}),
+          ...this.sseParam(),
+          ...this.ownerParam(),
         }),
       )
       return "Wrote a temporary test object"
@@ -330,7 +489,7 @@ export class S3StorageProvider implements StorageProvider {
 
     if (wrote) {
       await b.run("read", async () => {
-        const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }))
+        const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, ...this.ownerParam() }))
         const body = res.Body as any
         const bytes: Uint8Array | null = body?.transformToByteArray ? await body.transformToByteArray() : null
         if (bytes && bytes.byteLength !== payload.byteLength) {
@@ -339,7 +498,7 @@ export class S3StorageProvider implements StorageProvider {
         return "Read the test object back"
       })
       await b.run("delete", async () => {
-        await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
+        await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key, ...this.ownerParam() }))
         return "Deleted the test object"
       })
     } else {
@@ -347,27 +506,160 @@ export class S3StorageProvider implements StorageProvider {
       b.skip("delete", "Skipped — nothing was written to clean up")
     }
 
-    // 7. Multipart support: initiate then immediately abort (no parts uploaded),
-    // which exercises the multipart API path without leaving an open upload.
     await b.run("multipart", async () => {
-      const mpKey = this.full(`.v0-healthcheck/${randomUUID()}.part`)
+      const mpKey = `${this.tenantPhysicalPrefix()}.v0-healthcheck/${randomUUID()}.part`
       const created = await this.client.send(
         new CreateMultipartUploadCommand({
           Bucket: this.bucket,
           Key: mpKey,
           ContentType: "application/octet-stream",
-          ...(this.sse !== "none" ? { ServerSideEncryption: this.sse } : {}),
+          ...this.sseParam(),
+          ...this.ownerParam(),
         }),
       )
       const uploadId = created.UploadId
       if (!uploadId) throw new Error("Provider did not return a multipart upload ID")
       await this.client.send(
-        new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: mpKey, UploadId: uploadId }),
+        new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: mpKey, UploadId: uploadId, ...this.ownerParam() }),
       )
       return "Initiated and aborted a multipart upload"
     })
+    return true
+  }
 
-    return b.build()
+  /**
+   * Pre-activation verification: identity, ownership, region, encryption and
+   * permission scope, followed by the capability probes. A connection may only
+   * be activated after this reports `ok` for its current configuration.
+   */
+  async verify(): Promise<HealthReport & { observed: { account: string | null; bucketRegion: string | null } }> {
+    const b = new HealthReportBuilder()
+    const observed = { account: null as string | null, bucketRegion: null as string | null }
+
+    // 1. Identity — who do these credentials act as?
+    let identityOk = true
+    let callerAccount: string | null = null
+    if (this.isAws) {
+      const start = Date.now()
+      try {
+        const id = await callerIdentity(this.conn)
+        callerAccount = id.account
+        observed.account = id.account
+        const roleAccount = parseRoleArn(this.conn.roleArn)?.accountId ?? null
+        if (this.authMode === "iam_role" && roleAccount && id.account !== roleAccount) {
+          identityOk = false
+          b.fail("identity", "Assumed identity does not belong to the role's account", Date.now() - start)
+        } else {
+          b.pass(
+            "identity",
+            this.authMode === "iam_role"
+              ? `Assumed role in account ${id.account}`
+              : `Credentials belong to account ${id.account}`,
+            Date.now() - start,
+          )
+        }
+      } catch (err) {
+        identityOk = false
+        b.fail("identity", safeDetail(err), Date.now() - start)
+      }
+    } else {
+      b.skip("identity", "Not applicable for this S3-compatible provider")
+    }
+
+    if (!identityOk) {
+      for (const id of ["ownership", "region", "encryption", "scope"] as const) b.skip(id, "Skipped — identity check failed")
+      for (const id of ["connectivity", "credentials", "bucket", "write", "read", "delete", "multipart"] as const) {
+        b.skip(id, "Skipped — identity check failed")
+      }
+      return { ...b.build(), observed }
+    }
+
+    // 2. Region — the bucket must live where the connection says.
+    if (this.isAws) {
+      await b.run("region", async () => {
+        const res = await this.client.send(new GetBucketLocationCommand({ Bucket: this.bucket }))
+        const actual = normalizeBucketRegion(res.LocationConstraint as string | undefined)
+        observed.bucketRegion = actual
+        const configured = this.conn.region || "us-east-1"
+        if (actual !== configured) {
+          throw new Error(`Bucket is in ${actual} but the connection is configured for ${configured}`)
+        }
+        return `Bucket region ${actual} matches`
+      })
+    } else {
+      b.skip("region", "Not applicable for this S3-compatible provider")
+    }
+
+    // 3. Ownership — ExpectedBucketOwner makes S3 refuse a bucket owned by anyone else.
+    if (this.isAws) {
+      const expected = this.owner ?? callerAccount
+      await b.run("ownership", async () => {
+        if (!expected) throw new Error("Could not determine the expected bucket owner account")
+        try {
+          await this.client.send(new GetBucketLocationCommand({ Bucket: this.bucket, ExpectedBucketOwner: expected }))
+        } catch (err) {
+          if (isAccessDenied(err)) throw new Error(`Bucket is not owned by account ${expected}`)
+          throw err
+        }
+        return `Bucket is owned by account ${expected}`
+      })
+    } else {
+      b.skip("ownership", "Bucket ownership cannot be asserted for this provider; access is verified below")
+    }
+
+    // 4. Encryption — objects must be encrypted at rest.
+    if (this.isAws) {
+      await b.run("encryption", async () => {
+        try {
+          const res = await this.client.send(
+            new GetBucketEncryptionCommand({ Bucket: this.bucket, ...(this.owner ? { ExpectedBucketOwner: this.owner } : {}) }),
+          )
+          const algo =
+            res.ServerSideEncryptionConfiguration?.Rules?.[0]?.ApplyServerSideEncryptionByDefault?.SSEAlgorithm ?? null
+          if (!algo && this.sse === "none") throw new Error("Bucket has no default encryption and none is requested")
+          return `Bucket default ${algo ?? "none"}${this.sse !== "none" ? `; objects written with ${this.sse}` : ""}`
+        } catch (err) {
+          if (this.sse !== "none" && isAccessDenied(err)) {
+            return `Cannot read bucket default; every object is written with ${this.sse}`
+          }
+          throw err
+        }
+      })
+    } else if (this.sse !== "none") {
+      b.pass("encryption", `Objects are written with ${this.sse}`)
+    } else {
+      b.skip("encryption", "No server-side encryption requested")
+    }
+
+    // 5. Capabilities under the tenant prefix.
+    const capable = await this.runCapabilityChecks(b)
+
+    // 6. Scope — a role session must NOT be able to write outside this tenant.
+    if (this.authMode === "iam_role" && capable) {
+      const probeKey = this.full(`t/0/.v0-scope-probe/${randomUUID()}`)
+      const start = Date.now()
+      try {
+        await this.client.send(
+          new PutObjectCommand({ Bucket: this.bucket, Key: probeKey, Body: "x", ...this.sseParam(), ...this.ownerParam() }),
+        )
+        await this.client
+          .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: probeKey, ...this.ownerParam() }))
+          .catch(() => {})
+        b.fail("scope", "Credentials could write outside this workspace's prefix", Date.now() - start)
+      } catch (err) {
+        if (isAccessDenied(err)) b.pass("scope", "Writes outside this workspace's prefix are denied", Date.now() - start)
+        else b.fail("scope", safeDetail(err), Date.now() - start)
+      }
+    } else if (this.authMode === "iam_role") {
+      b.skip("scope", "Skipped — bucket is not accessible")
+    } else {
+      b.skip(
+        "scope",
+        "Static credentials are not narrowed per workspace; keys are still namespaced and checked server-side",
+      )
+    }
+
+    return { ...b.build(), observed }
   }
 }
 

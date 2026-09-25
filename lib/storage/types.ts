@@ -1,4 +1,5 @@
 import type { StorageProviderId, ServerSideEncryptionMode } from "./providers"
+import type { AuthMode, VerificationStatus } from "./credentials"
 
 /** A resolved storage connection (secrets decrypted, ready to use). */
 export type ResolvedConnection = {
@@ -19,6 +20,21 @@ export type ResolvedConnection = {
   /** server-side encryption mode applied to uploaded objects. */
   serverSideEncryption: ServerSideEncryptionMode
   isActive: boolean
+  /** Credential strategy; absent on legacy rows means "access_key". */
+  authMode?: AuthMode
+  /** STS session token for "temporary" credentials. */
+  sessionToken?: string | null
+  /** Expiry of stored "temporary" credentials (ISO). */
+  credentialExpiresAt?: string | null
+  /** Cross-account role assumed for "iam_role". */
+  roleArn?: string | null
+  /** Platform-generated ExternalId pinned in the role's trust policy. */
+  externalId?: string | null
+  /** 12-digit AWS account that must own the bucket (ExpectedBucketOwner). */
+  expectedBucketOwner?: string | null
+  verificationStatus?: VerificationStatus
+  verifiedFingerprint?: string | null
+  revokedAt?: string | null
 }
 
 /** Result of a successful upload. */
@@ -98,6 +114,11 @@ export type HealthCheckId =
   | "read"
   | "delete"
   | "multipart"
+  | "identity"
+  | "ownership"
+  | "region"
+  | "encryption"
+  | "scope"
 
 export type HealthCheckStatus = "pass" | "fail" | "skip"
 
@@ -173,4 +194,29 @@ export interface StorageProvider {
    * throws for expected failures; every probe is reported as pass/fail/skip.
    */
   diagnose(): Promise<HealthReport>
+  /**
+   * Optional direct-to-bucket capabilities (S3-compatible backends only).
+   * Callers MUST authorize session + tenant ownership of `key` first.
+   */
+  presignUpload?(key: string, opts: PresignUploadOptions): Promise<PresignedRequest>
+  presignUploadPart?(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<PresignedRequest>
+  /** HEAD an object; null when it does not exist. */
+  stat?(key: string): Promise<{ size: number; contentType: string | null; etag: string | null } | null>
+  /** Provider-authoritative list of uploaded parts for a multipart upload. */
+  listUploadedParts?(key: string, uploadId: string): Promise<MultipartPart[]>
+}
+
+export type PresignUploadOptions = {
+  contentType: string
+  contentLength: number
+  expiresIn?: number
+}
+
+/** A presigned request the browser performs directly against the bucket. */
+export type PresignedRequest = {
+  url: string
+  method: "PUT" | "GET"
+  /** Headers the client MUST send verbatim (they are part of the signature). */
+  headers: Record<string, string>
+  expiresAt: string
 }

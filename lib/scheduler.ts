@@ -87,6 +87,7 @@ const CATEGORY_BY_JOB: Record<string, SchedulerCategory> = {
   whatsapp_scheduler: "integrations",
   background_queue: "integrations",
   tenant_scheduled_jobs: "integrations",
+  integration_sync: "integrations",
   workflow_worker: "integrations",
   business_events: "integrations",
   notification_delivery: "notifications",

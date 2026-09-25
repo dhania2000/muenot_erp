@@ -40,6 +40,7 @@ import {
   type DemoTenantKind,
   type DemoTenantStatus,
   assertDemoTablesSafe,
+  buildClonedRow,
   computeExpiresAt,
   demoDaysRemaining,
   demoPurgeTables,
@@ -48,7 +49,6 @@ import {
   isDemoExpired,
   normalizeCloneInput,
   parseExtendDays,
-  regenerateUniqueValue,
   scopeIdempotencyKey,
   toSqlDatetime,
 } from "@/lib/demo-tenant-model"
@@ -670,18 +670,9 @@ async function copyDemoData(fromTenantId: number, toTenantId: number): Promise<R
   const copied: Record<string, number> = {}
   for (const spec of DEMO_CLONE_TABLES) {
     const rows = (await query(`SELECT * FROM \`${spec.table}\` WHERE \`tenant_id\` = ?`, [fromTenantId])) as any[]
-    const regen = new Set([...spec.uniqueColumns, ...spec.emailColumns])
     let n = 0
     for (const src of rows) {
-      const row: Record<string, unknown> = { ...src }
-      delete row.id
-      delete row.created_at
-      delete row.updated_at
-      row.tenant_id = toTenantId
-      for (const col of regen) {
-        if (col in row && row[col] != null) row[col] = regenerateUniqueValue(row[col], toTenantId)
-      }
-      await insertRow(spec.table, row)
+      await insertRow(spec.table, buildClonedRow(spec, src, toTenantId))
       n++
     }
     copied[spec.table] = n

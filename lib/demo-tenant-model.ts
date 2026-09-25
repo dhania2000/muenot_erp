@@ -118,9 +118,37 @@ export const DEMO_CLONE_DENYLIST: readonly string[] = [
 
 const DENYSET = new Set(DEMO_CLONE_DENYLIST.map((t) => t.toLowerCase()))
 
-/** True when the table is explicitly forbidden from being cloned. */
+/**
+ * Name patterns that mark a table as sensitive even when it is not listed
+ * explicitly, so a newly added bank/billing/secret/session/channel table is
+ * denied by default instead of silently becoming clonable.
+ */
+export const DEMO_CLONE_DENY_PATTERNS: readonly RegExp[] = [
+  /secret/,
+  /credential/,
+  /token/,
+  /password/,
+  /billing/,
+  /payment/,
+  /bank/,
+  /card/,
+  /session/,
+  /api_key/,
+  /webhook/,
+  /sso/,
+  /oauth/,
+  /whatsapp/,
+  /connector/,
+  /integration/,
+  /storage_(connection|upload)/,
+  /gateway/,
+  /subscription/,
+]
+
+/** True when the table is forbidden from being cloned (explicitly or by sensitive name pattern). */
 export function isDemoCloneDenied(table: string): boolean {
-  return DENYSET.has(table.toLowerCase())
+  const t = table.toLowerCase()
+  return DENYSET.has(t) || DEMO_CLONE_DENY_PATTERNS.some((re) => re.test(t))
 }
 
 // ---------------------------------------------------------------------------
@@ -143,11 +171,56 @@ export type DemoCloneTable = {
   uniqueColumns: string[]
   /** Email-shaped columns to rewrite so cloned contacts are obviously synthetic. */
   emailColumns: string[]
+  /**
+   * Columns holding ids of OTHER rows (users, companies, contacts, finance
+   * parties). They point into the source tenant, so they are cleared on copy
+   * rather than left as cross-tenant references.
+   */
+  nullColumns: string[]
+  /** Columns forced to a fixed value on copy (e.g. never enable portal login). */
+  fixedValues?: Record<string, unknown>
 }
 
 export const DEMO_CLONE_TABLES: readonly DemoCloneTable[] = [
-  { table: "clients", uniqueColumns: ["client_code"], emailColumns: ["email"] },
+  {
+    table: "clients",
+    uniqueColumns: ["client_code"],
+    emailColumns: ["email"],
+    nullColumns: [
+      "created_by",
+      "account_manager_id",
+      "archived_by",
+      "company_id",
+      "primary_contact_id",
+      "finance_party_id",
+      "merged_into_id",
+    ],
+    fixedValues: { login_allowed: "No" },
+  },
 ]
+
+/**
+ * Build the row to insert into the target tenant from a source-template row:
+ * drops the primary key and timestamps (fresh ids), remaps tenant_id, clears
+ * cross-tenant references and regenerates globally-unique values.
+ */
+export function buildClonedRow(
+  spec: DemoCloneTable,
+  source: Record<string, unknown>,
+  targetTenantId: number,
+): Record<string, unknown> {
+  const row: Record<string, unknown> = { ...source }
+  delete row.id
+  delete row.created_at
+  delete row.updated_at
+  row.tenant_id = targetTenantId
+  for (const col of spec.nullColumns) if (col in row) row[col] = null
+  for (const [col, value] of Object.entries(spec.fixedValues ?? {})) if (col in row) row[col] = value
+  for (const col of new Set([...spec.uniqueColumns, ...spec.emailColumns])) {
+    if (col in row && row[col] != null) row[col] = regenerateUniqueValue(row[col], targetTenantId)
+  }
+  return row
+}
 
 /**
  * Defense in depth. Throws if the curated allowlist ever names a denied table

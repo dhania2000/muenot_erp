@@ -11,7 +11,7 @@ import { classifyJobFailure, retryDisposition, type FailureKind } from "@/lib/jo
  * Queue entries are data, never commands or URLs. A reviewed handler registry
  * determines the code that can run for each job type.
  */
-export const BACKGROUND_JOB_TYPES = ["email.send", "bulk.action"] as const
+export const BACKGROUND_JOB_TYPES = ["email.send", "bulk.action", "tenant.scheduled_job"] as const
 export type BackgroundJobType = (typeof BACKGROUND_JOB_TYPES)[number]
 
 export const BACKGROUND_JOB_STATUSES = ["queued", "running", "completed", "failed", "dead_letter", "cancelled"] as const
@@ -164,7 +164,7 @@ function validateBulkActionPayload(payload: unknown): BulkActionPayload {
 
 function validatePayload(jobType: BackgroundJobType, payload: unknown): BackgroundJobPayload {
   if (jobType === "email.send") return validateEmailPayload(payload)
-  if (jobType === "bulk.action") return validateBulkActionPayload(payload)
+  if (jobType === "bulk.action" || jobType === "tenant.scheduled_job") return validateBulkActionPayload(payload)
   throw new Error("Unknown background job type")
 }
 
@@ -370,6 +370,22 @@ const JOB_HANDLERS: Record<BackgroundJobType, JobHandler> = {
     if (!report) return { skipped: "run not found or not resumable" }
     return { total: report.total, succeeded: report.succeeded, failed: report.failed, skipped: report.skipped }
   },
+  async "tenant.scheduled_job"(payload, context) {
+    const { runId } = payload as BulkActionPayload
+    const { executeTenantJobRun } = await import("@/lib/tenant-jobs/store")
+    return executeTenantJobRun(runId, context.job)
+  },
+}
+
+/** Mirror queue outcomes onto tenant scheduled-job runs (history + notifications). */
+async function afterSettle(job: BackgroundJob, status: BackgroundJobStatus, result: Record<string, unknown> | void, errorMessage: string | null) {
+  if (job.job_type !== "tenant.scheduled_job") return
+  try {
+    const { onTenantJobRunSettled } = await import("@/lib/tenant-jobs/store")
+    await onTenantJobRunSettled((job.payload as BulkActionPayload).runId, job.tenant_id, status, errorMessage, result)
+  } catch (error) {
+    console.error("[background-jobs] tenant job settle hook failed", error instanceof Error ? error.message : error)
+  }
 }
 
 /** Row lock + attempt identity prevent stale workers from finishing another attempt. */
@@ -399,10 +415,14 @@ async function settleBackgroundJob(job: BackgroundJob, result: Record<string, un
   })
 }
 async function completeBackgroundJob(job: BackgroundJob, result: Record<string, unknown> | void) {
-  return settleBackgroundJob(job, result, null)
+  const status = await settleBackgroundJob(job, result, null)
+  await afterSettle(job, status, result, null)
+  return status
 }
 async function failBackgroundJob(job: BackgroundJob, errorMessage: string, uncertain = false, error?: unknown) {
-  return settleBackgroundJob(job, undefined, errorMessage, classifyJobFailure(error, uncertain))
+  const status = await settleBackgroundJob(job, undefined, errorMessage, classifyJobFailure(error, uncertain))
+  await afterSettle(job, status, undefined, errorMessage)
+  return status
 }
 
 async function executeBackgroundJob(job: BackgroundJob): Promise<BackgroundJobStatus> {

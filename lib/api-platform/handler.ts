@@ -211,6 +211,9 @@ export function withApiV1<P = Record<string, string>>(
           return fail(new ApiError("forbidden", `Key lacks required scope "${scope}"`))
         }
       }
+      // OAuth access tokens carry an offset synthetic keyId; the per-key audit
+      // trail (api_key_events) is only meaningful for real API keys.
+      const isApiKeyPrincipal = !auth.oauth
 
       // 7. Rate limiting (per key, plan-tiered, multi-window — ).
       let rateHeaders: Record<string, string> = {}
@@ -230,7 +233,7 @@ export function withApiV1<P = Record<string, string>>(
         }
         rateHeaders = decision.headers
         if (!decision.allowed) {
-          if (decision.abuse) {
+          if (decision.abuse && isApiKeyPrincipal) {
             void recordApiKeyEvent({
               tenantId: auth.tenantId,
               keyId: auth.keyId,

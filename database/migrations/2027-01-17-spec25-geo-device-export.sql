@@ -49,9 +49,12 @@ CREATE TABLE IF NOT EXISTS `managed_device_enrollments` (
   `last_seen_at` DATETIME DEFAULT NULL,
   `revoked_by` INT UNSIGNED DEFAULT NULL,
   `revoked_at` DATETIME DEFAULT NULL,
+  -- Scopes an idempotent enroll retry to a tenant so a replayed request never double-enrolls.
+  `idempotency_key` VARCHAR(100) DEFAULT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_mde_tenant_device` (`tenant_id`, `device_id`),
+  UNIQUE KEY `uq_mde_tenant_idem` (`tenant_id`, `idempotency_key`),
   KEY `idx_mde_tenant_user` (`tenant_id`, `user_id`),
   KEY `idx_mde_tenant_status` (`tenant_id`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

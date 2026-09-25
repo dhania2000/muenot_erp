@@ -9,6 +9,8 @@ import {
   Timer,
   Siren,
   ClipboardCheck,
+  Globe,
+  Laptop,
   ArrowRight,
 } from "lucide-react"
 import { SecurityHeading } from "@/components/security/security-ui"
@@ -69,6 +71,22 @@ const SECTIONS: {
     spec: "",
     level: "live",
     desc: "Device, IP, country and re-authentication policies enforced at sign-in.",
+  },
+  {
+    icon: <Globe className="size-5" />,
+    title: "Country policy",
+    href: "/admin/security/geo-policy",
+    spec: "",
+    level: "live",
+    desc: "Allow or block sign-in by country using trusted IP geolocation, fail-safe on unknown locations.",
+  },
+  {
+    icon: <Laptop className="size-5" />,
+    title: "Managed devices",
+    href: "/admin/security/managed-devices",
+    spec: "",
+    level: "live",
+    desc: "Require a verified device assertion at sign-in, with per-device enrollment and revocation.",
   },
   {
     icon: <Timer className="size-5" />,

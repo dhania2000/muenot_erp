@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
-import { createSessionToken, setSessionCookie } from "@/lib/auth"
+import { SESSION_COOKIE, createSessionToken, setSessionCookie, verifySessionToken } from "@/lib/auth"
+import { AFFILIATE_COOKIE, readCookie } from "@/lib/affiliates/model"
+import { checkPartnerCodeSignup, claimSignup, recordCodeConversion } from "@/lib/affiliates/store"
 import { getNum } from "@/lib/settings/server"
 import { recordActivity } from "@/lib/notifications"
 import { registerBusiness, RegistrationError } from "@/lib/tenant-registration"
@@ -70,19 +72,66 @@ export async function POST(request: Request) {
     )
     await setSessionCookie(token, durationSeconds)
 
-    // Spec29 — partner referral attribution (best-effort; an unknown or
-    // inactive code is ignored and never blocks or reveals anything).
-    if (body.partnerCode) {
+    // Spec30 — affiliate attribution from the signed click cookie, then the
+    // Spec29 `?ref=` partner code as a fallback. Best-effort: never blocks
+    // signup. A browser already logged in as a partner member is treated as a
+    // self-referral, so the PRIOR session (incoming cookie) is checked.
+    const cookieHeader = request.headers.get("cookie")
+    const affiliateCookie = readCookie(cookieHeader, AFFILIATE_COOKIE)
+    const priorToken = readCookie(cookieHeader, SESSION_COOKIE)
+    const priorSession = priorToken ? await verifySessionToken(priorToken).catch(() => null) : null
+    const sessionUserId = priorSession?.userId ?? null
+    const auditBase = { actorUserId: result.userId, actorEmail: result.email, targetTenantId: result.tenantId }
+
+    let affiliateDecided = false
+    if (affiliateCookie) {
       try {
-        const attributed = await attributeSignup(result.tenantId, body.partnerCode, result.userId)
-        if (attributed) {
+        const claim = await claimSignup({
+          cookieValue: affiliateCookie,
+          tenantId: result.tenantId,
+          registrant: { userId: result.userId, email: result.email },
+          sessionUserId,
+          now: new Date(),
+        })
+        if (claim.status === "attributed") {
+          affiliateDecided = true
           await recordPlatformAudit({
-            actorUserId: result.userId,
-            actorEmail: result.email,
-            action: "partner_referral_attributed",
-            targetTenantId: result.tenantId,
-            detail: { partnerId: attributed.partnerId, referralId: attributed.referralId, source: "signup" },
+            ...auditBase,
+            action: "affiliate_referral_attributed",
+            detail: { partnerId: claim.partnerId, linkId: claim.linkId, clickId: claim.clickId, referralId: claim.referralId },
           })
+        } else if (claim.status === "rejected") {
+          affiliateDecided = true
+          await recordPlatformAudit({
+            ...auditBase,
+            action: "affiliate_referral_rejected",
+            detail: { partnerId: claim.partnerId, clickId: claim.clickId, reason: claim.reason },
+          })
+        }
+      } catch (err) {
+        console.error("[register] affiliate attribution failed:", err)
+      }
+    }
+
+    if (!affiliateDecided && body.partnerCode) {
+      try {
+        const check = await checkPartnerCodeSignup({ rawCode: body.partnerCode, registrantEmail: result.email, sessionUserId })
+        if (check?.reason) {
+          await recordPlatformAudit({
+            ...auditBase,
+            action: "affiliate_referral_rejected",
+            detail: { partnerId: check.partnerId, reason: check.reason, source: "signup" },
+          })
+        } else if (check) {
+          const attributed = await attributeSignup(result.tenantId, body.partnerCode, result.userId)
+          if (attributed) {
+            await recordCodeConversion({ partnerId: attributed.partnerId, tenantId: result.tenantId, referralId: attributed.referralId, now: new Date() })
+            await recordPlatformAudit({
+              ...auditBase,
+              action: "partner_referral_attributed",
+              detail: { partnerId: attributed.partnerId, referralId: attributed.referralId, source: "signup" },
+            })
+          }
         }
       } catch (err) {
         console.error("[register] partner attribution failed:", err)
@@ -109,7 +158,7 @@ export async function POST(request: Request) {
       actor: { userId: result.userId, name: result.name, email: result.email, role: result.role },
     })
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       user: {
         id: result.userId,
         name: result.name,
@@ -119,6 +168,8 @@ export async function POST(request: Request) {
       tenant: { id: result.tenantId, slug: result.tenantSlug },
       redirect: "/onboarding/whatsapp",
     })
+    if (affiliateCookie) response.cookies.set(AFFILIATE_COOKIE, "", { path: "/", maxAge: 0 })
+    return response
   } catch (error) {
     if (error instanceof RegistrationError) {
       return NextResponse.json({ error: error.message, field: error.field }, { status: error.status })

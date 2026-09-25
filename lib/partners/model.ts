@@ -322,7 +322,7 @@ export type DashboardReferral = {
   customerName: string
   ownership: Ownership
   status: ReferralStatus
-  source: "platform" | "signup"
+  source: "platform" | "signup" | "affiliate"
   attributedAt: string | null
   endedAt: string | null
 }
@@ -344,7 +344,7 @@ export function toDashboardReferral(r: any): DashboardReferral {
     customerName: String(r.tenant_name ?? ""),
     ownership: r.ownership === "partner" ? "partner" : "platform",
     status: r.status === "cancelled" || r.status === "transferred" ? r.status : "active",
-    source: r.source === "signup" ? "signup" : "platform",
+    source: r.source === "signup" || r.source === "affiliate" ? r.source : "platform",
     attributedAt: dayOf(r.attributed_at),
     endedAt: dayOf(r.ended_at),
   }

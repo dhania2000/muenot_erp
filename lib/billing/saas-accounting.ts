@@ -1,6 +1,14 @@
 import "server-only"
-import { buildInvoiceJournal, buildPaymentJournal, buildRefundJournal, buildCreditGrantJournal, postJournal } from "@/lib/billing/platform-ledger"
-import { createSchedule } from "@/lib/billing/revenue-recognition"
+import {
+  buildInvoiceJournal,
+  buildPaymentJournal,
+  buildRefundJournal,
+  buildCreditGrantJournal,
+  buildInvoiceReversalJournal,
+  buildArToCreditJournal,
+  postJournal,
+} from "@/lib/billing/platform-ledger"
+import { createSchedule, reverseDeferredRevenue } from "@/lib/billing/revenue-recognition"
 import { monthsBetween } from "@/lib/billing/revenue-schedule"
 import { round2 } from "@/lib/billing/billing-math"
 import type { SessionPayload } from "@/lib/auth"
@@ -97,7 +105,14 @@ export async function postPaymentAccounting(
 }
 
 export async function postRefundAccounting(
-  refund: { id: number; amount: number; as_credit?: boolean; created_at?: string | null },
+  refund: {
+    id: number
+    amount: number
+    as_credit?: boolean
+    /** Portion paying out a credit note's balance (clears AR, not Refunds). */
+    credit_note_settled?: number
+    created_at?: string | null
+  },
   session?: SessionPayload | null,
 ): Promise<void> {
   const amount = round2(refund.amount)
@@ -109,7 +124,102 @@ export async function postRefundAccounting(
       eventType: "refund_issued",
       entryDate: String(refund.created_at ?? new Date().toISOString()).slice(0, 10),
       memo: `Refund #${refund.id}`,
-      lines: buildRefundJournal(amount, { asCredit: Boolean(refund.as_credit) }),
+      lines: buildRefundJournal(amount, {
+        asCredit: Boolean(refund.as_credit),
+        arSettled: refund.credit_note_settled ?? 0,
+      }),
+    },
+    session,
+  )
+}
+
+const today = () => new Date().toISOString().slice(0, 10)
+
+/**
+ * Void of an issued invoice. First makes sure the original invoice posting
+ * exists (idempotent — covers a best-effort post that failed at issue time) so
+ * the reversal always has something to reverse, then reverses it in full:
+ * unrecognized months are cancelled out of Deferred Revenue, recognized months
+ * out of Revenue, GST output is reduced and applied account credit restored.
+ */
+export async function postVoidAccounting(inv: InvoiceLike, session?: SessionPayload | null): Promise<void> {
+  if (String(inv.status ?? "") === "draft") return
+  const gross = round2(inv.total)
+  if (!(gross > 0)) return
+  await postInvoiceAccounting({ ...inv, status: "open" }, session)
+  const tax = round2(inv.tax_total ?? 0)
+  const { fromDeferred } = await reverseDeferredRevenue({
+    invoiceId: inv.id,
+    sourceType: "void",
+    sourceId: inv.id,
+    amount: round2(gross - tax),
+  })
+  await postJournal(
+    {
+      sourceType: "invoice",
+      sourceId: inv.id,
+      eventType: "invoice_voided",
+      entryDate: today(),
+      memo: `Void ${inv.invoice_no ?? inv.id}`,
+      lines: buildInvoiceReversalJournal({
+        gross,
+        tax,
+        fromDeferred,
+        creditApplied: round2(inv.credit_applied ?? 0),
+      }),
+    },
+    session,
+  )
+}
+
+/**
+ * A GST credit note (negative invoice) against a source invoice. Reverses the
+ * credited net revenue — from the source's unrecognized deferred months first,
+ * then from recognized revenue — plus its GST, against AR. The resulting AR
+ * credit is later settled by a refund or converted to account credit.
+ */
+export async function postCreditNoteAccounting(
+  creditNote: InvoiceLike,
+  source: { id: number },
+  session?: SessionPayload | null,
+): Promise<void> {
+  const gross = round2(Math.abs(creditNote.total))
+  if (gross === 0) return
+  const tax = round2(Math.abs(creditNote.tax_total ?? 0))
+  const { fromDeferred } = await reverseDeferredRevenue({
+    invoiceId: source.id,
+    sourceType: "credit_note",
+    sourceId: creditNote.id,
+    amount: round2(gross - tax),
+  })
+  await postJournal(
+    {
+      sourceType: "invoice",
+      sourceId: creditNote.id,
+      eventType: "credit_note_issued",
+      entryDate: String(creditNote.issue_date ?? today()).slice(0, 10),
+      memo: `Credit note ${creditNote.invoice_no ?? creditNote.id}`,
+      lines: buildInvoiceReversalJournal({ gross, tax, fromDeferred }),
+    },
+    session,
+  )
+}
+
+/** Credit-note balance issued as spendable account credit: Dr AR / Cr Customer Credit. */
+export async function postCreditFromCreditNoteAccounting(
+  credit: { id: number; amount: number; created_at?: string | null },
+  session?: SessionPayload | null,
+): Promise<void> {
+  const amount = round2(credit.amount)
+  if (amount <= 0) return
+  await postJournal(
+    {
+      sourceType: "credit",
+      sourceId: credit.id,
+      eventType: "credit_from_credit_note",
+      entryDate: String(credit.created_at ?? today()).slice(0, 10),
+      memo: `Credit note balance to account credit #${credit.id}`,
+      lines: buildArToCreditJournal(amount),
     },
     session,
   )

@@ -78,6 +78,15 @@ export const TENANT_OWNED_TABLES = [
   "billing_reconciliation",
   // Payment gateway abstraction — inbound webhook idempotency ledger
   "billing_gateway_events",
+  // SaaS accounting (Spec 6) — the platform seller ledger and deferred revenue.
+  // Kept separate from each customer's own ERP finance ledger.
+  "platform_journal",
+  "platform_journal_lines",
+  "deferred_revenue_schedules",
+  "deferred_revenue_entries",
+  "deferred_revenue_reversals",
+  // Session-route idempotency (Idempotency-Key on billing money actions)
+  "billing_request_idempotency",
   // Renewal management
   "saas_renewal_reminders",
   "saas_renewal_attempts",

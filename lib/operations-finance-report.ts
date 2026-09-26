@@ -16,6 +16,12 @@ import "server-only"
 // =============================================================================
 
 import { query, tableColumns } from "@/lib/db"
+import { computeProjectProgress } from "@/lib/operations-automation"
+import {
+  computeProfitability,
+  type ProfitabilityInput,
+  type ProjectProfitabilityRow,
+} from "@/lib/project-profitability-model"
 
 function toNumber(value: unknown): number {
   const n = Number(value)
@@ -277,7 +283,53 @@ export async function budgetVsActualReport(): Promise<BudgetVsActualRow[]> {
   return rows.sort((a, b) => b.actual_amount - a.actual_amount)
 }
 
-export type FinanceReportView = "project_cost" | "resource_cost" | "vendor_cost" | "budget_vs_actual"
+// ---------------------------------------------------------------------------
+// Project Profitability (Spec44 #204) — invoiced revenue vs derived cost
+// ---------------------------------------------------------------------------
+export async function projectProfitabilityReport(): Promise<ProjectProfitabilityRow[]> {
+  const actuals = await perProjectActuals()
+  const projCols = await tableColumns("operations_projects")
+  const projects = projCols.size
+    ? await query<any[]>(
+        `SELECT id, project_name${projCols.has("budget_amount") ? ", budget_amount" : ""} FROM operations_projects`,
+      ).catch(() => [] as any[])
+    : []
+  const nameById = new Map(projects.map((p) => [String(p.id), p.project_name]))
+
+  const entries = new Map<string, ProfitabilityInput>()
+  const entry = (key: string, label: string) => {
+    const e = entries.get(key) ?? { key, label, revenue: 0, cost: 0, budget: 0, progress: null }
+    entries.set(key, e)
+    return e
+  }
+  for (const p of projects) entry(projectKey(p.id, p.project_name), projectLabel(p.id, p.project_name)).budget = toNumber(p.budget_amount)
+  for (const [key, a] of actuals) entry(key, a.label).cost = round2(a.vendor + a.expenses + a.labour)
+
+  const invCols = await tableColumns("sales_invoices")
+  const amtCol = invCols.has("invoice_total") ? "invoice_total" : invCols.has("net_receivable") ? "net_receivable" : null
+  if (invCols.has("project_id") && amtCol) {
+    const statusFilter = invCols.has("invoice_status") ? `AND COALESCE(invoice_status,'') NOT IN ('Cancelled','Draft','Void')` : ""
+    const typeFilter = invCols.has("invoice_type") ? `AND (invoice_type IS NULL OR invoice_type <> 'Proforma Invoice')` : ""
+    const rows = await query<any[]>(
+      `SELECT project_id, COALESCE(SUM(${amtCol}),0) amt FROM sales_invoices
+        WHERE project_id IS NOT NULL AND project_id <> '' ${statusFilter} ${typeFilter}
+        GROUP BY project_id`,
+    ).catch(() => [] as any[])
+    for (const r of rows) {
+      const name = nameById.get(String(r.project_id))
+      entry(projectKey(r.project_id, name), projectLabel(r.project_id, name)).revenue += toNumber(r.amt)
+    }
+  }
+
+  const progress = await computeProjectProgress().catch(() => [])
+  for (const p of progress) {
+    const e = entries.get(projectKey(p.project_id, p.project_name))
+    if (e) e.progress = p.progress
+  }
+  return computeProfitability([...entries.values()])
+}
+
+export type FinanceReportView = "project_cost" | "resource_cost" | "vendor_cost" | "budget_vs_actual" | "profitability"
 
 export async function financeReport(view: FinanceReportView) {
   switch (view) {
@@ -289,5 +341,7 @@ export async function financeReport(view: FinanceReportView) {
       return projectCostReport()
     case "budget_vs_actual":
       return budgetVsActualReport()
+    case "profitability":
+      return projectProfitabilityReport()
   }
 }

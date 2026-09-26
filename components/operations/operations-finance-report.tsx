@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/table"
 import { Info } from "lucide-react"
 
-type View = "project_cost" | "resource_cost" | "vendor_cost" | "budget_vs_actual"
+type View = "project_cost" | "resource_cost" | "vendor_cost" | "budget_vs_actual" | "profitability"
 
 type Column = {
   key: string
@@ -49,6 +49,10 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   "At Risk": "secondary",
   "Over Budget": "destructive",
   "No Budget": "outline",
+  Profitable: "default",
+  "Low Margin": "secondary",
+  Loss: "destructive",
+  "No Revenue": "outline",
 }
 
 const VIEWS: Record<
@@ -126,7 +130,34 @@ const VIEWS: Record<
       { label: "Over Budget", value: formatNumber(rows.filter((r) => r.status === "Over Budget").length) },
     ],
   },
+  profitability: {
+    title: "Project Profitability",
+    subtitle: "Invoiced revenue against derived actual cost, with margin, budget burn and delivery progress.",
+    source: "Source: Sales invoices (excl. cancelled/draft/proforma) vs bills + expenses + labour. Read-only report.",
+    columns: [
+      { key: "project_name", label: "Project" },
+      { key: "revenue", label: "Revenue", align: "right", money: true },
+      { key: "actual_cost", label: "Cost", align: "right", money: true },
+      { key: "gross_profit", label: "Gross Profit", align: "right", money: true },
+      { key: "margin_percent", label: "Margin %", align: "right" },
+      { key: "budget_used_percent", label: "Budget Used %", align: "right" },
+      { key: "progress_percent", label: "Progress %", align: "right" },
+      { key: "status", label: "Status", badge: true },
+    ],
+    summary: (rows) => {
+      const revenue = rows.reduce((s, r) => s + Number(r.revenue || 0), 0)
+      const profit = rows.reduce((s, r) => s + Number(r.gross_profit || 0), 0)
+      return [
+        { label: "Total Revenue", value: formatMoney(revenue) },
+        { label: "Gross Profit", value: formatMoney(profit) },
+        { label: "Blended Margin", value: revenue > 0 ? `${Math.round((profit / revenue) * 1000) / 10}%` : "—" },
+        { label: "Loss-making", value: formatNumber(rows.filter((r) => r.status === "Loss").length) },
+      ]
+    },
+  },
 }
+
+const PERCENT_KEYS = new Set(["variance_percent", "margin_percent", "budget_used_percent", "progress_percent"])
 
 function renderCell(col: Column, row: any) {
   const value = row[col.key]
@@ -134,8 +165,8 @@ function renderCell(col: Column, row: any) {
     return <Badge variant={STATUS_VARIANT[String(value)] ?? "outline"}>{value ?? "—"}</Badge>
   }
   if (col.money) return formatMoney(value)
-  if (col.key === "variance_percent") {
-    const n = Number(value)
+  if (PERCENT_KEYS.has(col.key)) {
+    const n = value == null ? Number.NaN : Number(value)
     return Number.isFinite(n) ? `${n}%` : "—"
   }
   if (col.numeric) return formatNumber(value)

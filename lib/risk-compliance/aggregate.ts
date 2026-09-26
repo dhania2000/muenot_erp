@@ -224,19 +224,21 @@ async function loadFailedAuth(tenantId: number, scope: RiskScope) {
   return safe(
     { key: "failed_auth", label: "Failed authentication", category: "operational", drillHref: "/admin/security/audit-log" },
     async () => {
+      // Failed sign-ins are recorded in the forensic audit log with the
+      // `auth.*` action taxonomy and result='failure' (see lib/audit-log-store).
       const rows = await query<any[]>(
-        `SELECT id, action, subject_email, ip_address, created_at
-           FROM security_audit_events
+        `SELECT id, action, actor_email AS subject_email, ip_address, created_at
+           FROM audit_log_entries
           WHERE (tenant_id = ? OR tenant_id IS NULL)
-            AND outcome = 'failure' AND category = 'auth'
+            AND result = 'failure' AND action LIKE 'auth.%'
             AND created_at >= (NOW() - INTERVAL 7 DAY)
           ORDER BY created_at DESC LIMIT ${ITEM_LIMIT}`,
         [tenantId],
       )
       const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(created_at) m FROM security_audit_events
+        `SELECT COUNT(*) c, MAX(created_at) m FROM audit_log_entries
           WHERE (tenant_id = ? OR tenant_id IS NULL)
-            AND outcome = 'failure' AND category = 'auth'
+            AND result = 'failure' AND action LIKE 'auth.%'
             AND created_at >= (NOW() - INTERVAL 7 DAY)`,
         [tenantId],
       )
@@ -268,15 +270,15 @@ async function loadFailedJobs(tenantId: number, scope: RiskScope) {
     { key: "jobs", label: "Failed background jobs", category: "operational", drillHref: "/admin/governance" },
     async () => {
       const rows = await query<any[]>(
-        `SELECT id, job_type, status, last_error, updated_at
+        `SELECT id, job_type, status, error_message, updated_at
            FROM platform_background_jobs
-          WHERE tenant_id = ? AND status IN ('failed','dead')
+          WHERE tenant_id = ? AND status IN ('failed','dead_letter')
           ORDER BY updated_at DESC LIMIT ${ITEM_LIMIT}`,
         [tenantId],
       )
       const [{ c, m }] = await query<any[]>(
         `SELECT COUNT(*) c, MAX(updated_at) m FROM platform_background_jobs
-          WHERE tenant_id = ? AND status IN ('failed','dead')`,
+          WHERE tenant_id = ? AND status IN ('failed','dead_letter')`,
         [tenantId],
       )
       const count = num(c)
@@ -289,9 +291,9 @@ async function loadFailedJobs(tenantId: number, scope: RiskScope) {
         items: rows.map((r) => ({
           id: `job:${r.id}`,
           label: r.job_type || `Job #${r.id}`,
-          detail: r.last_error ? String(r.last_error).slice(0, 120) : r.status,
+          detail: r.error_message ? String(r.error_message).slice(0, 120) : r.status,
           occurredAt: iso(r.updated_at),
-          severity: r.status === "dead" ? ("critical" as Severity) : ("high" as Severity),
+          severity: r.status === "dead_letter" ? ("critical" as Severity) : ("high" as Severity),
         })),
       }
     },
@@ -342,18 +344,19 @@ async function loadGstCompliance(_tenantId: number, scope: RiskScope) {
   return safe(
     { key: "gst_compliance", label: "GST filing status", category: "finance", drillHref: "/modules/finance/gst" },
     async () => {
+      // Not-yet-filed returns are the GST compliance exception signal.
       const rows = await query<any[]>(
-        `SELECT return_type, period, status, arn, updated_at
-           FROM gst_return_filings
-          ORDER BY period DESC, id DESC LIMIT ${ITEM_LIMIT}`,
+        `SELECT return_type, return_period, filing_status, arn, updated_at
+           FROM gst_filings
+          WHERE filing_status <> 'Filed'
+          ORDER BY return_period DESC, id DESC LIMIT ${ITEM_LIMIT}`,
         [],
       )
-      const [{ amended, m }] = await query<any[]>(
-        `SELECT SUM(status = 'Amended') amended, MAX(updated_at) m FROM gst_return_filings`,
+      const [{ c, m }] = await query<any[]>(
+        `SELECT COUNT(*) c, MAX(updated_at) m FROM gst_filings WHERE filing_status <> 'Filed'`,
         [],
       )
-      // Amendments are the compliance exception signal for filed returns.
-      const count = num(amended)
+      const count = num(c)
       return {
         available: true,
         scopeApplied: scope.level === "group" || scope.level === "company",
@@ -361,11 +364,11 @@ async function loadGstCompliance(_tenantId: number, scope: RiskScope) {
         severity: severityFromCount(count, 6, 2),
         asOf: iso(m),
         items: rows.map((r) => ({
-          id: `gst:${r.return_type}:${r.period}`,
-          label: `${r.return_type} ${r.period}`,
-          detail: r.arn ? `ARN ${r.arn} · ${r.status}` : r.status,
+          id: `gst:${r.return_type}:${r.return_period}`,
+          label: `${r.return_type ?? "GST"} ${r.return_period ?? ""}`.trim(),
+          detail: r.arn ? `ARN ${r.arn} · ${r.filing_status}` : r.filing_status,
           occurredAt: iso(r.updated_at),
-          severity: r.status === "Amended" ? ("medium" as Severity) : ("ok" as Severity),
+          severity: "medium" as Severity,
         })),
       }
     },
@@ -377,16 +380,17 @@ async function loadTdsCompliance(_tenantId: number, scope: RiskScope) {
     { key: "tds_compliance", label: "TDS filing status", category: "finance", drillHref: "/modules/finance/tds" },
     async () => {
       const rows = await query<any[]>(
-        `SELECT form_type, quarter, financial_year, status, updated_at
-           FROM tds_returns
+        `SELECT return_type, quarter, financial_year, return_status, updated_at
+           FROM tds_filings
+          WHERE return_status <> 'Filed'
           ORDER BY financial_year DESC, quarter DESC, id DESC LIMIT ${ITEM_LIMIT}`,
         [],
       )
-      const [{ pending, m }] = await query<any[]>(
-        `SELECT SUM(status <> 'Filed') pending, MAX(updated_at) m FROM tds_returns`,
+      const [{ c, m }] = await query<any[]>(
+        `SELECT COUNT(*) c, MAX(updated_at) m FROM tds_filings WHERE return_status <> 'Filed'`,
         [],
       )
-      const count = num(pending)
+      const count = num(c)
       return {
         available: true,
         scopeApplied: scope.level === "group" || scope.level === "company",
@@ -394,11 +398,11 @@ async function loadTdsCompliance(_tenantId: number, scope: RiskScope) {
         severity: severityFromCount(count, 4, 2),
         asOf: iso(m),
         items: rows.map((r) => ({
-          id: `tds:${r.form_type}:${r.quarter}:${r.financial_year}`,
-          label: `${r.form_type} ${r.quarter} ${r.financial_year}`,
-          detail: r.status,
+          id: `tds:${r.return_type}:${r.quarter}:${r.financial_year}`,
+          label: `${r.return_type ?? "TDS"} ${r.quarter ?? ""} ${r.financial_year ?? ""}`.replace(/\s+/g, " ").trim(),
+          detail: r.return_status,
           occurredAt: iso(r.updated_at),
-          severity: r.status !== "Filed" ? ("medium" as Severity) : ("ok" as Severity),
+          severity: "medium" as Severity,
         })),
       }
     },
@@ -410,15 +414,15 @@ async function loadReconciliation(_tenantId: number, scope: RiskScope) {
     { key: "reconciliation", label: "Bank reconciliation", category: "finance", drillHref: "/modules/finance/bank-reconciliation" },
     async () => {
       const rows = await query<any[]>(
-        `SELECT transaction_id, amount, txn_date, reconciliation_status
+        `SELECT transaction_id, amount, transaction_date, reconciliation_status
            FROM bank_transactions
-          WHERE COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') <> 'Reconciled'
-          ORDER BY txn_date DESC LIMIT ${ITEM_LIMIT}`,
+          WHERE COALESCE(NULLIF(reconciliation_status,''),'Pending') <> 'Reconciled'
+          ORDER BY transaction_date DESC LIMIT ${ITEM_LIMIT}`,
         [],
       )
       const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(txn_date) m FROM bank_transactions
-          WHERE COALESCE(NULLIF(reconciliation_status,''),'Unreconciled') <> 'Reconciled'`,
+        `SELECT COUNT(*) c, MAX(transaction_date) m FROM bank_transactions
+          WHERE COALESCE(NULLIF(reconciliation_status,''),'Pending') <> 'Reconciled'`,
         [],
       )
       const count = num(c)
@@ -431,9 +435,9 @@ async function loadReconciliation(_tenantId: number, scope: RiskScope) {
         items: rows.map((r) => ({
           id: `bank:${r.transaction_id}`,
           label: `Txn ${r.transaction_id}`,
-          detail: r.reconciliation_status || "Unreconciled",
+          detail: r.reconciliation_status || "Pending",
           amount: r.amount != null ? num(r.amount) : null,
-          occurredAt: iso(r.txn_date),
+          occurredAt: iso(r.transaction_date),
           severity: "medium" as Severity,
         })),
       }
@@ -447,16 +451,17 @@ async function loadHrDocuments(_tenantId: number, scope: RiskScope) {
   return safe(
     { key: "hr_documents", label: "Employee documents", category: "hr", drillHref: "/modules/hr/documents" },
     async () => {
+      // Unverified employee documents are the HR compliance exception signal;
+      // this table tracks verification state, not expiry.
       const rows = await query<any[]>(
-        `SELECT id, employee_id, type_name, expiry_date
+        `SELECT id, employee_id, document_type, status, updated_at
            FROM hr_employee_documents
-          WHERE expiry_date IS NOT NULL AND expiry_date <= (CURDATE() + INTERVAL 30 DAY)
-          ORDER BY expiry_date ASC LIMIT ${ITEM_LIMIT}`,
+          WHERE verified = 0
+          ORDER BY updated_at DESC LIMIT ${ITEM_LIMIT}`,
         [],
       )
-      const [{ c }] = await query<any[]>(
-        `SELECT COUNT(*) c FROM hr_employee_documents
-          WHERE expiry_date IS NOT NULL AND expiry_date <= (CURDATE() + INTERVAL 30 DAY)`,
+      const [{ c, m }] = await query<any[]>(
+        `SELECT COUNT(*) c, MAX(updated_at) m FROM hr_employee_documents WHERE verified = 0`,
         [],
       )
       const count = num(c)
@@ -465,12 +470,12 @@ async function loadHrDocuments(_tenantId: number, scope: RiskScope) {
         scopeApplied: scope.level === "group" || scope.level === "company",
         count,
         severity: severityFromCount(count, 15, 4),
-        asOf: new Date().toISOString(),
+        asOf: iso(m),
         items: rows.map((r) => ({
           id: `hrdoc:${r.id}`,
-          label: r.type_name || `Document #${r.id}`,
-          detail: `Employee ${r.employee_id} · expires ${r.expiry_date}`,
-          occurredAt: iso(r.expiry_date),
+          label: r.document_type || `Document #${r.id}`,
+          detail: `Employee ${r.employee_id} · ${r.status || "Pending"} verification`,
+          occurredAt: iso(r.updated_at),
           severity: "medium" as Severity,
           sensitive: { employee: String(r.employee_id) },
         })),
@@ -484,14 +489,14 @@ async function loadHrAttendance(_tenantId: number, scope: RiskScope) {
     { key: "hr_attendance", label: "Attendance regularisations", category: "hr", drillHref: "/modules/hr/attendance" },
     async () => {
       const rows = await query<any[]>(
-        `SELECT id, request_id, employee_name, status, created_at
+        `SELECT id, request_id, employee_name, status, requested_at
            FROM hr_attendance_regularisation
           WHERE status = 'Pending'
-          ORDER BY created_at ASC LIMIT ${ITEM_LIMIT}`,
+          ORDER BY requested_at ASC LIMIT ${ITEM_LIMIT}`,
         [],
       )
       const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(created_at) m FROM hr_attendance_regularisation WHERE status = 'Pending'`,
+        `SELECT COUNT(*) c, MAX(requested_at) m FROM hr_attendance_regularisation WHERE status = 'Pending'`,
         [],
       )
       const count = num(c)
@@ -505,7 +510,7 @@ async function loadHrAttendance(_tenantId: number, scope: RiskScope) {
           id: `att:${r.id}`,
           label: r.request_id || `Regularisation #${r.id}`,
           detail: "Pending review",
-          occurredAt: iso(r.created_at),
+          occurredAt: iso(r.requested_at),
           severity: "low" as Severity,
           sensitive: r.employee_name ? { employee: r.employee_name } : undefined,
         })),

@@ -1,501 +1,321 @@
 /**
- * Pure domain model for Training & Policy Acknowledgment (Spec38, #230-233).
- * ---------------------------------------------------------------------------
- * Deliberately free of `server-only`, DB and `Date.now()` so every rule can be
- * unit tested in isolation (see test/training-model.test.ts) and reused by the
- * server store (lib/training/store.ts) and the API routes.
+ * Spec38 (#230-233) — Training & policy acknowledgment: pure domain logic.
  *
- * This module owns NO persistence. It only:
- *   • validates + normalizes course / module / lesson / quiz / policy input,
- *   • scores quizzes,
- *   • computes assignment status (assigned / started / completed / overdue),
- *   • decides course completion (all lessons done + quiz passed when present),
- *   • normalizes acknowledgment evidence and decides re-acknowledgment after a
- *     policy version change.
+ * This module has NO database or network dependencies so the business rules
+ * (quiz scoring, status/overdue derivation, media access control, certificate
+ * numbering, evidence normalization, role matching, input validation) can be
+ * unit-tested in isolation and reused on both request paths.
  */
 
-// ── Enumerations ─────────────────────────────────────────────────────────────
-
-export const COURSE_STATUSES = ["draft", "published", "archived"] as const
-export type CourseStatus = (typeof COURSE_STATUSES)[number]
-
-export const LESSON_TYPES = ["video", "document"] as const
+export const LESSON_TYPES = ["video", "document", "text"] as const
 export type LessonType = (typeof LESSON_TYPES)[number]
 
-/** Persisted assignment lifecycle. `assigned` is the initial state. */
 export const ASSIGNMENT_STATUSES = ["assigned", "started", "completed", "overdue"] as const
 export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number]
 
-/** How a course/policy is targeted to employees. */
-export const AUDIENCE_TYPES = ["all", "role", "department", "designation", "employees"] as const
-export type AudienceType = (typeof AUDIENCE_TYPES)[number]
+export const MEDIA_ACCESS = ["assigned", "tenant"] as const
+export type MediaAccess = (typeof MEDIA_ACCESS)[number]
 
-export const POLICY_STATUSES = ["draft", "published", "archived"] as const
-export type PolicyStatus = (typeof POLICY_STATUSES)[number]
-
-export const DEFAULT_PASS_MARK = 70
-export const DEFAULT_DUE_DAYS = 30
-const MAX_DUE_DAYS = 3650
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-const MAX_TEXT = 20_000
-
-export class TrainingError extends Error {
-  status: number
-  constructor(message: string, status = 400) {
-    super(message)
-    this.name = "TrainingError"
-    this.status = status
-  }
+export function isLessonType(v: unknown): v is LessonType {
+  return typeof v === "string" && (LESSON_TYPES as readonly string[]).includes(v)
 }
 
-// ── Pure helpers ─────────────────────────────────────────────────────────────
-
-export const normStr = (v: unknown): string | null => {
-  if (v == null) return null
-  const s = String(v).trim()
-  return s.length ? s : null
+export function isMediaAccess(v: unknown): v is MediaAccess {
+  return typeof v === "string" && (MEDIA_ACCESS as readonly string[]).includes(v)
 }
 
-export const dateOf = (v: unknown): string | null => (v ? String(v).slice(0, 10) : null)
-
-export function isValidDate(v: unknown): boolean {
-  if (!v) return false
-  const s = String(v).slice(0, 10)
-  if (!ISO_DATE_RE.test(s)) return false
-  return Number.isFinite(Date.parse(s))
-}
-
-function normText(v: unknown, label: string, { required = false, max = MAX_TEXT } = {}): string | null {
-  const s = normStr(v)
-  if (!s) {
-    if (required) throw new TrainingError(`${label} is required.`)
-    return null
-  }
-  if (s.length > max) throw new TrainingError(`${label} must be at most ${max} characters.`)
-  return s
-}
-
-function normInt(v: unknown, label: string, { min = 0, max = Number.MAX_SAFE_INTEGER, fallback = 0 } = {}): number {
-  if (v === undefined || v === null || v === "") return fallback
-  const n = Number(v)
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < min || n > max)
-    throw new TrainingError(`${label} must be an integer between ${min} and ${max}.`)
-  return n
-}
-
-/** Whole days between two YYYY-MM-DD dates (b - a); positive when b is later. */
-export function daysBetween(aIso: string, bIso: string): number {
-  const a = Date.parse(`${aIso.slice(0, 10)}T00:00:00Z`)
-  const b = Date.parse(`${bIso.slice(0, 10)}T00:00:00Z`)
-  return Math.round((b - a) / 86_400_000)
-}
-
-/** Add whole days to a YYYY-MM-DD date, returning a YYYY-MM-DD date. */
-export function addDays(iso: string, days: number): string {
-  const t = Date.parse(`${iso.slice(0, 10)}T00:00:00Z`)
-  if (!Number.isFinite(t)) throw new TrainingError("Invalid date.")
-  return new Date(t + days * 86_400_000).toISOString().slice(0, 10)
-}
-
-// ── Audience ─────────────────────────────────────────────────────────────────
-
-export type AudienceConfig = {
-  roles?: string[]
-  departments?: string[]
-  designations?: string[]
-  employeeIds?: number[]
-}
-
-export function parseAudienceConfig(raw: unknown): AudienceConfig {
-  if (!raw) return {}
-  if (typeof raw === "string") {
+/** Parse a JSON column (string or already-parsed) into a string array. */
+export function parseStringArray(raw: unknown): string[] {
+  let value = raw
+  if (typeof value === "string") {
     try {
-      return JSON.parse(raw) as AudienceConfig
+      value = JSON.parse(value)
     } catch {
-      return {}
+      return []
     }
   }
-  return raw as AudienceConfig
+  if (!Array.isArray(value)) return []
+  return value.map((v) => String(v).trim()).filter((v) => v.length > 0)
 }
 
-/** Validate a targeted audience has at least one selection. Throws on empty. */
-export function validateAudience(type: AudienceType, cfg: AudienceConfig): AudienceConfig {
-  if (!AUDIENCE_TYPES.includes(type)) throw new TrainingError(`Invalid audience type "${type}".`)
-  const clean: AudienceConfig = {}
-  switch (type) {
-    case "all":
-      return {}
-    case "role": {
-      const roles = (cfg.roles ?? []).map((r) => String(r).trim()).filter(Boolean)
-      if (!roles.length) throw new TrainingError("Select at least one role for a role-based audience.")
-      clean.roles = [...new Set(roles)]
-      return clean
-    }
-    case "department": {
-      const d = (cfg.departments ?? []).map((r) => String(r).trim()).filter(Boolean)
-      if (!d.length) throw new TrainingError("Select at least one department.")
-      clean.departments = [...new Set(d)]
-      return clean
-    }
-    case "designation": {
-      const d = (cfg.designations ?? []).map((r) => String(r).trim()).filter(Boolean)
-      if (!d.length) throw new TrainingError("Select at least one designation.")
-      clean.designations = [...new Set(d)]
-      return clean
-    }
-    case "employees": {
-      const ids = (cfg.employeeIds ?? []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0)
-      if (!ids.length) throw new TrainingError("Select at least one employee.")
-      clean.employeeIds = [...new Set(ids)]
-      return clean
-    }
-  }
+/** Parse quiz options (JSON string or array) into a clean string array. */
+export function parseOptions(raw: unknown): string[] {
+  return parseStringArray(raw)
 }
 
-// ── Course / module / lesson / quiz validation ───────────────────────────────
-
-export type CourseInput = {
-  title?: string
-  description?: string | null
-  category?: string | null
-  status?: string
-  mandatory?: boolean | number | string
-  pass_mark?: number | string | null
-  due_days?: number | string | null
-  audience_type?: string
-  audience_config?: AudienceConfig | string | null
-}
-
-export type NormalizedCourse = {
-  title: string
-  description: string | null
-  category: string | null
-  status: CourseStatus
-  mandatory: 0 | 1
-  pass_mark: number
-  due_days: number
-  audience_type: AudienceType
-  audience_config: AudienceConfig
-}
-
-export function validateCourseInput(input: CourseInput, isUpdate = false): NormalizedCourse {
-  const title = normText(input.title, "Course title", { required: !isUpdate, max: 200 }) ?? ""
-  if (!isUpdate && !title) throw new TrainingError("Course title is required.")
-
-  const status = (normStr(input.status) ?? "draft") as CourseStatus
-  if (!COURSE_STATUSES.includes(status)) throw new TrainingError(`Invalid course status "${status}".`)
-
-  const passMark = normInt(input.pass_mark, "Pass mark", { min: 0, max: 100, fallback: DEFAULT_PASS_MARK })
-  const dueDays = normInt(input.due_days, "Due days", { min: 0, max: MAX_DUE_DAYS, fallback: DEFAULT_DUE_DAYS })
-
-  const audienceType = (normStr(input.audience_type) ?? "all") as AudienceType
-  const audienceConfig = validateAudience(audienceType, parseAudienceConfig(input.audience_config))
-
-  return {
-    title,
-    description: normText(input.description, "Description"),
-    category: normText(input.category, "Category", { max: 120 }),
-    status,
-    mandatory: toBool(input.mandatory) ? 1 : 0,
-    pass_mark: passMark,
-    due_days: dueDays,
-    audience_type: audienceType,
-    audience_config: audienceConfig,
-  }
-}
-
-export function toBool(v: unknown): boolean {
-  if (typeof v === "boolean") return v
-  if (typeof v === "number") return v !== 0
-  const s = String(v ?? "").trim().toLowerCase()
-  return s === "1" || s === "true" || s === "yes" || s === "on"
-}
-
-export type ModuleInput = { title?: string; summary?: string | null; sort_order?: number | string | null }
-export type NormalizedModule = { title: string; summary: string | null; sort_order: number }
-
-export function validateModuleInput(input: ModuleInput, isUpdate = false): NormalizedModule {
-  const title = normText(input.title, "Module title", { required: !isUpdate, max: 200 }) ?? ""
-  if (!isUpdate && !title) throw new TrainingError("Module title is required.")
-  return {
-    title,
-    summary: normText(input.summary, "Module summary", { max: 2000 }),
-    sort_order: normInt(input.sort_order, "Sort order", { min: 0, max: 100000, fallback: 0 }),
-  }
-}
-
-export type LessonInput = {
-  title?: string
-  lesson_type?: string
-  media_file_id?: number | string | null
-  external_url?: string | null
-  content?: string | null
-  duration_seconds?: number | string | null
-  sort_order?: number | string | null
-}
-
-export type NormalizedLesson = {
-  title: string
-  lesson_type: LessonType
-  media_file_id: number | null
-  external_url: string | null
-  content: string | null
-  duration_seconds: number
-  sort_order: number
-}
-
-export function validateLessonInput(input: LessonInput, isUpdate = false): NormalizedLesson {
-  const title = normText(input.title, "Lesson title", { required: !isUpdate, max: 200 }) ?? ""
-  if (!isUpdate && !title) throw new TrainingError("Lesson title is required.")
-
-  const lessonType = (normStr(input.lesson_type) ?? "document") as LessonType
-  if (!LESSON_TYPES.includes(lessonType)) throw new TrainingError(`Invalid lesson type "${lessonType}".`)
-
-  const mediaFileId = input.media_file_id == null || input.media_file_id === "" ? null : normInt(input.media_file_id, "Media file", { min: 1 })
-  const externalUrl = normText(input.external_url, "External URL", { max: 2000 })
-  if (externalUrl && !/^https?:\/\//i.test(externalUrl)) throw new TrainingError("External URL must start with http:// or https://.")
-
-  // A lesson must carry SOME content: an uploaded media file, an external URL, or inline text.
-  const content = normText(input.content, "Lesson content")
-  if (!isUpdate && !mediaFileId && !externalUrl && !content)
-    throw new TrainingError("A lesson needs an uploaded file, an external link, or written content.")
-
-  return {
-    title,
-    lesson_type: lessonType,
-    media_file_id: mediaFileId,
-    external_url: externalUrl,
-    content,
-    duration_seconds: normInt(input.duration_seconds, "Duration", { min: 0, max: 24 * 3600, fallback: 0 }),
-    sort_order: normInt(input.sort_order, "Sort order", { min: 0, max: 100000, fallback: 0 }),
-  }
-}
-
-export type QuizQuestionInput = {
-  module_id?: number | string | null
-  question?: string
-  options?: unknown
-  correct_index?: number | string | null
-  sort_order?: number | string | null
-}
-
-export type NormalizedQuizQuestion = {
-  module_id: number | null
-  question: string
-  options: string[]
+export type QuizQuestion = {
+  id: number
   correct_index: number
-  sort_order: number
+  points: number
 }
 
-export function validateQuizQuestionInput(input: QuizQuestionInput): NormalizedQuizQuestion {
-  const question = normText(input.question, "Question", { required: true, max: 2000 })!
-  let options: string[]
-  const raw = input.options
-  const arr = typeof raw === "string" ? safeJsonArray(raw) : raw
-  if (!Array.isArray(arr)) throw new TrainingError("Question options must be a list.")
-  options = arr.map((o) => String(o ?? "").trim()).filter((o) => o.length > 0)
-  if (options.length < 2) throw new TrainingError("A question needs at least two answer options.")
-  if (options.length > 10) throw new TrainingError("A question can have at most ten answer options.")
-
-  const correctIndex = normInt(input.correct_index, "Correct answer", { min: 0, max: options.length - 1, fallback: 0 })
-  if (correctIndex > options.length - 1) throw new TrainingError("The correct answer index is out of range.")
-
-  return {
-    module_id: input.module_id == null || input.module_id === "" ? null : normInt(input.module_id, "Module", { min: 1 }),
-    question,
-    options,
-    correct_index: correctIndex,
-    sort_order: normInt(input.sort_order, "Sort order", { min: 0, max: 100000, fallback: 0 }),
-  }
-}
-
-function safeJsonArray(raw: string): unknown {
-  try {
-    return JSON.parse(raw)
-  } catch {
-    return null
-  }
-}
-
-// ── Quiz scoring ─────────────────────────────────────────────────────────────
-
-export type ScorableQuestion = { id?: number | string; correct_index: number }
-
-export type QuizResult = {
-  total: number
-  correct: number
-  score: number // 0-100, integer
+export type QuizScore = {
+  totalQuestions: number
+  answeredCount: number
+  correctCount: number
+  earnedPoints: number
+  totalPoints: number
+  /** Percentage 0-100, rounded to the nearest integer, weighted by points. */
+  score: number
   passed: boolean
 }
 
 /**
- * Score a set of answers against the quiz's correct indices. `answers` maps a
- * question id -> the chosen option index. Missing / wrong answers score zero.
- * With no questions the quiz is vacuously passed with a 100 score, so a course
- * that has lessons but no quiz can still complete.
+ * Score a quiz submission. `answers` maps question id -> selected option index.
+ * The percentage is weighted by each question's points so a 3-point question
+ * counts more than a 1-point one. Passing requires `score >= passScore`.
  */
 export function scoreQuiz(
-  questions: ScorableQuestion[],
+  questions: QuizQuestion[],
   answers: Record<string | number, number>,
-  passMark = DEFAULT_PASS_MARK,
-): QuizResult {
-  const total = questions.length
-  if (total === 0) return { total: 0, correct: 0, score: 100, passed: true }
-  let correct = 0
+  passScore: number,
+): QuizScore {
+  let earnedPoints = 0
+  let totalPoints = 0
+  let correctCount = 0
+  let answeredCount = 0
   for (const q of questions) {
-    const key = q.id ?? ""
-    const chosen = answers[key as any] ?? answers[String(key) as any]
-    if (Number(chosen) === Number(q.correct_index)) correct++
+    const points = Number.isFinite(q.points) && q.points > 0 ? q.points : 1
+    totalPoints += points
+    const picked = answers[q.id]
+    if (picked !== undefined && picked !== null) answeredCount += 1
+    if (picked !== undefined && Number(picked) === Number(q.correct_index)) {
+      earnedPoints += points
+      correctCount += 1
+    }
   }
-  const score = Math.round((correct / total) * 100)
-  return { total, correct, score, passed: score >= passMark }
+  const score = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0
+  const pass = clampScore(passScore)
+  return {
+    totalQuestions: questions.length,
+    answeredCount,
+    correctCount,
+    earnedPoints,
+    totalPoints,
+    score,
+    passed: totalPoints > 0 && score >= pass,
+  }
 }
 
-// ── Assignment status + completion rules ─────────────────────────────────────
+export function clampScore(v: unknown): number {
+  const n = Math.round(Number(v))
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, Math.min(100, n))
+}
 
-export type AssignmentState = {
-  status: AssignmentStatus
-  started_at?: string | null
-  completed_at?: string | null
-  due_date?: string | null
+export type AssignmentLike = {
+  status: AssignmentStatus | string
+  due_date?: string | Date | null
+  completed_at?: string | Date | null
 }
 
 /**
- * Derive the *effective* status of an assignment at `now`. A stored status of
- * `completed` is terminal. Otherwise a past due date makes it `overdue`, a
- * present `started_at` makes it `started`, else `assigned`.
+ * Derive the *effective* status of an assignment at read time. Completed always
+ * wins. An incomplete assignment past its due date is reported as overdue
+ * regardless of the stored status, so a nightly job is not required for the UI
+ * to be correct.
  */
-export function computeAssignmentStatus(a: AssignmentState, now: Date = new Date()): AssignmentStatus {
+export function deriveStatus(a: AssignmentLike, now: Date = new Date()): AssignmentStatus {
   if (a.completed_at || a.status === "completed") return "completed"
-  const today = now.toISOString().slice(0, 10)
-  if (a.due_date && dateOf(a.due_date)! < today) return "overdue"
-  if (a.started_at) return "started"
+  if (isOverdue(a.due_date ?? null, now)) return "overdue"
+  if (a.status === "started") return "started"
   return "assigned"
 }
 
-export type CompletionInput = {
-  lessonsTotal: number
-  lessonsCompleted: number
-  hasQuiz: boolean
-  quizPassed: boolean
+export function isOverdue(dueDate: string | Date | null, now: Date = new Date()): boolean {
+  if (!dueDate) return false
+  const due = dueDate instanceof Date ? dueDate : new Date(dueDate)
+  if (Number.isNaN(due.getTime())) return false
+  // Due dates are day-granular; overdue only once the whole due day has passed.
+  const endOfDue = new Date(due)
+  endOfDue.setHours(23, 59, 59, 999)
+  return now.getTime() > endOfDue.getTime()
 }
 
-/**
- * A course is complete when EVERY lesson is done AND, when the course has a
- * quiz, the learner has passed it. A course with lessons but no quiz completes
- * on finishing all lessons; a course with no lessons and no quiz cannot be
- * "completed" (nothing to do) — guard against that with lessonsTotal > 0.
- */
-export function isCourseComplete(c: CompletionInput): boolean {
-  if (c.lessonsTotal <= 0 && !c.hasQuiz) return false
-  const lessonsDone = c.lessonsCompleted >= c.lessonsTotal
+/** Completion requires a passing quiz result AND every lesson completed. */
+export function meetsCompletionRule(input: {
+  totalLessons: number
+  completedLessons: number
+  hasQuiz: boolean
+  quizPassed: boolean
+}): boolean {
+  const lessonsDone = input.completedLessons >= input.totalLessons
   if (!lessonsDone) return false
-  if (c.hasQuiz && !c.quizPassed) return false
+  if (input.hasQuiz) return input.quizPassed
   return true
 }
 
-// ── Policy validation ────────────────────────────────────────────────────────
-
-export type PolicyInput = {
-  title?: string
-  category?: string | null
-  description?: string | null
-  audience_type?: string
-  audience_config?: AudienceConfig | string | null
-  requires_acknowledgment?: boolean | number | string
+/** Deterministic, human-readable certificate number, unique per assignment. */
+export function certificateNumber(assignmentId: number, issuedAt: Date = new Date()): string {
+  const year = issuedAt.getFullYear()
+  return `CERT-${year}-${String(assignmentId).padStart(6, "0")}`
 }
 
-export type NormalizedPolicy = {
-  title: string
-  category: string | null
-  description: string | null
-  audience_type: AudienceType
-  audience_config: AudienceConfig
-  requires_acknowledgment: 0 | 1
-}
-
-export function validatePolicyInput(input: PolicyInput, isUpdate = false): NormalizedPolicy {
-  const title = normText(input.title, "Policy title", { required: !isUpdate, max: 200 }) ?? ""
-  if (!isUpdate && !title) throw new TrainingError("Policy title is required.")
-  const audienceType = (normStr(input.audience_type) ?? "all") as AudienceType
-  const audienceConfig = validateAudience(audienceType, parseAudienceConfig(input.audience_config))
-  return {
-    title,
-    category: normText(input.category, "Category", { max: 120 }),
-    description: normText(input.description, "Description"),
-    audience_type: audienceType,
-    audience_config: audienceConfig,
-    requires_acknowledgment: input.requires_acknowledgment === undefined ? 1 : toBool(input.requires_acknowledgment) ? 1 : 0,
-  }
-}
-
-export type PolicyVersionInput = {
-  version_label?: string | null
-  content?: string | null
-  media_file_id?: number | string | null
-  effective_date?: string | null
-  change_summary?: string | null
-}
-
-export type NormalizedPolicyVersion = {
-  version_label: string | null
-  content: string | null
-  media_file_id: number | null
-  effective_date: string | null
-  change_summary: string | null
-}
-
-export function validatePolicyVersionInput(input: PolicyVersionInput): NormalizedPolicyVersion {
-  const content = normText(input.content, "Policy content")
-  const mediaFileId = input.media_file_id == null || input.media_file_id === "" ? null : normInt(input.media_file_id, "Media file", { min: 1 })
-  if (!content && !mediaFileId) throw new TrainingError("A policy version needs written content or an attached document.")
-  const effectiveDate = dateOf(input.effective_date)
-  if (effectiveDate && !isValidDate(effectiveDate)) throw new TrainingError("Effective date is invalid.")
-  return {
-    version_label: normText(input.version_label, "Version label", { max: 40 }),
-    content,
-    media_file_id: mediaFileId,
-    effective_date: effectiveDate,
-    change_summary: normText(input.change_summary, "Change summary", { max: 1000 }),
-  }
-}
-
-// ── Acknowledgment evidence + re-ack decision ────────────────────────────────
-
-export type AckEvidenceInput = {
-  ip?: string | null
-  user_agent?: string | null
-  statement?: string | null
-  signature_name?: string | null
-}
-
-export type NormalizedAckEvidence = {
+export type Evidence = {
   ip: string | null
-  user_agent: string | null
-  statement: string
-  signature_name: string | null
+  userAgent: string | null
+  capturedAt: string
 }
 
-export const DEFAULT_ACK_STATEMENT = "I have read, understood and agree to comply with this policy."
-
-export function normalizeAckEvidence(input: AckEvidenceInput): NormalizedAckEvidence {
-  const signature = normText(input.signature_name, "Signature", { max: 190 })
-  if (!signature) throw new TrainingError("Please type your full name to sign this acknowledgment.")
+/** Normalize acknowledgment evidence captured from the request. */
+export function normalizeEvidence(raw: {
+  ip?: string | null
+  userAgent?: string | null
+  capturedAt?: string | Date | null
+}): Evidence {
+  const capturedAt =
+    raw.capturedAt instanceof Date
+      ? raw.capturedAt.toISOString()
+      : typeof raw.capturedAt === "string" && raw.capturedAt
+        ? raw.capturedAt
+        : new Date().toISOString()
   return {
-    ip: normStr(input.ip)?.slice(0, 45) ?? null,
-    user_agent: normStr(input.user_agent)?.slice(0, 500) ?? null,
-    statement: normText(input.statement, "Statement", { max: 2000 }) ?? DEFAULT_ACK_STATEMENT,
-    signature_name: signature,
+    ip: cleanShort(raw.ip, 64),
+    userAgent: cleanShort(raw.userAgent, 400),
+    capturedAt,
   }
+}
+
+function cleanShort(v: unknown, max: number): string | null {
+  if (v === null || v === undefined) return null
+  const s = String(v).trim()
+  if (!s) return null
+  return s.slice(0, max)
+}
+
+export function isMediaExpired(expiresAt: string | Date | null | undefined, now: Date = new Date()): boolean {
+  if (!expiresAt) return false
+  const exp = expiresAt instanceof Date ? expiresAt : new Date(expiresAt)
+  if (Number.isNaN(exp.getTime())) return false
+  return now.getTime() > exp.getTime()
 }
 
 /**
- * Decide whether an employee still needs to acknowledge a policy. They must
- * acknowledge when there is no ack row for the CURRENT published version — i.e.
- * a brand new assignment, or a policy that has since been re-published with a
- * new version (the prior ack was for an older version and no longer counts).
+ * Access-control decision for a private media object. Tenant isolation is
+ * enforced separately at the data layer; this decides intra-tenant visibility:
+ *   • expired media is denied for everyone;
+ *   • managers (course authors/HR) may always view;
+ *   • `tenant` media is visible to any authenticated member of the tenant;
+ *   • `assigned` media is visible only to employees assigned to a course that
+ *     uses it.
  */
-export function needsAcknowledgment(currentVersionId: number | null, acknowledgedVersionIds: number[]): boolean {
-  if (!currentVersionId) return false // nothing published yet
-  return !acknowledgedVersionIds.includes(currentVersionId)
+export function canAccessMedia(input: {
+  access: MediaAccess | string
+  expiresAt: string | Date | null | undefined
+  isManager: boolean
+  mediaCourseIds: number[]
+  employeeCourseIds: number[]
+  now?: Date
+}): { allowed: boolean; reason?: "expired" | "not_assigned" } {
+  const now = input.now ?? new Date()
+  if (isMediaExpired(input.expiresAt, now)) return { allowed: false, reason: "expired" }
+  if (input.isManager) return { allowed: true }
+  if (input.access === "tenant") return { allowed: true }
+  const assigned = input.mediaCourseIds.some((c) => input.employeeCourseIds.includes(c))
+  return assigned ? { allowed: true } : { allowed: false, reason: "not_assigned" }
+}
+
+/**
+ * Does a course's role targeting match an employee? `roles` is the course's
+ * configured list of designations/roles; matching is case-insensitive. The
+ * sentinel "all" (or an empty list) targets every active employee.
+ */
+export function roleMatches(roles: string[], employee: { designation?: string | null; role?: string | null }): boolean {
+  if (roles.length === 0) return true
+  const wanted = roles.map((r) => r.toLowerCase())
+  if (wanted.includes("all") || wanted.includes("*")) return true
+  const desig = (employee.designation ?? "").toLowerCase().trim()
+  const role = (employee.role ?? "").toLowerCase().trim()
+  return (!!desig && wanted.includes(desig)) || (!!role && wanted.includes(role))
+}
+
+export type CourseInput = {
+  title?: unknown
+  code?: unknown
+  description?: unknown
+  category?: unknown
+  roles?: unknown
+  pass_score?: unknown
+  due_days?: unknown
+  active?: unknown
+}
+
+export type ValidatedCourse = {
+  title: string
+  code: string | null
+  description: string | null
+  category: string | null
+  roles: string[]
+  pass_score: number
+  due_days: number | null
+  active: boolean
+}
+
+export function validateCourse(input: CourseInput): { ok: true; value: ValidatedCourse } | { ok: false; error: string } {
+  const title = typeof input.title === "string" ? input.title.trim() : ""
+  if (!title) return { ok: false, error: "Title is required" }
+  if (title.length > 200) return { ok: false, error: "Title is too long" }
+  const dueDaysRaw = input.due_days
+  let due_days: number | null = null
+  if (dueDaysRaw !== undefined && dueDaysRaw !== null && String(dueDaysRaw) !== "") {
+    const n = Number(dueDaysRaw)
+    if (!Number.isInteger(n) || n < 0 || n > 3650) return { ok: false, error: "Due days must be between 0 and 3650" }
+    due_days = n
+  }
+  return {
+    ok: true,
+    value: {
+      title,
+      code: cleanShort(input.code, 40),
+      description: typeof input.description === "string" ? input.description.trim() || null : null,
+      category: cleanShort(input.category, 120),
+      roles: parseStringArray(input.roles),
+      pass_score: input.pass_score === undefined ? 70 : clampScore(input.pass_score),
+      due_days,
+      active: input.active === undefined ? true : Boolean(input.active),
+    },
+  }
+}
+
+export type PolicyInput = {
+  title?: unknown
+  code?: unknown
+  category?: unknown
+  body?: unknown
+  summary?: unknown
+  effective_date?: unknown
+}
+
+export type ValidatedPolicy = {
+  title: string
+  code: string | null
+  category: string | null
+  body: string
+  summary: string | null
+  effective_date: string | null
+}
+
+export function validatePolicy(input: PolicyInput): { ok: true; value: ValidatedPolicy } | { ok: false; error: string } {
+  const title = typeof input.title === "string" ? input.title.trim() : ""
+  if (!title) return { ok: false, error: "Title is required" }
+  if (title.length > 200) return { ok: false, error: "Title is too long" }
+  const body = typeof input.body === "string" ? input.body.trim() : ""
+  if (!body) return { ok: false, error: "Policy body is required" }
+  let effective_date: string | null = null
+  if (input.effective_date !== undefined && input.effective_date !== null && String(input.effective_date) !== "") {
+    const d = new Date(String(input.effective_date))
+    if (Number.isNaN(d.getTime())) return { ok: false, error: "Invalid effective date" }
+    effective_date = d.toISOString().slice(0, 10)
+  }
+  return {
+    ok: true,
+    value: {
+      title,
+      code: cleanShort(input.code, 40),
+      category: cleanShort(input.category, 120),
+      body,
+      summary: cleanShort(input.summary, 600),
+      effective_date,
+    },
+  }
 }

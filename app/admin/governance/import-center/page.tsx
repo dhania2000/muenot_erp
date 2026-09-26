@@ -1,5 +1,6 @@
 import { GovernanceTabs } from "@/components/governance/governance-tabs"
 import { ImportCenterPanel } from "@/components/governance/import-center-panel"
+import { BatchImportPanel } from "@/components/governance/batch-import-panel"
 
 // Central Import Center (UI). A generic
 // upload → map → validate → preview → import → result flow that sits on top
@@ -19,6 +20,8 @@ export default function ImportCenterPage() {
       <GovernanceTabs />
 
       <ImportCenterPanel />
+
+      <BatchImportPanel />
     </div>
   )
 }

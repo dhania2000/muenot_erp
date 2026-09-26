@@ -25,7 +25,7 @@ import "server-only"
  * lib/data-classification.ts) so existing databases converge with no manual
  * migration.
  */
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import { query, tableColumns } from "@/lib/db"
 import { recordAuditLog } from "@/lib/audit-log-store"
 import { onDataExport } from "@/lib/security-alerts-store"
@@ -670,8 +670,44 @@ async function serializeArtifact(format: ExportFormat, scopeLabel: string, datas
     case "pdf": {
       return renderPdf(scopeLabel, datasets)
     }
+    case "backup": {
+      return Buffer.from(serializeJson(buildBackupPackage(scopeLabel, datasets)), "utf-8")
+    }
     default:
       return Buffer.from(serializeCsv(datasets[0]?.rows ?? []), "utf-8")
+  }
+}
+
+/**
+ * Full-tenant backup package: a single self-describing JSON document with a
+ * manifest (format version, per-dataset row counts and SHA-256 checksums) so a
+ * restore can verify integrity before touching any data. Values are raw (not
+ * spreadsheet-neutralized) because the package is machine-restorable, and
+ * classified fields are already redacted by `enforceExportClassification`.
+ */
+function buildBackupPackage(scopeLabel: string, datasets: RenderedDataset[]) {
+  const entries = datasets.map((d) => {
+    const body = serializeJson(d.rows)
+    return {
+      label: d.label,
+      rowCount: d.rows.length,
+      redactedFields: d.redacted,
+      sha256: createHash("sha256").update(body).digest("hex"),
+      rows: d.rows,
+    }
+  })
+  const manifest = {
+    packageFormat: "muenot-erp-backup",
+    packageVersion: 1,
+    generatedAt: new Date().toISOString(),
+    scope: scopeLabel,
+    datasetCount: entries.length,
+    totalRows: entries.reduce((n, e) => n + e.rowCount, 0),
+    datasets: entries.map(({ label, rowCount, redactedFields, sha256 }) => ({ label, rowCount, redactedFields, sha256 })),
+  }
+  return {
+    manifest: { ...manifest, manifestSha256: createHash("sha256").update(JSON.stringify(manifest.datasets)).digest("hex") },
+    datasets: Object.fromEntries(entries.map((e) => [e.label, e.rows])),
   }
 }
 
@@ -758,6 +794,9 @@ export async function createExportSchedule(
   await ensureTables()
   const scope = resolveScope(input.datasetKey)
   const format = toExportFormat(input.format)
+  if (format === "backup") {
+    throw new Error("Backup packages cannot be scheduled; generate them on demand as the tenant owner")
+  }
   const frequency = toExportFrequency(input.frequency)
   const nextRun = computeNextExportRun(frequency, null)
 

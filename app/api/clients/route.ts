@@ -12,8 +12,8 @@ import {
   pageMeta,
   parseTableQuery,
   TableQueryError,
-  type TableQueryOptions,
 } from "@/lib/table-query"
+import { CLIENT_TABLE_QUERY } from "@/lib/clients-table-query"
 import {
   ensureClientTables,
   findClientDuplicates,
@@ -39,19 +39,6 @@ const ALLOWED = new Set([
   "payment_terms_days","credit_limit","legal_name",
 ])
 
-/** Public sort keys → trusted SQL. Keys mirror the list UI's column keys. */
-export const CLIENT_TABLE_QUERY: TableQueryOptions = {
-  sortable: {
-    client: "c.client_name",
-    company: "c.company_name",
-    location: "c.city",
-    login: "c.login_allowed",
-    status: "c.status",
-    created_at: "c.created_at",
-  },
-  filters: { status: ["Active", "Inactive"], login: ["Yes", "No"] },
-  defaultPageSize: 25,
-}
 
 export async function GET(request: Request) {
   await ensureClientTables()

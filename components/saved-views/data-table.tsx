@@ -16,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { EmptyState, ErrorState } from "@/components/enterprise/data-state"
 import { cn } from "@/lib/utils"
 import { DEFAULT_COLUMN_WIDTH, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from "@/lib/saved-views/types"
-import type { ColumnPref } from "@/lib/saved-views/types"
+import { layoutColumns } from "@/lib/saved-views/layout"
 import type { useSavedViews } from "./use-saved-views"
 
 type Hook = ReturnType<typeof useSavedViews>
@@ -45,18 +45,7 @@ export type DataTableProps<T> = {
   emptyDescription?: string
 }
 
-/** Visible columns with pinned ones first, plus the sticky left offset of each pinned column. */
-export function layoutColumns(columns: ColumnPref[]) {
-  const visible = columns.filter((c) => !c.hidden)
-  const ordered = [...visible.filter((c) => c.pinned), ...visible.filter((c) => !c.pinned)]
-  let offset = 0
-  return ordered.map((c) => {
-    const width = c.width ?? (c.pinned ? DEFAULT_COLUMN_WIDTH : undefined)
-    const left = c.pinned ? offset : undefined
-    if (c.pinned) offset += width ?? DEFAULT_COLUMN_WIDTH
-    return { ...c, width, left }
-  })
-}
+export { layoutColumns }
 
 export function DataTable<T>(props: DataTableProps<T>) {
   const {

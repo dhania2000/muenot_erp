@@ -278,6 +278,8 @@ async function replaceItems(invoicePk: number, items: ReturnType<typeof computeI
 export async function GET(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  // SPEC 45 — if the tenant disabled the finance module, its API does not exist.
+  if (!(await isModuleEnabled("finance"))) return NextResponse.json({ error: "Not found" }, { status: 404 })
   await ensureSalesInvoiceSchema()
 
   const p = req.nextUrl.searchParams
@@ -370,6 +372,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  // SPEC 45 — if the tenant disabled the finance module, its API does not exist.
+  if (!(await isModuleEnabled("finance"))) return NextResponse.json({ error: "Not found" }, { status: 404 })
   if (!(await canCreateInModule(session, SALES_INVOICE_PERMISSION_KEY))) {
     return NextResponse.json({ error: "You do not have permission to create invoices." }, { status: 403 })
   }
@@ -556,8 +560,10 @@ async function postAndRecord(inv: Record<string, any>, actorId?: number | null) 
 export async function PATCH(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  // SPEC 45 — if the tenant disabled the finance module, its API does not exist.
+  if (!(await isModuleEnabled("finance"))) return NextResponse.json({ error: "Not found" }, { status: 404 })
   await ensureSalesInvoiceSchema()
-
+  
   const body = await req.json()
   const id = Number(body.id)
   if (!id) return NextResponse.json({ error: "Invoice id is required" }, { status: 400 })
@@ -786,6 +792,8 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  // SPEC 45 — if the tenant disabled the finance module, its API does not exist.
+  if (!(await isModuleEnabled("finance"))) return NextResponse.json({ error: "Not found" }, { status: 404 })
   await ensureSalesInvoiceSchema()
   const id = Number(req.nextUrl.searchParams.get("id"))
   if (!id) return NextResponse.json({ error: "Invoice id is required" }, { status: 400 })

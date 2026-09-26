@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth"
 import { userHasFeature } from "@/lib/permissions"
 import { hasActionGrant } from "@/lib/permission-store"
 import { getCurrentTenant } from "@/lib/tenant-context"
+import { isModuleEnabled } from "@/lib/module-access"
 
 /**
  * Requires an active session with the given feature slug granted.
@@ -31,6 +32,25 @@ export async function requireModuleAction(moduleKey: string, actionKey: string) 
   const allowed = await hasActionGrant(session.userId, session.role, moduleKey, actionKey)
   if (!allowed) return null
   return session
+}
+
+/**
+ * SPEC 45 — module-enablement gate for API routes. Combines the feature
+ * permission check with the tenant's `module.<slug>` toggle: if the tenant has
+ * disabled the module, the API is treated as if it does not exist. Returns the
+ * session when allowed, or a discriminated failure the caller maps to a
+ * response — 404 for a disabled module (non-disclosure), 403 for a permission
+ * miss, 401 when unauthenticated.
+ */
+export async function requireFeatureInModule(moduleSlug: string, featureSlug: string) {
+  const session = await getSession()
+  if (!session) return { ok: false as const, status: 401 as const, error: "Unauthorized" }
+  if (!(await isModuleEnabled(moduleSlug))) {
+    return { ok: false as const, status: 404 as const, error: "Not found" }
+  }
+  const allowed = await userHasFeature(session.userId, session.role, featureSlug)
+  if (!allowed) return { ok: false as const, status: 403 as const, error: "Forbidden" }
+  return { ok: true as const, session }
 }
 
 /**

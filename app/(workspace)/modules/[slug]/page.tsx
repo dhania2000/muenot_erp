@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getUserAccessibleModules } from "@/lib/permissions"
+import { isModuleEnabled } from "@/lib/module-access"
 import { WorkspaceModuleClient } from "@/components/workspace-module-client"
 import { MessagesClient } from "@/components/messages-client"
 import { NoticeBoardClient } from "@/components/notice-board-client"
@@ -23,6 +24,10 @@ export default async function ModulePage({ params }: { params: Promise<{ slug: s
   const { slug } = await params
   const session = await getSession()
   if (!session) redirect("/login")
+
+  // SPEC 45 — respect the tenant's module toggle before anything else, so a
+  // disabled top-level module 404s instead of rendering its landing page.
+  if (!(await isModuleEnabled(slug))) notFound()
 
   const modules = await getUserAccessibleModules(session.userId, session.role)
   const currentModule = modules.find((m) => m.slug === slug)

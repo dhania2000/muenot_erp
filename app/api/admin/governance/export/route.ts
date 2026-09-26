@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { requireTenantAdmin, requireTenantOwner, effectiveTenantId } from "@/lib/platform-guard"
+import { isValidBatchIdempotencyKey } from "@/lib/data-import-batches-model"
 import {
+  ExportIdempotencyConflictError,
   createAndRunExport,
   getExportJobWithLink,
   listExportJobs,
@@ -12,6 +14,7 @@ import {
   EXPORT_FREQUENCIES,
   FULL_TENANT_EXPORT_KEY,
   assertFormatScope,
+  isAcceptedExportFormatInput,
   isBackupPackageFormat,
   toExportFormat,
 } from "@/lib/data-export-model"
@@ -41,6 +44,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}))
+  if (!isAcceptedExportFormatInput(body?.format)) {
+    return NextResponse.json({ error: "Unsupported export format" }, { status: 400 })
+  }
   let format
   try {
     format = toExportFormat(body?.format)
@@ -65,11 +71,24 @@ export async function POST(request: Request) {
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 400 })
   }
+  // Optional, but when sent it must be well-formed so a retry replays the
+  // original job instead of rendering (and auditing) a second artifact.
+  const rawKey = request.headers.get("idempotency-key") ?? body?.idempotencyKey
+  if (rawKey != null && !isValidBatchIdempotencyKey(rawKey)) {
+    return NextResponse.json({ error: "Idempotency-Key must be 8-120 url-safe characters" }, { status: 400 })
+  }
   try {
-    const job = await createAndRunExport(tenantId, { datasetKey, format: body?.format }, actor)
+    const job = await createAndRunExport(
+      tenantId,
+      { datasetKey, format: body?.format, idempotencyKey: (rawKey as string | undefined) ?? null },
+      actor,
+    )
     const withLink = await getExportJobWithLink(tenantId, job.id)
     return NextResponse.json({ job: withLink ?? job }, { status: 201 })
   } catch (err) {
+    if (err instanceof ExportIdempotencyConflictError) {
+      return NextResponse.json({ error: err.message }, { status: 409 })
+    }
     return NextResponse.json({ error: (err as Error).message }, { status: 400 })
   }
 }

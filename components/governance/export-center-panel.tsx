@@ -179,8 +179,8 @@ export function ExportCenterPanel() {
     try {
       const res = await fetch(API, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ datasetKey: effectiveScope, format: useFormat }),
+  headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+  body: JSON.stringify({ datasetKey: effectiveScope, format: useFormat }),
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || "Export failed")

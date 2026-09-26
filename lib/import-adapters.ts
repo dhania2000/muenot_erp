@@ -110,7 +110,6 @@ export const IMPORT_ADAPTERS: ImportAdapter[] = [
       Party: "client_name",
       "Voucher No": "payment_reference",
       "Voucher Number": "payment_reference",
-      "GSTIN/UIN": "irn_reference",
       "Taxable Value": "taxable_amount",
       "Taxable Amount": "taxable_amount",
       "Gross Total": "invoice_total",

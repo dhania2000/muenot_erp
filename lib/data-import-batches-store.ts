@@ -705,7 +705,12 @@ export async function processBatchImport(jobId: number, signal?: AbortSignal): P
     }
   } catch (err) {
     const message = ((err as Error).message || "Batch failed").slice(0, 1000)
-    await query(`UPDATE data_import_batch_jobs SET status = 'interrupted', error = ? WHERE id = ?`, [message, job.id])
+    // Only a still-running job becomes resumable; never clobber a concurrent
+    // rollback/cancel that already moved it out of `running`.
+    await query(`UPDATE data_import_batch_jobs SET status = 'interrupted', error = ? WHERE id = ? AND status = 'running'`, [
+      message,
+      job.id,
+    ])
     await recordEvent(job, "interrupted", { error: message })
     throw err // let the queue retry with backoff; the next attempt resumes from the checkpoint
   }

@@ -133,6 +133,7 @@ function compile(
   tenantId: number | null,
   existing: Set<string>,
   scope: DataScopeSql | null,
+  pagination?: { limit: number; offset: number },
 ): CompiledQuery {
   const tenantCol = resolveExistingColumn(source.tenantColumns, existing)
   if (tenantId != null && !tenantCol) {
@@ -205,10 +206,25 @@ function compile(
       return `${ident(alias)} ${s.direction === "desc" ? "DESC" : "ASC"}`
     })
     orderSql = ` ORDER BY ${parts.join(", ")}`
+  } else if (pagination) {
+    // OFFSET pagination is only correct over a DETERMINISTIC order: without one,
+    // MySQL may return the same row on two pages or skip rows entirely. Fall
+    // back to the table's primary `id`, else the first selected column, so a
+    // million-row export never double-counts or drops records.
+    if (existing.has("id")) orderSql = ` ORDER BY ${ident("id")} ASC`
+    else if (aliases.length > 0) orderSql = ` ORDER BY ${ident(aliases[0])} ASC`
   }
 
-  const limit = Math.min(def.limit ?? REPORT_CAPS.maxRows, REPORT_CAPS.maxRows)
-  const limitSql = ` LIMIT ${Math.trunc(limit)}`
+  let limitSql: string
+  if (pagination) {
+    // Integers only — trunc + clamp — never interpolate untrusted values.
+    const pageLimit = Math.max(0, Math.trunc(pagination.limit))
+    const pageOffset = Math.max(0, Math.trunc(pagination.offset))
+    limitSql = ` LIMIT ${pageLimit} OFFSET ${pageOffset}`
+  } else {
+    const limit = Math.min(def.limit ?? REPORT_CAPS.maxRows, REPORT_CAPS.maxRows)
+    limitSql = ` LIMIT ${Math.trunc(limit)}`
+  }
 
   const whereSql = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""
   const sql = `SELECT ${selectParts.join(", ")} FROM ${ident(source.table)}${whereSql}${groupSql}${orderSql}${limitSql}`
@@ -247,7 +263,20 @@ export type RunOptions = {
  * Raw (non-aggregated) results are redacted per the acting role's clearance so
  * a report can never expose a classified field the role may not view.
  */
-export async function runReport(rawDefinition: unknown, opts: RunOptions): Promise<RunReportResult> {
+type PreparedReport = {
+  source: ReportSource
+  def: ReportDefinition
+  existing: Set<string>
+  actor: Awaited<ReturnType<typeof resolveReportActor>>
+  scope: DataScopeSql | null
+}
+
+/**
+ * Shared validate → resolve-actor → build-scope pipeline used by BOTH the
+ * interactive run and the queued large export, so every path enforces the same
+ * catalog whitelist, tenant scope and row/field security before any SQL runs.
+ */
+async function prepareReport(rawDefinition: unknown, opts: RunOptions): Promise<PreparedReport> {
   const sourceKey = String((rawDefinition as ReportDefinition)?.sourceKey ?? "")
   const source = getReportSource(sourceKey)
   if (!source) throw new Error("Unknown data source.")
@@ -273,6 +302,11 @@ export async function runReport(rawDefinition: unknown, opts: RunOptions): Promi
     permissionGroups: opts.permissionGroups,
   })
   const scope = await buildReportScope(source, actor, existing)
+  return { source, def, existing, actor, scope }
+}
+
+export async function runReport(rawDefinition: unknown, opts: RunOptions): Promise<RunReportResult> {
+  const { source, def, existing, actor, scope } = await prepareReport(rawDefinition, opts)
 
   const compiled = compile(source, def, opts.tenantId, existing, scope)
   const rows = await query<Record<string, unknown>[]>(compiled.sql, compiled.params)
@@ -295,6 +329,119 @@ export async function runReport(rawDefinition: unknown, opts: RunOptions): Promi
     redactedFields: enforced.redactedFields,
     maskedFields: enforced.maskedFields,
     aggregated: compiled.isAggregated,
+  }
+}
+
+export type ExportPage = {
+  columns: { key: string; label: string }[]
+  rows: Record<string, unknown>[]
+  pageIndex: number
+  isFirst: boolean
+}
+
+export type RunExportOptions = RunOptions & {
+  /** Rows fetched per page. Clamped to a safe range. */
+  pageSize?: number
+  /** Hard ceiling on total rows streamed across all pages. */
+  maxRows?: number
+  /** Consulted before every page fetch; return false to stop (cancellation). */
+  shouldContinue?: () => boolean | Promise<boolean>
+}
+
+export type RunExportResult = {
+  columns: { key: string; label: string }[]
+  totalRows: number
+  redactedFields: string[]
+  maskedFields: string[]
+  aggregated: boolean
+  cancelled: boolean
+  truncated: boolean
+}
+
+/**
+ * Stream a validated report to `onPage` in bounded pages — the engine behind
+ * queued large exports. Reuses the exact same safe compiler + row/field
+ * security as `runReport`; the ONLY difference is it walks the result set with
+ * deterministic LIMIT/OFFSET pagination (up to `maxRows`) instead of a single
+ * capped read, redacts EACH page, and can be cancelled between pages. Aggregated
+ * / grouped reports collapse to a bounded set and are emitted in one page.
+ */
+export async function runReportForExport(
+  rawDefinition: unknown,
+  opts: RunExportOptions,
+  onPage: (page: ExportPage) => void | Promise<void>,
+): Promise<RunExportResult> {
+  const { source, def, existing, actor, scope } = await prepareReport(rawDefinition, opts)
+
+  const maxRows = Math.max(1, Math.min(Math.trunc(opts.maxRows ?? 1_000_000), 5_000_000))
+  const pageSize = Math.max(1, Math.min(Math.trunc(opts.pageSize ?? 10_000), 50_000))
+
+  const redacted = new Set<string>()
+  const masked = new Set<string>()
+
+  const aggregated = def.columns.some((c) => c.aggregation) || def.groupBy.length > 0
+  if (aggregated) {
+    const compiled = compile(source, def, opts.tenantId, existing, scope)
+    const rows = await query<Record<string, unknown>[]>(compiled.sql, compiled.params)
+    const enforced = await enforceReportSecurity(rows, { source, actor, isAggregated: true })
+    for (const f of enforced.redactedFields) redacted.add(f)
+    for (const f of enforced.maskedFields) masked.add(f)
+    const columns = compiled.aliases.map((a) => ({ key: a, label: compiled.headers[a] ?? a }))
+    await onPage({ columns, rows: enforced.rows as Record<string, unknown>[], pageIndex: 0, isFirst: true })
+    return {
+      columns,
+      totalRows: enforced.rows.length,
+      redactedFields: [...redacted],
+      maskedFields: [...masked],
+      aggregated: true,
+      cancelled: false,
+      truncated: enforced.rows.length >= REPORT_CAPS.maxRows,
+    }
+  }
+
+  let columns: { key: string; label: string }[] = []
+  let total = 0
+  let offset = 0
+  let pageIndex = 0
+  let cancelled = false
+  let truncated = false
+
+  while (true) {
+    if (opts.shouldContinue && !(await opts.shouldContinue())) {
+      cancelled = true
+      break
+    }
+    const remaining = maxRows - total
+    if (remaining <= 0) {
+      truncated = true
+      break
+    }
+    const limit = Math.min(pageSize, remaining)
+    const compiled = compile(source, def, opts.tenantId, existing, scope, { limit, offset })
+    if (pageIndex === 0) columns = compiled.aliases.map((a) => ({ key: a, label: compiled.headers[a] ?? a }))
+    const rows = await query<Record<string, unknown>[]>(compiled.sql, compiled.params)
+    const enforced = rows.length
+      ? await enforceReportSecurity(rows, { source, actor, isAggregated: false })
+      : { rows: [] as Record<string, unknown>[], redactedFields: [] as string[], maskedFields: [] as string[] }
+    for (const f of enforced.redactedFields) redacted.add(f)
+    for (const f of enforced.maskedFields) masked.add(f)
+    // Emit page 0 even when empty so the artifact always gets its header row.
+    await onPage({ columns, rows: enforced.rows as Record<string, unknown>[], pageIndex, isFirst: pageIndex === 0 })
+    if (rows.length === 0) break
+    total += rows.length
+    offset += rows.length
+    pageIndex++
+    if (rows.length < limit) break
+  }
+
+  return {
+    columns,
+    totalRows: total,
+    redactedFields: [...redacted],
+    maskedFields: [...masked],
+    aggregated: false,
+    cancelled,
+    truncated,
   }
 }
 

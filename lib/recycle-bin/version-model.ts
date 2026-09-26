@@ -159,6 +159,30 @@ export type TransitionContext = {
   actorUserId: number
   /** When true (default), an approver may not approve their own version. */
   enforceSegregation?: boolean
+  /**
+   * The live row changed underneath the proposal (row_version advanced or a
+   * gated field no longer matches the captured base values) — e.g. a direct
+   * edit, restore, or another publish landed first.
+   */
+  liveStale?: boolean
+}
+
+/**
+ * Live-row staleness: an edit captured against `baseRowVersion` + `baseValues`
+ * is stale when the row's optimistic-lock counter advanced OR any of the
+ * proposed fields no longer holds the value the author saw.
+ */
+export function isLiveRowStale(input: {
+  baseRowVersion: number | null
+  currentRowVersion: number | null
+  baseValues: Record<string, unknown>
+  currentValues: Record<string, unknown>
+  equals: (field: string, a: unknown, b: unknown) => boolean
+}): boolean {
+  if (input.baseRowVersion != null && input.currentRowVersion != null && input.currentRowVersion !== input.baseRowVersion) {
+    return true
+  }
+  return Object.keys(input.baseValues).some((f) => !input.equals(f, input.baseValues[f], input.currentValues[f]))
 }
 
 /**
@@ -186,7 +210,7 @@ export function evaluateTransition(t: VersionTransition, ctx: TransitionContext)
       status: 403,
     }
   }
-  if (t === "publish" && isEditStale(ctx.baseVersionNo, ctx.currentPublishedVersionNo)) {
+  if (t === "publish" && (ctx.liveStale || isEditStale(ctx.baseVersionNo, ctx.currentPublishedVersionNo))) {
     return {
       ok: false,
       code: "STALE",

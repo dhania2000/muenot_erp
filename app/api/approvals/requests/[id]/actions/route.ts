@@ -4,6 +4,7 @@ import { getCurrentTenant } from "@/lib/tenant-context"
 import { actOnApprovalRequest, type ActInput } from "@/lib/approval-authority"
 import { handleApprovalOutcome } from "@/lib/maker-checker"
 import { handleDocumentApprovalOutcome } from "@/lib/dms/approval"
+import { handleMatchApprovalOutcome, precheckMatchApprovalAction } from "@/lib/finance-three-way-match-server"
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
@@ -20,6 +21,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const action = body?.action
   if (!action || !["approve", "reject", "delegate", "escalate", "cancel"].includes(action))
     return NextResponse.json({ error: "A valid action is required" }, { status: 400 })
+
+  // Spec37 — a three-way match exception keeps its segregation-of-duties rule
+  // when decided from the inbox (bill booker / PO approver cannot approve).
+  const matchSod = await precheckMatchApprovalAction(Number(id), session.userId, action)
+  if (matchSod) return NextResponse.json({ error: matchSod }, { status: 403 })
 
   const result = await actOnApprovalRequest(
     {
@@ -43,6 +49,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     await handleApprovalOutcome(Number(id), result.status)
     await handleDocumentApprovalOutcome(Number(id), result.status)
+    await handleMatchApprovalOutcome(Number(id), result.status, { id: session.userId, name: session.name ?? null })
   } catch (err) {
     // The decision itself is recorded; surface apply failures without losing it.
     return NextResponse.json(

@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth"
 import { getTenantId } from "@/lib/api-auth"
 import { logFinanceEvent } from "@/lib/finance-audit"
 import { num, round2 } from "@/lib/finance-calc"
+import { raiseApprovalRequest } from "@/lib/approval-authority"
 import {
   evaluateThreeWayMatch,
   normalizeTolerances,
@@ -12,6 +13,7 @@ import {
   type MatchTolerances,
   type MatchResult,
   type MatchInput,
+  type MatchReceipt,
 } from "@/lib/finance-three-way-match"
 
 /**
@@ -23,9 +25,13 @@ import {
  * lib/finance-three-way-match.ts — this module only gathers the three
  * documents, persists the result, and gates payment on unresolved exceptions.
  *
- * Reuses the Spec36 procurement tables and the existing purchase_bills master;
- * it never duplicates the order / receipt / invoice subsystems.
+ * `purchase_bills` carries no tenant column, so sibling-bill totals and
+ * duplicate detection read the tenant-scoped `finance_match_results` ledger
+ * (one row per bill linked to a tenant PO) — never the unscoped bill table.
  */
+
+export const MATCH_MODULE = "finance.three_way_match"
+export const MATCH_APPROVAL_ENTITY = "finance_match_result"
 
 export class MatchTenantError extends Error {
   constructor() {
@@ -41,10 +47,19 @@ export async function requireMatchTenant(): Promise<number> {
 
 // ---------------------------------------------------------------------------
 // Schema — idempotent, once per process. Mirrors
-// database/migrations/2027-01-30-spec37-three-way-matching.sql for managed deploys.
+// database/migrations/2027-01-30-spec37-three-way-matching.sql (+ the 2027-02-02
+// follow-up) for managed deploys.
 // ---------------------------------------------------------------------------
 
 let schemaEnsured = false
+
+async function ensureColumn(table: string, column: string, ddl: string): Promise<void> {
+  const rows = (await query(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column],
+  )) as any[]
+  if (num(rows[0]?.n) === 0) await query(`ALTER TABLE ${table} ADD COLUMN ${ddl}`)
+}
 
 export async function ensureMatchSchema(): Promise<void> {
   if (schemaEnsured) return
@@ -86,7 +101,44 @@ export async function ensureMatchSchema(): Promise<void> {
     KEY idx_match_status (tenant_id, match_status)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
+  // Tenant-scoped bill ledger fields (sibling totals + duplicate detection) and
+  // the approval-inbox binding.
+  await ensureColumn("finance_match_results", "bill_number", "bill_number VARCHAR(80) DEFAULT NULL")
+  await ensureColumn("finance_match_results", "vendor_id", "vendor_id VARCHAR(60) DEFAULT NULL")
+  await ensureColumn("finance_match_results", "currency", "currency VARCHAR(10) DEFAULT NULL")
+  await ensureColumn("finance_match_results", "billed_quantity", "billed_quantity DECIMAL(14,3) NOT NULL DEFAULT 0")
+  await ensureColumn("finance_match_results", "billed_taxable", "billed_taxable DECIMAL(14,2) NOT NULL DEFAULT 0")
+  await ensureColumn("finance_match_results", "approval_request_id", "approval_request_id INT DEFAULT NULL")
+
+  await query(`CREATE TABLE IF NOT EXISTS finance_match_events (
+    id                   INT AUTO_INCREMENT PRIMARY KEY,
+    tenant_id            INT NOT NULL,
+    bill_id              VARCHAR(30) NOT NULL,
+    event_type           VARCHAR(30) NOT NULL,
+    summary              VARCHAR(500) NOT NULL,
+    detail               MEDIUMTEXT DEFAULT NULL,
+    actor_id             INT DEFAULT NULL,
+    actor_name           VARCHAR(190) DEFAULT NULL,
+    created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_match_events_bill (tenant_id, bill_id, created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  await query(`CREATE TABLE IF NOT EXISTS finance_match_idempotency (
+    tenant_id            INT NOT NULL,
+    idem_key             VARCHAR(100) NOT NULL,
+    bill_id              VARCHAR(30) NOT NULL,
+    decision             VARCHAR(10) NOT NULL,
+    response             MEDIUMTEXT NOT NULL,
+    created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tenant_id, idem_key)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
   schemaEnsured = true
+}
+
+/** Test hook — lets unit tests re-run the schema ensure against a fresh mock. */
+export function __resetMatchSchemaForTests(): void {
+  schemaEnsured = false
 }
 
 async function tableExists(name: string): Promise<boolean> {
@@ -102,6 +154,64 @@ const s = (v: unknown) => String(v ?? "").trim()
 async function actor(): Promise<{ id: number | null; name: string | null }> {
   const session = await getSession()
   return { id: session ? Number(session.userId) : null, name: session?.name ?? null }
+}
+
+/** Tenant-scoped match audit trail (plus the global finance audit log). */
+async function recordMatchEvent(
+  tenantId: number,
+  billId: string,
+  type: "computed" | "approved" | "rejected" | "reopened" | "config" | "deleted" | "approval_raised",
+  summary: string,
+  detail: Record<string, unknown>,
+  who: { id: number | null; name: string | null },
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO finance_match_events (tenant_id, bill_id, event_type, summary, detail, actor_id, actor_name)
+         VALUES (?,?,?,?,?,?,?)`,
+      [tenantId, billId, type, summary.slice(0, 500), JSON.stringify(detail), who.id, who.name],
+    )
+  } catch (error) {
+    console.error("[v0] recordMatchEvent failed:", (error as Error).message)
+  }
+  const financeType = type === "approved" ? "approved" : type === "rejected" ? "rejected" : "updated"
+  await logFinanceEvent({
+    entityType: MATCH_APPROVAL_ENTITY,
+    entityRef: billId,
+    type: financeType,
+    summary,
+    detail: { tenantId, ...detail },
+    actorId: who.id,
+    actorName: who.name,
+  })
+}
+
+export type MatchEvent = {
+  id: number
+  type: string
+  summary: string
+  detail: Record<string, unknown> | null
+  actorId: number | null
+  actorName: string | null
+  createdAt: string | null
+}
+
+export async function listMatchEvents(tenantId: number, billId: string): Promise<MatchEvent[]> {
+  await ensureMatchSchema()
+  const rows = (await query(
+    `SELECT id, event_type, summary, detail, actor_id, actor_name, created_at FROM finance_match_events
+      WHERE tenant_id = ? AND bill_id = ? ORDER BY created_at DESC, id DESC LIMIT 200`,
+    [tenantId, billId],
+  )) as any[]
+  return rows.map((r) => ({
+    id: Number(r.id),
+    type: s(r.event_type),
+    summary: s(r.summary),
+    detail: safeParse(r.detail),
+    actorId: r.actor_id != null ? Number(r.actor_id) : null,
+    actorName: r.actor_name != null ? s(r.actor_name) : null,
+    createdAt: r.created_at != null ? String(r.created_at) : null,
+  }))
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +237,10 @@ export async function setMatchTolerances(
   tenantId: number,
   raw: Partial<MatchTolerances>,
   userId: number | null,
+  userName: string | null = null,
 ): Promise<MatchTolerances> {
   await ensureMatchSchema()
+  const before = await getMatchTolerances(tenantId)
   const tol = normalizeTolerances(raw)
   await query(
     `INSERT INTO finance_match_config (tenant_id, quantity_percent, price_percent, amount_percent, amount_absolute, updated_by)
@@ -137,13 +249,9 @@ export async function setMatchTolerances(
        amount_percent = VALUES(amount_percent), amount_absolute = VALUES(amount_absolute), updated_by = VALUES(updated_by)`,
     [tenantId, tol.quantityPercent, tol.pricePercent, tol.amountPercent, tol.amountAbsolute, userId],
   )
-  await logFinanceEvent({
-    entityType: "finance_match_config",
-    entityRef: String(tenantId),
-    type: "updated",
-    summary: "Three-way match tolerances updated",
-    detail: tol as unknown as Record<string, unknown>,
-    actorId: userId,
+  await recordMatchEvent(tenantId, "__config__", "config", "Three-way match tolerances updated", { before, after: tol }, {
+    id: userId,
+    name: userName,
   })
   return tol
 }
@@ -152,7 +260,7 @@ export async function setMatchTolerances(
 // Gather the three documents for a bill — tenant-scoped, server-authoritative.
 // ---------------------------------------------------------------------------
 
-type BillRow = {
+export type BillRow = {
   bill_id?: unknown
   po_number?: unknown
   grn_number?: unknown
@@ -167,7 +275,7 @@ type BillRow = {
 async function findPo(tenantId: number, poRef: string) {
   if (!poRef) return null
   const rows = (await query(
-    `SELECT po_number, quantity, unit_price, discount_percent, taxable_amount, gst_rate, currency, vendor_id, vendor_name
+    `SELECT po_number, quantity, unit_price, discount_percent, taxable_amount, gst_rate, currency, vendor_id, vendor_name, approved_by_user_id
        FROM procurement_purchase_orders WHERE tenant_id = ? AND po_number = ? LIMIT 1`,
     [tenantId, poRef],
   )) as any[]
@@ -180,56 +288,67 @@ function netUnitPrice(po: Record<string, any>): number {
   return round2(num(po.unit_price) * (1 - discount / 100))
 }
 
-async function grnAggregate(tenantId: number, poRef: string) {
+/** Every goods receipt on the PO (split receipts), keyed by stable grn_id. */
+async function grnReceipts(tenantId: number, poRef: string): Promise<MatchReceipt[]> {
   const rows = (await query(
-    `SELECT COUNT(*) AS n, COALESCE(SUM(accepted_quantity),0) AS qty, COALESCE(SUM(received_value),0) AS val
-       FROM procurement_goods_receipts WHERE tenant_id = ? AND po_number = ?`,
+    `SELECT grn_id, receipt_date, received_quantity, accepted_quantity, rejected_quantity, received_value
+       FROM procurement_goods_receipts WHERE tenant_id = ? AND po_number = ? ORDER BY receipt_date, grn_id`,
     [tenantId, poRef],
   )) as any[]
-  return { count: num(rows[0]?.n), acceptedQuantity: num(rows[0]?.qty), receivedValue: num(rows[0]?.val) }
+  return rows.map((r) => ({
+    grnId: s(r.grn_id),
+    receiptDate: r.receipt_date != null ? String(r.receipt_date).slice(0, 10) : null,
+    receivedQuantity: num(r.received_quantity),
+    acceptedQuantity: num(r.accepted_quantity),
+    rejectedQuantity: num(r.rejected_quantity),
+    receivedValue: num(r.received_value),
+  }))
 }
 
-async function otherBillsForPo(poRef: string, excludeBillId: string) {
-  try {
-    const rows = (await query(
-      `SELECT COALESCE(SUM(taxable_amount),0) AS taxable, COALESCE(SUM(quantity),0) AS qty
-         FROM purchase_bills WHERE po_number = ? AND bill_id <> ?`,
-      [poRef, excludeBillId || "__none__"],
-    )) as any[]
-    return { taxable: num(rows[0]?.taxable), quantity: num(rows[0]?.qty) }
-  } catch {
-    return { taxable: 0, quantity: 0 }
-  }
+/**
+ * Quantity + taxable already billed on OTHER bills against the same PO, read
+ * from the tenant-scoped ledger. Exported so the bill guard's overbilling check
+ * shares the same scoped source.
+ */
+export async function billedOnPoForTenant(tenantId: number, poRef: string, excludeBillId: string) {
+  await ensureMatchSchema()
+  const rows = (await query(
+    `SELECT COALESCE(SUM(billed_taxable),0) AS taxable, COALESCE(SUM(billed_quantity),0) AS qty
+       FROM finance_match_results WHERE tenant_id = ? AND po_number = ? AND bill_id <> ?`,
+    [tenantId, poRef, excludeBillId || "__none__"],
+  )) as any[]
+  return { taxable: num(rows[0]?.taxable), quantity: num(rows[0]?.qty) }
 }
 
-async function isDuplicateBill(bill: BillRow, excludeBillId: string): Promise<boolean> {
-  const billNumber = s(bill.bill_number)
-  const vendorId = s(bill.vendor_id)
-  if (!billNumber || !vendorId) return false
-  try {
-    const rows = (await query(
-      `SELECT COUNT(*) AS n FROM purchase_bills WHERE bill_number = ? AND vendor_id = ? AND bill_id <> ?`,
-      [billNumber, vendorId, excludeBillId || "__none__"],
-    )) as any[]
-    return num(rows[0]?.n) > 0
-  } catch {
-    return false
-  }
+/** Same vendor bill number already booked for the same vendor in this tenant. */
+async function findDuplicateBill(tenantId: number, bill: BillRow, excludeBillId: string): Promise<string | null> {
+  const billNumber = s(bill.bill_number).toUpperCase()
+  const vendorKey = s(bill.vendor_id) || s(bill.vendor_name)
+  if (!billNumber || !vendorKey) return null
+  const rows = (await query(
+    `SELECT bill_id FROM finance_match_results
+      WHERE tenant_id = ? AND UPPER(bill_number) = ? AND (vendor_id = ? OR (vendor_id IS NULL AND vendor_name = ?))
+        AND bill_id <> ? LIMIT 1`,
+    [tenantId, billNumber, vendorKey, s(bill.vendor_name), excludeBillId || "__none__"],
+  )) as any[]
+  return rows[0] ? s(rows[0].bill_id) : null
 }
 
 /**
  * Build the pure-engine input for a bill from the tenant's PO, goods receipts
- * and sibling bills. The bill's own billable quantity is derived from its
- * taxable value at the PO net price when the bill carries no quantity column.
+ * and sibling bills. The bill's own billable quantity is the sum of its line
+ * items when supplied, else derived from its taxable value at the PO net price.
  */
 export async function gatherMatchInput(
   tenantId: number,
   bill: BillRow,
   opts?: { billQuantity?: unknown },
-): Promise<{ input: MatchInput; po: Record<string, any> | null; poRef: string }> {
+): Promise<{ input: MatchInput; po: Record<string, any> | null; poRef: string; billQuantity: number; duplicateOf: string | null }> {
+  await ensureMatchSchema()
   const poRef = s(bill.po_number)
   const po = await findPo(tenantId, poRef)
   const excludeBillId = s(bill.bill_id)
+  const billTaxable = round2(num(bill.taxable_amount))
 
   if (!po) {
     return {
@@ -242,25 +361,29 @@ export async function gatherMatchInput(
         receivedValue: 0,
         billedQuantity: 0,
         billUnitPrice: 0,
-        billTaxable: bill.taxable_amount,
+        billTaxable,
         billGstRate: bill.gst_rate,
         billCurrency: bill.currency,
       },
       po: null,
       poRef,
+      billQuantity: 0,
+      duplicateOf: null,
     }
   }
 
-  const grn = await grnAggregate(tenantId, poRef)
-  const others = await otherBillsForPo(poRef, excludeBillId)
-  const duplicate = await isDuplicateBill(bill, excludeBillId)
+  const receipts = await grnReceipts(tenantId, poRef)
+  const accepted = receipts.reduce((a, r) => a + r.acceptedQuantity, 0)
+  const receivedValue = receipts.reduce((a, r) => a + r.receivedValue, 0)
+  const others = await billedOnPoForTenant(tenantId, poRef, excludeBillId)
+  const duplicateOf = await findDuplicateBill(tenantId, bill, excludeBillId)
   const poUnit = netUnitPrice(po)
-  const billTaxable = round2(num(bill.taxable_amount))
-  const billQty = opts?.billQuantity != null && s(opts.billQuantity) !== ""
-    ? num(opts.billQuantity)
-    : poUnit > 0
-      ? round2(billTaxable / poUnit)
-      : 0
+  const billQty =
+    opts?.billQuantity != null && s(opts.billQuantity) !== ""
+      ? Math.max(0, num(opts.billQuantity))
+      : poUnit > 0
+        ? round2(billTaxable / poUnit)
+        : 0
   const billUnit = billQty > 0 ? round2(billTaxable / billQty) : poUnit
 
   return {
@@ -270,137 +393,231 @@ export async function gatherMatchInput(
       poTaxable: po.taxable_amount,
       poCurrency: po.currency,
       poGstRate: po.gst_rate,
-      grnCount: grn.count,
-      acceptedQuantity: grn.acceptedQuantity,
-      receivedValue: grn.receivedValue,
+      grnCount: receipts.length,
+      acceptedQuantity: accepted,
+      receivedValue: round2(receivedValue),
       billedQuantity: billQty,
       billUnitPrice: billUnit,
       billTaxable,
-      billCurrency: bill.currency ?? po.currency,
+      billCurrency: s(bill.currency) || po.currency,
       billGstRate: bill.gst_rate,
       otherBilledQuantity: others.quantity,
       otherBilledTaxable: others.taxable,
-      duplicateBill: duplicate,
+      duplicateBill: duplicateOf != null,
+      receipts,
     },
     po,
     poRef,
+    billQuantity: billQty,
+    duplicateOf,
   }
 }
 
 // ---------------------------------------------------------------------------
-// Compute + persist. A recompute that lands on the same status/categories does
-// not disturb an existing checker resolution; a recompute that changes the
+// Compute + persist. A recompute that lands on the same exception set does
+// not disturb an existing checker decision; a recompute that changes the
 // exception set reopens the hold so a stale approval can never release payment.
 // ---------------------------------------------------------------------------
 
+export type ResolutionStatus = "open" | "approved" | "rejected"
+
 export type PersistedMatch = {
+  id: number | null
   billId: string
+  billNumber: string | null
   poNumber: string | null
   grnNumber: string | null
   vendorName: string | null
   status: MatchResult["status"]
   paymentHold: boolean
-  resolutionStatus: "open" | "approved" | "rejected"
+  resolutionStatus: ResolutionStatus
   categories: string[]
   resolvedCategories: string[]
   resolvedBy: number | null
   resolvedByName: string | null
   resolvedAt: string | null
   resolutionNote: string | null
+  approvalRequestId: number | null
+  billedTaxable: number
+  computedAt: string | null
   evidence: MatchResult
   summary: string
+}
+
+/** Pure: how a recompute carries a prior checker decision forward. */
+export function carryResolution(
+  prev: { resolution_status?: unknown; resolved_categories?: unknown } | null,
+  categories: string[],
+): ResolutionStatus {
+  if (!prev || categories.length === 0) return "open"
+  const prevStatus = s(prev.resolution_status)
+  if ((prevStatus === "approved" || prevStatus === "rejected") && sameSet(parseList(prev.resolved_categories), categories)) {
+    return prevStatus
+  }
+  return "open"
 }
 
 export async function computeAndPersistMatch(
   tenantId: number,
   bill: BillRow,
-  opts?: { billQuantity?: unknown; userId?: number | null },
-): Promise<PersistedMatch> {
+  opts?: { billQuantity?: unknown; userId?: number | null; userName?: string | null },
+): Promise<PersistedMatch | null> {
   await ensureMatchSchema()
   const billId = s(bill.bill_id)
   if (!billId) throw new Error("A bill id is required to run three-way matching.")
 
+  const { input, po, poRef, billQuantity, duplicateOf } = await gatherMatchInput(tenantId, bill, opts)
+  if (!po) {
+    // Unlinked / legacy free-text PO: nothing to match. Drop any stale row so it
+    // no longer counts toward another bill's totals.
+    await query(`DELETE FROM finance_match_results WHERE tenant_id = ? AND bill_id = ?`, [tenantId, billId])
+    return null
+  }
+
   const tol = await getMatchTolerances(tenantId)
-  const { input, poRef } = await gatherMatchInput(tenantId, bill, opts)
   const result = evaluateThreeWayMatch(input, tol)
-  const categories = result.categories
-  const userId = opts?.userId ?? (await actor()).id
+  const categories = result.categories as string[]
+  const who = opts?.userId !== undefined ? { id: opts.userId ?? null, name: opts.userName ?? null } : await actor()
 
   const existing = (await query(
-    `SELECT match_status, categories, resolution_status, resolved_categories FROM finance_match_results
-       WHERE tenant_id = ? AND bill_id = ? LIMIT 1`,
+    `SELECT id, match_status, categories, resolution_status, resolved_categories, approval_request_id
+       FROM finance_match_results WHERE tenant_id = ? AND bill_id = ? LIMIT 1`,
     [tenantId, billId],
   )) as any[]
   const prev = existing[0] ?? null
 
-  // Keep a prior approval only when the exact same exception set is still open.
-  const prevResolved = parseList(prev?.resolved_categories)
-  const sameExceptionSet =
-    prev?.resolution_status === "approved" && sameSet(prevResolved, categories) && categories.length > 0
-  const resolutionStatus: "open" | "approved" | "rejected" = sameExceptionSet ? "approved" : "open"
+  const resolutionStatus = carryResolution(prev, categories)
+  const keep = resolutionStatus !== "open"
   const effectiveHold = result.paymentHold && resolutionStatus !== "approved"
+  const setChanged = !prev || !sameSet(parseList(prev.categories), categories)
 
   await query(
     `INSERT INTO finance_match_results
-       (tenant_id, bill_id, po_number, grn_number, vendor_name, match_status, payment_hold, categories, evidence,
-        resolution_status, resolved_categories, computed_by)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+       (tenant_id, bill_id, bill_number, po_number, grn_number, vendor_id, vendor_name, currency, billed_quantity, billed_taxable,
+        match_status, payment_hold, categories, evidence, resolution_status, computed_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE
-       po_number = VALUES(po_number), grn_number = VALUES(grn_number), vendor_name = VALUES(vendor_name),
+       bill_number = VALUES(bill_number), po_number = VALUES(po_number), grn_number = VALUES(grn_number),
+       vendor_id = VALUES(vendor_id), vendor_name = VALUES(vendor_name), currency = VALUES(currency),
+       billed_quantity = VALUES(billed_quantity), billed_taxable = VALUES(billed_taxable),
        match_status = VALUES(match_status), payment_hold = VALUES(payment_hold), categories = VALUES(categories),
        evidence = VALUES(evidence), resolution_status = VALUES(resolution_status),
-       resolved_categories = IF(VALUES(resolution_status) = 'approved', resolved_categories, NULL),
-       resolved_by = IF(VALUES(resolution_status) = 'approved', resolved_by, NULL),
-       resolved_by_name = IF(VALUES(resolution_status) = 'approved', resolved_by_name, NULL),
-       resolved_at = IF(VALUES(resolution_status) = 'approved', resolved_at, NULL),
-       resolution_note = IF(VALUES(resolution_status) = 'approved', resolution_note, NULL),
+       resolved_categories = IF(${keep ? 1 : 0} = 1, resolved_categories, NULL),
+       resolved_by = IF(${keep ? 1 : 0} = 1, resolved_by, NULL),
+       resolved_by_name = IF(${keep ? 1 : 0} = 1, resolved_by_name, NULL),
+       resolved_at = IF(${keep ? 1 : 0} = 1, resolved_at, NULL),
+       resolution_note = IF(${keep ? 1 : 0} = 1, resolution_note, NULL),
        computed_by = VALUES(computed_by)`,
     [
       tenantId,
       billId,
-      poRef || null,
+      s(bill.bill_number) || null,
+      poRef,
       s(bill.grn_number) || null,
+      s(bill.vendor_id) || null,
       s(bill.vendor_name) || null,
+      s(bill.currency) || s(po.currency) || null,
+      round2(billQuantity),
+      round2(num(bill.taxable_amount)),
       result.status,
       effectiveHold ? 1 : 0,
       JSON.stringify(categories),
-      JSON.stringify(result),
+      JSON.stringify({ ...result, duplicateOf }),
       resolutionStatus,
-      sameExceptionSet ? JSON.stringify(prevResolved) : null,
-      userId,
+      who.id,
     ],
   )
 
-  // Audit only a genuine change in the match outcome — a plain recompute is silent.
-  const changed = !prev || s(prev.match_status) !== result.status || !sameSet(parseList(prev.categories), categories)
-  if (changed) {
-    await logFinanceEvent({
-      entityType: "finance_match_result",
-      entityRef: billId,
-      type: "updated",
-      summary: `Three-way match ${billId}: ${summarizeMatch(result)}`,
-      detail: { poNumber: poRef, status: result.status, categories },
-      actorId: userId,
-    })
+  const freshRows = (await query(`SELECT * FROM finance_match_results WHERE tenant_id = ? AND bill_id = ? LIMIT 1`, [
+    tenantId,
+    billId,
+  ])) as any[]
+  const row = freshRows[0]
+
+  if (setChanged || s(prev?.match_status) !== result.status) {
+    const reopened = prev && s(prev.resolution_status) !== "open" && resolutionStatus === "open"
+    await recordMatchEvent(
+      tenantId,
+      billId,
+      reopened ? "reopened" : "computed",
+      `Three-way match ${billId}: ${summarizeMatch(result)}${reopened ? " (prior decision voided — exception set changed)" : ""}`,
+      { poNumber: poRef, status: result.status, categories, previousCategories: parseList(prev?.categories) },
+      who,
+    )
   }
 
-  return toPersisted({
-    tenant_id: tenantId,
-    bill_id: billId,
-    po_number: poRef || null,
-    grn_number: s(bill.grn_number) || null,
-    vendor_name: s(bill.vendor_name) || null,
-    match_status: result.status,
-    payment_hold: effectiveHold ? 1 : 0,
-    categories: JSON.stringify(categories),
-    evidence: JSON.stringify(result),
-    resolution_status: resolutionStatus,
-    resolved_categories: sameExceptionSet ? JSON.stringify(prevResolved) : null,
-    resolved_by: null,
-    resolved_by_name: null,
-    resolved_at: null,
-    resolution_note: null,
-  })
+  // Route an open exception to the approval inbox (once per exception set).
+  if (row && result.paymentHold && resolutionStatus === "open" && (setChanged || row.approval_request_id == null)) {
+    await cancelStaleApproval(tenantId, prev?.approval_request_id)
+    await raiseMatchApproval(tenantId, row, result, who)
+  }
+
+  return row ? toPersisted(row) : null
+}
+
+async function cancelStaleApproval(tenantId: number, requestId: unknown): Promise<void> {
+  if (requestId == null) return
+  try {
+    await query(
+      `UPDATE approval_requests SET status = 'cancelled' WHERE id = ? AND tenant_id = ? AND status IN ('pending','in_progress')`,
+      [Number(requestId), tenantId],
+    )
+  } catch {
+    /* approval schema variant without these columns — the binding is cleared below anyway */
+  }
+  await query(`UPDATE finance_match_results SET approval_request_id = NULL WHERE tenant_id = ? AND approval_request_id = ?`, [
+    tenantId,
+    Number(requestId),
+  ])
+}
+
+async function raiseMatchApproval(
+  tenantId: number,
+  row: Record<string, any>,
+  result: MatchResult,
+  who: { id: number | null; name: string | null },
+): Promise<void> {
+  if (who.id == null) return
+  try {
+    const raised = await raiseApprovalRequest({
+      moduleKey: MATCH_MODULE,
+      entityType: MATCH_APPROVAL_ENTITY,
+      entityPk: Number(row.id),
+      entityRef: s(row.bill_id),
+      title: `Three-way match exception — ${s(row.bill_id)} (${summarizeMatch(result)})`,
+      amount: num(row.billed_taxable),
+      requestedBy: who.id,
+      requestedByName: who.name,
+    })
+    // "No rule matched" auto-approval must NEVER release a payment hold: only a
+    // pending request is bound; otherwise the checker resolves on the match screen.
+    if (!raised.autoApproved) {
+      await query(`UPDATE finance_match_results SET approval_request_id = ? WHERE tenant_id = ? AND id = ?`, [
+        raised.requestId,
+        tenantId,
+        Number(row.id),
+      ])
+      await recordMatchEvent(tenantId, s(row.bill_id), "approval_raised", `Exception routed to approval inbox (request #${raised.requestId})`, {
+        requestId: raised.requestId,
+        categories: result.categories,
+      }, who)
+    }
+  } catch (error) {
+    console.error("[v0] raiseMatchApproval failed:", (error as Error).message)
+  }
+}
+
+/** Unwind a deleted bill's match so it stops counting toward sibling totals. */
+export async function deleteMatchForBill(tenantId: number, billId: string): Promise<void> {
+  await ensureMatchSchema()
+  const rows = (await query(`SELECT approval_request_id FROM finance_match_results WHERE tenant_id = ? AND bill_id = ? LIMIT 1`, [
+    tenantId,
+    billId,
+  ])) as any[]
+  if (!rows[0]) return
+  await cancelStaleApproval(tenantId, rows[0].approval_request_id)
+  await query(`DELETE FROM finance_match_results WHERE tenant_id = ? AND bill_id = ?`, [tenantId, billId])
+  await recordMatchEvent(tenantId, billId, "deleted", `Vendor bill ${billId} deleted — match removed`, {}, await actor())
 }
 
 // ---------------------------------------------------------------------------
@@ -413,9 +630,21 @@ export async function getMatchForBill(tenantId: number, billId: string): Promise
   return rows[0] ? toPersisted(rows[0]) : null
 }
 
+/** Load the bill fields the engine needs, only when the bill is already in this tenant's ledger. */
+export async function loadBillForRecompute(tenantId: number, billId: string): Promise<BillRow | null> {
+  const owned = await getMatchForBill(tenantId, billId)
+  if (!owned) return null
+  const rows = (await query(
+    `SELECT bill_id, po_number, grn_number, vendor_id, vendor_name, bill_number, taxable_amount, gst_rate, currency
+       FROM purchase_bills WHERE bill_id = ? LIMIT 1`,
+    [billId],
+  )) as any[]
+  return rows[0] ?? null
+}
+
 export async function listMatches(
   tenantId: number,
-  filter?: { status?: string; holdOnly?: boolean },
+  filter?: { status?: string; holdOnly?: boolean; resolution?: string },
 ): Promise<PersistedMatch[]> {
   await ensureMatchSchema()
   const where: string[] = ["tenant_id = ?"]
@@ -423,6 +652,10 @@ export async function listMatches(
   if (filter?.status && filter.status !== "all") {
     where.push("match_status = ?")
     args.push(filter.status)
+  }
+  if (filter?.resolution && filter.resolution !== "all") {
+    where.push("resolution_status = ?")
+    args.push(filter.resolution)
   }
   if (filter?.holdOnly) where.push("payment_hold = 1")
   const rows = (await query(
@@ -439,66 +672,102 @@ export async function listMatches(
 // ---------------------------------------------------------------------------
 
 export type ResolveOutcome =
-  | { ok: true; match: PersistedMatch }
+  | { ok: true; match: PersistedMatch; replayed?: boolean }
   | { ok: false; status: number; error: string }
 
 export async function resolveMatchException(
   tenantId: number,
   billId: string,
   decision: "approve" | "reject",
-  opts: { userId: number; userName: string | null; note?: string | null },
+  opts: { userId: number; userName: string | null; note?: string | null; idempotencyKey?: string | null; viaApprovalRequest?: number },
 ): Promise<ResolveOutcome> {
   await ensureMatchSchema()
+
+  const idemKey = s(opts.idempotencyKey)
+  if (idemKey) {
+    const hit = (await query(`SELECT bill_id, decision, response FROM finance_match_idempotency WHERE tenant_id = ? AND idem_key = ? LIMIT 1`, [
+      tenantId,
+      idemKey,
+    ])) as any[]
+    if (hit[0]) {
+      if (s(hit[0].bill_id) !== billId || s(hit[0].decision) !== decision) {
+        return { ok: false, status: 409, error: "Idempotency-Key was already used for a different match decision." }
+      }
+      const replay = safeParse(hit[0].response)
+      if (replay) return { ok: true, match: replay as PersistedMatch, replayed: true }
+    }
+  }
+
   const rows = (await query(`SELECT * FROM finance_match_results WHERE tenant_id = ? AND bill_id = ? LIMIT 1`, [tenantId, billId])) as any[]
   const row = rows[0]
   if (!row) return { ok: false, status: 404, error: "No three-way match record exists for this bill." }
   if (s(row.match_status) !== "exception") {
     return { ok: false, status: 409, error: "This match has no exception to resolve." }
   }
-  if (s(row.resolution_status) === "approved" && decision === "approve") {
-    return { ok: true, match: toPersisted(row) }
+
+  const target: ResolutionStatus = decision === "approve" ? "approved" : "rejected"
+  if (s(row.resolution_status) === target) {
+    const match = toPersisted(row)
+    await storeIdempotent(tenantId, idemKey, billId, decision, match)
+    return { ok: true, match, replayed: true }
   }
 
-  // Segregation of duties against the bill creator and the PO approver.
   const sod = await checkResolveSod(tenantId, billId, s(row.po_number), opts.userId)
   if (sod) return { ok: false, status: 403, error: sod }
 
   const approve = decision === "approve"
-  await query(
+  // Guard on the current state so two concurrent checkers cannot both apply.
+  const upd = (await query(
     `UPDATE finance_match_results
        SET resolution_status = ?, payment_hold = ?, resolution_note = ?, resolved_by = ?, resolved_by_name = ?,
            resolved_at = NOW(), resolved_categories = ?
-     WHERE tenant_id = ? AND bill_id = ?`,
+     WHERE tenant_id = ? AND bill_id = ? AND resolution_status = ? AND categories <=> ?`,
     [
-      approve ? "approved" : "rejected",
+      target,
       approve ? 0 : 1,
       s(opts.note) || null,
       opts.userId,
       opts.userName,
-      approve ? row.categories : null,
+      row.categories,
       tenantId,
       billId,
+      s(row.resolution_status),
+      row.categories,
     ],
-  )
+  )) as any
+  if (upd && typeof upd.affectedRows === "number" && upd.affectedRows === 0) {
+    return { ok: false, status: 409, error: "The match changed while you were reviewing it. Reload and try again." }
+  }
 
-  await logFinanceEvent({
-    entityType: "finance_match_result",
-    entityRef: billId,
-    type: approve ? "approved" : "rejected",
-    summary: `Three-way match exception ${approve ? "approved" : "rejected"} for ${billId}${opts.note ? ` — ${s(opts.note)}` : ""}`,
-    detail: {
+  await recordMatchEvent(
+    tenantId,
+    billId,
+    target,
+    `Three-way match exception ${target} for ${billId} — ${s(opts.note)}`,
+    {
       poNumber: s(row.po_number),
       categories: parseList(row.categories),
       decision,
       note: s(opts.note) || null,
+      previousResolution: s(row.resolution_status),
+      approvalRequestId: opts.viaApprovalRequest ?? null,
       evidence: safeParse(row.evidence),
     },
-    actorId: opts.userId,
-    actorName: opts.userName,
-  })
+    { id: opts.userId, name: opts.userName },
+  )
 
   const fresh = (await query(`SELECT * FROM finance_match_results WHERE tenant_id = ? AND bill_id = ? LIMIT 1`, [tenantId, billId])) as any[]
-  return { ok: true, match: toPersisted(fresh[0]) }
+  const match = toPersisted(fresh[0] ?? { ...row, resolution_status: target, payment_hold: approve ? 0 : 1 })
+  await storeIdempotent(tenantId, idemKey, billId, decision, match)
+  return { ok: true, match }
+}
+
+async function storeIdempotent(tenantId: number, key: string, billId: string, decision: string, match: PersistedMatch) {
+  if (!key) return
+  await query(
+    `INSERT IGNORE INTO finance_match_idempotency (tenant_id, idem_key, bill_id, decision, response) VALUES (?,?,?,?,?)`,
+    [tenantId, key, billId, decision, JSON.stringify(match)],
+  )
 }
 
 async function checkResolveSod(tenantId: number, billId: string, poRef: string, userId: number): Promise<string | null> {
@@ -523,6 +792,47 @@ async function checkResolveSod(tenantId: number, billId: string, poRef: string, 
 }
 
 // ---------------------------------------------------------------------------
+// Approval inbox binding. The actions route calls the precheck BEFORE recording
+// an approve (so SoD is enforced there too) and the outcome hook AFTER.
+// ---------------------------------------------------------------------------
+
+async function matchByApprovalRequest(tenantId: number, requestId: number) {
+  await ensureMatchSchema()
+  const rows = (await query(`SELECT * FROM finance_match_results WHERE tenant_id = ? AND approval_request_id = ? LIMIT 1`, [
+    tenantId,
+    requestId,
+  ])) as any[]
+  return rows[0] ?? null
+}
+
+export async function precheckMatchApprovalAction(requestId: number, actorId: number, action: string): Promise<string | null> {
+  if (action !== "approve") return null
+  const tenantId = await getTenantId()
+  if (tenantId == null) return null
+  const row = await matchByApprovalRequest(Number(tenantId), requestId)
+  if (!row) return null
+  return checkResolveSod(Number(tenantId), s(row.bill_id), s(row.po_number), actorId)
+}
+
+export async function handleMatchApprovalOutcome(
+  requestId: number,
+  status: string,
+  who: { id: number; name: string | null },
+): Promise<void> {
+  if (status !== "approved" && status !== "rejected") return
+  const tenantId = await getTenantId()
+  if (tenantId == null) return
+  const row = await matchByApprovalRequest(Number(tenantId), requestId)
+  if (!row) return
+  await resolveMatchException(Number(tenantId), s(row.bill_id), status === "approved" ? "approve" : "reject", {
+    userId: who.id,
+    userName: who.name,
+    note: `Decided in approval inbox (request #${requestId}).`,
+    viaApprovalRequest: requestId,
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Payment hold — called by the purchase-bill guard when payment increases.
 // Recomputes the match live (so it cannot be bypassed) and blocks payment when
 // an exception is open. An approved override for the same exception set releases it.
@@ -544,8 +854,6 @@ export async function evaluateBillPaymentHold(
   const result = evaluateThreeWayMatch(input, tol)
   if (!result.paymentHold) return null
 
-  // An open exception holds payment unless an authorised checker approved the
-  // exact same exception set on the persisted record.
   const billId = s(bill.bill_id)
   if (billId) {
     const rows = (await query(
@@ -593,19 +901,24 @@ function toPersisted(row: Record<string, any>): PersistedMatch {
     categories: parseList(row.categories),
   }
   return {
+    id: row.id != null ? Number(row.id) : null,
     billId: s(row.bill_id),
+    billNumber: row.bill_number != null ? s(row.bill_number) : null,
     poNumber: row.po_number != null ? s(row.po_number) : null,
     grnNumber: row.grn_number != null ? s(row.grn_number) : null,
     vendorName: row.vendor_name != null ? s(row.vendor_name) : null,
     status: (s(row.match_status) as MatchResult["status"]) || "exception",
     paymentHold: !!num(row.payment_hold),
-    resolutionStatus: (s(row.resolution_status) as PersistedMatch["resolutionStatus"]) || "open",
+    resolutionStatus: (s(row.resolution_status) as ResolutionStatus) || "open",
     categories: parseList(row.categories),
     resolvedCategories: parseList(row.resolved_categories),
     resolvedBy: row.resolved_by != null ? Number(row.resolved_by) : null,
     resolvedByName: row.resolved_by_name != null ? s(row.resolved_by_name) : null,
     resolvedAt: row.resolved_at != null ? String(row.resolved_at) : null,
     resolutionNote: row.resolution_note != null ? s(row.resolution_note) : null,
+    approvalRequestId: row.approval_request_id != null ? Number(row.approval_request_id) : null,
+    billedTaxable: num(row.billed_taxable),
+    computedAt: row.computed_at != null ? String(row.computed_at) : null,
     evidence,
     summary: summarizeMatch(evidence),
   }

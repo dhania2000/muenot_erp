@@ -25,7 +25,7 @@ import {
   evaluateProcurementDelete,
   derivePoFulfilmentStatus,
 } from "@/lib/finance-procurement-rules"
-import { evaluateBillPaymentHold } from "@/lib/finance-three-way-match-server"
+import { evaluateBillPaymentHold, billedOnPoForTenant } from "@/lib/finance-three-way-match-server"
 
 /**
  * SPEC 136 / Spec36 (#200) — Procurement workflow (server side).
@@ -777,13 +777,11 @@ export async function guardPurchaseBillProcurementLink(
     `SELECT COUNT(*) AS n, COALESCE(SUM(received_value),0) AS v FROM procurement_goods_receipts WHERE tenant_id = ? AND po_number = ?`,
     [tenantId, poRef],
   )) as any[])[0]
+  // Sibling bills are read from the tenant-scoped match ledger: purchase_bills
+  // has no tenant column, so summing it directly could count another tenant's bills.
   let otherBilled = 0
   try {
-    const rows = (await query(
-      `SELECT COALESCE(SUM(taxable_amount),0) AS s FROM purchase_bills WHERE po_number = ? AND bill_id <> ?`,
-      [poRef, s(merged.bill_id ?? ctx.existing?.bill_id) || "__none__"],
-    )) as any[]
-    otherBilled = num(rows[0]?.s)
+    otherBilled = (await billedOnPoForTenant(tenantId, poRef, s(merged.bill_id ?? ctx.existing?.bill_id))).taxable
   } catch {
     otherBilled = 0
   }

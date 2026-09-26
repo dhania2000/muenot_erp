@@ -79,8 +79,6 @@ const HR_CHILDREN: FeatureChild[] = [
   { label: "HR Support", href: "/modules/hr/support", feature: "hr.view_support" },
   { label: "Offboarding", href: "/modules/hr/offboarding", feature: "hr.view_offboarding" },
   { label: "Expense Claims", href: "/modules/hr/expense-claims" },
-  { label: "Training & Development", href: "/modules/hr/training" },
-  { label: "HR Policies", href: "/modules/hr/policies" },
   { label: "Performance Reviews", href: "/modules/hr/performance" },
   { label: "Goals & KPIs", href: "/modules/hr/goals-kpi" },
   {

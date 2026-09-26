@@ -42,6 +42,11 @@ export type SaveViewArgs = {
   isDefault?: boolean
 }
 
+function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID()
+  return `sv-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+}
+
 function defaultColumns(defs: ViewColumnDef[]): ColumnPref[] {
   return defs.map((d) => ({ key: d.key, hidden: Boolean(d.defaultHidden) }))
 }
@@ -213,6 +218,18 @@ export function useSavedViews({ tableKey, columns, initial }: UseSavedViewsOptio
     [views, columns, baseState],
   )
 
+  // Apply the user's default view once, the first time views arrive, unless
+  // the user already changed the table state.
+  const [defaultApplied, setDefaultApplied] = useState(false)
+  if (!defaultApplied && data) {
+    setDefaultApplied(true)
+    const def = views.find((v) => v.isDefault)
+    if (def && activeViewId == null && JSON.stringify(stateToComparable(state)) === JSON.stringify(stateToComparable(baseState))) {
+      setActiveViewId(def.id)
+      setState(stateFromConfig(columns, def.config, baseState))
+    }
+  }
+
   const resetToDefault = useCallback(() => {
     if (activeView) setState(stateFromConfig(columns, activeView.config, baseState))
     else setState(baseState)
@@ -225,9 +242,12 @@ export function useSavedViews({ tableKey, columns, initial }: UseSavedViewsOptio
     async (args: SaveViewArgs) => {
       setBusy(true)
       try {
-        const res = await fetch("/api/saved-views", {
+        // One key per save attempt: a retry after a dropped response replays
+        // the original create server-side instead of producing a duplicate.
+        const idempotencyKey = newIdempotencyKey()
+        const init: RequestInit = {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
           body: JSON.stringify({
             tableKey,
             name: args.name,
@@ -237,7 +257,13 @@ export function useSavedViews({ tableKey, columns, initial }: UseSavedViewsOptio
             isDefault: args.isDefault ?? false,
             config: configFromState(state),
           }),
-        })
+        }
+        let res: Response
+        try {
+          res = await fetch("/api/saved-views", init)
+        } catch {
+          res = await fetch("/api/saved-views", init)
+        }
         const body = await res.json().catch(() => ({}) as any)
         if (!res.ok) {
           toast.error(body.error || "Unable to save view")

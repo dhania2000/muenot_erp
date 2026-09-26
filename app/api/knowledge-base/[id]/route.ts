@@ -260,6 +260,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       await audit(newId, session, "duplicated", `Duplicated from article ${id}`)
       return NextResponse.json({ ok: true, id: newId, status: "draft" })
     }
+    case "delete": {
+      // Permanent removal — managers only. Audit first so the record survives
+      // (kb_audit.article_id is nullable and not cascaded).
+      await audit(id, session, "deleted", `Deleted article ${article.article_code || id}: ${article.heading}`)
+      await Promise.all([
+        query("DELETE FROM kb_tags WHERE article_id = ?", [id]),
+        query("DELETE FROM kb_attachments WHERE article_id = ?", [id]),
+        query("DELETE FROM kb_recipients WHERE article_id = ?", [id]),
+        query("DELETE FROM kb_reads WHERE article_id = ?", [id]),
+        query("DELETE FROM kb_acknowledgements WHERE article_id = ?", [id]),
+        query("DELETE FROM kb_favorites WHERE article_id = ?", [id]),
+        query("DELETE FROM kb_versions WHERE article_id = ?", [id]),
+        query("DELETE FROM kb_related WHERE article_id = ? OR related_id = ?", [id, id]),
+        query("DELETE FROM kb_erp_links WHERE article_id = ?", [id]),
+        query("DELETE FROM kb_feedback WHERE article_id = ?", [id]).catch(() => {}),
+      ])
+      await query("DELETE FROM kb_articles WHERE id = ?", [id])
+      return NextResponse.json({ ok: true, deleted: true })
+    }
     default:
       return NextResponse.json({ error: "Unknown action" }, { status: 400 })
   }

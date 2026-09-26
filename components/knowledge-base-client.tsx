@@ -92,6 +92,46 @@ export function KnowledgeBaseClient() {
   const openEdit = (detail: ArticleDetail) => { setDetailId(null); setEditing(detail); setEditorOpen(true) }
   const resetPageAnd = (fn: () => void) => { fn(); setPage(1) }
 
+  // Row-level Update: fetch the full detail, then open the editor.
+  const [rowBusyId, setRowBusyId] = useState<number | null>(null)
+  const updateArticle = async (id: number) => {
+    setRowBusyId(id)
+    try {
+      const res = await fetch(`/api/knowledge-base/${id}`)
+      const detail = await res.json().catch(() => null)
+      if (!res.ok || !detail?.article) { toast.error(detail?.error || "Could not open for editing"); return }
+      openEdit(detail as ArticleDetail)
+    } catch {
+      toast.error("Could not open for editing")
+    } finally {
+      setRowBusyId(null)
+    }
+  }
+
+  // Row-level Remove: confirm, then permanently delete.
+  const [removeTarget, setRemoveTarget] = useState<ArticleRow | null>(null)
+  const confirmRemove = async () => {
+    const target = removeTarget
+    if (!target) return
+    setRowBusyId(target.id)
+    try {
+      const res = await fetch(`/api/knowledge-base/${target.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete" }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) { toast.error(body.error || "Could not remove"); return }
+      toast.success("Removed")
+      setRemoveTarget(null)
+      mutate()
+    } catch {
+      toast.error("Could not remove")
+    } finally {
+      setRowBusyId(null)
+    }
+  }
+
   const changeSection = (key: string) => {
     setSectionKey(key)
     setPage(1)

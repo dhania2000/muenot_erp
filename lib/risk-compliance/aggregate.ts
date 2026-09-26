@@ -1,37 +1,35 @@
 import "server-only"
 import { query } from "@/lib/db"
+import { getClassifiedExpiries } from "@/lib/expiry/service"
+import type { ExpiryItem } from "@/lib/expiry/model"
+import { scopeKeyOf, type RiskScope, type ScopeLevel } from "./scope"
+
+export { scopeKeyOf }
+export type { RiskScope, ScopeLevel }
 
 /**
  * Spec43 (#196-199, #207-208) — Risk & compliance dashboard aggregator.
  *
- * This module READS from existing subsystems and rolls them into a single
- * risk/compliance view. It creates no source-of-truth data. Every source is
- * queried defensively (see `safe`): a missing table, dropped column, or query
- * error degrades that ONE source to `available: false` instead of failing the
- * whole dashboard — this is the "missing source module" contract the tests
- * exercise.
+ * READS existing subsystems only (approval authority, maker-checker, forensic
+ * audit log, background jobs, finance payments / GST / TDS / bank recon, HR
+ * documents / attendance / training, and the shared expiry engine for document
+ * + contract expiry). It owns no source-of-truth data.
  *
- * Tenant scope: multi-tenant tables carry a `tenant_id` and are always filtered
- * by the acting tenant. Some legacy finance/HR tables are the company's own
- * single-tenant books (no `tenant_id` column) and are reported company-wide;
- * those declare `tenantColumn: null`. The route ALWAYS resolves the tenant from
- * the session guard, never from client input.
- *
- * Aggregation dimensions (group / company / branch / department) are applied per
- * source where the underlying column exists; a source that cannot honour the
- * requested dimension reports `scopeApplied: false` rather than erroring, so the
- * aggregate stays honest about partial coverage.
+ * Contracts the tests pin down:
+ *   - Missing module: a source whose table/column is absent reports
+ *     `available: false` with a "not installed" note; any other failure reports
+ *     a generic note (SQL text is logged server-side, never returned).
+ *   - Tenant scope: multi-tenant tables are ALWAYS filtered by the guard's
+ *     tenant — failed-auth no longer includes tenant-less rows, which could
+ *     belong to any tenant.
+ *   - Aggregation scope: a source only contributes to a company / branch /
+ *     department view when it can actually filter by that dimension. Otherwise
+ *     it is `withheld` (count 0, no items) so a scope-restricted user never sees
+ *     org-wide data through a source that can't be narrowed.
  */
 
 export type Severity = "critical" | "high" | "medium" | "low" | "ok"
-export type RiskCategory = "operational" | "finance" | "hr"
-export type ScopeLevel = "group" | "company" | "branch" | "department"
-
-export interface RiskScope {
-  level: ScopeLevel
-  /** Dimension value, e.g. a department name or a legal-entity id. */
-  value?: string | null
-}
+export type RiskCategory = "operational" | "finance" | "hr" | "contracts"
 
 export interface RiskItem {
   id: string
@@ -40,10 +38,7 @@ export interface RiskItem {
   severity: Severity
   amount?: number | null
   occurredAt?: string | null
-  /**
-   * Field values that must be masked on export unless the caller is explicitly
-   * authorized to see them (e.g. counterparties, emails, PII).
-   */
+  /** PII / counterparty fields; masked for non-owners and on export. */
   sensitive?: Record<string, string>
 }
 
@@ -51,18 +46,14 @@ export interface SourceResult {
   key: string
   label: string
   category: RiskCategory
-  /** False when the underlying table/module is absent — surfaced, not fatal. */
   available: boolean
-  /** True when the requested scope dimension was applied to this source. */
   scopeApplied: boolean
-  /** Number of open risk/compliance items in scope. */
+  /** Source cannot filter by the requested dimension, so it is hidden. */
+  withheld: boolean
   count: number
   severity: Severity
-  /** Newest underlying record timestamp (ISO) — drives per-source staleness. */
   asOf: string | null
-  /** Deep link into the owning module for drill-down. */
   drillHref: string
-  /** Human note when the source is unavailable. */
   note?: string | null
   items: RiskItem[]
 }
@@ -79,41 +70,75 @@ export interface RiskComplianceDashboard {
     high: number
     sourcesAvailable: number
     sourcesMissing: number
+    sourcesWithheld: number
   }
   categories: Record<RiskCategory, { openItems: number; critical: number; sources: number }>
   sources: SourceResult[]
 }
 
 const ITEM_LIMIT = 25
+const MASK = "•••• (masked)"
 
-/** Canonical cache/scope key for a scope selection. */
-export function scopeKeyOf(scope: RiskScope): string {
-  if (scope.level === "group") return "group"
-  return `${scope.level}:${(scope.value ?? "").toString().slice(0, 150)}`
+type Meta = Pick<SourceResult, "key" | "label" | "category" | "drillHref">
+type Body = Omit<SourceResult, keyof Meta>
+type Dims = Partial<Record<Exclude<ScopeLevel, "group">, string>>
+
+class SourceMissing extends Error {}
+
+/** Per-computation column cache (information_schema probe). */
+class Columns {
+  private cache = new Map<string, Promise<Set<string>>>()
+  of(table: string): Promise<Set<string>> {
+    let p = this.cache.get(table)
+    if (!p) {
+      p = query<any[]>(
+        `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+        [table],
+      ).then((rows) => new Set(rows.map((r) => String(r.c ?? r.COLUMN_NAME).toLowerCase())))
+      this.cache.set(table, p)
+    }
+    return p
+  }
+  /** Columns of a table that must exist; throws SourceMissing otherwise. */
+  async require(table: string, cols: string[] = []): Promise<Set<string>> {
+    const set = await this.of(table)
+    if (!set.size) throw new SourceMissing(table)
+    const missing = cols.find((c) => !set.has(c))
+    if (missing) throw new SourceMissing(`${table}.${missing}`)
+    return set
+  }
 }
 
-/**
- * Run a source loader, converting ANY failure (missing table, bad column, DB
- * error) into an unavailable source. This is the missing-source contract.
- */
-async function safe(
-  meta: Pick<SourceResult, "key" | "label" | "category" | "drillHref">,
-  loader: () => Promise<Omit<SourceResult, "key" | "label" | "category" | "drillHref">>,
-): Promise<SourceResult> {
+async function safe(meta: Meta, loader: () => Promise<Body>): Promise<SourceResult> {
   try {
-    const partial = await loader()
-    return { ...meta, ...partial }
+    return { ...meta, ...(await loader()) }
   } catch (err) {
+    const missing = err instanceof SourceMissing
+    if (!missing) console.error(`[risk-compliance] source ${meta.key} failed:`, (err as Error)?.message)
     return {
       ...meta,
       available: false,
       scopeApplied: false,
+      withheld: false,
       count: 0,
       severity: "ok",
       asOf: null,
-      note: `Source unavailable: ${(err as Error)?.message?.slice(0, 140) || "not installed"}`,
+      note: missing ? `Module not installed (${(err as Error).message})` : "Source query failed — see server logs",
       items: [],
     }
+  }
+}
+
+function withheld(level: ScopeLevel): Body {
+  return {
+    available: true,
+    scopeApplied: false,
+    withheld: true,
+    count: 0,
+    severity: "ok",
+    asOf: null,
+    note: `Not broken down by ${level}; shown only in the group view.`,
+    items: [],
   }
 }
 
@@ -128,564 +153,596 @@ function iso(v: unknown): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString()
 }
 
-function severityFromCount(count: number, critical = 10, high = 3): Severity {
+function dateOnly(v: unknown): string | null {
+  const s = iso(v)
+  return s ? s.slice(0, 10) : null
+}
+
+export function severityFromCount(count: number, critical = 10, high = 3): Severity {
   if (count <= 0) return "ok"
   if (count >= critical) return "critical"
   if (count >= high) return "high"
   return "medium"
 }
 
-/**
- * Department scope predicate for a source that has a department column.
- * Returns the SQL fragment + params, or null when no dept filter applies.
- */
-function deptFilter(scope: RiskScope, column: string): { sql: string; params: string[] } | null {
-  if (scope.level === "department" && scope.value) {
-    return { sql: ` AND ${column} = ?`, params: [scope.value] }
-  }
-  return null
+/** Build the dimension predicate, or "withheld" when the source can't honour it. */
+function dimFilter(scope: RiskScope, dims: Dims): { sql: string; params: string[] } | "withheld" {
+  if (scope.level === "group") return { sql: "", params: [] }
+  const col = dims[scope.level]
+  if (!col || !scope.value) return "withheld"
+  return { sql: ` AND ${col} = ?`, params: [scope.value] }
 }
 
-// --- Operational sources ----------------------------------------------------
+/** hr_employees dimension columns, resolved against the live schema. */
+async function hrDims(cols: Columns, alias: string): Promise<Dims> {
+  const e = await cols.of("hr_employees")
+  const pick = (cands: string[]) => cands.find((c) => e.has(c))
+  const dims: Dims = {}
+  const company = pick(["legal_entity_id", "entity_id", "legal_entity", "entity"])
+  const branch = pick(["branch_id", "branch", "branch_name", "work_location"])
+  if (company) dims.company = `${alias}.${company}`
+  if (branch) dims.branch = `${alias}.${branch}`
+  if (e.has("department")) dims.department = `${alias}.department`
+  return dims
+}
 
-async function loadPendingApprovals(tenantId: number, scope: RiskScope) {
+interface SqlSource {
+  from: string
+  where: string
+  params: unknown[]
+  dims: Dims
+  select: string
+  orderBy: string
+  asOfExpr: string
+  thresholds: [number, number]
+  mapRow: (r: any) => RiskItem
+}
+
+async function runSql(def: SqlSource, scope: RiskScope): Promise<Body> {
+  const dim = dimFilter(scope, def.dims)
+  if (dim === "withheld") return withheld(scope.level)
+  const where = `WHERE ${def.where}${dim.sql}`
+  const params = [...def.params, ...dim.params]
+  const [rows, agg] = await Promise.all([
+    query<any[]>(`SELECT ${def.select} FROM ${def.from} ${where} ORDER BY ${def.orderBy} LIMIT ${ITEM_LIMIT}`, params),
+    query<any[]>(`SELECT COUNT(*) AS c, MAX(${def.asOfExpr}) AS m FROM ${def.from} ${where}`, params),
+  ])
+  const count = num(agg[0]?.c)
+  return {
+    available: true,
+    scopeApplied: scope.level !== "group",
+    withheld: false,
+    count,
+    severity: severityFromCount(count, ...def.thresholds),
+    asOf: iso(agg[0]?.m),
+    items: rows.map(def.mapRow),
+  }
+}
+
+const DAY_MS = 86_400_000
+
+// --- Operational ------------------------------------------------------------
+
+function loadPendingApprovals(tenantId: number, scope: RiskScope, cols: Columns) {
   return safe(
-    { key: "pending_approvals", label: "Pending approvals", category: "operational", drillHref: "/admin/governance" },
+    { key: "pending_approvals", label: "Pending approvals", category: "operational", drillHref: "/admin/approval-authority" },
     async () => {
-      const dept = deptFilter(scope, "department")
-      const rows = await query<any[]>(
-        `SELECT id, title, entity_ref, amount, department, created_at
-           FROM approval_requests
-          WHERE tenant_id = ? AND status = 'pending'${dept?.sql ?? ""}
-          ORDER BY created_at ASC LIMIT ${ITEM_LIMIT}`,
-        [tenantId, ...(dept?.params ?? [])],
+      const c = await cols.require("approval_requests", ["tenant_id", "status"])
+      const dims: Dims = {}
+      if (c.has("legal_entity_id")) dims.company = "t.legal_entity_id"
+      if (c.has("branch_id")) dims.branch = "t.branch_id"
+      if (c.has("department")) dims.department = "t.department"
+      return runSql(
+        {
+          from: "approval_requests t",
+          where: "t.tenant_id = ? AND t.status = 'pending'",
+          params: [tenantId],
+          dims,
+          select: "t.id, t.title, t.entity_ref, t.amount, t.department, t.created_at",
+          orderBy: "t.created_at ASC",
+          asOfExpr: "t.created_at",
+          thresholds: [10, 3],
+          mapRow: (r) => {
+            const aged = r.created_at && Date.now() - new Date(r.created_at).getTime() > 7 * DAY_MS
+            return {
+              id: `approval:${r.id}`,
+              label: r.title || r.entity_ref || `Approval #${r.id}`,
+              detail: [r.department && `Dept: ${r.department}`, aged && "pending > 7 days"].filter(Boolean).join(" · ") || null,
+              amount: r.amount != null ? num(r.amount) : null,
+              occurredAt: iso(r.created_at),
+              severity: aged ? "high" : "medium",
+            }
+          },
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(created_at) m FROM approval_requests
-          WHERE tenant_id = ? AND status = 'pending'${dept?.sql ?? ""}`,
-        [tenantId, ...(dept?.params ?? [])],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: !!dept || scope.level !== "department",
-        count,
-        severity: severityFromCount(count),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `approval:${r.id}`,
-          label: r.title || r.entity_ref || `Approval #${r.id}`,
-          detail: r.department ? `Dept: ${r.department}` : null,
-          amount: r.amount != null ? num(r.amount) : null,
-          occurredAt: iso(r.created_at),
-          severity: "medium" as Severity,
-        })),
-      }
     },
   )
 }
 
-async function loadMakerChecker(tenantId: number, scope: RiskScope) {
+function loadMakerChecker(tenantId: number, scope: RiskScope, cols: Columns) {
   return safe(
     { key: "maker_checker", label: "Maker-checker queue", category: "operational", drillHref: "/admin/governance" },
     async () => {
-      const rows = await query<any[]>(
-        `SELECT id, title, module_key, entity_ref, maker_name, status, created_at
-           FROM maker_checker_changes
-          WHERE tenant_id = ? AND status = 'pending'
-          ORDER BY created_at ASC LIMIT ${ITEM_LIMIT}`,
-        [tenantId],
+      await cols.require("maker_checker_changes", ["tenant_id", "status"])
+      return runSql(
+        {
+          from: "maker_checker_changes t",
+          where: "t.tenant_id = ? AND t.status = 'pending'",
+          params: [tenantId],
+          dims: {},
+          select: "t.id, t.title, t.module_key, t.entity_ref, t.maker_name, t.created_at",
+          orderBy: "t.created_at ASC",
+          asOfExpr: "t.created_at",
+          thresholds: [10, 3],
+          mapRow: (r) => ({
+            id: `mcc:${r.id}`,
+            label: r.title || r.entity_ref || `${r.module_key} change`,
+            detail: r.module_key ?? null,
+            occurredAt: iso(r.created_at),
+            severity: "medium",
+            sensitive: r.maker_name ? { maker: String(r.maker_name) } : undefined,
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(created_at) m FROM maker_checker_changes WHERE tenant_id = ? AND status = 'pending'`,
-        [tenantId],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level !== "department",
-        count,
-        severity: severityFromCount(count),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `mcc:${r.id}`,
-          label: r.title || r.entity_ref || `${r.module_key} change`,
-          detail: r.maker_name ? `By ${r.maker_name}` : null,
-          occurredAt: iso(r.created_at),
-          severity: "medium" as Severity,
-          sensitive: r.maker_name ? { maker: r.maker_name } : undefined,
-        })),
-      }
     },
   )
 }
 
-async function loadFailedAuth(tenantId: number, scope: RiskScope) {
+function loadFailedAuth(tenantId: number, scope: RiskScope, cols: Columns) {
   return safe(
-    { key: "failed_auth", label: "Failed authentication", category: "operational", drillHref: "/admin/security/audit-log" },
+    { key: "failed_auth", label: "Failed authentication (7d)", category: "operational", drillHref: "/admin/security/audit-log" },
     async () => {
-      // Failed sign-ins are recorded in the forensic audit log with the
-      // `auth.*` action taxonomy and result='failure' (see lib/audit-log-store).
-      const rows = await query<any[]>(
-        `SELECT id, action, actor_email AS subject_email, ip_address, created_at
-           FROM audit_log_entries
-          WHERE (tenant_id = ? OR tenant_id IS NULL)
-            AND result = 'failure' AND action LIKE 'auth.%'
-            AND created_at >= (NOW() - INTERVAL 7 DAY)
-          ORDER BY created_at DESC LIMIT ${ITEM_LIMIT}`,
-        [tenantId],
+      await cols.require("audit_log_entries", ["tenant_id", "result", "action"])
+      return runSql(
+        {
+          from: "audit_log_entries t",
+          // Strict tenant match: tenant-less failures can't be attributed and
+          // would leak other tenants' login attempts.
+          where: "t.tenant_id = ? AND t.result = 'failure' AND t.action LIKE 'auth.%' AND t.created_at >= (NOW() - INTERVAL 7 DAY)",
+          params: [tenantId],
+          dims: {},
+          select: "t.id, t.action, t.actor_email, t.ip_address, t.created_at",
+          orderBy: "t.created_at DESC",
+          asOfExpr: "t.created_at",
+          thresholds: [25, 8],
+          mapRow: (r) => ({
+            id: `auth:${r.id}`,
+            label: r.action || "Auth failure",
+            occurredAt: iso(r.created_at),
+            severity: "high",
+            sensitive: {
+              ...(r.actor_email ? { email: String(r.actor_email) } : {}),
+              ...(r.ip_address ? { ip: String(r.ip_address) } : {}),
+            },
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(created_at) m FROM audit_log_entries
-          WHERE (tenant_id = ? OR tenant_id IS NULL)
-            AND result = 'failure' AND action LIKE 'auth.%'
-            AND created_at >= (NOW() - INTERVAL 7 DAY)`,
-        [tenantId],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level !== "department",
-        count,
-        severity: severityFromCount(count, 25, 8),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `auth:${r.id}`,
-          label: r.action || "Auth failure",
-          detail: r.subject_email ? `User ${r.subject_email}` : null,
-          occurredAt: iso(r.created_at),
-          severity: "high" as Severity,
-          sensitive: {
-            ...(r.subject_email ? { email: r.subject_email } : {}),
-            ...(r.ip_address ? { ip: r.ip_address } : {}),
-          },
-        })),
-      }
     },
   )
 }
 
-async function loadFailedJobs(tenantId: number, scope: RiskScope) {
+function loadFailedJobs(tenantId: number, scope: RiskScope, cols: Columns) {
   return safe(
     { key: "jobs", label: "Failed background jobs", category: "operational", drillHref: "/admin/governance" },
     async () => {
-      const rows = await query<any[]>(
-        `SELECT id, job_type, status, error_message, updated_at
-           FROM platform_background_jobs
-          WHERE tenant_id = ? AND status IN ('failed','dead_letter')
-          ORDER BY updated_at DESC LIMIT ${ITEM_LIMIT}`,
-        [tenantId],
+      await cols.require("platform_background_jobs", ["tenant_id", "status"])
+      return runSql(
+        {
+          from: "platform_background_jobs t",
+          where: "t.tenant_id = ? AND t.status IN ('failed','dead_letter')",
+          params: [tenantId],
+          dims: {},
+          select: "t.id, t.job_type, t.status, t.error_message, t.updated_at",
+          orderBy: "t.updated_at DESC",
+          asOfExpr: "t.updated_at",
+          thresholds: [8, 2],
+          mapRow: (r) => ({
+            id: `job:${r.id}`,
+            label: r.job_type || `Job #${r.id}`,
+            detail: r.error_message ? String(r.error_message).slice(0, 120) : r.status,
+            occurredAt: iso(r.updated_at),
+            severity: r.status === "dead_letter" ? "critical" : "high",
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(updated_at) m FROM platform_background_jobs
-          WHERE tenant_id = ? AND status IN ('failed','dead_letter')`,
-        [tenantId],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level !== "department",
-        count,
-        severity: severityFromCount(count, 8, 2),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `job:${r.id}`,
-          label: r.job_type || `Job #${r.id}`,
-          detail: r.error_message ? String(r.error_message).slice(0, 120) : r.status,
-          occurredAt: iso(r.updated_at),
-          severity: r.status === "dead_letter" ? ("critical" as Severity) : ("high" as Severity),
-        })),
-      }
     },
   )
 }
 
-async function loadPaymentExceptions(_tenantId: number, scope: RiskScope) {
+// --- Finance (legacy company books: no tenant_id; group view only) ----------
+
+function loadPaymentExceptions(scope: RiskScope, cols: Columns) {
   return safe(
     { key: "payments", label: "Payment exceptions", category: "finance", drillHref: "/modules/finance/payments" },
     async () => {
-      // Legacy company-scoped books: no tenant_id column. Reversed payments are
-      // the risk signal (a completed payment that had to be backed out).
-      const rows = await query<any[]>(
-        `SELECT id, payment_id, party_name, amount, status, reversal_reason, payment_date
-           FROM payments
-          WHERE status = 'Reversed'
-          ORDER BY payment_date DESC LIMIT ${ITEM_LIMIT}`,
-        [],
+      await cols.require("payments", ["status"])
+      return runSql(
+        {
+          from: "payments t",
+          where: "t.status = 'Reversed'",
+          params: [],
+          dims: {},
+          select: "t.id, t.payment_id, t.party_name, t.amount, t.reversal_reason, t.payment_date",
+          orderBy: "t.payment_date DESC",
+          asOfExpr: "t.payment_date",
+          thresholds: [10, 3],
+          mapRow: (r) => ({
+            id: `pay:${r.id}`,
+            label: r.payment_id || `Payment #${r.id}`,
+            detail: r.reversal_reason ? String(r.reversal_reason).slice(0, 120) : "Reversed",
+            amount: r.amount != null ? num(r.amount) : null,
+            occurredAt: iso(r.payment_date),
+            severity: "high",
+            sensitive: r.party_name ? { party: String(r.party_name) } : undefined,
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(payment_date) m FROM payments WHERE status = 'Reversed'`,
-        [],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level === "group" || scope.level === "company",
-        count,
-        severity: severityFromCount(count, 10, 3),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `pay:${r.id}`,
-          label: r.payment_id || `Payment #${r.id}`,
-          detail: r.reversal_reason ? String(r.reversal_reason).slice(0, 120) : "Reversed",
-          amount: r.amount != null ? num(r.amount) : null,
-          occurredAt: iso(r.payment_date),
-          severity: "high" as Severity,
-          sensitive: r.party_name ? { party: r.party_name } : undefined,
-        })),
-      }
     },
   )
 }
 
-// --- Finance compliance sources --------------------------------------------
-
-async function loadGstCompliance(_tenantId: number, scope: RiskScope) {
+function loadGstCompliance(scope: RiskScope, cols: Columns) {
   return safe(
-    { key: "gst_compliance", label: "GST filing status", category: "finance", drillHref: "/modules/finance/gst" },
+    { key: "gst_compliance", label: "GST filing status", category: "finance", drillHref: "/modules/finance/gst-filing" },
     async () => {
-      // Not-yet-filed returns are the GST compliance exception signal.
-      const rows = await query<any[]>(
-        `SELECT return_type, return_period, filing_status, arn, updated_at
-           FROM gst_filings
-          WHERE filing_status <> 'Filed'
-          ORDER BY return_period DESC, id DESC LIMIT ${ITEM_LIMIT}`,
-        [],
+      const c = await cols.require("gst_filings", ["filing_status"])
+      const due = c.has("due_date") ? "t.due_date" : "NULL"
+      const asOf = c.has("updated_at") ? "t.updated_at" : due
+      return runSql(
+        {
+          from: "gst_filings t",
+          where: "COALESCE(t.filing_status,'') <> 'Filed'",
+          params: [],
+          dims: {},
+          select: `t.id, t.return_type, t.return_period, t.filing_status, ${due} AS due_date, ${asOf} AS as_of`,
+          orderBy: "t.return_period DESC, t.id DESC",
+          asOfExpr: asOf,
+          thresholds: [6, 2],
+          mapRow: (r) => {
+            const d = dateOnly(r.due_date)
+            const overdue = !!d && d < new Date().toISOString().slice(0, 10)
+            return {
+              id: `gst:${r.id}`,
+              label: `${r.return_type ?? "GST"} ${r.return_period ?? ""}`.trim(),
+              detail: [r.filing_status || "Not filed", d && (overdue ? `overdue since ${d}` : `due ${d}`)].filter(Boolean).join(" · "),
+              occurredAt: iso(r.as_of),
+              severity: overdue ? "high" : "medium",
+            }
+          },
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(updated_at) m FROM gst_filings WHERE filing_status <> 'Filed'`,
-        [],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level === "group" || scope.level === "company",
-        count,
-        severity: severityFromCount(count, 6, 2),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `gst:${r.return_type}:${r.return_period}`,
-          label: `${r.return_type ?? "GST"} ${r.return_period ?? ""}`.trim(),
-          detail: r.arn ? `ARN ${r.arn} · ${r.filing_status}` : r.filing_status,
-          occurredAt: iso(r.updated_at),
-          severity: "medium" as Severity,
-        })),
-      }
     },
   )
 }
 
-async function loadTdsCompliance(_tenantId: number, scope: RiskScope) {
+function loadTdsCompliance(scope: RiskScope, cols: Columns) {
   return safe(
-    { key: "tds_compliance", label: "TDS filing status", category: "finance", drillHref: "/modules/finance/tds" },
+    { key: "tds_compliance", label: "TDS return status", category: "finance", drillHref: "/modules/finance/tds-filing" },
     async () => {
-      const rows = await query<any[]>(
-        `SELECT return_type, quarter, financial_year, return_status, updated_at
-           FROM tds_filings
-          WHERE return_status <> 'Filed'
-          ORDER BY financial_year DESC, quarter DESC, id DESC LIMIT ${ITEM_LIMIT}`,
-        [],
+      const c = await cols.require("tds_filings")
+      // The TDS compliance engine uses `status`; older rows only have `return_status`.
+      const statusCol = c.has("status") ? "t.status" : c.has("return_status") ? "t.return_status" : null
+      if (!statusCol) throw new SourceMissing("tds_filings.status")
+      const period = ["period", "quarter"].find((x) => c.has(x))
+      const fy = c.has("financial_year") ? "t.financial_year" : "NULL"
+      const form = ["form_type", "return_type"].find((x) => c.has(x))
+      const asOf = c.has("updated_at") ? "t.updated_at" : "NULL"
+      return runSql(
+        {
+          from: "tds_filings t",
+          where: `COALESCE(NULLIF(${statusCol},''),'Draft') NOT IN ('Filed','Cancelled')`,
+          params: [],
+          dims: {},
+          select: `t.id, ${statusCol} AS status, ${period ? `t.${period}` : "NULL"} AS period, ${fy} AS fy, ${form ? `t.${form}` : "NULL"} AS form, ${asOf} AS as_of`,
+          orderBy: "t.id DESC",
+          asOfExpr: asOf,
+          thresholds: [4, 2],
+          mapRow: (r) => ({
+            id: `tds:${r.id}`,
+            label: [r.form ?? "TDS", r.period, r.fy].filter(Boolean).join(" "),
+            detail: r.status || "Draft",
+            occurredAt: iso(r.as_of),
+            severity: ["Rejected", "Correction Required"].includes(r.status) ? "high" : "medium",
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(updated_at) m FROM tds_filings WHERE return_status <> 'Filed'`,
-        [],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level === "group" || scope.level === "company",
-        count,
-        severity: severityFromCount(count, 4, 2),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `tds:${r.return_type}:${r.quarter}:${r.financial_year}`,
-          label: `${r.return_type ?? "TDS"} ${r.quarter ?? ""} ${r.financial_year ?? ""}`.replace(/\s+/g, " ").trim(),
-          detail: r.return_status,
-          occurredAt: iso(r.updated_at),
-          severity: "medium" as Severity,
-        })),
-      }
     },
   )
 }
 
-async function loadReconciliation(_tenantId: number, scope: RiskScope) {
+function loadReconciliation(scope: RiskScope, cols: Columns) {
   return safe(
-    { key: "reconciliation", label: "Bank reconciliation", category: "finance", drillHref: "/modules/finance/bank-reconciliation" },
+    { key: "reconciliation", label: "Bank reconciliation", category: "finance", drillHref: "/modules/finance/bank-transactions" },
     async () => {
-      const rows = await query<any[]>(
-        `SELECT transaction_id, amount, transaction_date, reconciliation_status
-           FROM bank_transactions
-          WHERE COALESCE(NULLIF(reconciliation_status,''),'Pending') <> 'Reconciled'
-          ORDER BY transaction_date DESC LIMIT ${ITEM_LIMIT}`,
-        [],
+      await cols.require("bank_transactions", ["reconciliation_status"])
+      return runSql(
+        {
+          from: "bank_transactions t",
+          where: "COALESCE(NULLIF(t.reconciliation_status,''),'Pending') <> 'Reconciled'",
+          params: [],
+          dims: {},
+          select: "t.transaction_id, t.amount, t.transaction_date, t.reconciliation_status",
+          orderBy: "t.transaction_date DESC",
+          asOfExpr: "t.transaction_date",
+          thresholds: [20, 5],
+          mapRow: (r) => ({
+            id: `bank:${r.transaction_id}`,
+            label: `Txn ${r.transaction_id}`,
+            detail: r.reconciliation_status || "Pending",
+            amount: r.amount != null ? num(r.amount) : null,
+            occurredAt: iso(r.transaction_date),
+            severity: "medium",
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(transaction_date) m FROM bank_transactions
-          WHERE COALESCE(NULLIF(reconciliation_status,''),'Pending') <> 'Reconciled'`,
-        [],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level === "group" || scope.level === "company",
-        count,
-        severity: severityFromCount(count, 20, 5),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `bank:${r.transaction_id}`,
-          label: `Txn ${r.transaction_id}`,
-          detail: r.reconciliation_status || "Pending",
-          amount: r.amount != null ? num(r.amount) : null,
-          occurredAt: iso(r.transaction_date),
-          severity: "medium" as Severity,
-        })),
-      }
     },
   )
 }
 
-// --- HR & contract sources --------------------------------------------------
+// --- HR ---------------------------------------------------------------------
 
-async function loadHrDocuments(_tenantId: number, scope: RiskScope) {
+function expirySeverity(it: ExpiryItem): Severity {
+  if (it.status === "Expired") return it.daysUntil < -30 ? "critical" : "high"
+  return it.escalation === "urgent" ? "high" : "medium"
+}
+
+function expiryBody(items: ExpiryItem[], thresholds: [number, number]): Body {
+  const count = items.length
+  return {
+    available: true,
+    scopeApplied: false,
+    withheld: false,
+    count,
+    severity: severityFromCount(count, ...thresholds),
+    asOf: new Date().toISOString(),
+    items: items.slice(0, ITEM_LIMIT).map((it) => ({
+      id: `exp:${it.sourceId}:${it.entityId}`,
+      label: it.sourceLabel,
+      detail: it.status === "Expired" ? `Expired ${-it.daysUntil}d ago (${it.expiryDate})` : `Expires in ${it.daysUntil}d (${it.expiryDate})`,
+      occurredAt: iso(it.expiryDate),
+      severity: expirySeverity(it),
+      sensitive: {
+        record: it.title,
+        ...(it.subtitle ? { owner: it.subtitle } : {}),
+        ...(it.documentNumber ? { number: it.documentNumber } : {}),
+      },
+    })),
+  }
+}
+
+type ExpiryLoader = () => Promise<ExpiryItem[]>
+
+function loadHrDocumentExpiry(scope: RiskScope, cols: Columns, expiries: ExpiryLoader) {
   return safe(
-    { key: "hr_documents", label: "Employee documents", category: "hr", drillHref: "/modules/hr/documents" },
+    { key: "hr_document_expiry", label: "Employee document expiry", category: "hr", drillHref: "/modules/operations/document-expiry" },
     async () => {
-      // Unverified employee documents are the HR compliance exception signal;
-      // this table tracks verification state, not expiry.
-      const rows = await query<any[]>(
-        `SELECT id, employee_id, document_type, status, updated_at
-           FROM hr_employee_documents
-          WHERE verified = 0
-          ORDER BY updated_at DESC LIMIT ${ITEM_LIMIT}`,
-        [],
+      await cols.require("hr_employee_documents")
+      let items = (await expiries()).filter(
+        (i) => (i.sourceId === "hr_employee_documents" || i.sourceId === "hr_passport_visa") && i.status !== "Valid" && i.status !== "None",
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(updated_at) m FROM hr_employee_documents WHERE verified = 0`,
-        [],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level === "group" || scope.level === "company",
-        count,
-        severity: severityFromCount(count, 15, 4),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `hrdoc:${r.id}`,
-          label: r.document_type || `Document #${r.id}`,
-          detail: `Employee ${r.employee_id} · ${r.status || "Pending"} verification`,
-          occurredAt: iso(r.updated_at),
-          severity: "medium" as Severity,
-          sensitive: { employee: String(r.employee_id) },
-        })),
+      if (scope.level !== "group") {
+        const dims = await hrDims(cols, "e")
+        const col = dims[scope.level]
+        if (!col) return withheld(scope.level)
+        const ids = [...new Set(items.map((i) => i.ownerUserId).filter((x): x is number => x != null))]
+        const inScope = new Set<number>()
+        if (ids.length) {
+          const rows = await query<any[]>(
+            `SELECT e.user_id FROM hr_employees e WHERE ${col} = ? AND e.user_id IN (${ids.map(() => "?").join(",")})`,
+            [scope.value, ...ids],
+          )
+          rows.forEach((r) => inScope.add(num(r.user_id)))
+        }
+        items = items.filter((i) => i.ownerUserId != null && inScope.has(i.ownerUserId))
       }
+      return { ...expiryBody(items, [15, 4]), scopeApplied: scope.level !== "group" }
     },
   )
 }
 
-async function loadHrAttendance(_tenantId: number, scope: RiskScope) {
+function loadHrDocumentVerification(scope: RiskScope, cols: Columns) {
   return safe(
-    { key: "hr_attendance", label: "Attendance regularisations", category: "hr", drillHref: "/modules/hr/attendance" },
+    { key: "hr_document_verification", label: "Unverified employee documents", category: "hr", drillHref: "/modules/hr/employee-documents" },
     async () => {
-      const rows = await query<any[]>(
-        `SELECT id, request_id, employee_name, status, requested_at
-           FROM hr_attendance_regularisation
-          WHERE status = 'Pending'
-          ORDER BY requested_at ASC LIMIT ${ITEM_LIMIT}`,
-        [],
+      const c = await cols.require("hr_employee_documents", ["verified", "employee_id"])
+      const dims = await hrDims(cols, "e")
+      const asOf = c.has("updated_at") ? "d.updated_at" : "NULL"
+      return runSql(
+        {
+          from: "hr_employee_documents d LEFT JOIN hr_employees e ON e.id = d.employee_id",
+          where: `d.verified = 0${c.has("archived_at") ? " AND d.archived_at IS NULL" : ""}`,
+          params: [],
+          dims,
+          select: `d.id, d.employee_id, d.document_type, e.full_name, ${asOf} AS as_of`,
+          orderBy: "d.id DESC",
+          asOfExpr: asOf,
+          thresholds: [15, 4],
+          mapRow: (r) => ({
+            id: `hrdoc:${r.id}`,
+            label: r.document_type || `Document #${r.id}`,
+            detail: "Pending verification",
+            occurredAt: iso(r.as_of),
+            severity: "medium",
+            sensitive: { employee: String(r.full_name || r.employee_id) },
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(requested_at) m FROM hr_attendance_regularisation WHERE status = 'Pending'`,
-        [],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level === "group" || scope.level === "company",
-        count,
-        severity: severityFromCount(count),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `att:${r.id}`,
-          label: r.request_id || `Regularisation #${r.id}`,
-          detail: "Pending review",
-          occurredAt: iso(r.requested_at),
-          severity: "low" as Severity,
-          sensitive: r.employee_name ? { employee: r.employee_name } : undefined,
-        })),
-      }
     },
   )
 }
 
-async function loadHrTraining(tenantId: number, scope: RiskScope) {
+function loadHrAttendance(scope: RiskScope, cols: Columns) {
   return safe(
-    { key: "hr_training", label: "Training compliance", category: "hr", drillHref: "/modules/hr/training" },
+    { key: "hr_attendance", label: "Attendance regularisations", category: "hr", drillHref: "/modules/hr/attendance-regularisation" },
     async () => {
-      const rows = await query<any[]>(
-        `SELECT id, employee_id, status, due_date
-           FROM training_assignments
-          WHERE tenant_id = ?
-            AND status <> 'completed'
-            AND (status = 'overdue' OR (due_date IS NOT NULL AND due_date < CURDATE()))
-          ORDER BY due_date ASC LIMIT ${ITEM_LIMIT}`,
-        [tenantId],
+      const c = await cols.require("hr_attendance_regularisation", ["status"])
+      const join = c.has("employee_id")
+      const dims = join ? await hrDims(cols, "e") : {}
+      if (c.has("department")) dims.department = "t.department"
+      return runSql(
+        {
+          from: `hr_attendance_regularisation t${join ? " LEFT JOIN hr_employees e ON e.id = t.employee_id" : ""}`,
+          where: "t.status = 'Pending'",
+          params: [],
+          dims,
+          select: "t.id, t.request_id, t.employee_name, t.requested_at",
+          orderBy: "t.requested_at ASC",
+          asOfExpr: "t.requested_at",
+          thresholds: [10, 3],
+          mapRow: (r) => ({
+            id: `att:${r.id}`,
+            label: r.request_id || `Regularisation #${r.id}`,
+            detail: "Pending review",
+            occurredAt: iso(r.requested_at),
+            severity: "low",
+            sensitive: r.employee_name ? { employee: String(r.employee_name) } : undefined,
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(due_date) m FROM training_assignments
-          WHERE tenant_id = ?
-            AND status <> 'completed'
-            AND (status = 'overdue' OR (due_date IS NOT NULL AND due_date < CURDATE()))`,
-        [tenantId],
-      )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level === "group" || scope.level === "company",
-        count,
-        severity: severityFromCount(count, 25, 8),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `train:${r.id}`,
-          label: `Assignment #${r.id}`,
-          detail: `Employee ${r.employee_id} · due ${r.due_date ?? "n/a"}`,
-          occurredAt: iso(r.due_date),
-          severity: "medium" as Severity,
-          sensitive: { employee: String(r.employee_id) },
-        })),
-      }
     },
   )
 }
 
-async function loadContractObligations(_tenantId: number, scope: RiskScope) {
+function loadHrTraining(tenantId: number, scope: RiskScope, cols: Columns) {
   return safe(
-    { key: "contract_obligations", label: "Contract obligations", category: "hr", drillHref: "/modules/legal/contracts" },
+    { key: "hr_training", label: "Overdue training", category: "hr", drillHref: "/modules/hr/training" },
     async () => {
-      const rows = await query<any[]>(
-        `SELECT id, title, party_name, status, end_date, renewal_date
-           FROM legal_generated_contracts
-          WHERE (end_date IS NOT NULL AND end_date <= (CURDATE() + INTERVAL 60 DAY))
-             OR (renewal_date IS NOT NULL AND renewal_date <= (CURDATE() + INTERVAL 60 DAY))
-          ORDER BY COALESCE(renewal_date, end_date) ASC LIMIT ${ITEM_LIMIT}`,
-        [],
+      await cols.require("training_assignments", ["tenant_id", "status", "due_date"])
+      const dims = await hrDims(cols, "e")
+      return runSql(
+        {
+          from: "training_assignments t LEFT JOIN hr_employees e ON e.id = t.employee_id",
+          where: "t.tenant_id = ? AND t.status <> 'completed' AND (t.status = 'overdue' OR (t.due_date IS NOT NULL AND t.due_date < CURDATE()))",
+          params: [tenantId],
+          dims,
+          select: "t.id, t.employee_id, t.status, t.due_date",
+          orderBy: "t.due_date ASC",
+          asOfExpr: "t.due_date",
+          thresholds: [25, 8],
+          mapRow: (r) => ({
+            id: `train:${r.id}`,
+            label: `Assignment #${r.id}`,
+            detail: `Due ${dateOnly(r.due_date) ?? "n/a"}`,
+            occurredAt: iso(r.due_date),
+            severity: "medium",
+            sensitive: { employee: String(r.employee_id) },
+          }),
+        },
+        scope,
       )
-      const [{ c, m }] = await query<any[]>(
-        `SELECT COUNT(*) c, MAX(updated_at) m FROM legal_generated_contracts
-          WHERE (end_date IS NOT NULL AND end_date <= (CURDATE() + INTERVAL 60 DAY))
-             OR (renewal_date IS NOT NULL AND renewal_date <= (CURDATE() + INTERVAL 60 DAY))`,
-        [],
+    },
+  )
+}
+
+// --- Contracts --------------------------------------------------------------
+
+function loadContractObligations(scope: RiskScope, cols: Columns, expiries: ExpiryLoader) {
+  return safe(
+    { key: "contract_obligations", label: "Contract expiry & renewals", category: "contracts", drillHref: "/modules/legal/contracts" },
+    async () => {
+      await cols.require("legal_generated_contracts")
+      if (scope.level !== "group") return withheld(scope.level)
+      const items = (await expiries()).filter(
+        (i) => i.sourceId === "legal_generated_contracts" && i.status !== "Valid" && i.status !== "None",
       )
-      const count = num(c)
-      return {
-        available: true,
-        scopeApplied: scope.level === "group" || scope.level === "company",
-        count,
-        severity: severityFromCount(count, 10, 3),
-        asOf: iso(m),
-        items: rows.map((r) => ({
-          id: `contract:${r.id}`,
-          label: r.title || `Contract #${r.id}`,
-          detail: `${r.status} · ${r.renewal_date ? `renews ${r.renewal_date}` : `ends ${r.end_date}`}`,
-          occurredAt: iso(r.renewal_date || r.end_date),
-          severity: "medium" as Severity,
-          sensitive: r.party_name ? { party: r.party_name } : undefined,
-        })),
-      }
+      return expiryBody(items, [10, 3])
     },
   )
 }
 
 /**
- * Compute the full dashboard live from every source. Never throws for a single
- * broken source — those degrade to `available: false`.
+ * Compute the dashboard live. Never throws for a single broken source.
+ * `now` is injectable for staleness tests.
  */
 export async function computeRiskComplianceDashboard(
   tenantId: number,
   scope: RiskScope,
+  now: Date = new Date(),
 ): Promise<RiskComplianceDashboard> {
+  const cols = new Columns()
+  // The expiry engine scans several tables — load it once for both consumers.
+  let expiryPromise: Promise<ExpiryItem[]> | null = null
+  const expiries: ExpiryLoader = () => (expiryPromise ??= getClassifiedExpiries(now))
+
   const sources = await Promise.all([
-    loadPendingApprovals(tenantId, scope),
-    loadMakerChecker(tenantId, scope),
-    loadFailedAuth(tenantId, scope),
-    loadFailedJobs(tenantId, scope),
-    loadPaymentExceptions(tenantId, scope),
-    loadGstCompliance(tenantId, scope),
-    loadTdsCompliance(tenantId, scope),
-    loadReconciliation(tenantId, scope),
-    loadHrDocuments(tenantId, scope),
-    loadHrAttendance(tenantId, scope),
-    loadHrTraining(tenantId, scope),
-    loadContractObligations(tenantId, scope),
+    loadPendingApprovals(tenantId, scope, cols),
+    loadMakerChecker(tenantId, scope, cols),
+    loadFailedAuth(tenantId, scope, cols),
+    loadFailedJobs(tenantId, scope, cols),
+    loadPaymentExceptions(scope, cols),
+    loadGstCompliance(scope, cols),
+    loadTdsCompliance(scope, cols),
+    loadReconciliation(scope, cols),
+    loadHrDocumentExpiry(scope, cols, expiries),
+    loadHrDocumentVerification(scope, cols),
+    loadHrAttendance(scope, cols),
+    loadHrTraining(tenantId, scope, cols),
+    loadContractObligations(scope, cols, expiries),
   ])
 
+  return summarize(tenantId, scope, sources, now)
+}
+
+export function summarize(tenantId: number, scope: RiskScope, sources: SourceResult[], now = new Date()): RiskComplianceDashboard {
   const categories: RiskComplianceDashboard["categories"] = {
     operational: { openItems: 0, critical: 0, sources: 0 },
     finance: { openItems: 0, critical: 0, sources: 0 },
     hr: { openItems: 0, critical: 0, sources: 0 },
+    contracts: { openItems: 0, critical: 0, sources: 0 },
   }
-  let openItems = 0
-  let critical = 0
-  let high = 0
-  let available = 0
+  const totals = { openItems: 0, critical: 0, high: 0, sourcesAvailable: 0, sourcesMissing: 0, sourcesWithheld: 0 }
   for (const s of sources) {
-    if (s.available) available += 1
-    openItems += s.count
-    if (s.severity === "critical") critical += 1
-    if (s.severity === "high") high += 1
     const cat = categories[s.category]
+    if (!s.available) totals.sourcesMissing += 1
+    else if (s.withheld) totals.sourcesWithheld += 1
+    else {
+      totals.sourcesAvailable += 1
+      cat.sources += 1
+    }
+    totals.openItems += s.count
     cat.openItems += s.count
-    if (s.severity === "critical") cat.critical += 1
-    if (s.available) cat.sources += 1
+    if (s.severity === "critical") {
+      totals.critical += 1
+      cat.critical += 1
+    }
+    if (s.severity === "high") totals.high += 1
   }
-
-  return {
-    tenantId,
-    scope,
-    scopeKey: scopeKeyOf(scope),
-    computedAt: new Date().toISOString(),
-    masked: false,
-    totals: {
-      openItems,
-      critical,
-      high,
-      sourcesAvailable: available,
-      sourcesMissing: sources.length - available,
-    },
-    categories,
-    sources,
-  }
+  return { tenantId, scope, scopeKey: scopeKeyOf(scope), computedAt: now.toISOString(), masked: false, totals, categories, sources }
 }
 
-/**
- * Return a copy of the dashboard with sensitive fields masked. Used for exports
- * and any caller not explicitly authorized to view PII/counterparties.
- */
+/** Copy of the dashboard with every sensitive value masked (incl. inside label/detail). */
 export function maskDashboard(dash: RiskComplianceDashboard): RiskComplianceDashboard {
+  const scrub = (text: string | null | undefined, values: string[]) => {
+    if (!text) return text ?? null
+    let out = text
+    for (const v of values) if (v && v.length >= 3) out = out.split(v).join(MASK)
+    return out
+  }
   return {
     ...dash,
     masked: true,
     sources: dash.sources.map((s) => ({
       ...s,
       items: s.items.map((it) => {
-        if (!it.sensitive) return it
-        const masked: Record<string, string> = {}
-        for (const k of Object.keys(it.sensitive)) masked[k] = "•••• (masked)"
-        // Also scrub sensitive substrings that may appear in the human detail.
-        let detail = it.detail ?? null
-        if (detail) {
-          for (const v of Object.values(it.sensitive)) {
-            if (v) detail = detail.split(v).join("•••• (masked)")
-          }
-        }
-        return { ...it, detail, sensitive: masked }
+        if (!it.sensitive || !Object.keys(it.sensitive).length) return it
+        const values = Object.values(it.sensitive)
+        const sensitive = Object.fromEntries(Object.keys(it.sensitive).map((k) => [k, MASK]))
+        return { ...it, label: scrub(it.label, values) ?? "", detail: scrub(it.detail, values), sensitive }
       }),
     })),
   }
 }
 
-/** Staleness helper: true when `computedAt` is older than `maxAgeMs`. */
 export function isStale(computedAt: string, maxAgeMs: number, now = Date.now()): boolean {
   const t = new Date(computedAt).getTime()
   if (Number.isNaN(t)) return true

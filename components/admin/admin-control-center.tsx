@@ -92,6 +92,7 @@ const CONTROL_AREAS: ControlArea[] = [
       { label: "Job monitoring", href: "/admin/job-monitoring" },
       { label: "Admin settings", href: "/admin/settings" },
       { label: "Audit log", href: "/admin/governance" },
+      { label: "Risk & compliance", href: "/admin/risk-compliance" },
       { label: "Notification preferences", href: "/notifications/preferences" },
     ],
   },

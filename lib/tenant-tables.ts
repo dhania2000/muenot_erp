@@ -362,6 +362,24 @@ export const TENANT_OWNED_TABLES = [
   "ai_anomaly_alerts",
   "ai_anomaly_alert_audit",
   "ai_anomaly_scans",
+  // SPEC 38 (#230-233) — Training & policy acknowledgment. Per-tenant learning
+  // catalogue (courses/modules/lessons/quiz), private media references with
+  // expiry + access control, role/employee assignments with progress, quiz
+  // attempts, certificates, and policies with immutable versions and employee
+  // acknowledgments (version + time + evidence). None may ever be visible to or
+  // acted on from another tenant.
+  "training_courses",
+  "training_modules",
+  "training_lessons",
+  "training_quiz_questions",
+  "training_media",
+  "training_assignments",
+  "training_lesson_progress",
+  "training_quiz_attempts",
+  "training_certificates",
+  "training_policies",
+  "training_policy_versions",
+  "training_policy_acknowledgments",
 ] as const
 
 export type TenantOwnedTable = (typeof TENANT_OWNED_TABLES)[number]

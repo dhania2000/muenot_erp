@@ -53,7 +53,7 @@ export async function ensureExpenseClaimSchema(): Promise<void> {
     period_from DATE DEFAULT NULL,
     period_to DATE DEFAULT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'Draft',
-    lines LONGTEXT DEFAULT NULL,
+    \`lines\` LONGTEXT DEFAULT NULL,
     gross_total DECIMAL(14,2) NOT NULL DEFAULT 0,
     reimbursable_total DECIMAL(14,2) NOT NULL DEFAULT 0,
     corporate_card_total DECIMAL(14,2) NOT NULL DEFAULT 0,
@@ -292,7 +292,7 @@ export async function createClaim(input: ClaimInput, session: SessionPayload): P
   await query(
     `INSERT INTO ${TABLE}
       (tenant_id, claim_id, title, employee_id, employee_name, department, designation,
-       employee_email, employee_manager, claim_date, period_from, period_to, status, lines,
+       employee_email, employee_manager, claim_date, period_from, period_to, status, \`lines\`,
        gross_total, reimbursable_total, corporate_card_total, mileage_total, policy_violations,
        notes, created_by, created_by_name)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -345,7 +345,7 @@ export async function updateClaim(
     `UPDATE ${TABLE} SET
        title = ?, employee_id = ?, employee_name = ?, department = ?, designation = ?,
        employee_email = ?, employee_manager = ?, claim_date = ?, period_from = ?, period_to = ?,
-       lines = ?, gross_total = ?, reimbursable_total = ?, corporate_card_total = ?,
+       \`lines\` = ?, gross_total = ?, reimbursable_total = ?, corporate_card_total = ?,
        mileage_total = ?, policy_violations = ?, notes = ?,
        status = CASE WHEN status = 'Rejected' THEN 'Draft' ELSE status END,
        rejected_reason = CASE WHEN status = 'Rejected' THEN NULL ELSE rejected_reason END

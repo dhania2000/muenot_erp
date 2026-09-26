@@ -34,7 +34,7 @@ export function ensurePayrollSchema(): Promise<void> {
         net DECIMAL(14,2) NOT NULL DEFAULT 0,
         unreconciled_count INT UNSIGNED NOT NULL DEFAULT 0,
         tax_slabs JSON DEFAULT NULL,
-        lines JSON DEFAULT NULL,
+        \`lines\` JSON DEFAULT NULL,
         created_by INT UNSIGNED DEFAULT NULL,
         finalized_by INT UNSIGNED DEFAULT NULL,
         finalized_at DATETIME DEFAULT NULL,
@@ -170,7 +170,7 @@ export async function createPayrollRun(
   const { lines, summary } = await previewPayroll(input.period, input.tax_slabs)
   const result: any = await query(
     `INSERT INTO ${TABLE} (tenant_id, period, status, idempotency_key, employee_count, gross, tax_withheld, net,
-       unreconciled_count, tax_slabs, lines, created_by) VALUES (?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       unreconciled_count, tax_slabs, \`lines\`, created_by) VALUES (?, ?, 'Draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       tid,
       input.period,

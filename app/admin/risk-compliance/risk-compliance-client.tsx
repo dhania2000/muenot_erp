@@ -26,13 +26,16 @@ interface RiskItem {
   severity: Severity
   amount?: number | null
   occurredAt?: string | null
+  sensitive?: Record<string, string>
 }
+type Category = "operational" | "finance" | "hr" | "contracts"
 interface SourceResult {
   key: string
   label: string
-  category: "operational" | "finance" | "hr"
+  category: Category
   available: boolean
   scopeApplied: boolean
+  withheld: boolean
   count: number
   severity: Severity
   asOf: string | null
@@ -44,17 +47,41 @@ interface Dashboard {
   scope: { level: ScopeLevel; value?: string | null }
   computedAt: string
   masked: boolean
-  totals: { openItems: number; critical: number; high: number; sourcesAvailable: number; sourcesMissing: number }
+  totals: {
+    openItems: number
+    critical: number
+    high: number
+    sourcesAvailable: number
+    sourcesMissing: number
+    sourcesWithheld: number
+  }
   categories: Record<string, { openItems: number; critical: number; sources: number }>
   sources: SourceResult[]
 }
 interface ApiResponse {
   ok: boolean
   dashboard: Dashboard
-  meta: { fromCache: boolean; stale: boolean; staleThresholdMs: number; canViewSensitive: boolean }
+  meta: {
+    fromCache: boolean
+    stale: boolean
+    staleThresholdMs: number
+    canViewSensitive: boolean
+    restricted: boolean
+    narrowed: boolean
+    allowed: { level: ScopeLevel; values: string[] } | null
+  }
 }
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json())
+class ApiError extends Error {}
+
+const fetcher = async (url: string): Promise<ApiResponse> => {
+  const r = await fetch(url)
+  const body = await r.json().catch(() => ({}))
+  if (!r.ok) throw new ApiError(body?.error || `Request failed (${r.status})`)
+  return body
+}
+
+const CATEGORIES: Category[] = ["operational", "finance", "hr", "contracts"]
 
 const SEV_STYLES: Record<Severity, string> = {
   critical: "bg-destructive/15 text-destructive border-destructive/30",
@@ -67,7 +94,8 @@ const SEV_STYLES: Record<Severity, string> = {
 const CATEGORY_LABELS: Record<string, string> = {
   operational: "Operational & security",
   finance: "Finance & tax compliance",
-  hr: "HR & contracts",
+  hr: "HR documents, attendance & training",
+  contracts: "Contract obligations",
 }
 
 function SeverityBadge({ severity }: { severity: Severity }) {
@@ -92,11 +120,13 @@ export function RiskComplianceClient() {
   const [level, setLevel] = useState<ScopeLevel>("group")
   const [value, setValue] = useState("")
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
 
+  const needsValue = level !== "group" && !value.trim()
   const params = new URLSearchParams({ level })
-  if (level !== "group" && value) params.set("value", value)
-  const key = `/api/admin/risk-compliance?${params.toString()}`
+  if (level !== "group" && value.trim()) params.set("value", value.trim())
+  const key = needsValue ? null : `/api/admin/risk-compliance?${params.toString()}`
 
   const { data, error, isLoading, mutate } = useSWR<ApiResponse>(key, fetcher, {
     revalidateOnFocus: false,
@@ -104,12 +134,18 @@ export function RiskComplianceClient() {
 
   async function handleRefresh() {
     setRefreshing(true)
+    setRefreshError(null)
     try {
-      await fetch("/api/admin/risk-compliance/refresh", {
+      const r = await fetch("/api/admin/risk-compliance/refresh", {
         method: "POST",
-        headers: { "content-type": "application/json", "idempotency-key": `refresh-${level}-${value}-${Date.now()}` },
-        body: JSON.stringify({ level, value: level === "group" ? null : value }),
+        headers: { "content-type": "application/json", "idempotency-key": `refresh-${crypto.randomUUID()}` },
+        body: JSON.stringify({ level, value: level === "group" ? null : value.trim() }),
       })
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        setRefreshError(body?.error || "Refresh failed")
+        return
+      }
       await mutate()
     } finally {
       setRefreshing(false)
@@ -118,8 +154,8 @@ export function RiskComplianceClient() {
 
   const dash = data?.dashboard
   const meta = data?.meta
-  const grouped: Record<string, SourceResult[]> = { operational: [], finance: [], hr: [] }
-  dash?.sources.forEach((s) => grouped[s.category].push(s))
+  const grouped: Record<Category, SourceResult[]> = { operational: [], finance: [], hr: [], contracts: [] }
+  dash?.sources.forEach((s) => grouped[s.category]?.push(s))
 
   const exportParams = new URLSearchParams({ level })
   if (level !== "group" && value) exportParams.set("value", value)
@@ -159,7 +195,7 @@ export function RiskComplianceClient() {
               aria-label={`${level} filter value`}
             />
           )}
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || needsValue}>
             <RefreshCw className={`mr-1.5 size-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
             Refresh
           </Button>
@@ -191,7 +227,27 @@ export function RiskComplianceClient() {
         </p>
       )}
 
-      {error && <p className="mt-6 text-sm text-destructive">Failed to load dashboard.</p>}
+      {meta?.restricted && dash && (
+        <p className="mt-2 text-xs text-muted-foreground" role="status">
+          Your data scope limits this view to {dash.scope.level} <span className="font-medium text-foreground">{dash.scope.value}</span>
+          {meta.narrowed ? " (narrowed from your request)" : ""}.
+          {meta.allowed && meta.allowed.values.length > 1 ? ` Allowed: ${meta.allowed.values.join(", ")}.` : ""}
+        </p>
+      )}
+
+      {needsValue && (
+        <p className="mt-6 text-sm text-muted-foreground">Enter a {level} value to load this view.</p>
+      )}
+      {refreshError && (
+        <p className="mt-4 text-sm text-destructive" role="alert">
+          {refreshError}
+        </p>
+      )}
+      {error && (
+        <p className="mt-6 text-sm text-destructive" role="alert">
+          {error instanceof ApiError ? error.message : "Failed to load dashboard."}
+        </p>
+      )}
       {isLoading && <p className="mt-6 text-sm text-muted-foreground">Loading risk signals…</p>}
 
       {dash && (
@@ -204,7 +260,7 @@ export function RiskComplianceClient() {
           </div>
 
           <div className="mt-6 flex flex-col gap-6">
-            {(["operational", "finance", "hr"] as const).map((cat) => (
+            {CATEGORIES.filter((cat) => grouped[cat].length > 0).map((cat) => (
               <div key={cat}>
                 <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                   {CATEGORY_LABELS[cat]}
@@ -239,10 +295,8 @@ export function RiskComplianceClient() {
                       </CardHeader>
                       <CardContent className="pt-0">
                         {!s.available && <p className="text-xs text-muted-foreground">{s.note}</p>}
-                        {s.available && !s.scopeApplied && dash.scope.level !== "group" && (
-                          <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">
-                            Shown org-wide — {dash.scope.level} filter not supported by this source.
-                          </p>
+                        {s.available && s.withheld && (
+                          <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">{s.note}</p>
                         )}
                         {s.available && s.items.length > 0 && (
                           <>
@@ -271,6 +325,13 @@ export function RiskComplianceClient() {
                                       )}
                                     </div>
                                     {it.detail && <p className="text-muted-foreground">{it.detail}</p>}
+                                    {it.sensitive && Object.keys(it.sensitive).length > 0 && (
+                                      <p className="text-muted-foreground">
+                                        {Object.entries(it.sensitive)
+                                          .map(([k, v]) => `${k}: ${v}`)
+                                          .join(" · ")}
+                                      </p>
+                                    )}
                                   </li>
                                 ))}
                               </ul>

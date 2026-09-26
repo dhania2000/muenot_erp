@@ -82,6 +82,16 @@ export const DATA_DOMAINS: DataDomain[] = [
     branchColumns: ["branch", "branch_id"],
   },
   {
+    // Spec43 — gates which company/branch views of the risk & compliance
+    // dashboard a user may open (see lib/risk-compliance/scope.ts).
+    key: "risk.compliance",
+    label: "Risk & compliance dashboard",
+    table: "approval_requests",
+    ownerColumns: ["requested_by", "created_by"],
+    entityColumns: ["legal_entity_id", "entity_id"],
+    branchColumns: ["branch_id", "branch"],
+  },
+  {
     key: "sales.leads",
     label: "Sales leads",
     table: "sales_leads",

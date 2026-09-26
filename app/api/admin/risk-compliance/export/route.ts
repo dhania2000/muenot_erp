@@ -1,68 +1,51 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireTenantAdmin, effectiveTenantId } from "@/lib/platform-guard"
-import { ensureRiskComplianceSchema } from "@/lib/risk-compliance/schema"
-import {
-  computeRiskComplianceDashboard,
-  maskDashboard,
-  scopeKeyOf,
-  type RiskScope,
-  type ScopeLevel,
-} from "@/lib/risk-compliance/aggregate"
 import { recordAuditLogFromRequest } from "@/lib/audit-log-store"
+import { authorizeRiskRequest } from "@/lib/risk-compliance/access"
+import { computeRiskComplianceDashboard, maskDashboard } from "@/lib/risk-compliance/aggregate"
+import { scopeKeyOf } from "@/lib/risk-compliance/scope"
 
 /**
- * GET /api/admin/risk-compliance/export — CSV export of the dashboard.
- *
- * Exports are ALWAYS masked for sensitive fields unless the caller is a tenant
- * owner AND explicitly requests `unmasked=1`. The export is audited, recording
- * whether sensitive data was included, so unmasked pulls are attributable.
+ * GET /api/admin/risk-compliance/export — CSV export.
+ * Masked unless the caller is a tenant owner AND passes `unmasked=1`. Every
+ * export is audited with whether sensitive data was included.
  */
 
-const SCOPE_LEVELS: ScopeLevel[] = ["group", "company", "branch", "department"]
-
-function csvCell(v: unknown): string {
-  const s = v == null ? "" : String(v)
+/** Quote a CSV cell and neutralise spreadsheet formula injection. */
+export function csvCell(v: unknown): string {
+  let s = v == null ? "" : String(v)
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
   return `"${s.replace(/"/g, '""')}"`
 }
 
 export async function GET(req: NextRequest) {
-  const guard = await requireTenantAdmin()
-  if (!guard.ok) return NextResponse.json({ error: guard.reason }, { status: guard.status })
-  const tenantId = effectiveTenantId(guard.ctx)
-  if (tenantId == null) return NextResponse.json({ error: "No tenant in context" }, { status: 403 })
+  const sp = req.nextUrl.searchParams
+  const access = await authorizeRiskRequest(sp.get("level"), sp.get("value"))
+  if (!access.ok) return access.response
+  const { tenantId, isOwner, resolved } = access
+  const scope = resolved.scope
+  const unmasked = isOwner && sp.get("unmasked") === "1"
 
   try {
-    await ensureRiskComplianceSchema()
-
-    const levelRaw = (req.nextUrl.searchParams.get("level") || "group").toLowerCase()
-    const level = (SCOPE_LEVELS.includes(levelRaw as ScopeLevel) ? levelRaw : "group") as ScopeLevel
-    const value = level === "group" ? null : req.nextUrl.searchParams.get("value")?.slice(0, 150) || null
-    const scope: RiskScope = { level, value }
-
-    const isOwner = guard.ctx.tenantRole === "tenant_owner"
-    const wantsUnmasked = req.nextUrl.searchParams.get("unmasked") === "1"
-    // Sensitive export masking: only a tenant owner can opt out of masking.
-    const unmasked = isOwner && wantsUnmasked
-
     const raw = await computeRiskComplianceDashboard(tenantId, scope)
     const dash = unmasked ? raw : maskDashboard(raw)
 
-    const header = ["category", "source", "available", "severity", "item", "detail", "amount", "occurred_at"]
+    const header = ["category", "source", "status", "severity", "item", "detail", "sensitive", "amount", "occurred_at", "drill_href"]
     const lines = [header.map(csvCell).join(",")]
     for (const s of dash.sources) {
+      const status = !s.available ? "unavailable" : s.withheld ? "withheld" : "ok"
       if (!s.items.length) {
-        lines.push([s.category, s.label, s.available ? "yes" : "no", s.severity, "", s.note ?? "", "", s.asOf ?? ""].map(csvCell).join(","))
+        lines.push([s.category, s.label, status, s.severity, "", s.note ?? "", "", "", s.asOf ?? "", s.drillHref].map(csvCell).join(","))
         continue
       }
       for (const it of s.items) {
+        const sensitive = it.sensitive ? Object.entries(it.sensitive).map(([k, v]) => `${k}=${v}`).join("; ") : ""
         lines.push(
-          [s.category, s.label, s.available ? "yes" : "no", it.severity, it.label, it.detail ?? "", it.amount ?? "", it.occurredAt ?? ""]
+          [s.category, s.label, status, it.severity, it.label, it.detail ?? "", sensitive, it.amount ?? "", it.occurredAt ?? "", s.drillHref]
             .map(csvCell)
             .join(","),
         )
       }
     }
-    const csv = lines.join("\r\n")
 
     await recordAuditLogFromRequest(req, {
       action: "risk_compliance.export",
@@ -71,14 +54,16 @@ export async function GET(req: NextRequest) {
       metadata: { scope, unmasked, rows: lines.length - 1 },
     })
 
-    return new NextResponse(csv, {
+    return new NextResponse(lines.join("\r\n"), {
       status: 200,
       headers: {
         "content-type": "text/csv; charset=utf-8",
         "content-disposition": `attachment; filename="risk-compliance-${scope.level}.csv"`,
+        "cache-control": "no-store",
       },
     })
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message || "Failed to export" }, { status: 500 })
+    console.error("[risk-compliance] export failed:", (err as Error)?.message)
+    return NextResponse.json({ error: "Failed to export" }, { status: 500 })
   }
 }

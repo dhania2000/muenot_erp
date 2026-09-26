@@ -13,6 +13,7 @@ export type ClaimStatus =
   | "Submitted"
   | "Approved"
   | "Rejected"
+  | "Partially Reimbursed"
   | "Reimbursed"
   | "Cancelled"
 
@@ -67,6 +68,7 @@ export const CLAIM_STATUSES: ClaimStatus[] = [
   "Submitted",
   "Approved",
   "Rejected",
+  "Partially Reimbursed",
   "Reimbursed",
   "Cancelled",
 ]
@@ -88,9 +90,45 @@ export function round2(n: number): number {
 export function computeLineAmount(line: ClaimLine): number {
   if (line.is_mileage) {
     const rate = num(line.mileage_rate) > 0 ? num(line.mileage_rate) : MILEAGE_RATE
-    return round2(num(line.distance_km) * rate)
+    return round2(Math.max(0, num(line.distance_km)) * Math.max(0, rate))
   }
-  return round2(num(line.amount))
+  return round2(Math.max(0, num(line.amount)))
+}
+
+export type ReimbursementPlan = {
+  amount: number
+  reimbursedAfter: number
+  remainingAfter: number
+  status: "Partially Reimbursed" | "Reimbursed"
+}
+
+/**
+ * Validate a (possibly partial) reimbursement against the claim's approved
+ * reimbursable total and what has already been paid. `requested` defaults to
+ * the full remaining balance. Throws on a non-positive or over-payment. Pure.
+ */
+export function planReimbursement(
+  reimbursableTotal: number,
+  alreadyReimbursed: number,
+  requested?: number | null,
+): ReimbursementPlan {
+  const total = round2(Math.max(0, num(reimbursableTotal)))
+  const paid = round2(Math.max(0, num(alreadyReimbursed)))
+  const remaining = round2(total - paid)
+  if (remaining <= 0) throw new Error("This claim has already been fully reimbursed.")
+  const amount = requested == null || requested === ("" as unknown) ? remaining : round2(num(requested))
+  if (!(amount > 0)) throw new Error("A positive reimbursement amount is required.")
+  if (amount > remaining + 0.005) {
+    throw new Error(`Reimbursement ${amount} exceeds the remaining balance ${remaining}.`)
+  }
+  const reimbursedAfter = round2(paid + amount)
+  const remainingAfter = round2(total - reimbursedAfter)
+  return {
+    amount,
+    reimbursedAfter,
+    remainingAfter,
+    status: remainingAfter <= 0.005 ? "Reimbursed" : "Partially Reimbursed",
+  }
 }
 
 export type ClaimTotals = {
@@ -195,6 +233,7 @@ export const STATUS_TONE: Record<ClaimStatus, string> = {
   Submitted: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   Approved: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
   Rejected: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+  "Partially Reimbursed": "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300",
   Reimbursed: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
   Cancelled: "bg-muted text-muted-foreground line-through",
 }

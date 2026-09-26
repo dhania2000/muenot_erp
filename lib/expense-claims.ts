@@ -13,7 +13,10 @@ import {
   computeLineAmount,
   validateClaim,
   hasBlockingViolations,
+  planReimbursement,
 } from "@/lib/expense-claims-core"
+import { recordExpensePayment } from "@/lib/finance-expense-payments"
+import { recordAuditLog } from "@/lib/audit-log-store"
 
 /**
  * Expense Claims server engine (SPEC 127 — Phases 2–4).
@@ -78,6 +81,13 @@ export async function ensureExpenseClaimSchema(): Promise<void> {
     KEY idx_claim_status (status),
     KEY idx_claim_creator (created_by)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  // Migration: partial reimbursement tracking (added after the initial table).
+  const cols = await Promise.resolve(tableColumns(TABLE)).catch(() => null)
+  if (cols && cols.size && !cols.has("reimbursed_amount")) {
+    await Promise.resolve(
+      query(`ALTER TABLE ${TABLE} ADD COLUMN reimbursed_amount DECIMAL(14,2) NOT NULL DEFAULT 0 AFTER reimbursed_at`),
+    ).catch(() => undefined)
+  }
   ensured = true
 }
 
@@ -200,8 +210,8 @@ export async function getClaim(idOrRef: string | number, session: SessionPayload
   await ensureExpenseClaimSchema()
   const byRef = typeof idOrRef === "string" && idOrRef.startsWith("ECL-")
   const rows = (await query(
-    `SELECT * FROM ${TABLE} WHERE ${byRef ? "claim_id" : "id"} = ? LIMIT 1`,
-    [idOrRef],
+    `SELECT * FROM ${TABLE} WHERE ${byRef ? "claim_id" : "id"} = ? AND (tenant_id = ? OR tenant_id IS NULL) LIMIT 1`,
+    [idOrRef, tenantId()],
   )) as any[]
   const row = rows[0]
   if (!row) return null
@@ -385,7 +395,7 @@ const TRANSITIONS: Record<ClaimAction, { from: ClaimStatus[]; to: ClaimStatus }>
   submit: { from: ["Draft", "Rejected"], to: "Submitted" },
   approve: { from: ["Submitted"], to: "Approved" },
   reject: { from: ["Submitted"], to: "Rejected" },
-  reimburse: { from: ["Approved"], to: "Reimbursed" },
+  reimburse: { from: ["Approved", "Partially Reimbursed"], to: "Reimbursed" },
   cancel: { from: ["Draft", "Submitted", "Rejected"], to: "Cancelled" },
   reopen: { from: ["Rejected", "Cancelled"], to: "Draft" },
 }
@@ -397,7 +407,14 @@ export async function transitionClaim(
   idOrRef: string | number,
   action: ClaimAction,
   session: SessionPayload,
-  opts: { reason?: string | null; reference?: string | null } = {},
+  opts: {
+    reason?: string | null
+    reference?: string | null
+    amount?: number | null
+    payment_date?: string | null
+    deposit_role?: "bank" | "cash"
+    idempotency_key?: string | null
+  } = {},
 ): Promise<ClaimRow> {
   const claim = await getClaim(idOrRef, session)
   if (!claim) throw new Error("Claim not found")
@@ -438,11 +455,7 @@ export async function transitionClaim(
       claim.id,
     ])
   } else if (action === "reimburse") {
-    await query(`UPDATE ${TABLE} SET status = ?, reimbursed_at = NOW(), reimbursement_reference = ? WHERE id = ?`, [
-      rule.to,
-      opts.reference || null,
-      claim.id,
-    ])
+    await reimburseClaim(claim, session, opts)
   } else if (action === "cancel") {
     await query(`UPDATE ${TABLE} SET status = ? WHERE id = ?`, [rule.to, claim.id])
   } else if (action === "reopen") {
@@ -451,7 +464,70 @@ export async function transitionClaim(
 
   const next = await getClaim(claim.id, session)
   if (!next) throw new Error("Claim reload failed")
+  await recordAuditLog({
+    action: `expense_claim.${action}`,
+    entityType: "hr_expense_claim",
+    entityId: claim.id,
+    entityLabel: claim.claim_id,
+    before: { status: claim.status, reimbursed_amount: Number(claim.reimbursed_amount) || 0 },
+    after: { status: next.status, reimbursed_amount: Number(next.reimbursed_amount) || 0 },
+    metadata: { reason: opts.reason ?? null, reference: opts.reference ?? null, amount: opts.amount ?? null },
+  })
   return next
+}
+
+/**
+ * Settle an approved claim — fully or partially — by recording a real cash
+ * payment against the linked Finance expense (Dr Employee Reimbursements
+ * Payable / Cr Bank|Cash). The payment date may fall in a later accounting
+ * period than the accrual; the payment period must be open. A retried request
+ * with the same idempotency key never double-pays.
+ */
+async function reimburseClaim(
+  claim: ClaimRow,
+  session: SessionPayload,
+  opts: {
+    reference?: string | null
+    amount?: number | null
+    payment_date?: string | null
+    deposit_role?: "bank" | "cash"
+    idempotency_key?: string | null
+  },
+): Promise<void> {
+  const reimbursable = Number(claim.reimbursable_total) || 0
+  if (reimbursable <= 0 || !claim.finance_expense_id) {
+    // Nothing payable (e.g. an all-corporate-card claim): close without cash.
+    await query(`UPDATE ${TABLE} SET status = 'Reimbursed', reimbursed_at = NOW(), reimbursement_reference = ? WHERE id = ?`, [
+      opts.reference || null,
+      claim.id,
+    ])
+    return
+  }
+
+  const plan = planReimbursement(reimbursable, Number(claim.reimbursed_amount) || 0, opts.amount ?? null)
+  const paymentDate = String(opts.payment_date || new Date().toISOString().slice(0, 10)).slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new Error("payment_date must be YYYY-MM-DD.")
+
+  const [exp] = (await query(`SELECT id FROM expenses WHERE expense_id = ? LIMIT 1`, [claim.finance_expense_id])) as any[]
+  if (!exp) throw new Error(`Linked finance expense ${claim.finance_expense_id} not found.`)
+
+  const payment = await recordExpensePayment({
+    expense_pk: Number(exp.id),
+    payment_type: "Payment",
+    payment_date: paymentDate,
+    amount: plan.amount,
+    deposit_role: opts.deposit_role === "cash" ? "cash" : "bank",
+    reference_no: opts.reference || null,
+    narration: `Reimbursement of expense claim ${claim.claim_id}`,
+    idempotency_key: opts.idempotency_key ? `claim:${claim.id}:${opts.idempotency_key}` : null,
+    created_by: session.userId,
+  })
+  if ((payment as any).duplicate) return
+
+  await query(
+    `UPDATE ${TABLE} SET status = ?, reimbursed_amount = ?, reimbursed_at = NOW(), reimbursement_reference = ? WHERE id = ?`,
+    [plan.status, plan.reimbursedAfter, opts.reference || (payment as any).payment_id || null, claim.id],
+  )
 }
 
 /**

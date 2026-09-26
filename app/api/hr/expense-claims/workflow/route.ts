@@ -35,10 +35,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Unknown action. Expected one of: ${ACTIONS.join(", ")}.` }, { status: 400 })
   }
 
+  let amount: number | null = null
+  if (body.amount != null && body.amount !== "") {
+    amount = Number(body.amount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json({ error: "amount must be a positive number." }, { status: 400 })
+    }
+  }
+  const idempotencyKey = req.headers.get("idempotency-key") || body.idempotency_key || null
+
   try {
     const claim = await transitionClaim(idOrRef, action, session, {
       reason: body.reason ?? null,
       reference: body.reference ?? null,
+      amount,
+      payment_date: body.payment_date ?? null,
+      deposit_role: body.deposit_role === "cash" ? "cash" : "bank",
+      idempotency_key: idempotencyKey ? String(idempotencyKey).slice(0, 80) : null,
     })
     return NextResponse.json({ claim })
   } catch (error) {

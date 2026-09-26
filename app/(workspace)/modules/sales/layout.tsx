@@ -2,10 +2,14 @@ import type React from "react"
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getFeatureChecker } from "@/lib/permissions"
+import { assertModuleEnabled } from "@/lib/module-access"
 
 export default async function SalesLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession()
   if (!session) redirect("/login")
+
+  // SPEC 45 — a tenant that disabled `module.sales` must not reach it by URL.
+  await assertModuleEnabled("sales")
 
   const has = await getFeatureChecker(session.userId, session.role)
 

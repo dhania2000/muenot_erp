@@ -158,6 +158,8 @@ export const TENANT_OWNED_TABLES = [
   "record_comments",
   "record_comment_attachments",
   "record_comment_mentions",
+  // Unified activity / CRM timeline stream (comments + module communications).
+  "activity_events",
   // Session-wise inactivity tied to an existing attendance row.
   "hr_attendance_idle_sessions",
   // WhatsApp Business platform (SPEC — multi-tenant WhatsApp isolation).

@@ -16,6 +16,7 @@ import {
 import { ArticleEditor } from "@/components/knowledge-base/article-editor"
 import { ArticleDetailView } from "@/components/knowledge-base/article-detail"
 import { CategoriesManager } from "@/components/knowledge-base/categories-manager"
+import { DepartmentsManager } from "@/components/knowledge-base/departments-manager"
 import {
   type ListResponse, type ArticleDetail, type ArticleRow, type Section, type ContentType,
   SECTIONS, SORT_OPTIONS, STATUS_META, CONTENT_TYPE_META, AUDIENCE_LABELS,
@@ -79,6 +80,10 @@ export function KnowledgeBaseClient() {
   }, [q, section.contentType, contentType, category, status, author, department, toType, tag, favoritesOnly, quick, sort, page])
 
   const { data, mutate } = useSWR<ListResponse>(isList ? `/api/knowledge-base?${params}` : null, fetcher)
+  const { data: deptData } = useSWR<ListResponse>(
+    section.kind === "departments" ? "/api/knowledge-base?pageSize=100&sort=az" : null,
+    fetcher,
+  )
   // Meta (authors/departments) for filters — only fetched for managers.
   const { data: filterMeta } = useSWR<{ authors: { id: number; name: string }[]; departments: string[] }>(
     data?.canManage && isList ? "/api/knowledge-base/meta" : null,
@@ -252,7 +257,7 @@ export function KnowledgeBaseClient() {
                 <Button variant="outline" onClick={exportCsv}><Download className="size-4" /> Export</Button>
               </>
             )}
-            {canManage && (
+            {canManage && isList && (
               <Button onClick={() => openCreate(section.contentType ?? "article")}>
                 <Plus className="size-4" /> Add {createLabel}
               </Button>
@@ -261,9 +266,20 @@ export function KnowledgeBaseClient() {
         </header>
 
         {section.kind === "categories" && <CategoriesManager />}
-        {section.kind === "settings" && <CategoriesManager />}
+        {section.kind === "settings" && (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section className="grid content-start gap-2" aria-labelledby="kb-settings-categories">
+              <h2 id="kb-settings-categories" className="text-sm font-semibold">Categories</h2>
+              <CategoriesManager />
+            </section>
+            <section className="grid content-start gap-2" aria-labelledby="kb-settings-departments">
+              <h2 id="kb-settings-departments" className="text-sm font-semibold">Departments</h2>
+              <DepartmentsManager />
+            </section>
+          </div>
+        )}
         {section.kind === "departments" && (
-          <DepartmentsView articles={articles} onOpen={setDetailId} />
+          <DepartmentsManager articles={deptData?.articles ?? []} onOpen={setDetailId} />
         )}
 
         {isList && (
@@ -385,6 +401,26 @@ export function KnowledgeBaseClient() {
         onChanged={() => mutate()}
         onOpenArticle={(id) => setDetailId(id)}
       />
+      <AlertDialog open={!!removeTarget} onOpenChange={(o) => { if (!o && rowBusyId == null) setRemoveTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove “{removeTarget?.heading}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the item with its attachments, versions, tags and read history. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rowBusyId != null}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={rowBusyId != null}
+              onClick={(e) => { e.preventDefault(); confirmRemove() }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {rowBusyId != null && <Loader2 className="size-4 animate-spin" />} Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   )
 }
@@ -508,10 +544,15 @@ function FilterSelect({ label, value, onChange, options }: {
 // ---------------------------------------------------------------------------
 // Article list row
 // ---------------------------------------------------------------------------
-function ArticleListItem({ article: a, canManage, onOpen }: { article: ArticleRow; canManage: boolean; onOpen: () => void }) {
+function ArticleListItem({
+  article: a, canManage, busy, onOpen, onUpdate, onRemove,
+}: {
+  article: ArticleRow; canManage: boolean; busy: boolean
+  onOpen: () => void; onUpdate: () => void; onRemove: () => void
+}) {
   return (
-    <li>
-      <button onClick={onOpen} className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40">
+    <li className="flex items-start transition-colors hover:bg-muted/40">
+      <button onClick={onOpen} className="flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left">
         <div className="mt-0.5 shrink-0 text-muted-foreground">
           {(() => { const Icon = CONTENT_TYPE_META[a.content_type]?.icon ?? BookOpen; return <Icon className="size-4" /> })()}
         </div>
@@ -536,45 +577,23 @@ function ArticleListItem({ article: a, canManage, onOpen }: { article: ArticleRo
           {canManage ? <StatusBadge status={a.status} /> : (!a.is_read && <Badge variant="default" className="font-normal">New</Badge>)}
         </div>
       </button>
-    </li>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Departments overview — groups visible articles by department
-// ---------------------------------------------------------------------------
-function DepartmentsView({ articles, onOpen }: { articles: ArticleRow[]; onOpen: (id: number) => void }) {
-  const groups = useMemo(() => {
-    const map = new Map<string, ArticleRow[]>()
-    for (const a of articles) {
-      const key = a.department || AUDIENCE_LABELS[a.audience_type] || "General"
-      if (!map.has(key)) map.set(key, [])
-      map.get(key)!.push(a)
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]))
-  }, [articles])
-
-  if (groups.length === 0) {
-    return <p className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">No department-specific content yet.</p>
-  }
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {groups.map(([dept, items]) => (
-        <div key={dept} className="rounded-lg border bg-card p-4">
-          <h3 className="mb-2 font-medium">{dept}</h3>
-          <ul className="grid gap-1">
-            {items.slice(0, 6).map((a) => (
-              <li key={a.id}>
-                <button onClick={() => onOpen(a.id)} className="w-full truncate text-left text-sm text-muted-foreground hover:text-foreground">
-                  {a.heading}
-                </button>
-              </li>
-            ))}
-          </ul>
-          {items.length > 6 && <p className="mt-2 text-xs text-muted-foreground">+{items.length - 6} more</p>}
+      {canManage && (
+        <div className="py-2.5 pr-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" disabled={busy} aria-label={`Actions for ${a.heading}`}>
+                {busy ? <Loader2 className="size-4 animate-spin" /> : <MoreVertical className="size-4" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onUpdate}><Pencil className="size-4" /> Update</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onRemove} className="text-destructive focus:text-destructive">
+                <Trash2 className="size-4" /> Remove
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      ))}
-    </div>
+      )}
+    </li>
   )
 }

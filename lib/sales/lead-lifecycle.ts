@@ -3,6 +3,8 @@ import { pool, query } from "@/lib/db"
 import { requireCurrentTenantId } from "@/lib/tenant-context"
 import { ensureEventSchema } from "@/lib/events/schema"
 import { publishEvent } from "@/lib/events/bus"
+import { mirrorLeadCommunication, resolveLeadForTimeline } from "@/lib/collaboration/crm-timeline"
+import { leadEventChannel } from "@/lib/collaboration/model"
 
 /**
  * Central Sales lead lifecycle service.
@@ -1092,10 +1094,16 @@ export async function attachLeadEvent(input: {
   refId?: string | number | null
   actorId?: Actor
   touchContact?: boolean
-}) {
+  /** Caller-supplied key so a retried manual log posts once to the CRM timeline. */
+  idempotencyKey?: string | null
+}): Promise<boolean> {
   await ensureLeadLifecycleSchema()
+  // Resolve the lead inside the acting tenant (system callers derive it) so a
+  // foreign lead id can never receive activity or a last-contact bump.
+  const lead = await resolveLeadForTimeline(Number(input.leadId))
+  if (!lead) return false
   await logActivity(null, {
-    leadId: input.leadId,
+    leadId: lead.id,
     type: input.type,
     title: input.title,
     body: input.body ?? null,
@@ -1104,6 +1112,19 @@ export async function attachLeadEvent(input: {
     createdBy: input.actorId,
   })
   if (input.touchContact) {
-    await query(`UPDATE sales_leads SET last_contact_date = NOW() WHERE id = ?`, [input.leadId]).catch(() => {})
+    await query(`UPDATE sales_leads SET last_contact_date = NOW() WHERE tenant_id = ? AND id = ?`, [lead.tenantId, lead.id]).catch(() => {})
   }
+  const channel = leadEventChannel(input.type)
+  if (channel) {
+    await mirrorLeadCommunication(lead, {
+      channel,
+      title: input.title,
+      body: input.body ?? null,
+      refType: input.refType ?? null,
+      refId: input.refId ?? null,
+      actorId: typeof input.actorId === "number" ? input.actorId : null,
+      idempotencyKey: input.idempotencyKey ?? null,
+    }).catch((e) => console.error("[lead-lifecycle] timeline mirror failed", e))
+  }
+  return true
 }

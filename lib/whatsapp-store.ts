@@ -2,6 +2,7 @@ import "server-only"
 import { query } from "@/lib/db"
 import { currentTenantId, currentTenantIdOrNull } from "@/lib/tenant-scope"
 import { meterUsage } from "@/lib/billing/usage-guard"
+import { mirrorWhatsAppMessage } from "@/lib/collaboration/crm-timeline"
 import type { WhatsAppPriority, WhatsAppStatus, WhatsAppTeam } from "@/lib/whatsapp-shared"
 
 /**
@@ -569,6 +570,15 @@ export async function recordInboundMessage(input: InboundMessageInput): Promise<
      WHERE id = ? AND tenant_id = ?`,
     [tsSql, tsSql, preview(input.messageType, input.body), input.conversationId, tenantId],
   )
+  await mirrorWhatsAppMessage({
+    conversationId: input.conversationId,
+    direction: "inbound",
+    wamid: input.wamid,
+    messageId: result.insertId,
+    messageType: input.messageType,
+    body: input.body,
+    occurredAt: ts,
+  }).catch((e) => console.error("[whatsapp-store] timeline mirror failed", e))
   return true
 }
 
@@ -636,6 +646,17 @@ export async function recordOutboundMessage(input: OutboundMessageInput): Promis
     refId: input.wamid ?? String(result.insertId),
     idempotencyKey: `wa:${input.wamid ?? result.insertId}`,
   })
+  if (input.status !== "failed") {
+    await mirrorWhatsAppMessage({
+      conversationId: input.conversationId,
+      direction: "outbound",
+      wamid: input.wamid,
+      messageId: result.insertId,
+      messageType: input.messageType,
+      body: input.body,
+      actorId: input.sentByUserId ?? null,
+    }).catch((e) => console.error("[whatsapp-store] timeline mirror failed", e))
+  }
   return result.insertId
 }
 

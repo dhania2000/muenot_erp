@@ -21,6 +21,7 @@ import "server-only"
  */
 import { query, tableColumns } from "@/lib/db"
 import { getSubscriptionForTenant } from "@/lib/platform-console"
+import { canWrite, isReadOnly, isSubscriptionStatus } from "@/lib/billing/subscription-lifecycle"
 import { cachedForTenant } from "@/lib/tenant-cache"
 import {
   type PlanEntitlements,
@@ -185,6 +186,46 @@ export async function requireQuota(
     limit: check.limit,
     usage: check.usage,
     check,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Read-only grace gate (423 on denial)
+// ---------------------------------------------------------------------------
+
+/**
+ * Enforce the subscription lifecycle's WRITE contract. During the grace window
+ * the product is deliberately READ-ONLY: reads (GET) stay open so a tenant can
+ * see and pay their outstanding balance, but every mutating action is refused.
+ * This is the server-side counterpart to the lifecycle predicates — a client
+ * that bypasses hidden UI and POSTs directly is still blocked here.
+ *
+ *   ok:true  → the tenant's subscription permits writes (trial/active/past_due),
+ *              or there is no subscription yet (starter floor is writable).
+ *   ok:false → status is read-only (grace) or has no product access at all
+ *              (suspended/expired/cancelled). `status` is 423 Locked so callers
+ *              can distinguish it from a 402 upgrade or a 403 capability miss.
+ *
+ * Only call this on mutating handlers (POST/PATCH/PUT/DELETE); never gate a GET.
+ */
+export async function requireWriteAccess(tenantId: number): Promise<EntitlementResult> {
+  const sub = await getSubscriptionForTenant(tenantId)
+  // No subscription → tenant is on the starter floor, which is writable.
+  if (!sub) return ok
+  const status = isSubscriptionStatus(sub.status) ? sub.status : "active"
+  if (canWrite(status)) return ok
+  if (isReadOnly(status)) {
+    return {
+      ok: false,
+      status: 423,
+      reason: "Your subscription is past due and in read-only grace mode. Settle the outstanding balance to restore write access.",
+    }
+  }
+  // Suspended / expired / cancelled — no access at all.
+  return {
+    ok: false,
+    status: 423,
+    reason: "Your subscription is not active. Reactivate your plan to continue.",
   }
 }
 

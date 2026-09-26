@@ -48,8 +48,11 @@ export function clampBatchSize(size: unknown): number {
 // ---------------------------------------------------------------------------
 
 export const BATCH_IMPORT_STATUSES = [
+  "staging",
+  "validated",
   "queued",
   "running",
+  "interrupted",
   "completed",
   "completed_with_errors",
   "failed",
@@ -58,17 +61,161 @@ export const BATCH_IMPORT_STATUSES = [
 export type BatchImportStatus = (typeof BATCH_IMPORT_STATUSES)[number]
 
 export const BATCH_IMPORT_STATUS_LABELS: Record<BatchImportStatus, string> = {
+  staging: "Uploading",
+  validated: "Validated",
   queued: "Queued",
   running: "Running",
+  interrupted: "Interrupted",
   completed: "Completed",
   completed_with_errors: "Completed with errors",
   failed: "Failed",
   rolled_back: "Rolled back",
 }
 
+export function isBatchImportStatus(value: unknown): value is BatchImportStatus {
+  return typeof value === "string" && (BATCH_IMPORT_STATUSES as readonly string[]).includes(value)
+}
+
 /** A batch job is finished (no more batches will be processed) in these states. */
 export function isTerminalBatchStatus(status: BatchImportStatus): boolean {
   return status === "completed" || status === "completed_with_errors" || status === "failed" || status === "rolled_back"
+}
+
+/** Rows may only be appended while the file is still being uploaded. */
+export function canAppendRows(status: BatchImportStatus): boolean {
+  return status === "staging"
+}
+
+/** Validation (full dry run) is allowed once uploaded, and may be re-run before start. */
+export function canValidate(status: BatchImportStatus): boolean {
+  return status === "staging" || status === "validated"
+}
+
+/** Only a validated job can be queued for commit. */
+export function canStart(status: BatchImportStatus): boolean {
+  return status === "validated"
+}
+
+/** An interrupted (or stuck queued/running) job resumes from its checkpoint. */
+export function canResume(status: BatchImportStatus): boolean {
+  return status === "interrupted" || status === "queued" || status === "running"
+}
+
+/**
+ * Rollback is allowed for any job that has committed rows and is not currently
+ * being processed (a running batch would race the delete).
+ */
+export function canRollback(status: BatchImportStatus, importedRows: number): boolean {
+  if (importedRows <= 0) return false
+  return status === "completed" || status === "completed_with_errors" || status === "interrupted" || status === "failed"
+}
+
+// ---------------------------------------------------------------------------
+// Progress history
+// ---------------------------------------------------------------------------
+
+export const BATCH_EVENT_TYPES = [
+  "created",
+  "chunk_staged",
+  "validated",
+  "queued",
+  "batch_committed",
+  "interrupted",
+  "resumed",
+  "completed",
+  "rolled_back",
+] as const
+export type BatchEventType = (typeof BATCH_EVENT_TYPES)[number]
+
+export type BatchImportEvent = {
+  id: number
+  event: BatchEventType
+  batchIndex: number | null
+  detail: Record<string, unknown> | null
+  createdAt: string
+}
+
+// ---------------------------------------------------------------------------
+// Upload chunk validation (malformed-file defense, server side)
+// ---------------------------------------------------------------------------
+
+/** Rows per upload request — keeps each request body well under platform limits. */
+export const BATCH_STAGE_CHUNK_MAX = 2_000
+export const MAX_IMPORT_COLUMNS = 200
+export const MAX_IMPORT_CELL_LENGTH = 10_000
+export const MAX_IMPORT_HEADER_LENGTH = 190
+
+export class ImportValidationError extends Error {}
+
+/**
+ * Validate one uploaded chunk of parsed rows. The browser parses the file, so
+ * the server must never trust the shape: rows must be plain objects whose
+ * values are primitives, with bounded column counts and cell sizes. Returns
+ * normalized rows (all cells as trimmed-free strings or null).
+ */
+export function validateStagedChunk(rows: unknown): Record<string, string | null>[] {
+  if (!Array.isArray(rows)) throw new ImportValidationError("rows must be an array")
+  if (rows.length === 0) throw new ImportValidationError("A chunk must contain at least one row")
+  if (rows.length > BATCH_STAGE_CHUNK_MAX) {
+    throw new ImportValidationError(`A chunk may contain at most ${BATCH_STAGE_CHUNK_MAX} rows`)
+  }
+  const out: Record<string, string | null>[] = []
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new ImportValidationError(`Row ${i + 1} of the chunk is not an object`)
+    }
+    const entries = Object.entries(row as Record<string, unknown>)
+    if (entries.length > MAX_IMPORT_COLUMNS) {
+      throw new ImportValidationError(`Row ${i + 1} has more than ${MAX_IMPORT_COLUMNS} columns`)
+    }
+    const clean: Record<string, string | null> = {}
+    for (const [key, value] of entries) {
+      if (key.length > MAX_IMPORT_HEADER_LENGTH || key === "__proto__" || key === "constructor" || key === "prototype") {
+        throw new ImportValidationError(`Row ${i + 1} has an invalid column name`)
+      }
+      if (value == null) {
+        clean[key] = null
+        continue
+      }
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+        throw new ImportValidationError(`Row ${i + 1} column "${key.slice(0, 40)}" must be a text or number value`)
+      }
+      if (typeof value === "number" && !Number.isFinite(value)) {
+        throw new ImportValidationError(`Row ${i + 1} column "${key.slice(0, 40)}" is not a finite number`)
+      }
+      const str = String(value)
+      if (str.length > MAX_IMPORT_CELL_LENGTH) {
+        throw new ImportValidationError(`Row ${i + 1} column "${key.slice(0, 40)}" exceeds ${MAX_IMPORT_CELL_LENGTH} characters`)
+      }
+      clean[key] = str
+    }
+    out.push(clean)
+  }
+  return out
+}
+
+/** Header list validation for job creation. */
+export function validateHeaders(headers: unknown): string[] {
+  if (!Array.isArray(headers)) throw new ImportValidationError("headers must be an array")
+  if (headers.length === 0) throw new ImportValidationError("The file has no header row")
+  if (headers.length > MAX_IMPORT_COLUMNS) throw new ImportValidationError(`At most ${MAX_IMPORT_COLUMNS} columns are supported`)
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const h of headers) {
+    if (typeof h !== "string" && typeof h !== "number") throw new ImportValidationError("Header names must be text")
+    const name = String(h)
+    if (name.length > MAX_IMPORT_HEADER_LENGTH) throw new ImportValidationError("A header name is too long")
+    if (seen.has(name)) throw new ImportValidationError(`Duplicate column header "${name.slice(0, 40)}"`)
+    seen.add(name)
+    out.push(name)
+  }
+  return out
+}
+
+/** Client-supplied idempotency key: 8-120 url-safe characters. */
+export function isValidBatchIdempotencyKey(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.:-]{8,120}$/.test(value)
 }
 
 // ---------------------------------------------------------------------------
@@ -169,21 +316,31 @@ export function batchCommitKey(jobId: number | string, batchIndex: number): stri
 const FORMULA_TRIGGERS = new Set(["=", "+", "-", "@", "\t", "\r", "\n"])
 
 /**
+ * `+` / `-` also start legitimate data: signed numbers ("-12.50") and phone
+ * numbers ("+91 98765 43210", "+1 (555) 010-2000"). Those are inert in every
+ * spreadsheet, so they are left untouched; anything else after the sign (e.g.
+ * `+HYPERLINK(...)`, `-2+3+cmd|' /C calc'!A0`) is treated as a formula.
+ */
+const SIGNED_LITERAL = /^[+-][\d\s().,-]*\d[\d\s().,-]*$/
+
+/** True when a raw string cell would be executed as a formula by a spreadsheet. */
+export function looksLikeFormula(value: unknown): boolean {
+  if (typeof value !== "string" || value.length === 0) return false
+  if (!FORMULA_TRIGGERS.has(value[0])) return false
+  if ((value[0] === "+" || value[0] === "-") && SIGNED_LITERAL.test(value)) return false
+  return true
+}
+
+/**
  * Neutralize a value that a spreadsheet would execute as a formula (CSV
  * injection / "DDE" attacks such as `=cmd|...`, `+HYPERLINK(...)`,
  * `@SUM(...)`). We prefix a single quote, the canonical, reversible defense, so
  * the cell renders as literal text. Applied on INGEST so the value is stored
- * inert and stays inert through any later export. Non-strings pass through.
+ * inert, and again on EXPORT for data that predates ingest neutralization.
+ * Idempotent: an already-quoted value starts with `'` and is left alone.
  */
 export function neutralizeFormula(value: unknown): unknown {
-  if (typeof value !== "string") return value
-  if (value.length === 0) return value
-  return FORMULA_TRIGGERS.has(value[0]) ? `'${value}` : value
-}
-
-/** True when a raw string cell would be executed as a formula by a spreadsheet. */
-export function looksLikeFormula(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0 && FORMULA_TRIGGERS.has(value[0])
+  return looksLikeFormula(value) ? `'${value as string}` : value
 }
 
 /** Neutralize every string cell of a raw row (mutation-free copy). */
@@ -230,8 +387,12 @@ export type BatchImportSummary = {
   importedRows: number
   failedRows: number
   skippedRows: number
+  stagedRows: number
+  /** Dry-run counts from the last validation pass (null until validated). */
+  validation: { validRows: number; errorRows: number; duplicateRows: number; unmappedRequired: string[] } | null
   errorCount: number
   progressPercent: number
+  lastError: string | null
   rolledBack: boolean
   rollbackable: boolean
   requestedByName: string | null

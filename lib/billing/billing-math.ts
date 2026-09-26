@@ -348,6 +348,50 @@ export function computePlanChange(input: PlanChangeInput): PlanChangeResult {
   return { kind, unusedCredit, remainingCharge, netAmount }
 }
 
+export type TermChangeInput = {
+  oldAmount: number
+  /** Full price of the NEW term (billed in full because the period restarts). */
+  newAmount: number
+  periodStart: string
+  periodEnd: string
+  changeDate: string
+}
+
+/**
+ * Proration when the billing TERM changes (e.g. monthly → five-year). Periods of
+ * different lengths cannot be prorated against each other, so the period
+ * restarts on the change date: the customer is credited the unused portion of
+ * the old period and charged the full new term.
+ */
+export function computeTermChange(input: TermChangeInput): PlanChangeResult {
+  const unusedCredit = unusedProration({
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+    changeDate: input.changeDate,
+    amount: input.oldAmount,
+  })
+  const remainingCharge = round2(nonNeg(input.newAmount))
+  const netAmount = round2(remainingCharge - unusedCredit)
+  const kind: PlanChangeResult["kind"] =
+    netAmount > 0 ? "upgrade" : netAmount < 0 ? "downgrade" : "no_change"
+  return { kind, unusedCredit, remainingCharge, netAmount }
+}
+
+/**
+ * Whether a coupon may be applied to one more invoice for a subscription.
+ * `once` coupons may only discount a single invoice per subscription; the
+ * global max_redemptions cap is enforced atomically at reservation time.
+ */
+export function couponAllowedForSubscription(
+  duration: string | null | undefined,
+  priorUsesOnSubscription: number,
+): { ok: boolean; reason: string | null } {
+  if (duration === "once" && priorUsesOnSubscription > 0) {
+    return { ok: false, reason: "This coupon has already been used on this subscription." }
+  }
+  return { ok: true, reason: null }
+}
+
 // ── Refunds ─────────────────────────────────────────────────────────────────
 
 export type RefundableInput = {

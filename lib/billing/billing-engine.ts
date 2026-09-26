@@ -27,8 +27,11 @@ import {
   planPriceForTerm,
   changePlanRecord,
   ensureSubscriptionSchema,
+  loadSubscriptionForChange,
 } from "@/lib/billing/subscription-engine"
-import { isBillingTerm, type BillingTerm } from "@/lib/billing/subscription-lifecycle"
+import { addTerm, canWrite, isBillingTerm, type BillingTerm } from "@/lib/billing/subscription-lifecycle"
+import { computeTermChange, couponAllowedForSubscription } from "@/lib/billing/billing-math"
+import { currentTenantId } from "@/lib/tenant-scope"
 import { computeGstBreakdown } from "@/lib/billing/saas-gst"
 import { getSellerGstin, getSellerStateCode, resolvePlaceOfSupply } from "@/lib/billing/saas-seller"
 import {
@@ -734,13 +737,10 @@ function validateContact(input: BillingContactInput, partial = false): Record<st
  * tenant scope guard means this can only ever touch the caller's own rows.
  */
 async function clearOtherPrimaries(exceptId: number | null): Promise<void> {
-  const rows = (await tenantSelect("billing_contacts", {
-    columns: "id",
-    where: "is_primary = 1",
-  })) as any[]
-  for (const r of rows) {
-    if (exceptId != null && Number(r.id) === exceptId) continue
-    await tenantUpdate("billing_contacts", Number(r.id), { is_primary: 0 })
+  if (exceptId != null) {
+    await tenantUpdate("billing_contacts", { is_primary: 0 }, "is_primary = 1 AND id <> ?", [exceptId])
+  } else {
+    await tenantUpdate("billing_contacts", { is_primary: 0 }, "is_primary = 1")
   }
 }
 
@@ -818,7 +818,7 @@ export async function updateBillingContact(
     if (input.is_primary) await clearOtherPrimaries(id)
   }
 
-  if (Object.keys(patch).length) await tenantUpdate("billing_contacts", id, patch)
+  if (Object.keys(patch).length) await tenantUpdate("billing_contacts", patch, "id = ?", [id])
   const row = await requireOwnedRow("billing_contacts", id)
   return mapContact(row)
 }
@@ -826,9 +826,8 @@ export async function updateBillingContact(
 export async function deleteBillingContact(id: number): Promise<void> {
   await ensureBillingSchema()
   await requireOwnedRow("billing_contacts", id)
-  await tenantUpdate("billing_contacts", id, {}) // touch/no-op guard; ensures ownership path
   const { tenantDelete } = await import("@/lib/tenant-scope")
-  await tenantDelete("billing_contacts", id)
+  await tenantDelete("billing_contacts", "id = ?", [id])
 }
 
 // ── Coupons ��────────────────────────────────────────────────────────────────
@@ -1082,8 +1081,62 @@ export async function createInvoice(input: CreateInvoiceInput, session: SessionP
       throw new BillingError(ev.reason ?? "Coupon is not applicable.", 400, { coupon_code: ev.reason ?? "Invalid coupon." })
     }
     couponDiscount = ev.discount
+    if (input.subscription_id && coupon) {
+      const prior = (await tenantSelect("billing_invoices", {
+        columns: "COUNT(*) AS n",
+        where: "subscription_id = ? AND coupon_code = ? AND status <> 'void'",
+        params: [input.subscription_id, coupon.coupon_code],
+      })) as any[]
+      const allowed = couponAllowedForSubscription(coupon.duration, num(prior[0]?.n))
+      if (!allowed.ok) {
+        throw new BillingError(allowed.reason ?? "Coupon is not applicable.", 409, { coupon_code: allowed.reason ?? "" })
+      }
+    }
+    // Atomic reservation: the conditional UPDATE is the single source of truth
+    // for max_redemptions, so two concurrent checkouts cannot both take the last
+    // redemption (the evaluateCoupon check above is only a friendly pre-check).
+    const reserved = await reserveCouponRedemption(coupon!.id)
+    if (!reserved) {
+      throw new BillingError("This coupon has reached its redemption limit.", 409, {
+        coupon_code: "Redemption limit reached.",
+      })
+    }
   }
 
+  try {
+    return await createInvoiceWithReservedCoupon(input, session, rawLines, currency, coupon, couponDiscount)
+  } catch (err) {
+    if (coupon) await releaseCouponRedemption(coupon.id).catch(() => {})
+    throw err
+  }
+}
+
+/** Claim one redemption slot. Returns false when the cap is already reached. */
+export async function reserveCouponRedemption(couponId: number): Promise<boolean> {
+  const res = await query<any>(
+    `UPDATE billing_coupons SET times_redeemed = times_redeemed + 1
+      WHERE tenant_id = ? AND id = ? AND is_active = 1
+        AND (max_redemptions IS NULL OR times_redeemed < max_redemptions)`,
+    [currentTenantId(), couponId],
+  )
+  return Number(res?.affectedRows ?? 0) === 1
+}
+
+async function releaseCouponRedemption(couponId: number): Promise<void> {
+  await query(
+    `UPDATE billing_coupons SET times_redeemed = GREATEST(times_redeemed - 1, 0) WHERE tenant_id = ? AND id = ?`,
+    [currentTenantId(), couponId],
+  )
+}
+
+async function createInvoiceWithReservedCoupon(
+  input: CreateInvoiceInput,
+  session: SessionPayload,
+  rawLines: LineInput[],
+  currency: string,
+  coupon: CouponRow | null,
+  couponDiscount: number,
+): Promise<InvoiceView> {
   const applyCreditFlag = input.apply_credit === true
   const available = applyCreditFlag ? await creditBalance() : 0
 
@@ -1173,16 +1226,8 @@ export async function createInvoice(input: CreateInvoiceInput, session: SessionP
     })
   }
 
-  // Consume credit + increment coupon redemption after the invoice exists.
+  // Consume credit after the invoice exists (coupon slot was reserved up front).
   if (totals.creditApplied > 0) await consumeCredit(totals.creditApplied, insertId, session)
-  if (coupon) {
-    await tenantUpdate(
-      "billing_coupons",
-      { times_redeemed: coupon.times_redeemed + 1 },
-      "id = ?",
-      [coupon.id],
-    ).catch((e) => console.log("[v0] coupon redemption bump failed", (e as Error).message))
-  }
 
   const created = await getInvoice(insertId)
   if (!created) throw new BillingError("Failed to load the invoice just created", 500)
@@ -1585,19 +1630,29 @@ export async function applyPlanChangeProration(
   subscriptionId: number,
   newAmount: number,
   session: SessionPayload,
-  opts: { taxRate?: number } = {},
+  opts: { taxRate?: number; termChanged?: boolean; unpaidTrial?: boolean } = {},
 ): Promise<{ result: ReturnType<typeof computePlanChange>; invoice: InvoiceView | null; credit: CreditEntry | null }> {
   await ensureBillingSchema()
   const sub = await getSubscriptionView(subscriptionId)
   if (!sub) throw new BillingError("Subscription not found", 404)
 
-  const result = computePlanChange({
+  // Nothing has been paid during a trial, so there is nothing to prorate.
+  if (opts.unpaidTrial) {
+    return {
+      result: { kind: "no_change", unusedCredit: 0, remainingCharge: 0, netAmount: 0 },
+      invoice: null,
+      credit: null,
+    }
+  }
+
+  const prorationInput = {
     oldAmount: sub.amount,
     newAmount: round2(num(newAmount)),
     periodStart: sub.current_period_start,
     periodEnd: sub.current_period_end,
     changeDate: today(),
-  })
+  }
+  const result = opts.termChanged ? computeTermChange(prorationInput) : computePlanChange(prorationInput)
 
   let invoice: InvoiceView | null = null
   let credit: CreditEntry | null = null
@@ -1669,9 +1724,26 @@ export async function changeSubscriptionPlan(
     throw new BillingError("This is already your current plan and term.", 409)
   }
 
+  // Validate state (terminal / read-only) BEFORE money moves.
+  const current = await loadSubscriptionForChange(subscriptionId)
+  if (!canWrite(current.status)) {
+    throw new BillingError(
+      "Settle the outstanding balance before changing plans (subscription is read-only or suspended).",
+      409,
+    )
+  }
+
   const newAmount = round2(planPriceForTerm(plan, term))
-  const proration = await applyPlanChangeProration(subscriptionId, newAmount, session, opts)
-  const changed = await changePlanRecord(subscriptionId, { plan_id: plan.id, term }, session)
+  const termChanged = term !== sub.term
+  const unpaidTrial = current.status === "trial" && !current.last_payment_at
+  const proration = await applyPlanChangeProration(subscriptionId, newAmount, session, {
+    ...opts,
+    termChanged,
+    unpaidTrial,
+  })
+  const periodReset =
+    termChanged && !unpaidTrial ? { period_start: today(), period_end: addTerm(today(), term) } : {}
+  const changed = await changePlanRecord(subscriptionId, { plan_id: plan.id, term, ...periodReset }, session)
 
   return { ...changed, proration }
 }

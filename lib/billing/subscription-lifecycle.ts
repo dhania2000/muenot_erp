@@ -223,6 +223,49 @@ export type LifecycleState = {
   currentPeriodStart: string
   currentPeriodEnd: string
   config: LifecycleConfig
+  /**
+   * How auto-renewal is modelled:
+   *  - "optimistic" (legacy default): auto_renew rolls the period forward on
+   *    read, assuming the charge succeeded.
+   *  - "charge_required": the period only moves forward after a recorded
+   *    collection (renewal engine / manual payment). An uncollected period end
+   *    walks the dunning ladder, so a FAILED renewal reaches grace/suspension.
+   */
+  renewalMode?: RenewalMode
+  /** Last successful collection; null means the trial was never paid for. */
+  lastPaymentAt?: string | null
+}
+
+export const RENEWAL_MODES = ["optimistic", "charge_required"] as const
+export type RenewalMode = (typeof RENEWAL_MODES)[number]
+
+export function isRenewalMode(v: unknown): v is RenewalMode {
+  return typeof v === "string" && (RENEWAL_MODES as readonly string[]).includes(v)
+}
+
+/**
+ * Date the current, still-unpaid obligation fell due. In charge-required mode
+ * an ended trial that was never paid is due on the trial end date (its first
+ * paid period starts there); otherwise the obligation is the period end.
+ */
+export function billingDueDate(state: Pick<LifecycleState, "trialEndDate" | "currentPeriodEnd" | "lastPaymentAt" | "renewalMode">): string {
+  if (state.renewalMode === "charge_required" && state.trialEndDate && !state.lastPaymentAt) {
+    return state.trialEndDate
+  }
+  return state.currentPeriodEnd
+}
+
+/** True when a charge-required trial has ended without the first payment. */
+export function isUnpaidTrialConversion(
+  state: Pick<LifecycleState, "trialEndDate" | "lastPaymentAt" | "renewalMode">,
+  now: string,
+): boolean {
+  return (
+    state.renewalMode === "charge_required" &&
+    !!state.trialEndDate &&
+    !state.lastPaymentAt &&
+    daysBetween(state.trialEndDate, now) >= 0
+  )
 }
 
 export type ReconcileResult = {
@@ -264,6 +307,23 @@ export function reconcileLifecycle(state: LifecycleState, now: string): Reconcil
   if (state.trialEndDate && daysBetween(now, state.trialEndDate) > 0) {
     const changed = state.status !== "trial"
     return { ...base, status: "trial", changed }
+  }
+
+  if (state.renewalMode === "charge_required") {
+    // A suspension is an explicit admin/dunning state; only a payment or
+    // resume leaves it, never the passage of time (except expiry).
+    const due = billingDueDate(state)
+    if (daysBetween(due, now) < 0) {
+      const next: SubscriptionStatus = state.status === "suspended" ? "suspended" : "active"
+      return { ...base, status: next, changed: state.status !== next }
+    }
+    if (state.cancelAtPeriodEnd) {
+      return { ...base, status: "cancelled", changed: state.status !== "cancelled" }
+    }
+    const phase = dunningPhase(due, now, state.config)
+    let mapped: SubscriptionStatus = phase === "current" ? "active" : (phase as SubscriptionStatus)
+    if (state.status === "suspended" && mapped !== "expired") mapped = "suspended"
+    return { ...base, status: mapped, changed: state.status !== mapped }
   }
 
   let periodStart = state.currentPeriodStart

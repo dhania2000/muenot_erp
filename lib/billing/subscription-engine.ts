@@ -68,6 +68,8 @@ export type Plan = {
   price_yearly: number
   price_two_year: number
   price_five_year: number
+  /** Negotiated custom price for the enterprise (annual) contract term. */
+  price_enterprise: number
   trial_days: number
   seats: number | null
   past_due_days: number
@@ -123,6 +125,22 @@ export type SubscriptionView = Subscription & {
 
 let schemaEnsured: Promise<void> | null = null
 
+/**
+ * Idempotently add a column to an existing subscription table. MySQL lacks
+ * `ADD COLUMN IF NOT EXISTS`, so we probe information_schema first. Safe to run
+ * on every boot; a no-op once the column exists.
+ */
+async function ensureSubscriptionColumn(table: string, column: string, definition: string): Promise<void> {
+  const rows = (await query(
+    `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  )) as any[]
+  if (!rows.length) {
+    await query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`)
+  }
+}
+
 async function runEnsure(): Promise<void> {
   // Global plan catalogue — shared across every tenant (NOT tenant-scoped).
   await query(`CREATE TABLE IF NOT EXISTS saas_plans (
@@ -135,6 +153,7 @@ async function runEnsure(): Promise<void> {
     price_yearly    DECIMAL(14,2) NOT NULL DEFAULT 0,
     price_two_year  DECIMAL(14,2) NOT NULL DEFAULT 0,
     price_five_year DECIMAL(14,2) NOT NULL DEFAULT 0,
+    price_enterprise DECIMAL(14,2) NOT NULL DEFAULT 0,
     trial_days      INT UNSIGNED NOT NULL DEFAULT 0,
     seats           INT UNSIGNED DEFAULT NULL,
     past_due_days   INT UNSIGNED NOT NULL DEFAULT ${DEFAULT_LIFECYCLE.pastDueDays},
@@ -149,6 +168,14 @@ async function runEnsure(): Promise<void> {
     UNIQUE KEY uq_saas_plan_code (plan_code),
     KEY idx_saas_plan_active (is_active)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  // In-place upgrade for existing installs: MySQL has no ADD COLUMN IF NOT EXISTS,
+  // so probe information_schema before adding the enterprise-term price column.
+  await ensureSubscriptionColumn(
+    "saas_plans",
+    "price_enterprise",
+    "DECIMAL(14,2) NOT NULL DEFAULT 0 AFTER price_five_year",
+  )
 
   await query(`CREATE TABLE IF NOT EXISTS saas_subscriptions (
     id                   INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -235,6 +262,7 @@ async function seedDefaultPlans(): Promise<void> {
       price_yearly: 290,
       price_two_year: 522,
       price_five_year: 1044,
+      price_enterprise: 0,
       trial_days: 14,
       seats: 10,
       past_due_days: 7,
@@ -252,6 +280,7 @@ async function seedDefaultPlans(): Promise<void> {
       price_yearly: 990,
       price_two_year: 1782,
       price_five_year: 3564,
+      price_enterprise: 0,
       trial_days: 14,
       seats: 50,
       past_due_days: 7,
@@ -269,6 +298,7 @@ async function seedDefaultPlans(): Promise<void> {
       price_yearly: 4990,
       price_two_year: 8982,
       price_five_year: 17964,
+      price_enterprise: 47880,
       trial_days: 30,
       seats: null,
       past_due_days: 14,
@@ -281,13 +311,13 @@ async function seedDefaultPlans(): Promise<void> {
   for (const p of defaults) {
     await query(
       `INSERT INTO saas_plans
-         (plan_code, name, description, currency, price_monthly, price_yearly, price_two_year, price_five_year,
+         (plan_code, name, description, currency, price_monthly, price_yearly, price_two_year, price_five_year, price_enterprise,
           trial_days, seats, past_due_days, grace_days, suspend_days, is_active, is_public)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE plan_code = plan_code`,
       [
         p.plan_code, p.name, p.description, p.currency,
-        p.price_monthly, p.price_yearly, p.price_two_year, p.price_five_year,
+        p.price_monthly, p.price_yearly, p.price_two_year, p.price_five_year, p.price_enterprise,
         p.trial_days, p.seats, p.past_due_days, p.grace_days, p.suspend_days,
         p.is_active ? 1 : 0, p.is_public ? 1 : 0,
       ],
@@ -313,6 +343,7 @@ function mapPlan(r: any): Plan {
     price_yearly: num(r.price_yearly),
     price_two_year: num(r.price_two_year),
     price_five_year: num(r.price_five_year),
+    price_enterprise: num(r.price_enterprise),
     trial_days: num(r.trial_days),
     seats: r.seats == null ? null : num(r.seats),
     past_due_days: num(r.past_due_days),
@@ -335,6 +366,8 @@ export function planPriceForTerm(plan: Plan, term: BillingTerm): number {
       return plan.price_two_year
     case "five_year":
       return plan.price_five_year
+    case "enterprise":
+      return plan.price_enterprise
   }
 }
 
@@ -452,6 +485,7 @@ export type PlanInput = {
   price_yearly?: number | string
   price_two_year?: number | string
   price_five_year?: number | string
+  price_enterprise?: number | string
   trial_days?: number | string
   seats?: number | string | null
   past_due_days?: number | string
@@ -466,7 +500,7 @@ function validatePlan(input: PlanInput, partial = false) {
   if (!partial || input.name !== undefined) {
     if (!String(input.name ?? "").trim()) fields.name = "Plan name is required."
   }
-  for (const k of ["price_monthly", "price_yearly", "price_two_year", "price_five_year"] as const) {
+  for (const k of ["price_monthly", "price_yearly", "price_two_year", "price_five_year", "price_enterprise"] as const) {
     if (input[k] !== undefined && num(input[k]) < 0) fields[k] = "Price cannot be negative."
   }
   if (input.trial_days !== undefined && num(input.trial_days) < 0) fields.trial_days = "Trial days cannot be negative."
@@ -487,9 +521,9 @@ export async function createPlan(input: PlanInput, session: SessionPayload): Pro
   })
   const res = (await query(
     `INSERT INTO saas_plans
-       (plan_code, name, description, currency, price_monthly, price_yearly, price_two_year, price_five_year,
+       (plan_code, name, description, currency, price_monthly, price_yearly, price_two_year, price_five_year, price_enterprise,
         trial_days, seats, past_due_days, grace_days, suspend_days, is_active, is_public, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       code,
       String(input.name).trim(),
@@ -499,6 +533,7 @@ export async function createPlan(input: PlanInput, session: SessionPayload): Pro
       num(input.price_yearly),
       num(input.price_two_year),
       num(input.price_five_year),
+      num(input.price_enterprise),
       num(input.trial_days),
       seats,
       cfg.pastDueDays,
@@ -528,6 +563,7 @@ export async function updatePlan(id: number, input: PlanInput): Promise<Plan> {
     price_yearly: num,
     price_two_year: num,
     price_five_year: num,
+    price_enterprise: num,
     trial_days: num,
     seats: (v) => (v === null || v === "" ? null : num(v)),
     past_due_days: num,

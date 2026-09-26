@@ -15,6 +15,7 @@ export type Plan = {
   price_yearly: number
   price_two_year: number
   price_five_year: number
+  price_enterprise: number
   trial_days: number
   seats: number | null
   past_due_days: number
@@ -64,6 +65,7 @@ export const TERM_OPTIONS = [
   { value: "yearly", label: "Yearly" },
   { value: "two_year", label: "2-Year" },
   { value: "five_year", label: "5-Year" },
+  { value: "enterprise", label: "Enterprise" },
 ] as const
 
 export const STATUS_TONE: Record<string, string> = {

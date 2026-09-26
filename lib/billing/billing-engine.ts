@@ -270,6 +270,27 @@ async function runEnsure(): Promise<void> {
     KEY idx_billing_coupons_tenant (tenant_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
+  // Billing contacts — the people a tenant designates to receive invoices,
+  // dunning and renewal notices. At most one primary per tenant (enforced in
+  // the service layer, not the schema, because "primary" moves between rows).
+  await query(`CREATE TABLE IF NOT EXISTS billing_contacts (
+    id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id     INT UNSIGNED NOT NULL,
+    name          VARCHAR(190) NOT NULL,
+    email         VARCHAR(190) NOT NULL,
+    phone         VARCHAR(40) DEFAULT NULL,
+    role          VARCHAR(40) NOT NULL DEFAULT 'billing',
+    is_primary    TINYINT(1) NOT NULL DEFAULT 0,
+    receive_invoices  TINYINT(1) NOT NULL DEFAULT 1,
+    receive_dunning   TINYINT(1) NOT NULL DEFAULT 1,
+    created_by    INT UNSIGNED DEFAULT NULL,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_billing_contact_email (tenant_id, email),
+    KEY idx_billing_contacts_tenant (tenant_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
   await query(`CREATE TABLE IF NOT EXISTS billing_invoices (
     id               INT UNSIGNED NOT NULL AUTO_INCREMENT,
     invoice_no       VARCHAR(30) NOT NULL,
@@ -642,7 +663,175 @@ export async function creditBalance(): Promise<number> {
   return round2(balance)
 }
 
-// ── Coupons ─────────────────────────────────────────────────────────────────
+// ── Billing contacts ──────────────────────────────────────────────────────────
+
+export type BillingContact = {
+  id: number
+  tenant_id: number
+  name: string
+  email: string
+  phone: string | null
+  role: string
+  is_primary: boolean
+  receive_invoices: boolean
+  receive_dunning: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type BillingContactInput = {
+  name?: string
+  email?: string
+  phone?: string | null
+  role?: string
+  is_primary?: boolean
+  receive_invoices?: boolean
+  receive_dunning?: boolean
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function mapContact(r: any): BillingContact {
+  return {
+    id: Number(r.id),
+    tenant_id: Number(r.tenant_id),
+    name: String(r.name ?? ""),
+    email: String(r.email ?? ""),
+    phone: r.phone ?? null,
+    role: String(r.role ?? "billing"),
+    is_primary: bool(r.is_primary),
+    receive_invoices: bool(r.receive_invoices),
+    receive_dunning: bool(r.receive_dunning),
+    created_at: String(r.created_at),
+    updated_at: String(r.updated_at),
+  }
+}
+
+export async function listBillingContacts(): Promise<BillingContact[]> {
+  await ensureBillingSchema()
+  const rows = (await tenantSelect("billing_contacts", {
+    tail: "ORDER BY is_primary DESC, name ASC",
+  })) as any[]
+  return rows.map(mapContact)
+}
+
+function validateContact(input: BillingContactInput, partial = false): Record<string, string> {
+  const fields: Record<string, string> = {}
+  if (!partial || input.name !== undefined) {
+    if (!String(input.name ?? "").trim()) fields.name = "Name is required."
+  }
+  if (!partial || input.email !== undefined) {
+    const email = String(input.email ?? "").trim()
+    if (!email) fields.email = "Email is required."
+    else if (!EMAIL_RE.test(email)) fields.email = "Enter a valid email address."
+  }
+  return fields
+}
+
+/**
+ * Ensure at most one primary contact per tenant. Called inside a create/update
+ * that sets is_primary=true; demotes every other row for the tenant first. The
+ * tenant scope guard means this can only ever touch the caller's own rows.
+ */
+async function clearOtherPrimaries(exceptId: number | null): Promise<void> {
+  const rows = (await tenantSelect("billing_contacts", {
+    columns: "id",
+    where: "is_primary = 1",
+  })) as any[]
+  for (const r of rows) {
+    if (exceptId != null && Number(r.id) === exceptId) continue
+    await tenantUpdate("billing_contacts", Number(r.id), { is_primary: 0 })
+  }
+}
+
+export async function createBillingContact(
+  input: BillingContactInput,
+  session: SessionPayload,
+): Promise<BillingContact> {
+  await ensureBillingSchema()
+  const fields = validateContact(input)
+  if (Object.keys(fields).length) throw new BillingError("Validation failed", 400, fields)
+
+  const email = String(input.email).trim().toLowerCase()
+  const dup = (await tenantSelect("billing_contacts", {
+    columns: "id",
+    where: "email = ?",
+    params: [email],
+  })) as any[]
+  if (dup.length) {
+    throw new BillingError("A contact with that email already exists.", 409, {
+      email: "Email already in use.",
+    })
+  }
+
+  const makePrimary = input.is_primary === true
+  if (makePrimary) await clearOtherPrimaries(null)
+
+  const { insertId } = await tenantInsert("billing_contacts", {
+    name: String(input.name).trim(),
+    email,
+    phone: input.phone ? String(input.phone).trim() : null,
+    role: String(input.role || "billing").trim(),
+    is_primary: makePrimary ? 1 : 0,
+    receive_invoices: input.receive_invoices === false ? 0 : 1,
+    receive_dunning: input.receive_dunning === false ? 0 : 1,
+    created_by: session.userId ?? null,
+  })
+  const row = await requireOwnedRow("billing_contacts", insertId)
+  return mapContact(row)
+}
+
+export async function updateBillingContact(
+  id: number,
+  input: BillingContactInput,
+  _session: SessionPayload,
+): Promise<BillingContact> {
+  await ensureBillingSchema()
+  // Ownership assertion — cross-tenant ids are refused here (404-equivalent).
+  await requireOwnedRow("billing_contacts", id)
+
+  const fields = validateContact(input, true)
+  if (Object.keys(fields).length) throw new BillingError("Validation failed", 400, fields)
+
+  const patch: Record<string, any> = {}
+  if (input.name !== undefined) patch.name = String(input.name).trim()
+  if (input.email !== undefined) {
+    const email = String(input.email).trim().toLowerCase()
+    const dup = (await tenantSelect("billing_contacts", {
+      columns: "id",
+      where: "email = ? AND id <> ?",
+      params: [email, id],
+    })) as any[]
+    if (dup.length) {
+      throw new BillingError("A contact with that email already exists.", 409, {
+        email: "Email already in use.",
+      })
+    }
+    patch.email = email
+  }
+  if (input.phone !== undefined) patch.phone = input.phone ? String(input.phone).trim() : null
+  if (input.role !== undefined) patch.role = String(input.role || "billing").trim()
+  if (input.receive_invoices !== undefined) patch.receive_invoices = input.receive_invoices ? 1 : 0
+  if (input.receive_dunning !== undefined) patch.receive_dunning = input.receive_dunning ? 1 : 0
+  if (input.is_primary !== undefined) {
+    patch.is_primary = input.is_primary ? 1 : 0
+    if (input.is_primary) await clearOtherPrimaries(id)
+  }
+
+  if (Object.keys(patch).length) await tenantUpdate("billing_contacts", id, patch)
+  const row = await requireOwnedRow("billing_contacts", id)
+  return mapContact(row)
+}
+
+export async function deleteBillingContact(id: number): Promise<void> {
+  await ensureBillingSchema()
+  await requireOwnedRow("billing_contacts", id)
+  await tenantUpdate("billing_contacts", id, {}) // touch/no-op guard; ensures ownership path
+  const { tenantDelete } = await import("@/lib/tenant-scope")
+  await tenantDelete("billing_contacts", id)
+}
+
+// ── Coupons ��────────────────────────────────────────────────────────────────
 
 export async function listCoupons(): Promise<CouponRow[]> {
   await ensureBillingSchema()
@@ -1298,7 +1487,7 @@ export async function listRefunds(): Promise<
   })
 }
 
-// ── Recurring billing / invoice generation from subscriptions ─────────────────
+// ���─ Recurring billing / invoice generation from subscriptions ─────────────────
 
 /**
  * Generate a recurring invoice for a subscription's current period. Idempotent

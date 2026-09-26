@@ -27,6 +27,7 @@ const EMPTY = {
   price_yearly: 0,
   price_two_year: 0,
   price_five_year: 0,
+  price_enterprise: 0,
   trial_days: 14,
   seats: "" as number | string,
   past_due_days: 7,
@@ -89,6 +90,7 @@ export function PlanCatalog() {
                   <PriceRow label="Yearly" value={formatMoney(p.price_yearly, p.currency)} />
                   <PriceRow label="2-Year" value={formatMoney(p.price_two_year, p.currency)} />
                   <PriceRow label="5-Year" value={formatMoney(p.price_five_year, p.currency)} />
+                  <PriceRow label="Enterprise" value={formatMoney(p.price_enterprise, p.currency)} />
                 </dl>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <span>{p.seats == null ? "Unlimited seats" : `${p.seats} seats`}</span>
@@ -155,6 +157,7 @@ function PlanDialog({
             price_yearly: editing.price_yearly,
             price_two_year: editing.price_two_year,
             price_five_year: editing.price_five_year,
+            price_enterprise: editing.price_enterprise,
             trial_days: editing.trial_days,
             seats: editing.seats ?? "",
             past_due_days: editing.past_due_days,
@@ -236,6 +239,10 @@ function PlanDialog({
             <div className="space-y-1.5">
               <Label>5-Year price</Label>
               <Input type="number" value={form.price_five_year} onChange={num("price_five_year")} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Enterprise price</Label>
+              <Input type="number" value={form.price_enterprise} onChange={num("price_enterprise")} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

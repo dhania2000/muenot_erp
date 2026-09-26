@@ -12,12 +12,16 @@
  *                         └──────── recover via payment/renewal ──────┘ (→ active)
  *   active/trial → cancelled (terminal, honoured immediately or at period end)
  *
- * Billing terms sold by Muenot: monthly, yearly, 2-year, 5-year.
+ * Billing terms sold by Muenot: monthly, yearly, 2-year, 5-year, enterprise.
+ *
+ * "enterprise" is a negotiated annual contract: it bills on a 12-month cadence
+ * (so the dunning/renewal math is identical to `yearly`) but carries its own
+ * custom, per-plan price rather than one of the published list prices.
  */
 
 // ── Terms ────────────────────────────────────────────────────────────────────
 
-export const BILLING_TERMS = ["monthly", "yearly", "two_year", "five_year"] as const
+export const BILLING_TERMS = ["monthly", "yearly", "two_year", "five_year", "enterprise"] as const
 export type BillingTerm = (typeof BILLING_TERMS)[number]
 
 export const TERM_LABELS: Record<BillingTerm, string> = {
@@ -25,6 +29,7 @@ export const TERM_LABELS: Record<BillingTerm, string> = {
   yearly: "Yearly",
   two_year: "2-Year",
   five_year: "5-Year",
+  enterprise: "Enterprise",
 }
 
 /** Number of whole calendar months in one billing term. */
@@ -38,6 +43,9 @@ export function termMonths(term: BillingTerm): number {
       return 24
     case "five_year":
       return 60
+    case "enterprise":
+      // Negotiated annual contract — same 12-month cadence, custom pricing.
+      return 12
   }
 }
 
@@ -74,12 +82,38 @@ export const TERMINAL_STATUSES: SubscriptionStatus[] = ["cancelled", "expired"]
 /** Statuses in which the tenant still has working access to the product. */
 export const ACTIVE_ACCESS_STATUSES: SubscriptionStatus[] = ["trial", "active", "past_due", "grace"]
 
+/**
+ * Statuses in which the tenant may perform mutating (write) actions. `grace` is
+ * deliberately excluded: during the grace window the product is READ-ONLY — the
+ * tenant can still sign in and view/export their data, but every create/update/
+ * delete is refused until they settle payment. `past_due` still allows writes
+ * (the first, softest dunning phase); `grace` is the hard read-only tier before
+ * suspension removes access entirely.
+ */
+export const WRITE_ACCESS_STATUSES: SubscriptionStatus[] = ["trial", "active", "past_due"]
+
+/** Statuses that keep access but restrict the tenant to read-only usage. */
+export const READ_ONLY_STATUSES: SubscriptionStatus[] = ["grace"]
+
 export function isTerminal(status: SubscriptionStatus): boolean {
   return TERMINAL_STATUSES.includes(status)
 }
 
 export function hasProductAccess(status: SubscriptionStatus): boolean {
   return ACTIVE_ACCESS_STATUSES.includes(status)
+}
+
+/** True when the tenant may perform write/mutation actions in this status. */
+export function canWrite(status: SubscriptionStatus): boolean {
+  return WRITE_ACCESS_STATUSES.includes(status)
+}
+
+/**
+ * True when the tenant retains access but is confined to read-only usage
+ * (the grace period). Callers use this to allow GETs while refusing mutations.
+ */
+export function isReadOnly(status: SubscriptionStatus): boolean {
+  return READ_ONLY_STATUSES.includes(status)
 }
 
 export function isSubscriptionStatus(v: unknown): v is SubscriptionStatus {

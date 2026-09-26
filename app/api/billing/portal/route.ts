@@ -49,6 +49,7 @@ export async function GET() {
         price_yearly: plan.price_yearly,
         price_two_year: plan.price_two_year,
         price_five_year: plan.price_five_year,
+        price_enterprise: plan.price_enterprise,
         seats: plan.seats,
         trial_days: plan.trial_days,
         is_current: isCurrent,

@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import useSWR from "swr"
+import useSWR, { useSWRConfig } from "swr"
 import {
   BarChart3,
   Calculator,
@@ -9,6 +9,7 @@ import {
   Columns3,
   Database,
   Download,
+  FileClock,
   Filter,
   Loader2,
   Plus,
@@ -39,6 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { fetcher } from "@/lib/fetcher"
+import { LARGE_EXPORTS_API } from "@/components/reports/large-exports-panel"
 import type { PublicReportColumn, PublicReportSource } from "@/lib/reports/catalog"
 import {
   aggregationsForType,
@@ -116,6 +118,8 @@ export function ReportBuilder() {
   const [running, setRunning] = useState(false)
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState<string | null>(null)
+  const [queueing, setQueueing] = useState(false)
+  const { mutate: globalMutate } = useSWRConfig()
   const [saveOpen, setSaveOpen] = useState(false)
 
   const catalog = data?.catalog ?? []
@@ -370,6 +374,34 @@ export function ReportBuilder() {
       toast.error("Could not export report.")
     } finally {
       setExporting(null)
+    }
+  }
+
+  async function queueLargeExport() {
+    if (!def) return
+    setQueueing(true)
+    try {
+      const res = await fetch(LARGE_EXPORTS_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          definition: def,
+          name: name || "report",
+          format: "csv",
+          requestKey: crypto.randomUUID(),
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) {
+        toast.error(json?.error || "Could not queue the export.")
+        return
+      }
+      toast.success("Export queued. You'll be notified when the download is ready.")
+      globalMutate(LARGE_EXPORTS_API)
+    } catch {
+      toast.error("Could not queue the export.")
+    } finally {
+      setQueueing(false)
     }
   }
 
@@ -817,6 +849,16 @@ export function ReportBuilder() {
                 {fmt}
               </Button>
             ))}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={queueLargeExport}
+              disabled={queueing || def.columns.length === 0}
+              className="gap-1.5"
+            >
+              {queueing ? <Loader2 className="size-4 animate-spin" /> : <FileClock className="size-4" />}
+              Queue large export
+            </Button>
           </div>
 
           {/* Results */}

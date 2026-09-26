@@ -4,6 +4,13 @@ import { requirePlatformStaff } from "@/lib/platform-guard"
 import { getStoredRoles, recordPlatformAudit } from "@/lib/platform-roles"
 import { getTenantById } from "@/lib/tenant-service"
 import { getNum } from "@/lib/settings/server"
+import {
+  IMPERSONATION_LIMITS,
+  computeImpersonationExpiry,
+  isImpersonationWindowOpen,
+  resolveImpersonationMinutes,
+  validateImpersonationReason,
+} from "@/lib/impersonation-window"
 
 /**
  * Tenant impersonation (the ONLY audited path by which a Muenot
@@ -13,20 +20,21 @@ import { getNum } from "@/lib/settings/server"
  *   - Only a platform operator (platform_staff or platform_super_admin) may
  *     start an impersonation; roles are re-resolved from the DB, never trusted
  *     from the token.
- *   - An operator can never impersonate their OWN home tenant (that would be a
- *     no-op that only muddies the audit trail) and can only enter a tenant that
- *     exists and is active.
- *   - The impersonation is carried ONLY in the freshly-minted, signed session
- *     cookie. `resolveRoleContext`/`canActOnTenant` then cap the operator at
- *     delegated tenant_admin authority — never tenant_owner — so impersonation
- *     can never delete a tenant or transfer ownership.
- *   - Both entering and leaving are written to `platform_admin_audit`.
+ *   - An operator can never impersonate their OWN home tenant and can only
+ *     enter a tenant that exists and is active.
+ *   - Spec47: every impersonation is time-boxed (5-120 min, default 30) and
+ *     requires a written justification. The expiry is signed into the token;
+ *     `getSession()` / `resolveRoleContext()` drop an elapsed window, so an
+ *     operator can never linger inside a customer tenant.
+ *   - Start, stop, denial and re-entry are written to `platform_admin_audit`
+ *     (projected into the security audit stream).
  */
 
-/** Re-mint the caller's session cookie with a new impersonation target. */
-async function remintSession(session: SessionPayload, impersonatedTenantId: number | null) {
-  // Re-read the role axes from the source of truth so the new token reflects
-  // the operator's current authority, not whatever a stale token carried.
+async function remintSession(
+  session: SessionPayload,
+  impersonatedTenantId: number | null,
+  impersonationExpiresAt: number | null,
+) {
   const roles = await getStoredRoles(session.userId)
   const timeoutMinutes = await getNum("security.session_timeout", 480)
   const durationSeconds = Math.max(60, Math.round(timeoutMinutes * 60))
@@ -40,10 +48,23 @@ async function remintSession(session: SessionPayload, impersonatedTenantId: numb
       platformRole: roles?.platformRole ?? session.platformRole ?? "none",
       tenantRole: roles?.tenantRole ?? session.tenantRole ?? "employee",
       impersonatedTenantId,
+      impersonationExpiresAt,
+      sid: session.sid,
     },
     durationSeconds,
   )
   await setSessionCookie(token, durationSeconds)
+}
+
+export async function GET() {
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+  // getSession() has already cleared an elapsed window.
+  const active = session.impersonatedTenantId != null
+  return NextResponse.json({
+    impersonating: active ? { tenantId: session.impersonatedTenantId } : null,
+    expiresAt: active && session.impersonationExpiresAt ? new Date(session.impersonationExpiresAt).toISOString() : null,
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -61,50 +82,90 @@ export async function POST(req: NextRequest) {
   if (!Number.isInteger(tenantId) || tenantId <= 0) {
     return NextResponse.json({ error: "A valid tenantId is required" }, { status: 400 })
   }
-
-  // Re-resolving roles here (not trusting the token) is what enforces that only
-  // a genuine platform operator can enter a tenant.
-  const roles = await getStoredRoles(guard.ctx.userId)
-  if (tenantId === roles?.tenantId) {
+  const reason = validateImpersonationReason(body?.reason)
+  if (!reason) {
     return NextResponse.json(
-      { error: "You cannot impersonate your own home tenant" },
+      {
+        error: `A justification of ${IMPERSONATION_LIMITS.MIN_REASON}-${IMPERSONATION_LIMITS.MAX_REASON} characters is required`,
+      },
       { status: 400 },
     )
   }
+  const minutes = resolveImpersonationMinutes(body?.durationMinutes)
+
+  const roles = await getStoredRoles(guard.ctx.userId)
+  const deny = async (error: string, status: number, code: string) => {
+    await recordPlatformAudit({
+      actorUserId: guard.ctx.userId,
+      actorEmail: guard.session.email,
+      action: "impersonation_denied",
+      targetTenantId: tenantId,
+      detail: { code, reason },
+    })
+    return NextResponse.json({ error }, { status })
+  }
+
+  if (tenantId === roles?.tenantId) return deny("You cannot impersonate your own home tenant", 400, "own_tenant")
 
   const target = await getTenantById(tenantId)
-  if (!target) return NextResponse.json({ error: "Tenant not found" }, { status: 404 })
-  if (target.status !== "active") {
-    return NextResponse.json({ error: "That tenant is not active" }, { status: 409 })
-  }
+  if (!target) return deny("Tenant not found", 404, "not_found")
+  if (target.status !== "active") return deny("That tenant is not active", 409, "inactive")
 
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
 
-  await remintSession(session, target.id)
+  const now = Date.now()
+  // Idempotent: repeating the same start while the window is open does not
+  // extend it (extension requires stopping and re-justifying).
+  if (session.impersonatedTenantId === target.id && isImpersonationWindowOpen(session.impersonationExpiresAt, now)) {
+    return NextResponse.json({
+      ok: true,
+      replayed: true,
+      impersonating: { id: target.id, name: target.name, slug: target.slug },
+      expiresAt: new Date(session.impersonationExpiresAt as number).toISOString(),
+    })
+  }
+
+  const expiresAt = computeImpersonationExpiry(now, minutes)
+  const previous = session.impersonatedTenantId ?? null
+  await remintSession(session, target.id, expiresAt)
+  if (previous != null && previous !== target.id) {
+    await recordPlatformAudit({
+      actorUserId: guard.ctx.userId,
+      actorEmail: guard.session.email,
+      action: "impersonation_stop",
+      targetTenantId: previous,
+      detail: { cause: "switched_tenant" },
+    })
+  }
   await recordPlatformAudit({
     actorUserId: guard.ctx.userId,
     actorEmail: guard.session.email,
     action: "impersonation_start",
     targetTenantId: target.id,
-    detail: { tenant: target.name, slug: target.slug },
+    detail: {
+      tenant: target.name,
+      slug: target.slug,
+      reason,
+      durationMinutes: minutes,
+      expiresAt: new Date(expiresAt).toISOString(),
+    },
   })
 
   return NextResponse.json({
     ok: true,
     impersonating: { id: target.id, name: target.name, slug: target.slug },
+    expiresAt: new Date(expiresAt).toISOString(),
   })
 }
 
 export async function DELETE() {
-  // Anyone with a session may drop an impersonation (fail-safe: leaving a
-  // customer tenant should never be blocked). If the caller is not actually
-  // impersonating, this is an idempotent no-op.
+  // Leaving a customer tenant is never blocked; a no-op when not impersonating.
   const session = await getSession()
   if (!session) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
 
   const previous = session.impersonatedTenantId ?? null
-  await remintSession(session, null)
+  await remintSession(session, null, null)
 
   if (previous != null) {
     await recordPlatformAudit({
@@ -112,6 +173,7 @@ export async function DELETE() {
       actorEmail: session.email,
       action: "impersonation_stop",
       targetTenantId: previous,
+      detail: { cause: "operator_exit" },
     })
   }
 

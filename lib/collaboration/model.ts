@@ -10,8 +10,6 @@
  * CRM communications are timeline events with a per-tenant dedupe key.
  */
 
-import type { PermissionScope } from "@/lib/permission-model"
-
 export class CollabError extends Error {
   constructor(
     public status: 400 | 403 | 404 | 409 | 422,
@@ -29,13 +27,18 @@ export class CollabError extends Error {
 // ---------------------------------------------------------------------------
 
 export type CollabSubject = {
-  /** Permission module key checked via the effective matrix. */
+  /** Permission module key checked via the effective matrix (lib/permission-model.ts catalog). */
   moduleKey: string
   table: string
   labelColumn: string
-  /** Row-scope columns for "added" / "owned" scopes. */
-  addedBy: string | null
-  ownedBy: string | null
+  /** Columns loaded for the permission check (besides id / label). */
+  scopeColumns: string[]
+  /**
+   * Map a loaded row onto the catalog's `addedBy` / `ownedBy` column names so
+   * the shared `canActOnRecord` (RBAC + ABAC) decides access. Needed where the
+   * physical table differs from the catalog's (central `tasks` engine).
+   */
+  permissionRow: (row: Record<string, unknown>) => Record<string, unknown>
   /** field_security_policies (module, entity) pair used for redaction. */
   fieldModule: string
   fieldEntity: string
@@ -44,13 +47,15 @@ export type CollabSubject = {
   link: (id: number) => string
 }
 
+const identity = (row: Record<string, unknown>) => row
+
 export const COLLAB_SUBJECTS: Record<string, CollabSubject> = {
   lead: {
     moduleKey: "sales.leads",
     table: "sales_leads",
-    labelColumn: "name",
-    addedBy: "created_by",
-    ownedBy: "assigned_to",
+    labelColumn: "company_name",
+    scopeColumns: ["created_by", "assigned_to"],
+    permissionRow: identity,
     fieldModule: "sales",
     fieldEntity: "lead",
     crm: true,
@@ -59,9 +64,9 @@ export const COLLAB_SUBJECTS: Record<string, CollabSubject> = {
   company: {
     moduleKey: "sales.companies",
     table: "sales_companies",
-    labelColumn: "name",
-    addedBy: "created_by",
-    ownedBy: "owner_id",
+    labelColumn: "company_name",
+    scopeColumns: ["created_by", "assigned_to"],
+    permissionRow: identity,
     fieldModule: "sales",
     fieldEntity: "company",
     crm: true,
@@ -71,8 +76,8 @@ export const COLLAB_SUBJECTS: Record<string, CollabSubject> = {
     moduleKey: "sales.deals",
     table: "sales_deals",
     labelColumn: "title",
-    addedBy: "created_by",
-    ownedBy: "owner_id",
+    scopeColumns: ["created_by", "owner_id"],
+    permissionRow: identity,
     fieldModule: "sales",
     fieldEntity: "deal",
     crm: true,
@@ -81,9 +86,9 @@ export const COLLAB_SUBJECTS: Record<string, CollabSubject> = {
   contact: {
     moduleKey: "marketing.contacts",
     table: "marketing_contacts",
-    labelColumn: "name",
-    addedBy: "created_by",
-    ownedBy: null,
+    labelColumn: "full_name",
+    scopeColumns: ["owner_id"],
+    permissionRow: identity,
     fieldModule: "marketing",
     fieldEntity: "contact",
     crm: true,
@@ -93,12 +98,16 @@ export const COLLAB_SUBJECTS: Record<string, CollabSubject> = {
     moduleKey: "operations.tasks",
     table: "tasks",
     labelColumn: "title",
-    addedBy: "reporter_id",
-    ownedBy: "assignee_id",
+    scopeColumns: ["reporter_id", "assignee_id", "created_by", "approver_id"],
+    permissionRow: (row) => ({
+      ...row,
+      created_by: row.reporter_id ?? row.created_by,
+      assigned_to: row.assignee_id,
+    }),
     fieldModule: "operations",
     fieldEntity: "task",
     crm: false,
-    link: (id) => `/modules/operations/tasks?id=${id}`,
+    link: (id) => `/modules/tasks?id=${id}`,
   },
 }
 
@@ -106,33 +115,10 @@ export function getSubject(type: unknown): CollabSubject | null {
   return typeof type === "string" && Object.hasOwn(COLLAB_SUBJECTS, type) ? COLLAB_SUBJECTS[type] : null
 }
 
-/**
- * Row-scope SQL for a subject + permission scope. Returns `1=0` for "none" and
- * for scopes whose ownership column the subject does not have (fail-closed).
- */
-export function subjectScopeSql(
-  subject: CollabSubject,
-  scope: PermissionScope,
-  userId: number,
-): { sql: string; params: number[] } {
-  const added = subject.addedBy
-  const owned = subject.ownedBy
-  switch (scope) {
-    case "all":
-      return { sql: "1=1", params: [] }
-    case "added":
-      return added ? { sql: `\`${added}\` = ?`, params: [userId] } : { sql: "1=0", params: [] }
-    case "owned":
-      return owned ? { sql: `\`${owned}\` = ?`, params: [userId] } : { sql: "1=0", params: [] }
-    case "both": {
-      const parts: string[] = []
-      if (added) parts.push(`\`${added}\` = ?`)
-      if (owned) parts.push(`\`${owned}\` = ?`)
-      return parts.length ? { sql: `(${parts.join(" OR ")})`, params: parts.map(() => userId) } : { sql: "1=0", params: [] }
-    }
-    default:
-      return { sql: "1=0", params: [] }
-  }
+/** Internal redirect target that re-checks access at click time. */
+export function openLink(subjectType: string, subjectId: number, commentId?: number | null): string {
+  const base = `/api/collaboration/open/${encodeURIComponent(subjectType)}/${subjectId}`
+  return commentId ? `${base}?comment=${commentId}` : base
 }
 
 export function parseSubjectId(value: unknown): number {

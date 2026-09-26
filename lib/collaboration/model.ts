@@ -306,6 +306,36 @@ export function crmDedupeKey(e: Pick<CrmEventInput, "channel" | "sourceRef">): s
   return `crm:${e.channel}:${e.sourceRef}`.slice(0, 191)
 }
 
+/** Lead-lifecycle event types (sales_lead_activities.activity_type) that are CRM communications. */
+export function leadEventChannel(type: string): CrmChannel | null {
+  return (CRM_CHANNELS as readonly string[]).includes(type) ? (type as CrmChannel) : null
+}
+
+/**
+ * Timeline dedupe key for a module-emitted lead communication. Automatic only
+ * where the ref is unique per occurrence (a call / email row, a WhatsApp wamid),
+ * so a retried write collapses. Meetings reuse one meeting code across their
+ * lifecycle and notes have no ref, so those only dedupe on an explicit key.
+ * Shares the `crm:` key space with POST /api/collaboration/crm-events.
+ */
+export function leadTimelineDedupeKey(input: {
+  channel: CrmChannel
+  refType?: string | null
+  refId?: string | number | null
+  idempotencyKey?: string | null
+}): string | null {
+  if (input.idempotencyKey) return crmDedupeKey({ channel: input.channel, sourceRef: `manual/${input.idempotencyKey}` })
+  const auto = input.channel === "call" || input.channel === "email" || input.channel === "whatsapp"
+  if (!auto || input.refId == null || input.refId === "") return null
+  const ref = `${input.refType || input.channel}/${input.refId}`
+  if (!/^[A-Za-z0-9_:.@\-/]{1,150}$/.test(ref)) return null
+  return crmDedupeKey({ channel: input.channel, sourceRef: ref })
+}
+
+export function isValidIdempotencyKey(value: unknown): value is string {
+  return typeof value === "string" && IDEMPOTENCY_RE.test(value)
+}
+
 // ---------------------------------------------------------------------------
 // Hidden / masked fields in timeline metadata
 // ---------------------------------------------------------------------------

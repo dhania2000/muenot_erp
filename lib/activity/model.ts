@@ -49,6 +49,7 @@ export const ACTIVITY_KINDS = [
   "payment",
   "document",
   "system",
+  "whatsapp",
 ] as const
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number]
 

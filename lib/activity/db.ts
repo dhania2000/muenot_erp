@@ -67,6 +67,21 @@ async function runEnsure(): Promise<void> {
     KEY \`idx_activity_feed\` (\`tenant_id\`, \`occurred_at\`, \`id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
+  // Spec42: idempotent ingestion (webhook retries, double-submits) keyed per tenant.
+  const dedupeCol = await query<any[]>(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = 'activity_events' AND column_name = 'dedupe_key' LIMIT 1`,
+  )
+  if (dedupeCol.length === 0) {
+    await query(
+      `ALTER TABLE \`activity_events\`
+         ADD COLUMN \`dedupe_key\` VARCHAR(191) DEFAULT NULL,
+         ADD UNIQUE KEY \`uq_activity_dedupe\` (\`tenant_id\`, \`dedupe_key\`)`,
+    ).catch((err: any) => {
+      if (err?.code !== "ER_DUP_FIELDNAME" && err?.code !== "ER_DUP_KEYNAME") throw err
+    })
+  }
+
   await registerActivityFeatures()
   await ensureTenantIsolation()
 }
@@ -130,25 +145,64 @@ export async function ensureActivityTables(): Promise<void> {
 // Writes
 // ---------------------------------------------------------------------------
 
-export type RecordedActivity = { id: number; activity_code: string }
+export type RecordedActivity = { id: number; activity_code: string; duplicate?: boolean }
+
+async function findByDedupeKey(tenantId: number, dedupeKey: string): Promise<RecordedActivity | null> {
+  const rows = await query<any[]>(
+    `SELECT id, activity_code FROM activity_events WHERE tenant_id = ? AND dedupe_key = ? LIMIT 1`,
+    [tenantId, dedupeKey],
+  )
+  return rows[0] ? { id: Number(rows[0].id), activity_code: String(rows[0].activity_code), duplicate: true } : null
+}
 
 /**
  * Append one activity to the centralized stream for the current tenant. Returns
  * the new id + code. Use `recordActivitySafe` from module code paths where a
  * timeline write must never break the primary operation.
+ *
+ * `opts.dedupeKey` makes the write idempotent per tenant: a repeat returns the
+ * original event with `duplicate: true` instead of inserting a second row.
  */
-export async function recordActivity(input: ActivityEventInput): Promise<RecordedActivity> {
+export async function recordActivity(
+  input: ActivityEventInput,
+  opts: { dedupeKey?: string | null } = {},
+): Promise<RecordedActivity> {
   await ensureActivityTables()
   const tenantId = currentTenantId()
   const event = buildActivityEvent(input)
+  const dedupeKey = opts.dedupeKey ? String(opts.dedupeKey).slice(0, 191) : null
+  if (dedupeKey) {
+    const existing = await findByDedupeKey(tenantId, dedupeKey)
+    if (existing) return existing
+  }
   const code = await nextRecordId("ACT").catch(() => `ACT-${Date.now()}`)
 
-  const result = await query<any>(
+  let result: any
+  try {
+    result = await insertEvent(event, code, tenantId, dedupeKey)
+  } catch (err: any) {
+    if (dedupeKey && err?.code === "ER_DUP_ENTRY") {
+      const existing = await findByDedupeKey(tenantId, dedupeKey)
+      if (existing) return existing
+    }
+    throw err
+  }
+  const id = Number((result as any)?.insertId ?? 0)
+  return { id, activity_code: code, duplicate: false }
+}
+
+async function insertEvent(
+  event: ReturnType<typeof buildActivityEvent>,
+  code: string,
+  tenantId: number,
+  dedupeKey: string | null,
+): Promise<any> {
+  return query<any>(
     `INSERT INTO activity_events
        (activity_code, kind, subject_type, subject_id, subject_label, action, title, body,
         source_module, actor_id, actor_type, ref_type, ref_id, visibility, visibility_rank,
-        importance, watchers, meta, occurred_at, tenant_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        importance, watchers, meta, occurred_at, tenant_id, dedupe_key)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       code,
       event.kind,
@@ -170,10 +224,9 @@ export async function recordActivity(input: ActivityEventInput): Promise<Recorde
       event.meta ? JSON.stringify(event.meta) : null,
       event.occurred_at,
       tenantId,
+      dedupeKey,
     ],
   )
-  const id = Number((result as any)?.insertId ?? 0)
-  return { id, activity_code: code }
 }
 
 /**
@@ -181,9 +234,12 @@ export async function recordActivity(input: ActivityEventInput): Promise<Recorde
  * (and logs) any failure so a timeline problem never rolls back the caller's
  * real write. Mirrors the pattern in lib/sales/lead-lifecycle.ts.
  */
-export async function recordActivitySafe(input: ActivityEventInput): Promise<RecordedActivity | null> {
+export async function recordActivitySafe(
+  input: ActivityEventInput,
+  opts: { dedupeKey?: string | null } = {},
+): Promise<RecordedActivity | null> {
   try {
-    return await recordActivity(input)
+    return await recordActivity(input, opts)
   } catch (err) {
     console.error("[activity] record failed", err)
     return null

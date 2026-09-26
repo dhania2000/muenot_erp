@@ -18,6 +18,7 @@ import "server-only"
 import { query } from "@/lib/db"
 import type { SavedViewRecord, TableViewConfig, ViewVisibility } from "./types"
 import { ROLE_KEYS } from "./types"
+import { sanitizeViewConfig } from "./sanitize"
 
 let ensured: Promise<void> | null = null
 
@@ -89,36 +90,9 @@ export async function resolveTeamKeys(tenantId: number, userId: number): Promise
   }
 }
 
+/** Parse the stored JSON config through the shared sanitizer (see sanitize.ts). */
 function parseConfig(raw: unknown): TableViewConfig {
-  let obj: any = raw
-  if (typeof raw === "string") {
-    try {
-      obj = JSON.parse(raw)
-    } catch {
-      obj = {}
-    }
-  }
-  if (!obj || typeof obj !== "object") return {}
-  const columns = Array.isArray(obj.columns)
-    ? obj.columns
-        .filter((c: any) => c && typeof c.key === "string")
-        .map((c: any) => ({ key: String(c.key), hidden: Boolean(c.hidden) }))
-    : undefined
-  const sort = Array.isArray(obj.sort)
-    ? obj.sort
-        .filter((s: any) => s && typeof s.key === "string")
-        .map((s: any) => ({ key: String(s.key), dir: s.dir === "desc" ? "desc" : "asc" }))
-    : undefined
-  const filters =
-    obj.filters && typeof obj.filters === "object" && !Array.isArray(obj.filters) ? obj.filters : undefined
-  return {
-    search: typeof obj.search === "string" ? obj.search : undefined,
-    filters,
-    columns,
-    sort,
-    groupBy: typeof obj.groupBy === "string" ? obj.groupBy : obj.groupBy === null ? null : undefined,
-    pageSize: Number.isFinite(obj.pageSize) ? Number(obj.pageSize) : undefined,
-  }
+  return sanitizeViewConfig(raw)
 }
 
 function rowToRecord(row: any, viewer: Viewer): SavedViewRecord {

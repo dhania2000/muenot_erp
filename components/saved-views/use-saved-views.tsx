@@ -23,6 +23,7 @@ import type {
   ViewColumnDef,
   ViewVisibility,
 } from "@/lib/saved-views/types"
+import { MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from "@/lib/saved-views/types"
 
 export type ViewState = {
   search: string
@@ -69,7 +70,7 @@ function stateFromConfig(defs: ViewColumnDef[], config: TableViewConfig, fallbac
     const seen = new Set<string>()
     columns = config.columns
       .filter((c) => known.has(c.key) && !seen.has(c.key) && (seen.add(c.key), true))
-      .map((c) => ({ key: c.key, hidden: Boolean(c.hidden) }))
+      .map((c) => ({ key: c.key, hidden: Boolean(c.hidden), width: c.width, pinned: c.pinned }))
     for (const d of defs) if (!seen.has(d.key)) columns.push({ key: d.key, hidden: Boolean(d.defaultHidden) })
   } else {
     columns = defaultColumns(defs)
@@ -168,6 +169,32 @@ export function useSavedViews({ tableKey, columns, initial }: UseSavedViewsOptio
         if (existing.dir === "asc") return { ...s, sort: [{ key, dir: "desc" }] }
         return { ...s, sort: [] }
       }),
+    [],
+  )
+  const setColumnWidth = useCallback(
+    (key: string, width: number | null) =>
+      setState((s) => ({
+        ...s,
+        columns: s.columns.map((c) =>
+          c.key === key
+            ? {
+                ...c,
+                width:
+                  width == null
+                    ? undefined
+                    : Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(width))),
+              }
+            : c,
+        ),
+      })),
+    [],
+  )
+  const togglePin = useCallback(
+    (key: string) =>
+      setState((s) => ({
+        ...s,
+        columns: s.columns.map((c) => (c.key === key ? { ...c, pinned: !c.pinned } : c)),
+      })),
     [],
   )
 
@@ -300,6 +327,8 @@ export function useSavedViews({ tableKey, columns, initial }: UseSavedViewsOptio
     toggleColumn,
     moveColumn,
     toggleSort,
+    setColumnWidth,
+    togglePin,
     // views
     applyView,
     resetToDefault,
@@ -314,7 +343,12 @@ function stateToComparable(state: ViewState) {
   return {
     search: state.search || "",
     filters: state.filters,
-    columns: state.columns.map((c) => ({ key: c.key, hidden: Boolean(c.hidden) })),
+    columns: state.columns.map((c) => ({
+      key: c.key,
+      hidden: Boolean(c.hidden),
+      width: c.width ?? null,
+      pinned: Boolean(c.pinned),
+    })),
     sort: state.sort,
     groupBy: state.groupBy ?? null,
     pageSize: state.pageSize,

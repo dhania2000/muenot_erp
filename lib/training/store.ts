@@ -1,12 +1,16 @@
 import "server-only"
 import { randomUUID, createHash } from "node:crypto"
-import { query } from "@/lib/db"
+import { query, withTransaction } from "@/lib/db"
 import { getTenantId } from "@/lib/api-auth"
 import type { SessionPayload } from "@/lib/auth"
 import { resolveEmployee, type EmployeeIdentity } from "@/lib/knowledge-base"
 import { recordAuditLog } from "@/lib/audit-log-store"
-import { getSignedDownloadUrl } from "@/lib/storage"
+import { getSignedDownloadUrl, keyBelongsToTenant, uploadFile } from "@/lib/storage"
 import {
+  lessonCompletable,
+  policyAckState,
+  ackVersionConflict,
+  isMediaExpired,
   scoreQuiz,
   deriveStatus,
   meetsCompletionRule,
@@ -202,7 +206,9 @@ async function createSchema(): Promise<void> {
     published_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     published_by INT DEFAULT NULL,
     published_by_name VARCHAR(150) DEFAULT NULL,
+    idempotency_key VARCHAR(80) DEFAULT NULL,
     UNIQUE KEY uq_training_policy_version (tenant_id, policy_id, version),
+    UNIQUE KEY uq_training_policy_version_idem (tenant_id, policy_id, idempotency_key),
     KEY idx_training_policy_version (tenant_id, policy_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
@@ -219,6 +225,19 @@ async function createSchema(): Promise<void> {
     UNIQUE KEY uq_training_ack (tenant_id, policy_id, version, employee_id),
     KEY idx_training_ack_emp (tenant_id, employee_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  // Follow-up migration (2027-02-04): tables created by the first Spec38 cut
+  // lack the policy-publish idempotency key. Additive; ignore if present.
+  for (const sql of [
+    "ALTER TABLE training_policy_versions ADD COLUMN idempotency_key VARCHAR(80) DEFAULT NULL",
+    "ALTER TABLE training_policy_versions ADD UNIQUE KEY uq_training_policy_version_idem (tenant_id, policy_id, idempotency_key)",
+  ]) {
+    try {
+      await query(sql)
+    } catch {
+      // already applied
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +272,109 @@ async function audit(
     metadata: extra?.metadata ?? null,
     result: extra?.result ?? "success",
   })
+}
+
+export type TenantEmployee = {
+  id: number
+  employee_name: string | null
+  designation: string | null
+  department: string | null
+  user_id: number
+}
+
+/**
+ * Active employees that belong to the acting tenant. `hr_employees` is
+ * tenant-global in this ERP, so membership is established through the linked
+ * login in `users` (tenant-scoped): either the explicit `user_id` link or, for
+ * unlinked records, a matching email. Employees without a tenant login cannot
+ * sign in to take training and are never targeted — this is what keeps one
+ * tenant's assignments/notifications from reaching another tenant's staff.
+ */
+export async function listTenantEmployees(t: number): Promise<TenantEmployee[]> {
+  const { ensureEmployeeUserLinkSchema } = await import("@/lib/employee-user-link")
+  await ensureEmployeeUserLinkSchema()
+  const rows = await query<any[]>(
+    `SELECT e.id, e.employee_name, e.designation, e.department, u.id AS user_id
+       FROM hr_employees e
+       JOIN users u
+         ON u.tenant_id = ?
+        AND (u.id = e.user_id OR (e.user_id IS NULL AND u.email IN (e.official_email, e.personal_email)))
+      WHERE (e.employment_status IS NULL OR LOWER(e.employment_status) = 'active')
+      ORDER BY e.employee_name`,
+    [t],
+  )
+  const seen = new Map<number, TenantEmployee>()
+  for (const r of rows) {
+    const id = Number(r.id)
+    if (!seen.has(id)) {
+      seen.set(id, {
+        id,
+        employee_name: r.employee_name ?? null,
+        designation: r.designation ?? null,
+        department: r.department ?? null,
+        user_id: Number(r.user_id),
+      })
+    }
+  }
+  return [...seen.values()]
+}
+
+/** Best-effort in-app notifications through the central notification engine. */
+async function notifyUsers(
+  t: number,
+  items: { userId: number; key: string; title: string; body: string; link: string }[],
+) {
+  if (!items.length) return
+  try {
+    const { ensureNotificationEngineSchema } = await import("@/lib/notification-engine/schema")
+    const { enqueueNotification } = await import("@/lib/notification-engine/service")
+    await ensureNotificationEngineSchema()
+    for (const n of items) {
+      try {
+        await withTransaction((c) =>
+          enqueueNotification(c, {
+            tenantId: t,
+            userId: n.userId,
+            channel: "in_app",
+            key: n.key.slice(0, 191),
+            title: n.title.slice(0, 255),
+            body: n.body.slice(0, 4000),
+            link: n.link,
+            context: { moduleKey: "hr", entityTable: "training", kind: "training" },
+          }),
+        )
+      } catch (err) {
+        console.error("[training] notification skipped:", (err as Error).message)
+      }
+    }
+  } catch (err) {
+    console.error("[training] notification engine unavailable:", (err as Error).message)
+  }
+}
+
+/** Best-effort follow-up task in the shared Tasks module for an assignment. */
+async function createAssignmentTask(input: {
+  userId: number
+  courseTitle: string
+  dueDate: string | null
+  assignmentId: number
+}) {
+  try {
+    const { createTask } = await import("@/lib/tasks/model")
+    await createTask({
+      title: `Complete training: ${input.courseTitle}`.slice(0, 200),
+      description: "Assigned via Training & Policies. Open My learning to start the course.",
+      task_type: "Task",
+      priority: "Medium",
+      assignee_id: input.userId,
+      due_date: input.dueDate,
+      source_module: "training",
+      source_entity: "training_assignment",
+      source_entity_id: String(input.assignmentId),
+    })
+  } catch (err) {
+    console.error("[training] task creation skipped:", (err as Error).message)
+  }
 }
 
 /** Resolve the acting employee or fail — required for every learner action. */
@@ -348,6 +470,14 @@ export async function deleteCourse(courseId: number) {
   const t = await tid()
   const exists = (await query<any[]>(`SELECT id FROM training_courses WHERE tenant_id = ? AND id = ? LIMIT 1`, [t, courseId]))[0]
   if (!exists) throw new TrainingError("Course not found", 404)
+  const [{ c: assignmentCount }] = await query<any[]>(
+    `SELECT COUNT(*) AS c FROM training_assignments WHERE tenant_id = ? AND course_id = ?`,
+    [t, courseId],
+  )
+  if (Number(assignmentCount) > 0) {
+    // Completion records and certificates are compliance evidence; deactivate instead.
+    throw new TrainingError("Course has assignments; deactivate it instead of deleting", 409)
+  }
   for (const tbl of ["training_lessons", "training_modules", "training_quiz_questions"]) {
     await query(`DELETE FROM ${tbl} WHERE tenant_id = ? AND course_id = ?`, [t, courseId])
   }
@@ -431,7 +561,14 @@ async function assertMedia(t: number, mediaId: number) {
 // ---------------------------------------------------------------------------
 // Assignment (by role / explicit employees) + tracking
 // ---------------------------------------------------------------------------
-export type AssignResult = { assigned: number; skipped: number; reassigned: number; targeted: number }
+export type AssignResult = {
+  assigned: number
+  skipped: number
+  reassigned: number
+  targeted: number
+  outOfScope: number
+  replayed: boolean
+}
 
 export async function assignCourse(
   courseId: number,
@@ -447,25 +584,34 @@ export async function assignCourse(
   const roles = opts.roles && opts.roles.length ? opts.roles : configuredRoles
   const explicit = (opts.employeeIds ?? []).filter((n) => Number.isInteger(n))
 
-  // Resolve the target set of ACTIVE employees. hr_employees is not
-  // tenant-scoped in this schema, so it is queried without a tenant predicate
-  // exactly like the existing Knowledge Base audience resolver.
-  const employees = await query<any[]>(
-    `SELECT id, employee_name, designation, department, employment_status FROM hr_employees
-      WHERE (employment_status IS NULL OR LOWER(employment_status) = 'active')`,
-  )
+  if (!course.active) throw new TrainingError("Course is inactive", 409)
+
+  const key = opts.idempotencyKey ? String(opts.idempotencyKey).slice(0, 80) : null
+  if (key) {
+    const [{ c }] = await query<any[]>(
+      `SELECT COUNT(*) AS c FROM training_assignments WHERE tenant_id = ? AND course_id = ? AND idempotency_key = ?`,
+      [t, courseId, key],
+    )
+    if (Number(c) > 0) {
+      return { assigned: 0, skipped: 0, reassigned: 0, targeted: 0, outOfScope: 0, replayed: true }
+    }
+  }
+
+  const employees = await listTenantEmployees(t)
+  const inScope = new Set(employees.map((e) => e.id))
+  const outOfScope = explicit.filter((id) => !inScope.has(id)).length
   const targets = employees.filter((e) => {
     if (explicit.length && explicit.includes(e.id)) return true
-    if (explicit.length && !roles.length) return false
+    if (explicit.length && !(opts.roles && opts.roles.length)) return false
     return roleMatches(roles, { designation: e.designation })
   })
 
   const dueDate = course.due_days != null ? isoDatePlusDays(Number(course.due_days)) : null
-  const key = opts.idempotencyKey ?? null
 
   let assigned = 0
   let skipped = 0
   let reassigned = 0
+  const followUps: { userId: number; assignmentId: number }[] = []
   for (const e of targets) {
     const existing = (await query<any[]>(
       `SELECT id, status FROM training_assignments WHERE tenant_id = ? AND course_id = ? AND employee_id = ? LIMIT 1`,
@@ -476,32 +622,44 @@ export async function assignCourse(
         await query(
           `UPDATE training_assignments
               SET status = 'assigned', due_date = ?, started_at = NULL, completed_at = NULL,
-                  score = NULL, passed = NULL, reassigned_count = reassigned_count + 1, assigned_by = ?, assigned_at = CURRENT_TIMESTAMP
+                  score = NULL, passed = NULL, reassigned_count = reassigned_count + 1, assigned_by = ?,
+                  assigned_at = CURRENT_TIMESTAMP, idempotency_key = COALESCE(?, idempotency_key)
             WHERE tenant_id = ? AND id = ?`,
-          [dueDate, session.userId, t, existing.id],
+          [dueDate, session.userId, key, t, existing.id],
         )
-        // A reassignment restarts the course: clear prior progress and results.
+        // A reassignment restarts the course: clear prior progress and the
+        // active certificate. Quiz attempts stay as immutable history.
         await query(`DELETE FROM training_lesson_progress WHERE tenant_id = ? AND assignment_id = ?`, [t, existing.id])
         await query(`DELETE FROM training_certificates WHERE tenant_id = ? AND assignment_id = ?`, [t, existing.id])
+        followUps.push({ userId: e.user_id, assignmentId: Number(existing.id) })
         reassigned += 1
       } else {
         skipped += 1
       }
       continue
     }
-    await query(
-      `INSERT INTO training_assignments (tenant_id, course_id, employee_id, employee_name, assigned_role, status, due_date, assigned_by, idempotency_key)
+    const res: any = await query(
+      `INSERT IGNORE INTO training_assignments (tenant_id, course_id, employee_id, employee_name, assigned_role, status, due_date, assigned_by, idempotency_key)
        VALUES (?,?,?,?,?, 'assigned', ?, ?, ?)`,
       [t, courseId, e.id, e.employee_name ?? null, e.designation ?? null, dueDate, session.userId, key],
     )
-    assigned += 1
+    if (res?.affectedRows) {
+      followUps.push({ userId: e.user_id, assignmentId: Number(res.insertId) })
+      assigned += 1
+    } else {
+      skipped += 1 // concurrent request inserted it first
+    }
+  }
+
+  for (const f of followUps) {
+    await createAssignmentTask({ userId: f.userId, courseTitle: course.title, dueDate, assignmentId: f.assignmentId })
   }
 
   await audit("training.course.assign", "training_course", courseId, {
     entityLabel: course.title,
-    metadata: { assigned, skipped, reassigned, targeted: targets.length, roles },
+    metadata: { assigned, skipped, reassigned, targeted: targets.length, outOfScope, roles, reassign: !!opts.reassign },
   })
-  return { assigned, skipped, reassigned, targeted: targets.length }
+  return { assigned, skipped, reassigned, targeted: targets.length, outOfScope, replayed: false }
 }
 
 export async function listMyAssignments(employeeId: number) {
@@ -585,10 +743,29 @@ export async function markLessonComplete(assignmentId: number, lessonId: number,
   ))[0]
   if (!a) throw new TrainingError("Assignment not found", 404)
   const lesson = (await query<any[]>(
-    `SELECT id FROM training_lessons WHERE tenant_id = ? AND id = ? AND course_id = ? LIMIT 1`,
+    `SELECT id, lesson_type, media_id FROM training_lessons WHERE tenant_id = ? AND id = ? AND course_id = ? LIMIT 1`,
     [t, lessonId, a.course_id],
   ))[0]
   if (!lesson) throw new TrainingError("Lesson not found", 404)
+  const media = lesson.media_id != null
+    ? (await query<any[]>(
+        `SELECT id, expires_at FROM training_media WHERE tenant_id = ? AND id = ? LIMIT 1`,
+        [t, lesson.media_id],
+      ))[0] ?? null
+    : null
+  const gate = lessonCompletable({ lessonType: lesson.lesson_type, mediaId: lesson.media_id, media })
+  if (!gate.ok) {
+    await audit("training.lesson.complete", "training_lesson", lessonId, {
+      result: "denied",
+      metadata: { assignmentId, reason: gate.reason },
+    })
+    throw new TrainingError(
+      gate.reason === "media_expired"
+        ? "This lesson's media has expired and cannot be completed. Ask HR to refresh it."
+        : "This lesson's media is unavailable and cannot be completed.",
+      409,
+    )
+  }
   await query(
     `INSERT IGNORE INTO training_lesson_progress (tenant_id, assignment_id, lesson_id) VALUES (?,?,?)`,
     [t, assignmentId, lessonId],
@@ -712,6 +889,12 @@ export async function registerMedia(
   await ensureTrainingSchema()
   const t = await tid()
   if (!input.storage_key) throw new TrainingError("storage_key is required")
+  // Only objects inside this tenant's private-storage namespace may be referenced.
+  if (!keyBelongsToTenant(input.storage_key, t)) {
+    await audit("training.media.register", "training_media", null, { result: "denied", metadata: { reason: "foreign_key" } })
+    throw new TrainingError("storage_key does not belong to this tenant", 403)
+  }
+  const expires = parseExpiry(input.expires_at)
   const res: any = await query(
     `INSERT INTO training_media (tenant_id, storage_key, file_name, mime, size, access, expires_at, created_by)
      VALUES (?,?,?,?,?,?,?,?)`,
@@ -722,12 +905,57 @@ export async function registerMedia(
       input.mime?.slice(0, 150) ?? null,
       Math.max(0, Number(input.size) || 0),
       input.access === "tenant" ? "tenant" : "assigned",
-      input.expires_at ? new Date(input.expires_at) : null,
+      expires,
       session.userId,
     ],
   )
   await audit("training.media.register", "training_media", res.insertId, { entityLabel: input.file_name ?? null })
   return { id: res.insertId as number }
+}
+
+function parseExpiry(raw: string | null | undefined): Date | null {
+  if (raw == null || raw === "") return null
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) throw new TrainingError("expires_at is not a valid date")
+  if (d.getTime() <= Date.now()) throw new TrainingError("expires_at must be in the future")
+  return d
+}
+
+const MEDIA_MIME = /^(video\/|application\/pdf$|application\/vnd\.openxmlformats-officedocument\.|application\/msword$|application\/vnd\.ms-powerpoint$|text\/plain$)/
+
+/**
+ * Upload a lesson video/document into central private storage (tenant-
+ * namespaced key, quota, malware scan, file_objects metadata) and register it.
+ */
+export async function uploadTrainingMedia(
+  file: File,
+  opts: { access?: MediaAccess; expires_at?: string | null },
+  session: SessionPayload,
+) {
+  await ensureTrainingSchema()
+  await tid()
+  if (!file.size) throw new TrainingError("File is empty")
+  if (!MEDIA_MIME.test(file.type || "")) throw new TrainingError("Only video, PDF, Office or text documents are allowed")
+  parseExpiry(opts.expires_at) // validate before storing bytes
+  const up = await uploadFile(`training/${randomUUID()}-${file.name}`, file, {
+    metadata: { module: "training", entityType: "training_media", ownerId: session.userId, classification: "internal" },
+  })
+  if (!up.ok) throw new TrainingError(up.error, 400)
+  const media = await registerMedia(
+    { storage_key: up.result.key, file_name: file.name, mime: file.type, size: file.size, access: opts.access, expires_at: opts.expires_at },
+    session,
+  )
+  return { ...media, file_name: file.name, mime: file.type, size: file.size }
+}
+
+export async function listMedia() {
+  await ensureTrainingSchema()
+  const t = await tid()
+  const rows = await query<any[]>(
+    `SELECT id, file_name, mime, size, access, expires_at, created_at FROM training_media WHERE tenant_id = ? ORDER BY created_at DESC`,
+    [t],
+  )
+  return rows.map((m) => ({ ...m, size: Number(m.size), expired: isMediaExpired(m.expires_at) }))
 }
 
 /**
@@ -855,23 +1083,61 @@ export async function createPolicy(v: ValidatedPolicy, session: SessionPayload) 
 }
 
 /** Publish a new immutable version; supersedes prior acknowledgments. */
-export async function publishPolicyVersion(policyId: number, v: ValidatedPolicy, session: SessionPayload) {
+export async function publishPolicyVersion(
+  policyId: number,
+  v: ValidatedPolicy,
+  session: SessionPayload,
+  idempotencyKey: string | null = null,
+) {
   await ensureTrainingSchema()
   const t = await tid()
   const policy = (await query<any[]>(`SELECT * FROM training_policies WHERE tenant_id = ? AND id = ? LIMIT 1`, [t, policyId]))[0]
   if (!policy) throw new TrainingError("Policy not found", 404)
+  const key = idempotencyKey ? String(idempotencyKey).slice(0, 80) : null
+  if (key) {
+    const prior = (await query<any[]>(
+      `SELECT version FROM training_policy_versions WHERE tenant_id = ? AND policy_id = ? AND idempotency_key = ? LIMIT 1`,
+      [t, policyId, key],
+    ))[0]
+    if (prior) return { ...(await getPolicyDetail(policyId, null)), replayed: true, published_version: Number(prior.version) }
+  }
   const nextVersion = Number(policy.current_version) + 1
+  try {
+    await query(
+      `INSERT INTO training_policy_versions (tenant_id, policy_id, version, body, summary, effective_date, published_by, published_by_name, idempotency_key)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [t, policyId, nextVersion, v.body, v.summary, v.effective_date, session.userId, session.name, key],
+    )
+  } catch (err: any) {
+    if (err?.code === "ER_DUP_ENTRY") {
+      throw new TrainingError("Another version was published at the same time; reload and try again", 409)
+    }
+    throw err
+  }
+  // Guarded compare-and-set so a concurrent publish cannot move the pointer backwards.
   await query(
-    `INSERT INTO training_policy_versions (tenant_id, policy_id, version, body, summary, effective_date, published_by, published_by_name)
-     VALUES (?,?,?,?,?,?,?,?)`,
-    [t, policyId, nextVersion, v.body, v.summary, v.effective_date, session.userId, session.name],
+    `UPDATE training_policies SET current_version = ?, title = ?, category = ?
+      WHERE tenant_id = ? AND id = ? AND current_version < ?`,
+    [nextVersion, v.title, v.category, t, policyId, nextVersion],
   )
-  await query(
-    `UPDATE training_policies SET current_version = ?, title = ?, category = ? WHERE tenant_id = ? AND id = ?`,
-    [nextVersion, v.title, v.category, t, policyId],
+  await audit("training.policy.publish", "training_policy", policyId, {
+    entityLabel: v.title,
+    metadata: { version: nextVersion, previousVersion: Number(policy.current_version) },
+  })
+
+  // Every prior acknowledgment is now outdated — ask employees to re-acknowledge.
+  const employees = await listTenantEmployees(t)
+  await notifyUsers(
+    t,
+    employees.map((e) => ({
+      userId: e.user_id,
+      key: `training:policy:${policyId}:v${nextVersion}:u${e.user_id}`,
+      title: `Policy updated: ${v.title}`,
+      body: `Version ${nextVersion} has been published. Please read and acknowledge it.`,
+      link: "/modules/hr/policies",
+    })),
   )
-  await audit("training.policy.publish", "training_policy", policyId, { entityLabel: v.title, metadata: { version: nextVersion } })
-  return getPolicyDetail(policyId, null)
+  return { ...(await getPolicyDetail(policyId, null)), replayed: false, published_version: nextVersion }
 }
 
 export type AckResult = { acknowledged: boolean; replayed: boolean; version: number; certificateEvidenceHash: string }
@@ -883,7 +1149,11 @@ export type AckResult = { acknowledged: boolean; replayed: boolean; version: num
  */
 export async function acknowledgePolicy(
   policyId: number,
-  input: { evidence: { ip?: string | null; userAgent?: string | null }; idempotencyKey?: string | null },
+  input: {
+    evidence: { ip?: string | null; userAgent?: string | null }
+    idempotencyKey?: string | null
+    readVersion?: unknown
+  },
   session: SessionPayload,
   employee: EmployeeIdentity,
 ): Promise<AckResult> {
@@ -891,7 +1161,15 @@ export async function acknowledgePolicy(
   const t = await tid()
   const policy = (await query<any[]>(`SELECT * FROM training_policies WHERE tenant_id = ? AND id = ? LIMIT 1`, [t, policyId]))[0]
   if (!policy) throw new TrainingError("Policy not found", 404)
+  if (!policy.active) throw new TrainingError("Policy is inactive", 409)
   const version = Number(policy.current_version)
+  if (ackVersionConflict(version, input.readVersion)) {
+    await audit("training.policy.acknowledge", "training_policy", policyId, {
+      result: "denied",
+      metadata: { reason: "stale_version", readVersion: input.readVersion, currentVersion: version, employeeId: employee.id },
+    })
+    throw new TrainingError(`This policy was updated to version ${version}. Please read the latest version before acknowledging.`, 409)
+  }
 
   const existing = (await query<any[]>(
     `SELECT * FROM training_policy_acknowledgments WHERE tenant_id = ? AND policy_id = ? AND version = ? AND employee_id = ? LIMIT 1`,
@@ -929,6 +1207,47 @@ export async function listPolicyAcknowledgments(policyId: number) {
       WHERE tenant_id = ? AND policy_id = ?
       ORDER BY acknowledged_at DESC`,
     [t, policyId],
+  )
+}
+
+/** Per-employee acknowledgment state for the current version (compliance roster). */
+export async function listPolicyRoster(policyId: number) {
+  await ensureTrainingSchema()
+  const t = await tid()
+  const policy = (await query<any[]>(`SELECT id, current_version FROM training_policies WHERE tenant_id = ? AND id = ? LIMIT 1`, [t, policyId]))[0]
+  if (!policy) throw new TrainingError("Policy not found", 404)
+  const current = Number(policy.current_version)
+  const acks = await query<any[]>(
+    `SELECT employee_id, MAX(version) AS version, MAX(acknowledged_at) AS acknowledged_at
+       FROM training_policy_acknowledgments WHERE tenant_id = ? AND policy_id = ? GROUP BY employee_id`,
+    [t, policyId],
+  )
+  const byEmp = new Map(acks.map((a) => [Number(a.employee_id), a]))
+  const employees = await listTenantEmployees(t)
+  const rows = employees.map((e) => {
+    const a = byEmp.get(e.id)
+    const latest = a ? Number(a.version) : null
+    return {
+      employee_id: e.id,
+      employee_name: e.employee_name,
+      designation: e.designation,
+      latest_version: latest,
+      acknowledged_at: a?.acknowledged_at ?? null,
+      state: policyAckState(current, latest),
+    }
+  })
+  const summary = { current: 0, outdated: 0, pending: 0 }
+  for (const r of rows) summary[r.state] += 1
+  return { current_version: current, summary, rows }
+}
+
+export async function listMyCertificates(employeeId: number) {
+  await ensureTrainingSchema()
+  const t = await tid()
+  return query<any[]>(
+    `SELECT id, assignment_id, course_id, course_title, certificate_no, score, issued_at
+       FROM training_certificates WHERE tenant_id = ? AND employee_id = ? ORDER BY issued_at DESC`,
+    [t, employeeId],
   )
 }
 

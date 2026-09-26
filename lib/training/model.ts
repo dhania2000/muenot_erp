@@ -145,6 +145,42 @@ export function meetsCompletionRule(input: {
   return true
 }
 
+/**
+ * Can a lesson be marked complete? Video/document lessons require their media
+ * to exist and be unexpired — a learner cannot "complete" content they were
+ * never able to open. Text lessons need no media.
+ */
+export function lessonCompletable(input: {
+  lessonType: LessonType | string
+  mediaId: number | null | undefined
+  media: { expires_at: string | Date | null } | null
+  now?: Date
+}): { ok: true } | { ok: false; reason: "media_missing" | "media_expired" } {
+  if (input.lessonType === "text") return { ok: true }
+  if (input.mediaId == null || !input.media) return { ok: false, reason: "media_missing" }
+  if (isMediaExpired(input.media.expires_at, input.now)) return { ok: false, reason: "media_expired" }
+  return { ok: true }
+}
+
+/** An employee's acknowledgment state for a policy's current version. */
+export type PolicyAckState = "current" | "outdated" | "pending"
+
+export function policyAckState(currentVersion: number, latestAckedVersion: number | null | undefined): PolicyAckState {
+  if (latestAckedVersion == null) return "pending"
+  return Number(latestAckedVersion) >= Number(currentVersion) ? "current" : "outdated"
+}
+
+/**
+ * An acknowledgment must reference the version the employee actually read. If
+ * the client sends a version and a newer one was published meanwhile, reject
+ * so the employee re-reads the updated text.
+ */
+export function ackVersionConflict(currentVersion: number, readVersion: unknown): boolean {
+  if (readVersion === undefined || readVersion === null || readVersion === "") return false
+  const n = Number(readVersion)
+  return !Number.isInteger(n) || n !== Number(currentVersion)
+}
+
 /** Deterministic, human-readable certificate number, unique per assignment. */
 export function certificateNumber(assignmentId: number, issuedAt: Date = new Date()): string {
   const year = issuedAt.getFullYear()

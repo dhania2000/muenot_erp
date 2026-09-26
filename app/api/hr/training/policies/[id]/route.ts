@@ -23,6 +23,11 @@ export async function PATCH(request: Request, { params }: Ctx) {
     const body = await request.json().catch(() => ({}))
     const parsed = validatePolicy(body)
     if (!parsed.ok) throw new TrainingError(parsed.error, 400)
-    return publishPolicyVersion(parseId(id), parsed.value, session)
+    return publishPolicyVersion(
+      parseId(id),
+      parsed.value,
+      session,
+      request.headers.get("idempotency-key") ?? body?.idempotencyKey ?? null,
+    )
   })
 }

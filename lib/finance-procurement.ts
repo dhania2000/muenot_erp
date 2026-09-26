@@ -25,6 +25,7 @@ import {
   evaluateProcurementDelete,
   derivePoFulfilmentStatus,
 } from "@/lib/finance-procurement-rules"
+import { evaluateBillPaymentHold } from "@/lib/finance-three-way-match-server"
 
 /**
  * SPEC 136 / Spec36 (#200) — Procurement workflow (server side).
@@ -805,12 +806,33 @@ export async function guardPurchaseBillProcurementLink(
     who.id != null && po.approved_by_user_id != null && Number(who.id) === Number(po.approved_by_user_id)
       ? "segregation of duties — the purchase order approver cannot record payment against its vendor bill."
       : null
-  return evaluateBillPayment({
+  const basic = evaluateBillPayment({
     amountPaid: merged.amount_paid,
     payable,
     previousPaid: ctx.existing?.amount_paid ?? 0,
     chainError: paymentSod,
   })
+  if (basic) return basic
+
+  // Spec37 (#201) — three-way match payment hold. Only gates an INCREASE in
+  // payment, so an unpaid bill can still be saved/edited while its exception is
+  // pending; the checker resolves the hold from the Three-Way Match screen.
+  const increasing = num(merged.amount_paid) > num(ctx.existing?.amount_paid ?? 0)
+  if (increasing) {
+    const hold = await evaluateBillPaymentHold(tenantId, {
+      bill_id: merged.bill_id ?? ctx.existing?.bill_id,
+      po_number: poRef,
+      grn_number: merged.grn_number,
+      vendor_id: merged.vendor_id,
+      vendor_name: merged.vendor_name,
+      bill_number: merged.bill_number,
+      taxable_amount: merged.taxable_amount,
+      gst_rate: merged.gst_rate,
+      currency: merged.currency,
+    })
+    if (hold) return hold
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------

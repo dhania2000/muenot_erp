@@ -5,6 +5,7 @@ import useSWR from "swr"
 import { fetcher } from "@/lib/fetcher"
 import { StatusBadge, formatMoney, TERM_OPTIONS } from "@/components/billing/billing-shared"
 import { InvoiceStatusBadge, StatCard, Pill } from "@/components/billing/engine-shared"
+import { BillingContactsPanel, type PortalContact } from "@/components/billing/billing-contacts-panel"
 
 type PortalSnapshot = {
   subscription: any | null
@@ -39,6 +40,8 @@ type PortalSnapshot = {
     }>
   } | null
   paymentMethods: string[]
+  contacts?: PortalContact[]
+  access?: { writable: boolean; status: string | null; reason: string | null }
 }
 
 function fmtDate(value: string | null | undefined): string {
@@ -135,6 +138,16 @@ export function CustomerPortalConsole() {
           Manage your plan, review usage and invoices, and update how you pay.
         </p>
       </header>
+
+      {data?.access && !data.access.writable ? (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
+        >
+          <p className="font-medium">Workspace is read-only</p>
+          <p className="mt-0.5">{data.access.reason}</p>
+        </div>
+      ) : null}
 
       {notice ? (
         <div
@@ -303,6 +316,8 @@ export function CustomerPortalConsole() {
       )}
 
       {/* Invoices */}
+      <BillingContactsPanel contacts={data?.contacts ?? []} onChanged={() => mutate()} />
+
       <section className="rounded-lg border border-border bg-card p-5" aria-labelledby="invoices">
         <h2 id="invoices" className="text-lg font-semibold text-foreground">
           Invoices

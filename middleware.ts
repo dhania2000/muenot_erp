@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server"
 import { jwtVerify } from "jose"
 import { maintenanceGate, type GateSubject } from "@/lib/maintenance/edge-gate"
 import { isMaintenanceExemptPath } from "@/lib/maintenance/model"
+import { billingWriteLockGate } from "@/lib/billing/edge-write-lock"
 
 const SESSION_COOKIE = "ems_session"
 const PORTAL_SESSION_COOKIE = "ems_portal_session"
@@ -59,6 +60,13 @@ function maintenanceSubject(s: EdgeSession): GateSubject {
     tenantId,
     cacheKey: `u:${s.userId}|t:${tenantId ?? ""}`,
     hint: { platformRole: s.platformRole ?? null, tenantRole: s.tenantRole ?? null },
+  }
+}
+
+function writeLockSubject(s: EdgeSession) {
+  return {
+    tenantId: s.impersonatedTenantId ?? s.activeTenantId ?? s.tenantId ?? null,
+    platformRole: s.platformRole ?? null,
   }
 }
 
@@ -168,6 +176,8 @@ export async function middleware(request: NextRequest) {
       if (s) {
         const blocked = await maintenanceGate(request, maintenanceSubject(s), requestId)
         if (blocked) return blocked
+        const locked = await billingWriteLockGate(request, writeLockSubject(s), requestId)
+        if (locked) return locked
       }
     }
     const headers = new Headers(request.headers)
@@ -194,6 +204,10 @@ export async function middleware(request: NextRequest) {
 
   const maintenanceBlocked = await maintenanceGate(request, maintenanceSubject(session), requestId)
   if (maintenanceBlocked) return maintenanceBlocked
+
+  // Spec46 — read-only grace / suspension: block mutating APIs for locked tenants.
+  const writeLocked = await billingWriteLockGate(request, writeLockSubject(session), requestId)
+  if (writeLocked) return writeLocked
 
   // Forward the subdomain as a PRE-AUTH HINT only (e.g. acme.muenot.app -> "acme").
   // Server code must still derive the authoritative tenant from the verified

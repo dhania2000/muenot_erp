@@ -5,7 +5,7 @@ import { getSession } from "@/lib/auth"
 import { userHasFeature } from "@/lib/permissions"
 import { hasActionGrant } from "@/lib/permission-store"
 import { getCurrentTenant } from "@/lib/tenant-context"
-import { isModuleEnabled } from "@/lib/module-access"
+import { isModuleEnabled, isModuleInPlan } from "@/lib/module-access"
 
 /**
  * Requires an active session with the given feature slug granted.
@@ -47,6 +47,16 @@ export async function requireFeatureInModule(moduleSlug: string, featureSlug: st
   if (!session) return { ok: false as const, status: 401 as const, error: "Unauthorized" }
   if (!(await isModuleEnabled(moduleSlug))) {
     return { ok: false as const, status: 404 as const, error: "Not found" }
+  }
+  // Spec46: the plan must include the module (403 PLAN_REQUIRED, distinct from
+  // a disabled toggle's non-disclosing 404 — the tenant knows its plan).
+  if (!(await isModuleInPlan(moduleSlug, session.tenantId ?? getCurrentTenant()?.tenantId ?? null))) {
+    return {
+      ok: false as const,
+      status: 403 as const,
+      error: "Your current plan does not include this module. Upgrade to continue.",
+      code: "PLAN_REQUIRED" as const,
+    }
   }
   const allowed = await userHasFeature(session.userId, session.role, featureSlug)
   if (!allowed) return { ok: false as const, status: 403 as const, error: "Forbidden" }

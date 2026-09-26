@@ -25,11 +25,14 @@ import "server-only"
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import { query, withTransaction } from "@/lib/db"
 import { recordAuditLog } from "@/lib/audit-log-store"
-import { runReportForExport } from "@/lib/reports/query-builder"
+import { preflightReport, runReportForExport } from "@/lib/reports/query-builder"
 import { getReport, type Actor } from "@/lib/reports/store"
 import { tenantKey } from "@/lib/storage/keys"
 import type { StorageProvider } from "@/lib/storage/types"
 import { clampExportTtl, isExportExpired } from "@/lib/data-export-model"
+import { runForTenant } from "@/lib/tenant-scope"
+import { resolveRoleContext } from "@/lib/platform-roles"
+import { canActOnTenant, isImpersonating, type TenantRole } from "@/lib/role-model"
 
 export const LARGE_EXPORT_FORMATS = ["csv", "xlsx", "json"] as const
 export type LargeExportFormat = (typeof LARGE_EXPORT_FORMATS)[number]
@@ -45,7 +48,22 @@ export const LARGE_EXPORT_CAPS = {
   pageSize: 10_000,
   /** Fail an export rather than buffer an artifact larger than this. */
   maxArtifactBytes: 200 * 1024 * 1024,
+  /** A `running` job with no finish after this long is presumed dead (worker timeout/crash). */
+  staleRunningSeconds: 30 * 60,
+  /** A `queued` job untouched for this long is picked up by the cron sweep. */
+  orphanQueuedSeconds: 60,
 } as const
+
+/**
+ * Per-format row ceilings. CSV streams page-by-page into bytes; JSON and XLSX
+ * must hold every row as an object before serialising, and XLSX sheets top out
+ * at 1,048,576 rows, so those formats get lower, memory-safe limits.
+ */
+export const LARGE_EXPORT_FORMAT_MAX_ROWS: Record<LargeExportFormat, number> = {
+  csv: LARGE_EXPORT_CAPS.maxRows,
+  json: 500_000,
+  xlsx: 250_000,
+}
 
 export type LargeExportStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "expired"
 
@@ -237,13 +255,26 @@ export async function createLargeExportJob(
   }
 
   if (!definition || typeof definition !== "object") throw new Error("A report definition is required.")
-  const sourceKey = String(definition.sourceKey ?? "")
-  if (!sourceKey) throw new Error("The report definition is missing a data source.")
   if (!name) name = "report"
   const format = toLargeExportFormat(input.format)
-  const requestKey = input.requestKey ? String(input.requestKey).slice(0, 120) : null
+  const requestKey = input.requestKey ? String(input.requestKey).trim().slice(0, 120) || null : null
 
   // Idempotency: a repeated requestKey returns the existing job untouched.
+  if (requestKey) {
+    const existing = await query<Row[]>(
+      `SELECT ${PUBLIC_COLS} FROM report_export_jobs WHERE tenant_id = ? AND request_key = ? LIMIT 1`,
+      [tenantId, requestKey],
+    )
+    if (existing[0]) return toJob(existing[0])
+  }
+
+  // Reject unknown sources, non-whitelisted fields, bad operators and injection
+  // attempts NOW (the same validator the worker uses) and persist only the
+  // normalized definition — never the raw client payload.
+  const preflight = await preflightReport(definition, { tenantId, role: actor.role, userId: actor.userId })
+  definition = preflight.definition
+  const sourceKey = preflight.sourceKey
+
   if (requestKey) {
     const existing = await query<Row[]>(
       `SELECT ${PUBLIC_COLS} FROM report_export_jobs WHERE tenant_id = ? AND request_key = ? LIMIT 1`,
@@ -306,23 +337,75 @@ export async function getLargeExportJob(tenantId: number | null, id: number): Pr
 // ---------------------------------------------------------------------------
 // Cancellation
 // ---------------------------------------------------------------------------
-export async function cancelLargeExportJob(tenantId: number | null, id: number, actor: Actor): Promise<LargeExportJob | null> {
+export async function cancelLargeExportJob(
+  tenantId: number | null,
+  id: number,
+  actor: Actor,
+): Promise<{ job: LargeExportJob | null; changed: boolean }> {
   await ensureLargeExportSchema()
-  // Terminal queued jobs cancel immediately; a running job is flagged and the
-  // worker stops between pages. Completed/failed/expired jobs are unaffected.
-  await query(
+  // Queued jobs cancel immediately; a running job is flagged and the worker
+  // stops between pages. Completed/failed/expired jobs are unaffected, and a
+  // repeated cancel is a no-op (idempotent, audited once).
+  const res = await query<{ affectedRows: number }>(
     `UPDATE report_export_jobs
        SET cancel_requested = 1,
            status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
            finished_at = CASE WHEN status = 'queued' THEN UTC_TIMESTAMP() ELSE finished_at END
-     WHERE id = ? AND tenant_id <=> ? AND status IN ('queued','running')`,
+     WHERE id = ? AND tenant_id <=> ? AND status IN ('queued','running') AND cancel_requested = 0`,
     [id, tenantId],
   )
-  await recordAuditLog(
-    { action: "report.export.cancel_requested", entityType: "report_export", entityId: id },
-    auditContext(tenantId, actor),
-  ).catch(() => {})
-  return getLargeExportJob(tenantId, id)
+  const changed = Number((res as any)?.affectedRows ?? 0) > 0
+  if (changed) {
+    await recordAuditLog(
+      { action: "report.export.cancel_requested", entityType: "report_export", entityId: id },
+      auditContext(tenantId, actor),
+    ).catch(() => {})
+  }
+  return { job: await getLargeExportJob(tenantId, id), changed }
+}
+
+// ---------------------------------------------------------------------------
+// Recovery (cron)
+// ---------------------------------------------------------------------------
+/** Fail `running` jobs whose worker died (function timeout / crash) so they never hang. */
+export async function recoverStaleLargeExports(tenantId: number): Promise<number> {
+  await ensureLargeExportSchema()
+  const res = await query<{ affectedRows: number }>(
+    `UPDATE report_export_jobs
+        SET status = 'failed', error = 'The export worker stopped before finishing. Please retry.', finished_at = UTC_TIMESTAMP()
+      WHERE tenant_id = ? AND status = 'running' AND started_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? SECOND)`,
+    [tenantId, LARGE_EXPORT_CAPS.staleRunningSeconds],
+  )
+  return Number((res as any)?.affectedRows ?? 0)
+}
+
+/** Queued jobs whose `after()` trigger never ran, oldest first. */
+export async function listOrphanedQueuedExports(tenantId: number, limit = 3): Promise<number[]> {
+  await ensureLargeExportSchema()
+  const rows = await query<{ id: number }[]>(
+    `SELECT id FROM report_export_jobs
+      WHERE tenant_id = ? AND status = 'queued' AND created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? SECOND)
+      ORDER BY created_at ASC, id ASC LIMIT ${Math.max(1, Math.min(10, Math.trunc(limit)))}`,
+    [tenantId, LARGE_EXPORT_CAPS.orphanQueuedSeconds],
+  )
+  return rows.map((r) => Number(r.id))
+}
+
+/**
+ * Re-derive the requester's authority at execution time. A job may run minutes
+ * after it was queued (or be resumed by cron), so a role downgrade, removal or
+ * tenant move in between must stop the export — the queued role is not trusted.
+ */
+async function reauthorizeRequester(
+  tenantId: number,
+  userId: number | null,
+): Promise<{ ok: true; role: TenantRole } | { ok: false; reason: string }> {
+  if (!userId) return { ok: false, reason: "The export has no requester." }
+  const ctx = await resolveRoleContext({ userId, impersonatedTenantId: tenantId }).catch(() => null)
+  if (!ctx || !canActOnTenant(ctx, tenantId, "tenant_admin")) {
+    return { ok: false, reason: "The requester is no longer authorized to run this export." }
+  }
+  return { ok: true, role: isImpersonating(ctx) ? "tenant_admin" : ctx.tenantRole }
 }
 
 // ---------------------------------------------------------------------------
@@ -342,15 +425,25 @@ function csvEscape(v: unknown): string {
  */
 export async function processLargeExportJob(
   jobId: number,
-  ctx: { provider: StorageProvider; tenantId: number | null; actor: Actor; ttlSeconds?: number },
+  ctx: { provider: StorageProvider; tenantId: number; actor?: Actor; ttlSeconds?: number },
+): Promise<LargeExportJob | null> {
+  if (!Number.isInteger(ctx.tenantId) || ctx.tenantId <= 0) throw new Error("A tenant context is required.")
+  // Background work has no request ALS; bind the tenant explicitly so the
+  // tenant guard and every tenant-aware helper see the right scope.
+  return runForTenant(ctx.tenantId, () => processLargeExportJobScoped(jobId, ctx))
+}
+
+async function processLargeExportJobScoped(
+  jobId: number,
+  ctx: { provider: StorageProvider; tenantId: number; actor?: Actor; ttlSeconds?: number },
 ): Promise<LargeExportJob | null> {
   await ensureLargeExportSchema()
-  const { provider, tenantId, actor } = ctx
+  const { provider, tenantId } = ctx
 
   // Claim the job — only one worker can transition queued -> running.
   const claim = await query<{ affectedRows: number }>(
     `UPDATE report_export_jobs SET status = 'running', started_at = UTC_TIMESTAMP()
-     WHERE id = ? AND tenant_id <=> ? AND status = 'queued'`,
+     WHERE id = ? AND tenant_id = ? AND status = 'queued' AND cancel_requested = 0`,
     [jobId, tenantId],
   )
   if (Number((claim as any).affectedRows) !== 1) return getLargeExportJob(tenantId, jobId)
@@ -358,9 +451,32 @@ export async function processLargeExportJob(
   const job = await getLargeExportJob(tenantId, jobId)
   if (!job) return null
 
-  const defRows = await query<{ definition: any }[]>(`SELECT definition FROM report_export_jobs WHERE id = ?`, [jobId])
+  const auth = await reauthorizeRequester(tenantId, job.requestedBy)
+  const actor: Actor = {
+    userId: job.requestedBy ?? 0,
+    name: ctx.actor?.name ?? null,
+    email: ctx.actor?.email ?? null,
+    role: auth.ok ? auth.role : (ctx.actor?.role ?? "viewer"),
+  }
+  if (!auth.ok) {
+    await query(
+      `UPDATE report_export_jobs SET status = 'failed', error = ?, finished_at = UTC_TIMESTAMP() WHERE id = ? AND tenant_id = ?`,
+      [auth.reason, jobId, tenantId],
+    )
+    await recordAuditLog(
+      { action: "report.export.denied", result: "denied", entityType: "report_export", entityId: jobId, metadata: { reason: auth.reason } },
+      auditContext(tenantId, actor),
+    ).catch(() => {})
+    return getLargeExportJob(tenantId, jobId)
+  }
+
+  const defRows = await query<{ definition: any }[]>(
+    `SELECT definition FROM report_export_jobs WHERE id = ? AND tenant_id = ?`,
+    [jobId, tenantId],
+  )
   const definition = normalizeDefinition(defRows[0]?.definition)
   const format = job.format
+  const formatMaxRows = LARGE_EXPORT_FORMAT_MAX_ROWS[format]
   const ttlSeconds = clampExportTtl(ctx.ttlSeconds)
 
   try {
@@ -384,12 +500,12 @@ export async function processLargeExportJob(
         role: actor.role,
         userId: actor.userId,
         pageSize: LARGE_EXPORT_CAPS.pageSize,
-        maxRows: LARGE_EXPORT_CAPS.maxRows,
+        maxRows: formatMaxRows,
         // Cooperative cancellation: re-read the flag before each page.
         shouldContinue: async () => {
           const r = await query<{ cancel_requested: number }[]>(
-            `SELECT cancel_requested FROM report_export_jobs WHERE id = ?`,
-            [jobId],
+            `SELECT cancel_requested FROM report_export_jobs WHERE id = ? AND tenant_id = ?`,
+            [jobId, tenantId],
           )
           return !(r[0] && Number(r[0].cancel_requested) === 1)
         },
@@ -411,7 +527,7 @@ export async function processLargeExportJob(
             for (const c of page.columns) labeled[c.label] = row[c.key] ?? null
             jsonRows.push(labeled)
           }
-          if (jsonRows.length > LARGE_EXPORT_CAPS.maxRows) {
+          if (jsonRows.length > formatMaxRows) {
             throw new Error("Export exceeds the maximum row count. Add filters or split the report.")
           }
         }
@@ -420,8 +536,8 @@ export async function processLargeExportJob(
 
     if (result.cancelled) {
       await query(
-        `UPDATE report_export_jobs SET status = 'cancelled', finished_at = UTC_TIMESTAMP() WHERE id = ?`,
-        [jobId],
+        `UPDATE report_export_jobs SET status = 'cancelled', finished_at = UTC_TIMESTAMP() WHERE id = ? AND tenant_id = ?`,
+        [jobId, tenantId],
       )
       await recordAuditLog(
         { action: "report.export.cancelled", entityType: "report_export", entityId: jobId },
@@ -452,7 +568,7 @@ export async function processLargeExportJob(
 
     // Write to PRIVATE storage under a tenant-namespaced key + per-artifact salt.
     const ext = EXTENSION[format]
-    const key = tenantKey(tenantId!, `report-exports/${jobId}-${randomBytes(8).toString("hex")}.${ext}`)
+    const key = tenantKey(tenantId, `report-exports/${jobId}-${randomBytes(8).toString("hex")}.${ext}`)
     const contentType = CONTENT_TYPE[format]
     const uploaded = await provider.upload(key, artifact, contentType, { public: false })
     const salt = randomBytes(16).toString("hex")
@@ -463,7 +579,7 @@ export async function processLargeExportJob(
          SET status = 'completed', row_count = ?, byte_size = ?, file_key = ?, file_name = ?,
              content_type = ?, storage_provider = ?, token_salt = ?, redacted_fields = ?,
              expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND), finished_at = UTC_TIMESTAMP()
-       WHERE id = ?`,
+       WHERE id = ? AND tenant_id = ? AND status = 'running'`,
       [
         result.totalRows,
         uploaded.size || artifact.length,
@@ -475,6 +591,7 @@ export async function processLargeExportJob(
         result.redactedFields.join(","),
         ttlSeconds,
         jobId,
+        tenantId,
       ],
     )
 
@@ -502,8 +619,8 @@ export async function processLargeExportJob(
   } catch (err: any) {
     const message = typeof err?.message === "string" ? err.message.slice(0, 500) : "Export failed."
     await query(
-      `UPDATE report_export_jobs SET status = 'failed', error = ?, finished_at = UTC_TIMESTAMP() WHERE id = ?`,
-      [message, jobId],
+      `UPDATE report_export_jobs SET status = 'failed', error = ?, finished_at = UTC_TIMESTAMP() WHERE id = ? AND tenant_id = ?`,
+      [message, jobId, tenantId],
     ).catch(() => {})
     await recordAuditLog(
       { action: "report.export.failed", result: "failure", entityType: "report_export", entityId: jobId, metadata: { error: message } },
@@ -591,8 +708,8 @@ export async function expireDueLargeExports(tenantId: number | null, provider?: 
       }
     }
     await query(
-      `UPDATE report_export_jobs SET status = 'expired', file_key = NULL, token_salt = NULL WHERE id = ?`,
-      [Number(r.id)],
+      `UPDATE report_export_jobs SET status = 'expired', file_key = NULL, token_salt = NULL WHERE id = ? AND tenant_id <=> ?`,
+      [Number(r.id), tenantId],
     )
     expired++
   }

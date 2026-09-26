@@ -124,6 +124,17 @@ export type CompiledQuery = {
 }
 
 /**
+ * Export pagination. Keyset (`afterId`) walks the primary key with `id > ?`, so
+ * page N costs the same as page 1 — OFFSET re-scans every skipped row and turns
+ * a million-row export quadratic. OFFSET remains the fallback when the user
+ * chose a sort order or the source has no `id`.
+ */
+export type ExportPagination = { limit: number; offset: number } | { limit: number; afterId: number | null }
+
+/** Hidden cursor alias; stripped before rows reach security or the artifact. */
+export const ROW_KEY = "__row_key"
+
+/**
  * Compile a validated definition into a single parameterized statement, scoped
  * to `tenantId`. `existing` is the live column set of the source's table.
  */
@@ -133,7 +144,7 @@ function compile(
   tenantId: number | null,
   existing: Set<string>,
   scope: DataScopeSql | null,
-  pagination?: { limit: number; offset: number },
+  pagination?: ExportPagination,
 ): CompiledQuery {
   const tenantCol = resolveExistingColumn(source.tenantColumns, existing)
   if (tenantId != null && !tenantCol) {
@@ -161,12 +172,20 @@ function compile(
     aliases.push(alias)
   }
 
+  const keyset = pagination && "afterId" in pagination
+  if (keyset) selectParts.push(`${ident("id")} AS ${ident(ROW_KEY)}`)
+
   const where: string[] = []
   const params: unknown[] = []
 
   if (tenantCol) {
     where.push(`${ident(tenantCol)} = ?`)
     params.push(tenantId)
+  }
+
+  if (keyset && pagination.afterId != null) {
+    where.push(`${ident("id")} > ?`)
+    params.push(pagination.afterId)
   }
 
   // SPEC 99 — row-level access control (User / Team / Entity / Branch). The
@@ -200,11 +219,16 @@ function compile(
   }
 
   let orderSql = ""
-  if (def.sort.length > 0) {
+  if (keyset) {
+    orderSql = ` ORDER BY ${ident("id")} ASC`
+  } else if (def.sort.length > 0) {
     const parts = def.sort.map((s) => {
       const alias = columnAlias({ column: s.column, aggregation: s.aggregation ?? null })
       return `${ident(alias)} ${s.direction === "desc" ? "DESC" : "ASC"}`
     })
+    // A user sort alone can tie; paginated walks need a unique tie-breaker so
+    // no row is repeated or skipped across OFFSET pages.
+    if (pagination && existing.has("id") && !isAggregated) parts.push(`${ident("id")} ASC`)
     orderSql = ` ORDER BY ${parts.join(", ")}`
   } else if (pagination) {
     // OFFSET pagination is only correct over a DETERMINISTIC order: without one,
@@ -219,8 +243,12 @@ function compile(
   if (pagination) {
     // Integers only — trunc + clamp — never interpolate untrusted values.
     const pageLimit = Math.max(0, Math.trunc(pagination.limit))
-    const pageOffset = Math.max(0, Math.trunc(pagination.offset))
-    limitSql = ` LIMIT ${pageLimit} OFFSET ${pageOffset}`
+    if ("afterId" in pagination) {
+      limitSql = ` LIMIT ${pageLimit}`
+    } else {
+      const pageOffset = Math.max(0, Math.trunc(pagination.offset))
+      limitSql = ` LIMIT ${pageLimit} OFFSET ${pageOffset}`
+    }
   } else {
     const limit = Math.min(def.limit ?? REPORT_CAPS.maxRows, REPORT_CAPS.maxRows)
     limitSql = ` LIMIT ${Math.trunc(limit)}`
@@ -402,9 +430,11 @@ export async function runReportForExport(
   let columns: { key: string; label: string }[] = []
   let total = 0
   let offset = 0
+  let afterId: number | null = null
   let pageIndex = 0
   let cancelled = false
   let truncated = false
+  const useKeyset = existing.has("id") && def.sort.length === 0
 
   while (true) {
     if (opts.shouldContinue && !(await opts.shouldContinue())) {
@@ -417,9 +447,16 @@ export async function runReportForExport(
       break
     }
     const limit = Math.min(pageSize, remaining)
-    const compiled = compile(source, def, opts.tenantId, existing, scope, { limit, offset })
+    const pagination: ExportPagination = useKeyset ? { limit, afterId } : { limit, offset }
+    const compiled = compile(source, def, opts.tenantId, existing, scope, pagination)
     if (pageIndex === 0) columns = compiled.aliases.map((a) => ({ key: a, label: compiled.headers[a] ?? a }))
-    const rows = await query<Record<string, unknown>[]>(compiled.sql, compiled.params)
+    const rawRows = await query<Record<string, unknown>[]>(compiled.sql, compiled.params)
+    let rows = rawRows
+    if (useKeyset) {
+      const last = rawRows[rawRows.length - 1]
+      if (last) afterId = Number(last[ROW_KEY])
+      rows = rawRows.map(({ [ROW_KEY]: _cursor, ...rest }) => rest)
+    }
     const enforced = rows.length
       ? await enforceReportSecurity(rows, { source, actor, isAggregated: false })
       : { rows: [] as Record<string, unknown>[], redactedFields: [] as string[], maskedFields: [] as string[] }
@@ -443,6 +480,19 @@ export async function runReportForExport(
     cancelled,
     truncated,
   }
+}
+
+/**
+ * Validate a definition against the catalog whitelist + live schema WITHOUT
+ * running it, so the queue rejects bad/malicious input synchronously (400)
+ * instead of accepting a job that can only fail later.
+ */
+export async function preflightReport(
+  rawDefinition: unknown,
+  opts: RunOptions,
+): Promise<{ sourceKey: string; definition: ReportDefinition }> {
+  const { source, def } = await prepareReport(rawDefinition, opts)
+  return { sourceKey: source.key, definition: def }
 }
 
 export class ReportValidationError extends Error {

@@ -34,10 +34,24 @@ export const ROLE_KEY_LABELS: Record<string, string> = {
 
 export type SortDirection = "asc" | "desc"
 
+/**
+ * Column resize bounds (in px). Widths outside this range are clamped both on
+ * the client (while dragging) and on the server (when persisting a view), so a
+ * saved view can never make a column unusably narrow or absurdly wide.
+ */
+export const MIN_COLUMN_WIDTH = 64
+export const MAX_COLUMN_WIDTH = 800
+/** Fallback width used for offset math when a pinned column has no saved width. */
+export const DEFAULT_COLUMN_WIDTH = 180
+
 /** One column-level preference: position is implied by array order. */
 export type ColumnPref = {
   key: string
   hidden?: boolean
+  /** Persisted pixel width from a resize; clamped to [MIN,MAX]_COLUMN_WIDTH. */
+  width?: number
+  /** Pinned (frozen) to the left edge so it stays visible while scrolling. */
+  pinned?: boolean
 }
 
 export type SortRule = {

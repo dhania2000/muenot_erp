@@ -9,7 +9,8 @@ import {
   type Viewer,
 } from "@/lib/saved-views/store"
 import { ROLE_KEYS, ROLE_KEY_LABELS, VIEW_VISIBILITIES } from "@/lib/saved-views/types"
-import type { SavedViewsBootstrap, TableViewConfig, ViewVisibility } from "@/lib/saved-views/types"
+import type { SavedViewsBootstrap, ViewVisibility } from "@/lib/saved-views/types"
+import { sanitizeViewConfig } from "@/lib/saved-views/sanitize"
 
 async function resolveViewer(): Promise<Viewer | null> {
   const session = await getSession()
@@ -19,41 +20,6 @@ async function resolveViewer(): Promise<Viewer | null> {
   const roleKeys = new Set<string>([session.role, tenantRole])
   const teamKeys = await resolveTeamKeys(tenantId, session.userId)
   return { userId: session.userId, tenantId, role: session.role, tenantRole, roleKeys, teamKeys }
-}
-
-function sanitizeConfig(raw: any): TableViewConfig {
-  if (!raw || typeof raw !== "object") return {}
-  const columns = Array.isArray(raw.columns)
-    ? raw.columns
-        .filter((c: any) => c && typeof c.key === "string")
-        .slice(0, 200)
-        .map((c: any) => ({ key: String(c.key).slice(0, 96), hidden: Boolean(c.hidden) }))
-    : undefined
-  const sort = Array.isArray(raw.sort)
-    ? raw.sort
-        .filter((s: any) => s && typeof s.key === "string")
-        .slice(0, 8)
-        .map((s: any) => ({ key: String(s.key).slice(0, 96), dir: s.dir === "desc" ? "desc" : "asc" }))
-    : undefined
-  let filters: Record<string, string | string[] | null> | undefined
-  if (raw.filters && typeof raw.filters === "object" && !Array.isArray(raw.filters)) {
-    filters = {}
-    for (const [k, v] of Object.entries(raw.filters).slice(0, 40)) {
-      if (v == null) filters[k.slice(0, 64)] = null
-      else if (typeof v === "string") filters[k.slice(0, 64)] = v.slice(0, 200)
-      else if (Array.isArray(v))
-        filters[k.slice(0, 64)] = v.filter((x) => typeof x === "string").slice(0, 50) as string[]
-    }
-  }
-  const pageSize = Number.isFinite(raw.pageSize) ? Math.min(500, Math.max(1, Math.trunc(raw.pageSize))) : undefined
-  return {
-    search: typeof raw.search === "string" ? raw.search.slice(0, 200) : undefined,
-    filters,
-    columns,
-    sort,
-    groupBy: typeof raw.groupBy === "string" ? raw.groupBy.slice(0, 96) : raw.groupBy === null ? null : undefined,
-    pageSize,
-  }
 }
 
 export async function GET(request: Request) {
@@ -90,7 +56,7 @@ export async function POST(request: Request) {
       visibility,
       roleKey: typeof body.roleKey === "string" ? body.roleKey : null,
       teamKey: typeof body.teamKey === "string" ? body.teamKey : null,
-      config: sanitizeConfig(body.config),
+      config: sanitizeViewConfig(body.config),
       isDefault: Boolean(body.isDefault),
     })
     return NextResponse.json({ id })

@@ -3,6 +3,7 @@ import { cookies } from "next/headers"
 import { setCurrentActor } from "./actor-context"
 import { initializeSessionTenantContext, setCurrentTenant } from "./tenant-context"
 import { isSessionActive, touchSession } from "./session-store"
+import { isImpersonationWindowOpen } from "./impersonation-window"
 
 export const SESSION_COOKIE = "ems_session"
 const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7 // 7 days
@@ -44,6 +45,13 @@ export type SessionPayload = {
    * this tenant instead of the operator's home tenant.
    */
   impersonatedTenantId?: number | null
+  /**
+   * Epoch-ms hard expiry of the impersonation window (Spec47). Signed with
+   * the token; an impersonation without a future expiry is ignored (fails
+   * closed to the home tenant), so a legacy or leftover field can never keep an
+   * operator inside a customer tenant.
+   */
+  impersonationExpiresAt?: number | null
   /**
    * The organization a MULTI-ORG user has actively switched into. Unlike
    * `impersonatedTenantId` (a platform-operator concept), this is available to
@@ -134,6 +142,15 @@ export async function getSession(): Promise<SessionPayload | null> {
     // only ever set by the audited impersonation endpoint. It is honored here
     // only for a genuine platform operator, so a forged/leftover field on a
     // non-platform token can never redirect scoping to another tenant.
+    if (
+      session.impersonatedTenantId != null &&
+      !isImpersonationWindowOpen(session.impersonationExpiresAt, Date.now())
+    ) {
+      // Expired (or never time-boxed) impersonation: drop it for this request.
+      // Downstream guards read the same object, so they also see no impersonation.
+      session.impersonatedTenantId = null
+      session.impersonationExpiresAt = null
+    }
     let effectiveTenantId =
       session.impersonatedTenantId != null &&
       session.platformRole != null &&

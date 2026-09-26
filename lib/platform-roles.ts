@@ -13,6 +13,7 @@ import "server-only"
  * Phase 4 needs as evidence.
  */
 import { query } from "@/lib/db"
+import { isImpersonationWindowOpen } from "@/lib/impersonation-window"
 import {
   type PlatformRole,
   type RoleContext,
@@ -153,6 +154,8 @@ export async function getStoredRoles(userId: number): Promise<StoredRoles | null
 export async function resolveRoleContext(session: {
   userId: number
   impersonatedTenantId?: number | null
+  /** When the caller passes the session's signed expiry, an elapsed window is ignored. */
+  impersonationExpiresAt?: number | null
 }): Promise<RoleContext | null> {
   const stored = await getStoredRoles(session.userId)
   if (!stored) return null
@@ -161,7 +164,9 @@ export async function resolveRoleContext(session: {
   const isPlatformOwnerTenant = Boolean(homeTenant?.is_platform_owner)
 
   let impersonatedTenantId: number | null = null
-  const requested = session.impersonatedTenantId
+  const expired =
+    "impersonationExpiresAt" in session && !isImpersonationWindowOpen(session.impersonationExpiresAt, Date.now())
+  const requested = expired ? null : session.impersonatedTenantId
   if (requested != null && stored.platformRole !== "none" && requested !== stored.tenantId) {
     const target = await getTenantById(requested)
     if (target && target.status === "active") impersonatedTenantId = target.id

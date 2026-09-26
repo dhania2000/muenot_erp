@@ -48,6 +48,7 @@ async function loadContext(): Promise<
   const ctx = await resolveRoleContext({
     userId: session.userId,
     impersonatedTenantId: session.impersonatedTenantId,
+    impersonationExpiresAt: session.impersonationExpiresAt ?? null,
   })
   if (!ctx) return null
   return { session, ctx }

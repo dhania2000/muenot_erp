@@ -49,6 +49,7 @@ async function remintSession(
       tenantRole: tenantRoleHint ?? roles?.tenantRole ?? session.tenantRole ?? "employee",
       // Switching never grants or preserves a platform impersonation.
       impersonatedTenantId: session.impersonatedTenantId ?? null,
+      impersonationExpiresAt: session.impersonationExpiresAt ?? null,
       activeTenantId,
       // Preserve the server-side session record so revocation still applies.
       sid: session.sid,

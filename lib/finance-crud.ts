@@ -28,7 +28,18 @@ import {
   afterRfqWrite,
   afterPoWrite,
   afterGrnWrite,
+  afterGrnDelete,
+  augmentGoodsReceipt,
+  guardProcurementDelete,
+  guardPurchaseBillProcurementLink,
+  requireProcurementTenant,
+  ProcurementTenantError,
+  normalizeIdempotencyKey,
+  findIdempotentReplay,
+  isDuplicateKeyError,
+  PROCUREMENT_TABLES,
 } from "@/lib/finance-procurement"
+import { guardProcurementApprovalChain, raiseProcurementApproval } from "@/lib/procurement-approval-chain"
 import { assertPeriodOpen, PeriodLockedError } from "@/lib/finance-period-lock"
 import {
   syncGstInputForBill,
@@ -47,6 +58,7 @@ import {
   mergeScopeIntoWhere,
   canActOnRecord,
   canCreateInModule,
+  canPerformAction,
 } from "@/lib/permission-enforce"
 
 /**
@@ -65,6 +77,9 @@ const SERVER_AUGMENT: Record<
   // Phase 4 — fill the type-implied direction, EMI / end date / total interest
   // and seed the split outstanding balances authoritatively.
   "loans-advances": augmentLoanAdvance,
+  // Ordered qty, unit price and vendor always come from the tenant's PO; the
+  // pending quantity / receipt band is cumulative across all receipts.
+  "goods-receipt": (merged) => augmentGoodsReceipt(merged),
 }
 
 /** Optional per-module custom business-key generator (Phase 1: PB-2026-000001). */
@@ -124,7 +139,10 @@ const DUPLICATE_CHECKS: Record<
  */
 const ASYNC_GUARDS: Record<
   string,
-  (merged: Record<string, any>, ctx: { isCreate: boolean; existing: Record<string, any> | null }) => Promise<string | null>
+  (
+    merged: Record<string, any>,
+    ctx: { isCreate: boolean; existing: Record<string, any> | null; body?: Record<string, any> },
+  ) => Promise<string | null>
 > = {
   "bank-transactions": (merged) => guardBankTransactionWrite(merged),
   "bank-cash": (merged, ctx) => guardBankAccountClose(merged, ctx.existing),
@@ -136,6 +154,18 @@ const ASYNC_GUARDS: Record<
   "rfq": (merged, ctx) => guardRfqWrite(merged, ctx),
   "purchase-orders": (merged, ctx) => guardPoWrite(merged, ctx),
   "goods-receipt": (merged, ctx) => guardGrnWrite(merged, ctx),
+  // Vendor invoice + payment against the approved procurement chain (three-way
+  // match, vendor / GST consistency, payment cap and approver SoD).
+  "purchase-bills": (merged, ctx) => guardPurchaseBillProcurementLink(merged, ctx),
+}
+
+/** Procurement transitions that need the extended `approve` grant. */
+function approvalDecisionField(moduleKey: string): { field: string; decisions: string[] } | null {
+  if (moduleKey === "purchase-requisition" || moduleKey === "purchase-orders") {
+    return { field: "approval_status", decisions: ["Approved", "Rejected"] }
+  }
+  if (moduleKey === "rfq") return { field: "status", decisions: ["Awarded"] }
+  return null
 }
 
 /** SPEC 136 — the four procurement document modules (shared table ensure). */
@@ -156,6 +186,10 @@ const DELETE_GUARDS: Record<string, (row: Record<string, any>) => Promise<string
     const result = await checkAccountDeletable(row)
     return result.ok ? null : result.reason ?? "This account cannot be deleted."
   },
+  "purchase-requisition": (row) => guardProcurementDelete("purchase-requisition", row),
+  rfq: (row) => guardProcurementDelete("rfq", row),
+  "purchase-orders": (row) => guardProcurementDelete("purchase-orders", row),
+  "goods-receipt": (row) => guardProcurementDelete("goods-receipt", row),
 }
 
 /**
@@ -401,6 +435,8 @@ const AFTER_WRITE: Record<
 
 /** Optional per-module side effect that runs when a record is deleted. */
 const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> = {
+  // Re-derive the PO's fulfilment status once one of its receipts is removed.
+  "goods-receipt": (row) => afterGrnDelete(row),
   "purchase-bills": async (row) => {
     const billId = row?.bill_id
     if (!billId) return
@@ -612,12 +648,68 @@ export function createFinanceHandlers(moduleKey: string) {
   const augment = SERVER_AUGMENT[moduleKey]
   const idGenerator = ID_GENERATORS[moduleKey]
 
+  // Procurement documents are tenant-owned rows: every read and write below is
+  // bounded by tenant_id, and a request with no tenant context is refused.
+  const isProcurement = PROCUREMENT_MODULE_KEYS.has(moduleKey)
+  const decision = approvalDecisionField(moduleKey)
+
+  async function resolveTenant(): Promise<{ tenantId: number | null; denied: NextResponse | null }> {
+    if (!isProcurement) return { tenantId: null, denied: null }
+    try {
+      return { tenantId: await requireProcurementTenant(), denied: null }
+    } catch (error) {
+      if (error instanceof ProcurementTenantError) {
+        return { tenantId: null, denied: NextResponse.json({ error: error.message }, { status: 403 }) }
+      }
+      throw error
+    }
+  }
+  const tenantAnd = (tenantId: number | null) => (tenantId != null ? " AND tenant_id = ?" : "")
+  const tenantArg = (tenantId: number | null) => (tenantId != null ? [tenantId] : [])
+
+  async function runGuard(
+    merged: Record<string, any>,
+    ctx: { isCreate: boolean; existing: Record<string, any> | null; body: Record<string, any> },
+  ): Promise<NextResponse | null> {
+    if (!asyncGuard) return null
+    try {
+      const message = await asyncGuard(merged, ctx)
+      return message ? NextResponse.json({ error: message }, { status: 400 }) : null
+    } catch (error) {
+      if (error instanceof ProcurementTenantError) return NextResponse.json({ error: error.message }, { status: 403 })
+      throw error
+    }
+  }
+
+  /** Approve / reject / award needs the extended `approve` grant, not just update. */
+  async function guardDecisionPermission(
+    session: NonNullable<Awaited<ReturnType<typeof getSession>>>,
+    existing: Record<string, any>,
+    body: Record<string, any>,
+  ): Promise<NextResponse | null> {
+    if (!decision || !permissionKey || !(decision.field in body)) return null
+    const next = String(body[decision.field] ?? "").trim()
+    const prev = String(existing[decision.field] ?? "").trim()
+    if (next === prev || !decision.decisions.includes(next)) return null
+    if (!(await canPerformAction(session, permissionKey, "approve"))) {
+      return NextResponse.json({ error: `You do not have permission to mark this document ${next}.` }, { status: 403 })
+    }
+    return null
+  }
+
   async function GET(req: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    const tenant = await resolveTenant()
+    if (tenant.denied) return tenant.denied
+
     await ensureSchema()
     let { where, args } = buildWhere(cfg, req.nextUrl.searchParams)
+    if (tenant.tenantId != null) {
+      where = where ? `${where} AND x.tenant_id = ?` : "WHERE x.tenant_id = ?"
+      args = [...args, tenant.tenantId]
+    }
 
     // Record-level permission scope (Add/View/Update/Delete × none/all/added/
     // owned/both). Non-workflow finance modules apply it directly to the list +
@@ -694,8 +786,9 @@ export function createFinanceHandlers(moduleKey: string) {
     const financialYears = cfg.financialYearColumn
       ? ((await query(
           `SELECT DISTINCT ${cfg.financialYearColumn} v FROM ${cfg.table}
-             WHERE ${cfg.financialYearColumn} IS NOT NULL AND ${cfg.financialYearColumn} <> ''
+             WHERE ${cfg.financialYearColumn} IS NOT NULL AND ${cfg.financialYearColumn} <> ''${tenantAnd(tenant.tenantId)}
              ORDER BY v DESC`,
+          tenantArg(tenant.tenantId),
         )) as any[]).map((r) => r.v)
       : []
 
@@ -720,8 +813,27 @@ export function createFinanceHandlers(moduleKey: string) {
       return NextResponse.json({ error: "You do not have permission to create this record." }, { status: 403 })
     }
 
+    const tenant = await resolveTenant()
+    if (tenant.denied) return tenant.denied
+
     await ensureSchema()
     const body = await req.json()
+
+    // Idempotent create: a retried POST with the same key returns the document
+    // already created rather than minting a second number.
+    let idempotencyKey: string | null = null
+    if (isProcurement) {
+      try {
+        idempotencyKey = normalizeIdempotencyKey(req.headers.get("idempotency-key") ?? body.__idempotencyKey)
+      } catch (error) {
+        return NextResponse.json({ error: (error as Error).message }, { status: 400 })
+      }
+      if (idempotencyKey && tenant.tenantId != null) {
+        const replay = await findIdempotentReplay(moduleKey as keyof typeof PROCUREMENT_TABLES, tenant.tenantId, idempotencyKey)
+        if (replay) return NextResponse.json({ ok: true, id: replay, replayed: true }, { status: 200 })
+      }
+    }
+
     const derived = cfg.compute ? cfg.compute(body) : {}
 
     const record: Record<string, any> = {}
@@ -748,10 +860,8 @@ export function createFinanceHandlers(moduleKey: string) {
 
     // Async guard (period lock, closed-account). May read other rows; runs on
     // the merged record before the id is minted so a rejection burns nothing.
-    if (asyncGuard) {
-      const message = await asyncGuard({ ...body, ...record }, { isCreate: true, existing: null })
-      if (message) return NextResponse.json({ error: message }, { status: 400 })
-    }
+    const createGuard = await runGuard({ ...body, ...record }, { isCreate: true, existing: null, body })
+    if (createGuard) return createGuard
 
     // Accounting Period Lock (SPEC 162) — reject a new dated document in a
     // locked month before the id is minted so a rejection burns no sequence.
@@ -766,9 +876,11 @@ export function createFinanceHandlers(moduleKey: string) {
       if (hit) return NextResponse.json({ duplicate: hit }, { status: 409 })
     }
 
+    let autoMinted = false
     if (idGenerator) {
       // Custom immutable business key (never client-supplied, concurrency-safe).
       record[cfg.idColumn] = await idGenerator(record)
+      autoMinted = true
     } else if (cfg.manualId) {
       if (!body[cfg.idColumn]) return NextResponse.json({ error: `${cfg.idColumn} is required` }, { status: 400 })
       record[cfg.idColumn] = body[cfg.idColumn]
@@ -776,10 +888,9 @@ export function createFinanceHandlers(moduleKey: string) {
       // editableId modules keep a hand-entered business key, but fall back to an
       // auto-generated id whenever the user leaves the field blank.
       const provided = cfg.editableId ? body[cfg.idColumn] : undefined
-      record[cfg.idColumn] =
-        provided !== undefined && provided !== null && String(provided).trim() !== ""
-          ? String(provided).trim()
-          : await nextRecordIdForPrefix(cfg.idPrefix)
+      const hasProvided = provided !== undefined && provided !== null && String(provided).trim() !== ""
+      record[cfg.idColumn] = hasProvided ? String(provided).trim() : await nextRecordIdForPrefix(cfg.idPrefix)
+      autoMinted = !hasProvided
     }
 
     if (cfg.trackingId) {
@@ -789,15 +900,49 @@ export function createFinanceHandlers(moduleKey: string) {
     }
 
     record.created_by = session.userId
+    if (tenant.tenantId != null) record.tenant_id = tenant.tenantId
+    if (idempotencyKey) record.idempotency_key = idempotencyKey
 
-    const cols = Object.keys(record)
-    await query(
-      `INSERT INTO ${cfg.table} (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`,
-      cols.map((c) => record[c]),
-    )
+    // Document numbers are unique per tenant. A collision on an auto-minted
+    // number (sequence drift, concurrent create) re-mints; a hand-entered
+    // duplicate is refused with 409; a concurrent idempotent retry replays.
+    for (let attempt = 0; ; attempt++) {
+      const cols = Object.keys(record)
+      try {
+        await query(
+          `INSERT INTO ${cfg.table} (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`,
+          cols.map((c) => record[c]),
+        )
+        break
+      } catch (error) {
+        if (!isProcurement || !isDuplicateKeyError(error)) throw error
+        if (idempotencyKey && tenant.tenantId != null) {
+          const replay = await findIdempotentReplay(moduleKey as keyof typeof PROCUREMENT_TABLES, tenant.tenantId, idempotencyKey)
+          if (replay) return NextResponse.json({ ok: true, id: replay, replayed: true }, { status: 200 })
+        }
+        if (autoMinted && attempt < 3) {
+          record[cfg.idColumn] = idGenerator ? await idGenerator(record) : await nextRecordIdForPrefix(cfg.idPrefix!)
+          continue
+        }
+        return NextResponse.json(
+          { error: `Document number ${record[cfg.idColumn]} already exists in this workspace.` },
+          { status: 409 },
+        )
+      }
+    }
+
+    let createdRow: Record<string, any> = record
+    if (isProcurement) {
+      const [row] = (await query(
+        `SELECT * FROM ${cfg.table} WHERE ${cfg.idColumn} = ?${tenantAnd(tenant.tenantId)} LIMIT 1`,
+        [record[cfg.idColumn], ...tenantArg(tenant.tenantId)],
+      )) as any[]
+      if (row) createdRow = row
+      await raiseProcurementApproval(moduleKey, createdRow, null, session.userId)
+    }
 
     const afterWrite = AFTER_WRITE[moduleKey]
-    if (afterWrite) await afterWrite({ finalRow: record, body, userId: session.userId, isCreate: true, existing: null })
+    if (afterWrite) await afterWrite({ finalRow: createdRow, body, userId: session.userId, isCreate: true, existing: null })
 
     // Snapshot the assignee's reporting manager for the second approval stage.
     if (INVOICE_WORKFLOW_MODULES.has(moduleKey)) await snapshotInvoiceManager(moduleKey, record)
@@ -809,16 +954,27 @@ export function createFinanceHandlers(moduleKey: string) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    const tenant = await resolveTenant()
+    if (tenant.denied) return tenant.denied
+    if (isProcurement) await ensureSchema()
+
     const body = await req.json()
     const id = Number(body.id)
     if (!id) return NextResponse.json({ error: "Record id is required" }, { status: 400 })
 
-    const [existing] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
+    // Another tenant's row resolves to 404, never to an edit.
+    const [existing] = (await query(
+      `SELECT * FROM ${cfg.table} WHERE id = ?${tenantAnd(tenant.tenantId)}`,
+      [id, ...tenantArg(tenant.tenantId)],
+    )) as any[]
     if (!existing) return NextResponse.json({ error: "Record not found" }, { status: 404 })
 
     if (permissionKey && !(await canActOnRecord(session, permissionKey, "update", existing))) {
       return NextResponse.json({ error: "You do not have permission to update this record." }, { status: 403 })
     }
+
+    const decisionDenied = await guardDecisionPermission(session, existing, body)
+    if (decisionDenied) return decisionDenied
 
     // Accounting Period Lock (SPEC 162) — block editing a document already
     // sealed in a locked month, and block moving one into a locked month.
@@ -838,9 +994,14 @@ export function createFinanceHandlers(moduleKey: string) {
 
     // Async guard (period lock, closed-account, pre-close balance/reconciliation
     // checks) against the merged row plus its prior committed state.
-    if (asyncGuard) {
-      const message = await asyncGuard(merged, { isCreate: false, existing })
-      if (message) return NextResponse.json({ error: message }, { status: 400 })
+    const editGuard = await runGuard(merged, { isCreate: false, existing, body })
+    if (editGuard) return editGuard
+
+    // A configured Approval Authority chain must have signed off before the
+    // document itself can be marked Approved.
+    if (isProcurement) {
+      const chainBlock = await guardProcurementApprovalChain(moduleKey, existing, merged)
+      if (chainBlock) return NextResponse.json({ error: chainBlock }, { status: 409 })
     }
 
     const derived = cfg.compute ? cfg.compute(merged) : {}
@@ -871,17 +1032,21 @@ export function createFinanceHandlers(moduleKey: string) {
     const cols = Object.keys(update)
     if (cols.length) {
       await query(
-        `UPDATE ${cfg.table} SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id=?`,
-        [...cols.map((c) => update[c]), id],
+        `UPDATE ${cfg.table} SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id=?${tenantAnd(tenant.tenantId)}`,
+        [...cols.map((c) => update[c]), id, ...tenantArg(tenant.tenantId)],
       )
     }
 
     const afterWrite = AFTER_WRITE[moduleKey]
-    if (afterWrite) {
+    if (afterWrite || isProcurement) {
       // Re-read the row so the side effect keys off the committed state (the
       // update set only carries changed columns, not the whole bill).
-      const [finalRow] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
-      if (finalRow) await afterWrite({ finalRow, body, userId: session.userId, isCreate: false, existing })
+      const [finalRow] = (await query(
+        `SELECT * FROM ${cfg.table} WHERE id = ?${tenantAnd(tenant.tenantId)}`,
+        [id, ...tenantArg(tenant.tenantId)],
+      )) as any[]
+      if (finalRow && isProcurement) await raiseProcurementApproval(moduleKey, finalRow, existing, session.userId)
+      if (finalRow && afterWrite) await afterWrite({ finalRow, body, userId: session.userId, isCreate: false, existing })
     }
 
     // Re-snapshot the reporting manager in case the assignee changed on edit.
@@ -902,12 +1067,20 @@ export function createFinanceHandlers(moduleKey: string) {
     // Enforce the delete scope on the specific row. We may need the row for the
     // permission check and/or the side effect, so load it once when either
     // needs it.
+    const tenant = await resolveTenant()
+    if (tenant.denied) return tenant.denied
+    if (isProcurement) await ensureSchema()
+
     const afterDelete = AFTER_DELETE[moduleKey]
     let doomed: Record<string, any> | null = null
-    if (permissionKey || typeof afterDelete === "function" || PERIOD_LOCKED_MODULES.has(moduleKey)) {
-      const [row] = (await query(`SELECT * FROM ${cfg.table} WHERE id = ?`, [id])) as any[]
+    if (isProcurement || permissionKey || typeof afterDelete === "function" || PERIOD_LOCKED_MODULES.has(moduleKey)) {
+      const [row] = (await query(
+        `SELECT * FROM ${cfg.table} WHERE id = ?${tenantAnd(tenant.tenantId)}`,
+        [id, ...tenantArg(tenant.tenantId)],
+      )) as any[]
       doomed = row ?? null
     }
+    if (isProcurement && !doomed) return NextResponse.json({ error: "Record not found" }, { status: 404 })
 
     if (permissionKey && doomed && !(await canActOnRecord(session, permissionKey, "delete", doomed))) {
       return NextResponse.json({ error: "You do not have permission to delete this record." }, { status: 403 })
@@ -935,7 +1108,7 @@ export function createFinanceHandlers(moduleKey: string) {
       }
     }
 
-    await query(`DELETE FROM ${cfg.table} WHERE id = ?`, [id])
+    await query(`DELETE FROM ${cfg.table} WHERE id = ?${tenantAnd(tenant.tenantId)}`, [id, ...tenantArg(tenant.tenantId)])
 
     if (typeof afterDelete === "function" && doomed) await afterDelete(doomed)
 

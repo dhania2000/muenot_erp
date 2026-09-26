@@ -72,6 +72,7 @@ const MARKETING_CHILDREN: FeatureChild[] = [
 const HR_CHILDREN: FeatureChild[] = [
   { label: "HR Dashboard", href: "/modules/hr/dashboard", feature: "hr.view_dashboard" },
   { label: "Employees", href: "/modules/hr/employees", feature: "hr.view_employees" },
+  { label: "Employee 360", href: "/modules/hr/employee-360", feature: "hr.view_employees" },
   { label: "Employee Documents", href: "/modules/hr/employee-documents", feature: "hr.view_documents" },
   { label: "Attendance", href: "/modules/hr/attendance", feature: "hr.view_attendance" },
   { label: "Attendance Regularisation", href: "/modules/hr/attendance-regularisation", feature: "hr.view_regularisation" },

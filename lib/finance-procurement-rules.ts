@@ -216,4 +216,264 @@ export function evaluatePoCancellation(
   return null
 }
 
+export function evaluateRfqCancellation(nextStatus: unknown, opts: { linkedPoCount: number }): string | null {
+  if (norm(nextStatus) === CANCELLED && opts.linkedPoCount > 0) {
+    return `RFQ cannot be cancelled: ${opts.linkedPoCount} purchase order(s) already reference it. Cancel the purchase order(s) first.`
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// 7. Approval state machine — Draft → Submitted → Approved | Rejected.
+//    A new document can never be created already Approved (that would skip
+//    the checker), and an Approved document cannot be walked back.
+// ---------------------------------------------------------------------------
+
+const APPROVAL_TRANSITIONS: Record<string, string[]> = {
+  Draft: ["Draft", "Submitted"],
+  Submitted: ["Submitted", "Approved", "Rejected", "Draft"],
+  Rejected: ["Rejected", "Draft", "Submitted"],
+  Approved: ["Approved"],
+}
+
+export function evaluateApprovalTransition(
+  prevStatus: unknown,
+  nextStatus: unknown,
+  opts: { isCreate: boolean; documentLabel?: string },
+): string | null {
+  const label = opts.documentLabel || "document"
+  const next = norm(nextStatus) || "Draft"
+  if (!(next in APPROVAL_TRANSITIONS)) return `Unknown approval status "${next}".`
+  if (opts.isCreate) {
+    if (next === APPROVED || next === REJECTED) {
+      return `A new ${label} must start as Draft or Submitted; it cannot be created already ${next}.`
+    }
+    return null
+  }
+  const prev = norm(prevStatus) || "Draft"
+  const allowed = APPROVAL_TRANSITIONS[prev] ?? APPROVAL_TRANSITIONS.Draft
+  if (!allowed.includes(next)) {
+    return `Invalid approval transition for this ${label}: ${prev} → ${next}.`
+  }
+  return null
+}
+
+/**
+ * Once a document is Approved its commercial fields are frozen — changing the
+ * amount after the checker signed off would bypass the approval and budget
+ * control. Returns the first changed locked field as a rejection message.
+ */
+export function evaluateApprovedImmutability(
+  existing: Record<string, any> | null,
+  body: Record<string, any>,
+  lockedFields: readonly string[],
+  documentLabel = "document",
+): string | null {
+  if (!existing || norm(existing.approval_status) !== APPROVED) return null
+  for (const field of lockedFields) {
+    if (!(field in body)) continue
+    const before = existing[field]
+    const after = body[field]
+    const numeric = typeof before === "number" || /^-?\d+(\.\d+)?$/.test(norm(before))
+    const changed = numeric ? round2(num(before)) !== round2(num(after)) : norm(before) !== norm(after)
+    if (changed) {
+      return `This ${documentLabel} is approved; "${field}" can no longer be changed. Cancel it and raise a new one instead.`
+    }
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// 8. Upstream consistency — the PO must honour what was approved / awarded.
+// ---------------------------------------------------------------------------
+
+export type PoUpstreamInput = {
+  poQuantity: unknown
+  poTaxable: unknown
+  poVendorId?: unknown
+  poVendorName?: unknown
+  requisition?: { quantity?: unknown } | null
+  rfq?: { selected_vendor_id?: unknown; selected_vendor_name?: unknown; awarded_amount?: unknown } | null
+  /** Quantity already ordered on OTHER live POs against the same requisition. */
+  otherOrderedQuantity?: unknown
+}
+
+export function evaluatePoAgainstUpstream(input: PoUpstreamInput): string | null {
+  const qty = num(input.poQuantity)
+  if (qty <= 0) return "Purchase order quantity must be greater than zero."
+  if (input.requisition) {
+    const reqQty = num(input.requisition.quantity)
+    const already = Math.max(0, num(input.otherOrderedQuantity))
+    if (reqQty > 0 && qty + already > reqQty + 1e-9) {
+      return `Purchase order quantity ${qty} exceeds the requisition's remaining quantity ${round2(
+        Math.max(0, reqQty - already),
+      )}.`
+    }
+  }
+  if (input.rfq) {
+    const awardedId = norm(input.rfq.selected_vendor_id)
+    const awardedName = norm(input.rfq.selected_vendor_name).toLowerCase()
+    const poId = norm(input.poVendorId)
+    const poName = norm(input.poVendorName).toLowerCase()
+    const vendorMatches = (awardedId && poId && awardedId === poId) || (awardedName && poName && awardedName === poName)
+    if ((awardedId || awardedName) && !vendorMatches) {
+      return `Purchase order vendor must be the RFQ's awarded vendor (${norm(input.rfq.selected_vendor_name) || awardedId}).`
+    }
+    const awarded = num(input.rfq.awarded_amount)
+    if (awarded > 0 && round2(num(input.poTaxable)) > round2(awarded) + 0.005) {
+      return `Purchase order value before tax (${round2(num(input.poTaxable)).toFixed(
+        2,
+      )}) exceeds the awarded quote (${round2(awarded).toFixed(2)}).`
+    }
+  }
+  return null
+}
+
+/** The awarded vendor must be one of the vendors that actually quoted. */
+export function evaluateRfqSelection(merged: Record<string, any>): string | null {
+  if (norm(merged.status) !== "Awarded") return null
+  const selectedId = norm(merged.selected_vendor_id)
+  const selectedName = norm(merged.selected_vendor_name).toLowerCase()
+  if (!selectedId && !selectedName) return "Select the awarded vendor before marking the RFQ Awarded."
+  for (const i of [1, 2, 3]) {
+    const quote = num(merged[`vendor_${i}_quote`])
+    if (quote <= 0) continue
+    const id = norm(merged[`vendor_${i}_id`])
+    const name = norm(merged[`vendor_${i}_name`]).toLowerCase()
+    if ((selectedId && id === selectedId) || (selectedName && name === selectedName)) return null
+  }
+  return "The awarded vendor must be one of the vendors that submitted a quote."
+}
+
+// ---------------------------------------------------------------------------
+// 9. Goods receipt quantities + segregation of duties.
+// ---------------------------------------------------------------------------
+
+export type GrnQuantityInput = {
+  orderedQuantity: unknown
+  /** Received on OTHER receipts for the same PO (current receipt excluded). */
+  alreadyReceived: unknown
+  receivedQuantity: unknown
+  acceptedQuantity: unknown
+  rejectedQuantity: unknown
+  /** Tolerance for over-receipt, in percent of the ordered quantity. */
+  overReceiptTolerancePercent?: number
+}
+
+export function evaluateGrnQuantities(input: GrnQuantityInput): string | null {
+  const received = num(input.receivedQuantity)
+  const accepted = num(input.acceptedQuantity)
+  const rejected = num(input.rejectedQuantity)
+  if (received < 0 || accepted < 0 || rejected < 0) return "Receipt quantities cannot be negative."
+  if (accepted + rejected > received + 1e-9) {
+    return `Accepted (${accepted}) plus rejected (${rejected}) cannot exceed the received quantity (${received}).`
+  }
+  const ordered = num(input.orderedQuantity)
+  const already = Math.max(0, num(input.alreadyReceived))
+  const tolerance = Math.max(0, input.overReceiptTolerancePercent ?? 0)
+  const ceiling = ordered * (1 + tolerance / 100)
+  if (ordered > 0 && already + received > ceiling + 1e-9) {
+    return `Receipt exceeds the purchase order: ${round2(already)} already received, ${received} more would pass the ordered ${ordered}.`
+  }
+  return null
+}
+
+export function evaluateGrnSod(actorUserId: unknown, poApproverUserId: unknown): string | null {
+  if (actorUserId == null || poApproverUserId == null || poApproverUserId === "") return null
+  if (Number(actorUserId) === Number(poApproverUserId)) {
+    return "Segregation of duties: the user who approved the purchase order cannot also record its goods receipt."
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// 10. Vendor invoice (purchase bill) + payment against the procurement chain.
+// ---------------------------------------------------------------------------
+
+export type BillAgainstPoInput = {
+  po: {
+    approval_status?: unknown
+    status?: unknown
+    vendor_id?: unknown
+    vendor_name?: unknown
+    gst_rate?: unknown
+  } | null
+  poRef: string
+  billVendorId?: unknown
+  billVendorName?: unknown
+  billTaxable: unknown
+  billGstRate?: unknown
+  /** Accepted value across all goods receipts of the PO. */
+  receivedValue: unknown
+  /** Taxable value already billed on OTHER bills against the same PO. */
+  otherBilledTaxable: unknown
+  grnCount: number
+}
+
+export function evaluateBillAgainstPo(input: BillAgainstPoInput): string | null {
+  const ref = norm(input.poRef)
+  if (!input.po) return `Vendor bill references purchase order ${ref}, which does not exist.`
+  if (norm(input.po.approval_status) !== APPROVED) return `Vendor bill cannot be booked: purchase order ${ref} is not approved.`
+  if (norm(input.po.status) === CANCELLED) return `Vendor bill cannot be booked against cancelled purchase order ${ref}.`
+  if (input.grnCount <= 0) return `Vendor bill cannot be booked: no goods have been received against purchase order ${ref} yet.`
+
+  const poId = norm(input.po.vendor_id)
+  const billId = norm(input.billVendorId)
+  const poName = norm(input.po.vendor_name).toLowerCase()
+  const billName = norm(input.billVendorName).toLowerCase()
+  const sameVendor = (poId && billId && poId === billId) || (poName && billName && poName === billName)
+  if ((poId || poName) && (billId || billName) && !sameVendor) {
+    return `Vendor bill vendor does not match purchase order ${ref}'s vendor (${norm(input.po.vendor_name) || poId}).`
+  }
+
+  const poRate = num(input.po.gst_rate)
+  if (input.billGstRate != null && norm(input.billGstRate) !== "" && Math.abs(num(input.billGstRate) - poRate) > 0.001) {
+    return `Vendor bill GST rate ${num(input.billGstRate)}% does not match purchase order ${ref} GST rate ${poRate}%.`
+  }
+
+  const billable = round2(Math.max(0, num(input.receivedValue) - Math.max(0, num(input.otherBilledTaxable))))
+  if (round2(num(input.billTaxable)) > billable + 0.005) {
+    return `Vendor bill taxable value ${round2(num(input.billTaxable)).toFixed(
+      2,
+    )} exceeds the received-but-unbilled value ${billable.toFixed(2)} on purchase order ${ref}.`
+  }
+  return null
+}
+
+export function evaluateBillPayment(input: {
+  amountPaid: unknown
+  payable: unknown
+  previousPaid: unknown
+  chainError: string | null
+}): string | null {
+  const paid = num(input.amountPaid)
+  if (paid < 0) return "Amount paid cannot be negative."
+  const payable = num(input.payable)
+  if (payable > 0 && round2(paid) > round2(payable) + 0.005) {
+    return `Amount paid ${round2(paid).toFixed(2)} exceeds the bill's payable amount ${round2(payable).toFixed(2)}.`
+  }
+  if (paid > num(input.previousPaid) && input.chainError) {
+    return `Payment blocked: ${input.chainError}`
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// 11. Delete — only a document nobody downstream depends on, and never an
+//     approved one (cancel it instead so the audit trail survives).
+// ---------------------------------------------------------------------------
+
+export function evaluateProcurementDelete(
+  row: Record<string, any>,
+  opts: { downstreamCount: number; documentLabel: string },
+): string | null {
+  if (norm(row.approval_status) === APPROVED || norm(row.status) === "Awarded") {
+    return `An approved ${opts.documentLabel} cannot be deleted. Cancel it instead so the audit trail is kept.`
+  }
+  if (opts.downstreamCount > 0) {
+    return `This ${opts.documentLabel} cannot be deleted: ${opts.downstreamCount} downstream document(s) reference it.`
+  }
+  return null
+}
+
 export const PROCUREMENT_STATUS = { APPROVED, REJECTED, CANCELLED } as const

@@ -31,6 +31,8 @@ vi.mock("@/lib/finance-expenses", () => ({
 }))
 vi.mock("@/lib/finance-expense-posting", () => ({ syncExpensePosting: m.sync }))
 vi.mock("@/lib/finance-calc", () => ({ financialYearFor: () => "2026-2027" }))
+vi.mock("@/lib/finance-expense-payments", () => ({ recordExpensePayment: vi.fn() }))
+vi.mock("@/lib/audit-log-store", () => ({ recordAuditLog: vi.fn() }))
 
 import { getClaim, listClaims, transitionClaim } from "@/lib/expense-claims"
 

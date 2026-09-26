@@ -63,6 +63,12 @@ export function isExportFormat(value: unknown): value is ExportFormat {
 }
 
 /** Coerce arbitrary (UI label or code) input to a valid format, defaulting to CSV. */
+/** Absent means "use the default"; anything supplied must be a known format or alias. */
+export function isAcceptedExportFormatInput(value: unknown): boolean {
+  if (value == null || value === "") return true
+  return typeof value === "string" && value.trim().toLowerCase() in FORMAT_ALIASES
+}
+
 export function toExportFormat(value: unknown): ExportFormat {
   if (typeof value !== "string") return "csv"
   return FORMAT_ALIASES[value.trim().toLowerCase()] ?? "csv"
@@ -260,7 +266,7 @@ export function collectColumns(rows: Record<string, unknown>[], preferred?: stri
 /** Serialize rows to CSV text. A leading BOM keeps Excel happy with UTF-8. */
 export function serializeCsv(rows: Record<string, unknown>[], columns?: string[]): string {
   const cols = columns ?? collectColumns(rows)
-  const lines = [cols.map((c) => csvEscape(c)).join(",")]
+  const lines = [cols.map((c) => csvEscape(neutralizeFormula(c) as string)).join(",")]
   for (const row of rows) {
     lines.push(cols.map((c) => csvEscape(spreadsheetSafeCell(row[c]))).join(","))
   }

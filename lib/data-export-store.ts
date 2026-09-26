@@ -42,6 +42,7 @@ import {
   type ExportFormat,
   type ExportFrequency,
   type ExportStatus,
+  assertFormatScope,
   buildTable,
   clampExportTtl,
   computeNextExportRun,
@@ -61,6 +62,14 @@ import {
 const MAX_ROWS_PER_DATASET = 50_000
 
 export type Actor = { userId: number; name?: string | null; email?: string | null; role: TenantRole }
+
+/** An Idempotency-Key was reused for a different scope or format. */
+export class ExportIdempotencyConflictError extends Error {
+  constructor() {
+    super("This Idempotency-Key was already used for a different export")
+    this.name = "ExportIdempotencyConflictError"
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -191,6 +200,30 @@ async function runEnsure(): Promise<void> {
       KEY \`idx_export_schedule_due\` (\`status\`, \`next_run_at\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `)
+  const jobCols = await tableColumns("data_export_jobs")
+  if (!jobCols.has("idempotency_key")) {
+    await query(
+      `ALTER TABLE \`data_export_jobs\`
+         ADD COLUMN \`idempotency_key\` VARCHAR(120) DEFAULT NULL,
+         ADD UNIQUE KEY \`uq_export_job_idem\` (\`tenant_id\`, \`requested_by\`, \`idempotency_key\`)`,
+    ).catch((err) => {
+      // A concurrent instance may have added it first.
+      if (!/Duplicate (column|key)/i.test(String((err as Error).message))) throw err
+    })
+  }
+}
+
+async function findIdempotentExport(
+  tenantId: number | null,
+  actorId: number,
+  key: string,
+): Promise<{ id: number; dataset_key: string; format: string } | null> {
+  const rows = await query<{ id: number; dataset_key: string; format: string }[]>(
+    `SELECT id, dataset_key, format FROM data_export_jobs
+      WHERE tenant_id <=> ? AND requested_by = ? AND idempotency_key = ? LIMIT 1`,
+    [tenantId, actorId, key],
+  )
+  return rows[0] ?? null
 }
 
 function ensureTables(): Promise<void> {
@@ -445,7 +478,9 @@ export type CreateExportInput = {
   triggerSource?: "manual" | "scheduler"
   scheduleId?: number | null
   ttlSeconds?: number
-}
+  /** Client retry key: the same key for the same requester returns the original job. */
+  idempotencyKey?: string | null
+  }
 
 /**
  * Create AND run an export job synchronously (datasets are row-capped). Returns
@@ -460,28 +495,55 @@ export async function createAndRunExport(
   await ensureTables()
   const scope = resolveScope(input.datasetKey)
   const format = toExportFormat(input.format)
+  // Defense in depth: the route checks this too, but every caller (scheduler,
+  // future jobs) must be unable to emit a partial "backup package".
+  assertFormatScope(format, input.datasetKey)
   const triggerSource = input.triggerSource === "scheduler" ? "scheduler" : "manual"
+  const idempotencyKey = input.idempotencyKey ?? null
   const salt = randomBytes(18).toString("hex")
   const ttl = clampExportTtl(input.ttlSeconds)
   const expiresAt = new Date(Date.now() + ttl * 1000)
 
-  const res = await query<{ insertId: number }>(
-    `INSERT INTO data_export_jobs
-       (tenant_id, dataset_key, scope_label, format, status, trigger_source, schedule_id, requested_by, token_salt, expires_at)
-     VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)`,
-    [
-      tenantId,
-      input.datasetKey,
-      scope.label,
-      format,
-      triggerSource,
-      input.scheduleId ?? null,
-      actor.userId,
-      salt,
-      expiresAt,
-    ],
-  )
-  const jobId = (res as any).insertId as number
+  const replay = async (): Promise<ExportJob | null> => {
+    if (!idempotencyKey) return null
+    const prior = await findIdempotentExport(tenantId, actor.userId, idempotencyKey)
+    if (!prior) return null
+    if (prior.dataset_key !== input.datasetKey || prior.format !== format) {
+      throw new ExportIdempotencyConflictError()
+    }
+    return toPublicJob((await loadJobRow(tenantId, prior.id)) as JobRow)
+  }
+  const existing = await replay()
+  if (existing) return existing
+
+  let jobId: number
+  try {
+    const res = await query<{ insertId: number }>(
+      `INSERT INTO data_export_jobs
+         (tenant_id, dataset_key, scope_label, format, status, trigger_source, schedule_id, requested_by, token_salt, expires_at, idempotency_key)
+       VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        input.datasetKey,
+        scope.label,
+        format,
+        triggerSource,
+        input.scheduleId ?? null,
+        actor.userId,
+        salt,
+        expiresAt,
+        idempotencyKey,
+      ],
+    )
+    jobId = (res as any).insertId as number
+  } catch (err) {
+    // A concurrent retry with the same key won the unique index; return it.
+    if (idempotencyKey && /ER_DUP_ENTRY|Duplicate entry/i.test(String((err as any)?.code ?? (err as Error).message))) {
+      const winner = await replay()
+      if (winner) return winner
+    }
+    throw err
+  }
 
   try {
     const { bytes, rowCount, redacted, fileName, contentType } = await renderExport(

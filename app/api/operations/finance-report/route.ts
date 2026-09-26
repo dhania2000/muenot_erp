@@ -9,6 +9,7 @@ const permissionKeys: Record<FinanceReportView, string> = {
   resource_cost: "operations.resource_cost",
   vendor_cost: "operations.vendor_cost",
   budget_vs_actual: "operations.budget_vs_actual",
+  profitability: "operations.project_cost",
 }
 
 function isView(value: string | null): value is FinanceReportView {

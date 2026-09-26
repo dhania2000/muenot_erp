@@ -331,6 +331,7 @@ const OPERATIONS_CHILDREN: FeatureChild[] = [
       { label: "Resource Cost", href: "/modules/operations/resource-cost", feature: "operations.view_resource_cost" },
       { label: "Vendor Cost", href: "/modules/operations/vendor-cost", feature: "operations.view_vendor_cost" },
       { label: "Budget vs Actual", href: "/modules/operations/budget-vs-actual", feature: "operations.view_budget_vs_actual" },
+      { label: "Project Profitability", href: "/modules/operations/project-profitability", feature: "operations.view_budget_vs_actual" },
     ],
   },
   {

@@ -25,6 +25,8 @@ import {
   UserRound,
   ArrowUp,
   ArrowDown,
+  Pin,
+  PinOff,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -99,6 +101,8 @@ export function SavedViewsBar({ hook, groupable = true }: { hook: Hook; groupabl
     setGroupBy,
     toggleColumn,
     moveColumn,
+    togglePin,
+    setColumnWidth,
     applyView,
     resetToDefault,
     saveAs,
@@ -181,6 +185,17 @@ export function SavedViewsBar({ hook, groupable = true }: { hook: Hook; groupabl
                     variant="ghost"
                     size="icon-sm"
                     className="size-6"
+                    aria-label={`${c.pinned ? "Unpin" : "Pin"} ${labelFor(def, c.key)} column`}
+                    aria-pressed={Boolean(c.pinned)}
+                    disabled={Boolean(c.hidden)}
+                    onClick={() => togglePin(c.key)}
+                  >
+                    {c.pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-6"
                     aria-label={`Move ${labelFor(def, c.key)} up`}
                     disabled={i === 0}
                     onClick={() => moveColumn(c.key, -1)}
@@ -201,13 +216,20 @@ export function SavedViewsBar({ hook, groupable = true }: { hook: Hook; groupabl
               )
             })}
           </div>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={!state.columns.some((c) => c.width != null)}
+            onClick={() => state.columns.forEach((c) => c.width != null && setColumnWidth(c.key, null))}
+          >
+            <RotateCcw className="size-4" /> Reset column widths
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
       {/* Grouping */}
       {groupable && groupableCols.length > 0 && (
         <Select value={state.groupBy ?? "none"} onValueChange={(v) => setGroupBy(v === "none" ? null : (v as string))}>
-          <SelectTrigger size="sm" className="w-40">
+          <SelectTrigger size="sm" className="w-40" aria-label="Group rows by">
             <SelectValue placeholder="Group by" />
           </SelectTrigger>
           <SelectContent>
@@ -223,7 +245,7 @@ export function SavedViewsBar({ hook, groupable = true }: { hook: Hook; groupabl
 
       {/* Page size */}
       <Select value={String(state.pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
-        <SelectTrigger size="sm" className="w-28">
+        <SelectTrigger size="sm" className="w-28" aria-label="Rows per page">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

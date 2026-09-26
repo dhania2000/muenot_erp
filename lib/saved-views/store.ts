@@ -36,15 +36,26 @@ async function runEnsure(): Promise<void> {
       \`config\` JSON NOT NULL,
       \`is_default\` TINYINT(1) NOT NULL DEFAULT 0,
       \`created_by\` INT UNSIGNED DEFAULT NULL,
+      \`idempotency_key\` VARCHAR(80) DEFAULT NULL,
       \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (\`id\`),
       KEY \`idx_saved_views_tenant_table\` (\`tenant_id\`, \`table_key\`),
       KEY \`idx_saved_views_owner\` (\`tenant_id\`, \`owner_user_id\`),
       KEY \`idx_saved_views_role\` (\`tenant_id\`, \`role_key\`),
-      KEY \`idx_saved_views_team\` (\`tenant_id\`, \`team_key\`)
+      KEY \`idx_saved_views_team\` (\`tenant_id\`, \`team_key\`),
+      UNIQUE KEY \`uq_saved_views_idem\` (\`tenant_id\`, \`created_by\`, \`idempotency_key\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+  // Upgrade tables created before Spec34 added idempotent creation.
+  const [col] = await query<any[]>(
+    "SELECT COUNT(*) AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'saved_views' AND column_name = 'idempotency_key'",
+  )
+  if (Number(col?.c ?? 0) === 0) {
+    await query(
+      "ALTER TABLE `saved_views` ADD COLUMN `idempotency_key` VARCHAR(80) DEFAULT NULL, ADD UNIQUE KEY `uq_saved_views_idem` (`tenant_id`, `created_by`, `idempotency_key`)",
+    )
+  }
 }
 
 export async function ensureSavedViewSchema(): Promise<void> {
@@ -78,12 +89,14 @@ export function canManageShared(viewer: Viewer): boolean {
  */
 export async function resolveTeamKeys(tenantId: number, userId: number): Promise<Set<string>> {
   try {
+    // Joined through users so a department is only ever resolved for a user
+    // that belongs to the acting tenant.
     const rows = await query<any[]>(
-      `SELECT DISTINCT department FROM hr_employees
-        WHERE user_id = ? AND department IS NOT NULL AND department <> '' LIMIT 50`,
-      [userId],
+      `SELECT DISTINCT e.department FROM hr_employees e
+         JOIN users u ON u.id = e.user_id AND u.tenant_id = ?
+        WHERE e.user_id = ? AND e.department IS NOT NULL AND e.department <> '' LIMIT 50`,
+      [tenantId, userId],
     )
-    void tenantId
     return new Set(rows.map((r) => String(r.department)))
   } catch {
     return new Set<string>()
@@ -209,33 +222,70 @@ async function clearSiblingDefaults(viewer: Viewer, input: SaveInput, exceptId: 
   await query(sql, params)
 }
 
-export async function createView(viewer: Viewer, input: SaveInput): Promise<number> {
-  await ensureSavedViewSchema()
-  assertVisibilityAllowed(viewer, input.visibility, input.roleKey, input.teamKey)
-  const name = input.name.trim().slice(0, 160) || "Untitled view"
-  const res = await query<any>(
-    `INSERT INTO \`saved_views\`
-       (tenant_id, table_key, name, visibility, owner_user_id, role_key, team_key, config, is_default, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      viewer.tenantId,
-      input.tableKey.slice(0, 96),
-      name,
-      input.visibility,
-      input.visibility === "private" ? viewer.userId : null,
-      input.visibility === "role" ? input.roleKey : null,
-      input.visibility === "team" ? input.teamKey : null,
-      JSON.stringify(input.config ?? {}),
-      input.isDefault ? 1 : 0,
-      viewer.userId,
-    ],
-  )
-  const id = Number(res?.insertId ?? 0)
-  if (input.isDefault) await clearSiblingDefaults(viewer, input, id)
-  return id
+export const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9_\-:.]{8,80}$/
+
+export function normalizeIdempotencyKey(raw: string | null | undefined): string | null {
+  if (raw == null || raw.trim() === "") return null
+  const key = raw.trim()
+  if (!IDEMPOTENCY_KEY_RE.test(key)) {
+    throw new SavedViewError("Idempotency-Key must be 8-80 chars: letters, digits, _ - : .", 400)
+  }
+  return key
 }
 
-export async function updateView(viewer: Viewer, id: number, input: SaveInput): Promise<void> {
+export async function createView(
+  viewer: Viewer,
+  input: SaveInput,
+  opts: { idempotencyKey?: string | null } = {},
+): Promise<{ id: number; replayed: boolean }> {
+  await ensureSavedViewSchema()
+  assertVisibilityAllowed(viewer, input.visibility, input.roleKey, input.teamKey)
+  const key = opts.idempotencyKey ?? null
+  if (key) {
+    const [prior] = await query<any[]>(
+      "SELECT id FROM `saved_views` WHERE tenant_id = ? AND created_by = ? AND idempotency_key = ? LIMIT 1",
+      [viewer.tenantId, viewer.userId, key],
+    )
+    if (prior) return { id: Number(prior.id), replayed: true }
+  }
+  const name = input.name.trim().slice(0, 160) || "Untitled view"
+  let res: any
+  try {
+    res = await query<any>(
+      `INSERT INTO \`saved_views\`
+         (tenant_id, table_key, name, visibility, owner_user_id, role_key, team_key, config, is_default, created_by, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        viewer.tenantId,
+        input.tableKey.slice(0, 96),
+        name,
+        input.visibility,
+        input.visibility === "private" ? viewer.userId : null,
+        input.visibility === "role" ? input.roleKey : null,
+        input.visibility === "team" ? input.teamKey : null,
+        JSON.stringify(input.config ?? {}),
+        input.isDefault ? 1 : 0,
+        viewer.userId,
+        key,
+      ],
+    )
+  } catch (err: any) {
+    // A concurrent retry with the same key won the race: return its row.
+    if (key && err?.code === "ER_DUP_ENTRY") {
+      const [prior] = await query<any[]>(
+        "SELECT id FROM `saved_views` WHERE tenant_id = ? AND created_by = ? AND idempotency_key = ? LIMIT 1",
+        [viewer.tenantId, viewer.userId, key],
+      )
+      if (prior) return { id: Number(prior.id), replayed: true }
+    }
+    throw err
+  }
+  const id = Number(res?.insertId ?? 0)
+  if (input.isDefault) await clearSiblingDefaults(viewer, input, id)
+  return { id, replayed: false }
+}
+
+export async function updateView(viewer: Viewer, id: number, input: SaveInput): Promise<SavedViewRecord> {
   const existing = await getView(viewer, id)
   if (!existing) throw new SavedViewError("View not found", 404)
   if (!existing.canEdit) throw new SavedViewError("You cannot edit this view", 403)
@@ -258,11 +308,13 @@ export async function updateView(viewer: Viewer, id: number, input: SaveInput): 
     ],
   )
   if (input.isDefault) await clearSiblingDefaults(viewer, input, id)
+  return existing
 }
 
-export async function deleteView(viewer: Viewer, id: number): Promise<void> {
+export async function deleteView(viewer: Viewer, id: number): Promise<SavedViewRecord> {
   const existing = await getView(viewer, id)
   if (!existing) throw new SavedViewError("View not found", 404)
   if (!existing.canEdit) throw new SavedViewError("You cannot delete this view", 403)
   await query(`DELETE FROM \`saved_views\` WHERE id = ? AND tenant_id = ?`, [id, viewer.tenantId])
+  return existing
 }

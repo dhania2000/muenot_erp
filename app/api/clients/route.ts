@@ -7,6 +7,14 @@ import { scopeWhereForModule, mergeScopeIntoWhere, canCreateInModule } from "@/l
 import { currentTenantId } from "@/lib/tenant-scope"
 import { ensureTenantIsolation } from "@/lib/tenant-ensure"
 import {
+  likePattern,
+  orderByClause,
+  pageMeta,
+  parseTableQuery,
+  TableQueryError,
+  type TableQueryOptions,
+} from "@/lib/table-query"
+import {
   ensureClientTables,
   findClientDuplicates,
   resolveFinanceParty,
@@ -31,6 +39,20 @@ const ALLOWED = new Set([
   "payment_terms_days","credit_limit","legal_name",
 ])
 
+/** Public sort keys → trusted SQL. Keys mirror the list UI's column keys. */
+export const CLIENT_TABLE_QUERY: TableQueryOptions = {
+  sortable: {
+    client: "c.client_name",
+    company: "c.company_name",
+    location: "c.city",
+    login: "c.login_allowed",
+    status: "c.status",
+    created_at: "c.created_at",
+  },
+  filters: { status: ["Active", "Inactive"], login: ["Yes", "No"] },
+  defaultPageSize: 25,
+}
+
 export async function GET(request: Request) {
   await ensureClientTables()
   await ensureTenantIsolation()
@@ -49,6 +71,63 @@ export async function GET(request: Request) {
     ? "WHERE c.tenant_id = ?"
     : "WHERE c.tenant_id = ? AND c.archived_at IS NULL"
   const { where, args } = mergeScopeIntoWhere(baseWhere, [tenantId], scoped)
+
+  // Paged mode (Spec34): the list UI requests one page at a time so large
+  // tenants never ship their whole client book to the browser.
+  if (url.searchParams.has("page")) {
+    const started = performance.now()
+    let q
+    try {
+      q = parseTableQuery(url.searchParams, CLIENT_TABLE_QUERY)
+    } catch (err) {
+      if (err instanceof TableQueryError) return NextResponse.json({ error: err.message }, { status: 400 })
+      throw err
+    }
+    const extra: string[] = []
+    const extraArgs: unknown[] = []
+    if (q.search) {
+      const like = likePattern(q.search)
+      extra.push(
+        `(c.client_code LIKE ? OR c.client_name LIKE ? OR c.email LIKE ? OR c.company_name LIKE ?
+          OR c.gst_number LIKE ? OR c.pan LIKE ? OR c.city LIKE ? OR c.country LIKE ?)`,
+      )
+      extraArgs.push(like, like, like, like, like, like, like, like)
+    }
+    if (q.filters.status) {
+      extra.push("c.status = ?")
+      extraArgs.push(q.filters.status)
+    }
+    if (q.filters.login) {
+      extra.push("c.login_allowed = ?")
+      extraArgs.push(q.filters.login)
+    }
+    const pagedWhere = extra.length ? `${where} AND ${extra.join(" AND ")}` : where
+    const pagedArgs = [...args, ...extraArgs]
+    const order = orderByClause(q, CLIENT_TABLE_QUERY, "c.created_at DESC", "c.id DESC")
+
+    const [countRows, rows] = await Promise.all([
+      query<any[]>(`SELECT COUNT(*) AS total FROM clients c ${pagedWhere}`, pagedArgs),
+      query<any[]>(
+        `SELECT c.*,
+                sc.company_code, sc.company_name AS linked_company_name,
+                cv.customer_name AS finance_party_name,
+                am.name AS account_manager_name
+           FROM clients c
+           LEFT JOIN sales_companies sc ON sc.id = c.company_id
+           LEFT JOIN customers_vendors cv ON cv.party_id = c.finance_party_id
+           LEFT JOIN users am ON am.id = c.account_manager_id
+           ${pagedWhere}
+           ${order}
+           LIMIT ${q.pageSize} OFFSET ${q.offset}`,
+        pagedArgs,
+      ),
+    ])
+    const durationMs = Math.round((performance.now() - started) * 10) / 10
+    return NextResponse.json(
+      { clients: rows, ...pageMeta(q, Number(countRows[0]?.total ?? 0)), durationMs },
+      { headers: { "Server-Timing": `db;dur=${durationMs}` } },
+    )
+  }
 
   const clients = await query(
     `SELECT c.*,

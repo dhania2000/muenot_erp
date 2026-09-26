@@ -3,6 +3,7 @@ import { randomUUID } from "crypto"
 import { query } from "@/lib/db"
 import { getSession } from "@/lib/auth"
 import { nextRecordId } from "@/lib/record-ids"
+import { computeAndPersistMatch, deleteMatchForBill, requireMatchTenant } from "@/lib/finance-three-way-match-server"
 import { nextRecordIdForPrefix } from "@/lib/settings/numbering"
 import { FINANCE_MODULE_CONFIGS } from "@/lib/finance-module-configs"
 import type { ModuleConfig } from "@/lib/finance-schema"
@@ -287,6 +288,17 @@ const AFTER_WRITE: Record<
     // failure-tolerant — a posting error leaves the bill "Unposted" and the next
     // save retries, so it never blocks bill CRUD.
     await syncPurchaseBillPosting(String(billId), { createdBy: userId })
+    // Spec37 (#201) — recompute the PO ⇄ GRN ⇄ bill match and route any new
+    // exception to the approval inbox. Failure-tolerant: payment is still gated
+    // live by the bill guard even if this projection fails.
+    try {
+      const tenantId = await requireMatchTenant()
+      const billQuantity =
+        raw && raw.length > 0 ? raw.reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0) : undefined
+      await computeAndPersistMatch(tenantId, { ...finalRow, bill_id: billId }, { billQuantity })
+    } catch (error) {
+      console.error("[v0] three-way match recompute failed:", (error as Error).message)
+    }
   },
   // Phase 7/40 — after an expense is committed, project its eligible input GST
   // into the SAME centralized GST Input register (idempotent; a zero-GST or
@@ -445,6 +457,11 @@ const AFTER_DELETE: Record<string, (row: Record<string, any>) => Promise<void>> 
     await reversePurchaseBillPosting(row)
     await deleteGstInputForBill(String(billId))
     await query(`DELETE FROM purchase_bill_items WHERE bill_id = ?`, [billId])
+    try {
+      await deleteMatchForBill(await requireMatchTenant(), String(billId))
+    } catch (error) {
+      console.error("[v0] three-way match delete failed:", (error as Error).message)
+    }
   },
   // Unwind the expense's projected ITC record when it is deleted.
   expenses: async (row) => {

@@ -106,12 +106,37 @@ export type MatchVariance = {
 
 export type MatchStatus = "matched" | "matched_within_tolerance" | "exception"
 
+/** One goods receipt on the PO, keyed by its stable GRN id (split receipts). */
+export type MatchReceipt = {
+  grnId: string
+  receiptDate: string | null
+  receivedQuantity: number
+  acceptedQuantity: number
+  rejectedQuantity: number
+  receivedValue: number
+}
+
+/** Document-level context shown next to the variances as comparison evidence. */
+export type MatchContext = {
+  orderedQuantity: number
+  acceptedQuantity: number
+  billedQuantity: number
+  cumulativeBilledQuantity: number
+  receivedValue: number
+  billTaxable: number
+  cumulativeBilledTaxable: number
+  /** Accepted quantity is still below the ordered quantity. */
+  partialDelivery: boolean
+  receipts: MatchReceipt[]
+}
+
 export type MatchResult = {
   status: MatchStatus
   paymentHold: boolean
   variances: MatchVariance[]
   exceptions: MatchVariance[]
   categories: MismatchCategory[]
+  context?: MatchContext
 }
 
 export type MatchInput = {
@@ -137,6 +162,8 @@ export type MatchInput = {
   otherBilledTaxable?: unknown
   /** True when another bill with the same vendor bill number already exists. */
   duplicateBill?: boolean
+  /** Per-GRN breakdown (split receipts) — evidence only; totals drive the match. */
+  receipts?: MatchReceipt[]
 }
 
 const str = (v: unknown) => String(v ?? "").trim()
@@ -237,7 +264,11 @@ export function evaluateThreeWayMatch(input: MatchInput, tolerancesRaw?: Partial
   if (poUnit > 0 && billUnit > 0) {
     const variance = round2(billUnit - poUnit)
     const variancePct = pct(variance, poUnit)
-    const withinTol = Math.abs(variancePct) <= tol.pricePercent + 1e-9
+    // A unit price derived from a rounded line total (e.g. 100.00 / 7) can drift
+    // by a paisa; accept it when the line-value effect stays within the absolute
+    // currency-rounding slack.
+    const roundingOnly = billedQty > 0 && round2(Math.abs(variance) * billedQty) <= tol.amountAbsolute + 1e-9 && Math.abs(variance) <= 0.01 + 1e-9
+    const withinTol = Math.abs(variancePct) <= tol.pricePercent + 1e-9 || roundingOnly
     variances.push({
       dimension: "price",
       label: "Unit price",
@@ -321,7 +352,67 @@ export function evaluateThreeWayMatch(input: MatchInput, tolerancesRaw?: Partial
   const hasTolerance = variances.some((v) => v.status === "within_tolerance")
   const status: MatchStatus = exceptions.length > 0 ? "exception" : hasTolerance ? "matched_within_tolerance" : "matched"
 
-  return { status, paymentHold: exceptions.length > 0, variances, exceptions, categories }
+  const orderedQty = Math.max(0, num(input.orderedQuantity))
+  const receipts = (input.receipts ?? []).map((r) => ({
+    grnId: str(r.grnId),
+    receiptDate: r.receiptDate ? str(r.receiptDate) : null,
+    receivedQuantity: round2(num(r.receivedQuantity)),
+    acceptedQuantity: round2(num(r.acceptedQuantity)),
+    rejectedQuantity: round2(num(r.rejectedQuantity)),
+    receivedValue: round2(num(r.receivedValue)),
+  }))
+  const context: MatchContext = {
+    orderedQuantity: round2(orderedQty),
+    acceptedQuantity: round2(acceptedQty),
+    billedQuantity: round2(billedQty),
+    cumulativeBilledQuantity: cumulativeQty,
+    receivedValue,
+    billTaxable,
+    cumulativeBilledTaxable: cumulativeTaxable,
+    partialDelivery: grnCount > 0 && acceptedQty + 1e-9 < orderedQty,
+    receipts,
+  }
+
+  return { status, paymentHold: exceptions.length > 0, variances, exceptions, categories, context }
+}
+
+// ---------------------------------------------------------------------------
+// Request validation (shared by the API routes; pure so it is unit-tested).
+// ---------------------------------------------------------------------------
+
+export type ResolvePayload = { decision: "approve" | "reject"; note: string }
+
+/** A checker override must name a decision and justify it in writing. */
+export function parseResolvePayload(body: unknown): { ok: true; value: ResolvePayload } | { ok: false; error: string } {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>
+  const decision = str(b.decision).toLowerCase()
+  if (decision !== "approve" && decision !== "reject") {
+    return { ok: false, error: "decision must be 'approve' or 'reject'." }
+  }
+  const note = str(b.note)
+  if (note.length < 10) return { ok: false, error: "A justification note of at least 10 characters is required for every override." }
+  if (note.length > 2000) return { ok: false, error: "The justification note must be 2000 characters or fewer." }
+  return { ok: true, value: { decision, note } }
+}
+
+/**
+ * Strict tolerance validation for the settings API: unlike normalizeTolerances
+ * (which clamps for safe reads), a write with a non-numeric or out-of-range
+ * value is rejected so an admin never silently saves a different number.
+ */
+export function validateTolerancePayload(
+  body: unknown,
+): { ok: true; value: MatchTolerances } | { ok: false; error: string } {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>
+  const out = { ...DEFAULT_TOLERANCES }
+  for (const key of Object.keys(TOLERANCE_BOUNDS) as (keyof MatchTolerances)[]) {
+    if (b[key] == null || str(b[key]) === "") return { ok: false, error: `${key} is required.` }
+    const n = Number(b[key])
+    const [lo, hi] = TOLERANCE_BOUNDS[key]
+    if (!Number.isFinite(n) || n < lo || n > hi) return { ok: false, error: `${key} must be a number between ${lo} and ${hi}.` }
+    out[key] = round2(n)
+  }
+  return { ok: true, value: out }
 }
 
 /** A short, stable human summary of the match outcome. */

@@ -11,7 +11,7 @@ import { classifyJobFailure, retryDisposition, type FailureKind } from "@/lib/jo
  * Queue entries are data, never commands or URLs. A reviewed handler registry
  * determines the code that can run for each job type.
  */
-export const BACKGROUND_JOB_TYPES = ["email.send", "bulk.action", "tenant.scheduled_job"] as const
+export const BACKGROUND_JOB_TYPES = ["email.send", "bulk.action", "tenant.scheduled_job", "data.import_batch"] as const
 export type BackgroundJobType = (typeof BACKGROUND_JOB_TYPES)[number]
 
 export const BACKGROUND_JOB_STATUSES = ["queued", "running", "completed", "failed", "dead_letter", "cancelled"] as const
@@ -164,7 +164,7 @@ function validateBulkActionPayload(payload: unknown): BulkActionPayload {
 
 function validatePayload(jobType: BackgroundJobType, payload: unknown): BackgroundJobPayload {
   if (jobType === "email.send") return validateEmailPayload(payload)
-  if (jobType === "bulk.action" || jobType === "tenant.scheduled_job") return validateBulkActionPayload(payload)
+  if (jobType === "bulk.action" || jobType === "tenant.scheduled_job" || jobType === "data.import_batch") return validateBulkActionPayload(payload)
   throw new Error("Unknown background job type")
 }
 
@@ -379,6 +379,13 @@ const JOB_HANDLERS: Record<BackgroundJobType, JobHandler> = {
     const { runId } = payload as BulkActionPayload
     const { executeTenantJobRun } = await import("@/lib/tenant-jobs/store")
     return executeTenantJobRun(runId, context.job)
+  },
+  async "data.import_batch"(payload, context) {
+    // Payload carries only the staged job id; tenant, mapping and actor are
+    // rehydrated from the persisted, tenant-scoped job row.
+    const { runId } = payload as BulkActionPayload
+    const { processBatchImport } = await import("@/lib/data-import-batches-store")
+    return processBatchImport(runId, context.signal)
   },
 }
 

@@ -42,6 +42,7 @@ import {
   type ImportJobSummary,
   type ImportPreparedRow,
 } from "@/lib/data-import-model"
+import { neutralizeFormula } from "@/lib/data-import-batches-model"
 
 const TENANT_COLUMN_CANDIDATES = ["tenant_id", "company_id"]
 const PREVIEW_LIMIT = 25
@@ -130,7 +131,7 @@ function coerceValue(col: ImportColumn, raw: unknown): { empty: boolean; value: 
     const d = parseSpreadsheetDate(String(raw))
     return { empty: !d, value: d }
   }
-  return { empty: false, value: String(raw).trim() }
+  return { empty: false, value: neutralizeFormula(String(raw).trim()) }
 }
 
 /** Auto-map each target column to the best-matching source header by alias. */
@@ -371,6 +372,139 @@ function normalizeMapping(
     out[col.key] = v && String(v).trim() !== "" ? String(v) : null
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Reusable pipeline for the queued batch importer
+// (lib/data-import-batches-store.ts). Same map → coerce → validate → dedupe →
+// insert rules as analyze/commit, but driven batch by batch.
+// ---------------------------------------------------------------------------
+
+export type ImportRunRow = PreparedRow
+
+export type ImportRun = {
+  config: ImportConfig
+  datasetLabel: string
+  mapping: Record<string, string | null>
+  cols: Set<string>
+  tenantColumn: string | null
+  tenantId: number | null
+  ctx: PrepareContext
+  unmappedRequired: string[]
+  hasIdPk: boolean
+  createdByColumn: string | null
+  mintId: ((record: Record<string, unknown>) => Promise<void>) | null
+}
+
+export async function prepareImportRun(
+  tenantId: number | null,
+  datasetKey: string,
+  headers: string[],
+  mapping: Record<string, string | null> | null | undefined,
+  options: { withIdMinter?: boolean } = {},
+): Promise<ImportRun> {
+  const config = getImportDataset(datasetKey)
+  const publicDataset = getPublicImportDataset(datasetKey)
+  if (!config || !publicDataset) throw new Error("Unknown or unsupported dataset")
+  const resolvedMapping =
+    mapping && Object.keys(mapping).length > 0 ? normalizeMapping(config, mapping) : autoMap(config, headers)
+  const { cols, tenantColumn } = await resolveTable(config)
+  const dbFingerprints = await loadExistingFingerprints(
+    config,
+    dedupeKeysFor(config).filter((k) => cols.has(k.toLowerCase())),
+    tenantColumn,
+    tenantId,
+  )
+  const createdByColumn = config.createdBy === null ? null : config.createdBy ?? "created_by"
+  return {
+    config,
+    datasetLabel: `${publicDataset.label} · ${publicDataset.module}`,
+    mapping: resolvedMapping,
+    cols,
+    tenantColumn,
+    tenantId,
+    ctx: buildPrepareContext(config, resolvedMapping, cols, dbFingerprints),
+    unmappedRequired: config.columns.filter((c) => c.required && !resolvedMapping[c.key]).map((c) => c.key),
+    hasIdPk: cols.has("id"),
+    createdByColumn: createdByColumn != null && cols.has(createdByColumn.toLowerCase()) ? createdByColumn : null,
+    mintId: options.withIdMinter ? await makeIdMinter(config, tenantColumn, tenantId) : null,
+  }
+}
+
+/**
+ * Prepare staged rows. `seen` carries in-file duplicate fingerprints ACROSS
+ * batches so a duplicate ID in batch 7 of a row in batch 1 is still caught.
+ * `rowNumber` is the 1-based spreadsheet row (header = 1).
+ */
+export function prepareStagedRows(
+  run: ImportRun,
+  rows: { rowNumber: number; raw: Record<string, unknown> }[],
+  seen: Set<string>,
+): ImportRunRow[] {
+  const out: ImportRunRow[] = []
+  for (const { rowNumber, raw } of rows) {
+    const row = prepareRow(rowNumber - 2, raw, run.ctx)
+    if (row.status === "valid" && row.fingerprint) {
+      if (run.ctx.dbFingerprints.has(row.fingerprint) || seen.has(row.fingerprint)) {
+        row.status = "duplicate"
+        row.messages = ["Duplicate of an existing or earlier row"]
+      } else {
+        seen.add(row.fingerprint)
+      }
+    }
+    out.push(row)
+  }
+  return out
+}
+
+type Exec = (sql: string, params: unknown[]) => Promise<{ insertId?: number } | unknown>
+
+/** Insert one prepared valid row; tenant + creator are forced server-side. */
+export async function insertPreparedRow(
+  run: ImportRun,
+  row: ImportRunRow,
+  actorId: number,
+  exec: Exec = (sql, params) => query(sql, params as any[]),
+): Promise<{ ok: true; insertId: number | null } | { ok: false; message: string }> {
+  const record = { ...row.record }
+  if (run.tenantColumn && run.tenantId != null) record[run.tenantColumn] = run.tenantId
+  if (run.createdByColumn) record[run.createdByColumn] = actorId
+  try {
+    if (run.mintId) await run.mintId(record)
+    const keys = Object.keys(record).filter((k) => run.cols.has(k.toLowerCase()))
+    if (keys.length === 0) throw new Error("No mappable columns for this row")
+    const result = (await exec(
+      `INSERT INTO \`${run.config.table}\` (${keys.map((k) => `\`${k}\``).join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`,
+      keys.map((k) => record[k]),
+    )) as { insertId?: number } | undefined
+    if (row.fingerprint) run.ctx.dbFingerprints.add(row.fingerprint)
+    return { ok: true, insertId: run.hasIdPk && result?.insertId ? Number(result.insertId) : null }
+  } catch (err) {
+    return { ok: false, message: ((err as Error).message || "Insert failed").slice(0, 500) }
+  }
+}
+
+/** Delete exact inserted ids from the run's table, tenant-scoped. */
+export async function deleteInsertedRows(
+  table: string,
+  tenantColumn: string | null,
+  tenantId: number | null,
+  ids: number[],
+): Promise<number> {
+  let deleted = 0
+  const CHUNK = 500
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK).filter((n) => Number.isFinite(n))
+    if (chunk.length === 0) continue
+    const placeholders = chunk.map(() => "?").join(", ")
+    const scoped = tenantColumn && tenantId != null
+    const res = (await query(
+      `DELETE FROM \`${table}\` WHERE ${scoped ? `\`${tenantColumn}\` = ? AND ` : ""}id IN (${placeholders})`,
+      scoped ? [tenantId, ...chunk] : chunk,
+    )) as { affectedRows?: number }
+    deleted += Number(res?.affectedRows ?? 0)
+  }
+  return deleted
 }
 
 // ---------------------------------------------------------------------------

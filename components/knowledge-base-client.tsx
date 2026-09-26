@@ -22,8 +22,12 @@ import {
   StatusBadge, TypeBadge, FavoriteStar, formatDate,
 } from "@/components/knowledge-base/kb-lib"
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
   Plus, Search, SlidersHorizontal, Download, Star, Pin, AlertTriangle, Eye, Paperclip,
-  BookOpen, ChevronLeft, ChevronRight, Menu, Upload,
+  BookOpen, ChevronLeft, ChevronRight, Menu, Upload, MoreVertical, Pencil, Trash2, Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -335,7 +339,15 @@ export function KnowledgeBaseClient() {
               ) : (
                 <ul className="divide-y">
                   {articles.map((a) => (
-                    <ArticleListItem key={a.id} article={a} canManage={canManage} onOpen={() => setDetailId(a.id)} />
+                    <ArticleListItem
+                      key={a.id}
+                      article={a}
+                      canManage={canManage}
+                      busy={rowBusyId === a.id}
+                      onOpen={() => setDetailId(a.id)}
+                      onUpdate={() => updateArticle(a.id)}
+                      onRemove={() => setRemoveTarget(a)}
+                    />
                   ))}
                 </ul>
               )}

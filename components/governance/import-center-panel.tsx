@@ -71,7 +71,7 @@ function formatDateTime(value: string | null): string {
 }
 
 /** Parse a browser File (CSV / Excel / JSON) into headers + raw row objects. */
-async function parseFile(file: File): Promise<ParsedFile> {
+export async function parseFile(file: File): Promise<ParsedFile> {
   const name = file.name.toLowerCase()
   let rows: Record<string, unknown>[]
   if (name.endsWith(".json")) {

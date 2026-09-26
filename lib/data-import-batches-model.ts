@@ -56,6 +56,7 @@ export const BATCH_IMPORT_STATUSES = [
   "completed",
   "completed_with_errors",
   "failed",
+  "rolling_back",
   "rolled_back",
 ] as const
 export type BatchImportStatus = (typeof BATCH_IMPORT_STATUSES)[number]
@@ -69,6 +70,7 @@ export const BATCH_IMPORT_STATUS_LABELS: Record<BatchImportStatus, string> = {
   completed: "Completed",
   completed_with_errors: "Completed with errors",
   failed: "Failed",
+  rolling_back: "Rolling back",
   rolled_back: "Rolled back",
 }
 

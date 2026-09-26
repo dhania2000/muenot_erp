@@ -14,11 +14,13 @@
  * lib/data-export-store.ts.
  */
 
+import { neutralizeFormula } from "@/lib/data-import-batches-model"
+
 // ---------------------------------------------------------------------------
 // Formats
 // ---------------------------------------------------------------------------
 
-export const EXPORT_FORMATS = ["csv", "xlsx", "json", "pdf"] as const
+export const EXPORT_FORMATS = ["csv", "xlsx", "json", "pdf", "backup"] as const
 export type ExportFormat = (typeof EXPORT_FORMATS)[number]
 
 export const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
@@ -26,6 +28,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
   xlsx: "Excel",
   json: "JSON",
   pdf: "PDF",
+  backup: "Backup package",
 }
 
 const FORMAT_ALIASES: Record<string, ExportFormat> = {
@@ -35,6 +38,24 @@ const FORMAT_ALIASES: Record<string, ExportFormat> = {
   xls: "xlsx",
   json: "json",
   pdf: "pdf",
+  backup: "backup",
+  package: "backup",
+}
+
+/**
+ * A backup package is a whole-tenant, checksummed, restorable snapshot. It only
+ * makes sense for the full-tenant scope, and it requires tenant-owner authority
+ * because it bundles every exportable dataset at once.
+ */
+export function isBackupPackageFormat(format: ExportFormat): boolean {
+  return format === "backup"
+}
+
+/** Throws when a format/scope pairing is not allowed (backup ⇒ full tenant only). */
+export function assertFormatScope(format: ExportFormat, datasetKey: string): void {
+  if (isBackupPackageFormat(format) && datasetKey !== FULL_TENANT_EXPORT_KEY) {
+    throw new Error("A backup package can only be generated for the full-tenant scope")
+  }
 }
 
 export function isExportFormat(value: unknown): value is ExportFormat {
@@ -48,7 +69,8 @@ export function toExportFormat(value: unknown): ExportFormat {
 }
 
 export function exportFileExtension(format: ExportFormat): string {
-  return format === "xlsx" ? "xlsx" : format
+  if (format === "backup") return "backup.json"
+  return format
 }
 
 export function exportContentType(format: ExportFormat): string {
@@ -56,6 +78,7 @@ export function exportContentType(format: ExportFormat): string {
     case "xlsx":
       return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     case "json":
+    case "backup":
       return "application/json; charset=utf-8"
     case "pdf":
       return "application/pdf"
@@ -196,6 +219,15 @@ export function stringifyCell(value: unknown): string {
   return String(value)
 }
 
+/**
+ * Stringify a cell for a spreadsheet-openable artifact (CSV / Excel) and
+ * neutralize formula payloads (`=`, `@`, `+CMD`…) so stored data can never
+ * execute when the file is opened. JSON / backup packages keep raw values.
+ */
+export function spreadsheetSafeCell(value: unknown): string {
+  return neutralizeFormula(stringifyCell(value)) as string
+}
+
 function csvEscape(value: string): string {
   return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
 }
@@ -230,7 +262,7 @@ export function serializeCsv(rows: Record<string, unknown>[], columns?: string[]
   const cols = columns ?? collectColumns(rows)
   const lines = [cols.map((c) => csvEscape(c)).join(",")]
   for (const row of rows) {
-    lines.push(cols.map((c) => csvEscape(stringifyCell(row[c]))).join(","))
+    lines.push(cols.map((c) => csvEscape(spreadsheetSafeCell(row[c]))).join(","))
   }
   return "\uFEFF" + lines.join("\r\n")
 }
@@ -247,6 +279,9 @@ export function serializeJson(payload: unknown): string {
  */
 export function buildTable(rows: Record<string, unknown>[], columns?: string[]): { columns: string[]; aoa: string[][] } {
   const cols = columns ?? collectColumns(rows)
-  const aoa = [cols.slice(), ...rows.map((row) => cols.map((c) => stringifyCell(row[c])))]
+  const aoa = [
+    cols.map((c) => neutralizeFormula(c) as string),
+    ...rows.map((row) => cols.map((c) => spreadsheetSafeCell(row[c]))),
+  ]
   return { columns: cols, aoa }
 }

@@ -161,7 +161,13 @@ export function ExportCenterPanel() {
   const formatEntries = (Object.entries(formats ?? { csv: "CSV", xlsx: "Excel", json: "JSON", pdf: "PDF" }) as [
     ExportFormat,
     string,
-  ][]).filter(([f]) => !(f === "pdf" && pdfDisabled))
+  ][]).filter(([f]) => !(f === "pdf" && pdfDisabled) && !(f === "backup" && effectiveScope !== fullTenantKey))
+  const isBackup = format === "backup"
+
+  function changeScope(next: string) {
+    setScope(next)
+    if (next !== fullTenantKey && format === "backup") setFormat("json")
+  }
 
   async function startExport() {
     if (!effectiveScope) {
@@ -276,7 +282,7 @@ export function ExportCenterPanel() {
                   <label className="text-xs font-medium text-muted-foreground" htmlFor="export-scope">
                     Dataset / scope
                   </label>
-                  <Select value={effectiveScope} onValueChange={setScope} disabled={isLoading}>
+                  <Select value={effectiveScope} onValueChange={changeScope} disabled={isLoading}>
                     <SelectTrigger id="export-scope">
                       <SelectValue placeholder="Select a dataset" />
                     </SelectTrigger>
@@ -333,7 +339,9 @@ export function ExportCenterPanel() {
                 <p className="text-xs text-muted-foreground">{selectedDataset.description}</p>
               ) : effectiveScope === fullTenantKey ? (
                 <p className="text-xs text-muted-foreground">
-                  Exports every available dataset across all modules into a single archive.
+                  {isBackup
+                    ? "Backup package: every dataset plus a manifest with per-dataset SHA-256 checksums. Tenant owners only; generated on demand, never scheduled."
+                    : "Exports every available dataset across all modules into a single archive."}
                 </p>
               ) : null}
               <div className="flex flex-wrap gap-2">
@@ -346,7 +354,7 @@ export function ExportCenterPanel() {
                   variant="outline"
                   className="gap-1.5"
                   onClick={scheduleExport}
-                  disabled={scheduling || isLoading}
+                  disabled={scheduling || isLoading || isBackup}
                 >
                   {scheduling ? <Loader2 className="size-3.5 animate-spin" /> : <CalendarClock className="size-3.5" />}
                   Schedule recurring export

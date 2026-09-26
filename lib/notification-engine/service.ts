@@ -8,6 +8,8 @@ import { CHANNELS, defaultEnabled, defaultFrequency, FREQUENCIES, PRIORITIES, re
 import { ensureNotificationEngineSchema } from "./schema"
 import { providerFor } from "./providers"
 import { meterUsage } from "@/lib/billing/usage-guard"
+import { guardOutbound } from "@/lib/comms-governance/service"
+import { isChannel, mysqlDateTime } from "@/lib/comms-governance/model"
 async function rows(c:PoolConnection,sql:string,args:unknown[]=[]):Promise<any[]>{const [r]=await c.query(sql,args);return r as any[]}
 async function log(c:PoolConnection,d:any,status:string,actor:number|null=null){await c.query("INSERT INTO notification_delivery_log (tenant_id,delivery_id,attempt,status,actor_id) VALUES (?,?,?,?,?)",[d.tenant_id,d.id,d.attempts,status,actor])}
 // Caller owns transaction; schema must be prepared before starting it.
@@ -112,6 +114,17 @@ export async function processNotification(id:number) {
     const destination=d.channel==="email"?user.email:d.channel==="push"?`user:${d.user_id}`:pref?.destination
     if(!providerFor(d.channel)||!destination) {
       await c.query("UPDATE notification_deliveries SET status='blocked',attempts=?,error_code='provider_or_destination_missing' WHERE id=?",[d.attempts,id]);await log(c,d,"blocked");return null
+    }
+    // Spec41: central tenant provider config, suppression and send limits.
+    if(isChannel(d.channel)) {
+      const gate=await guardOutbound(Number(d.tenant_id),d.channel,d.channel==="push"?null:String(destination),{mandatory:!!d.mandatory})
+      if(!gate.ok&&gate.code==="rate_limited") {
+        await c.query("UPDATE notification_deliveries SET available_at=?,error_code='rate_limited' WHERE id=?",[mysqlDateTime(gate.retryAt??new Date(Date.now()+3600000)),id]);await log(c,d,"deferred");return null
+      }
+      if(!gate.ok) {
+        const code=gate.code==="suppressed"?`suppressed_${gate.reason??"address"}`:gate.code
+        await c.query("UPDATE notification_deliveries SET status=?,attempts=?,error_code=? WHERE id=?",[gate.code==="suppressed"?"skipped":"blocked",d.attempts,code.slice(0,80),id]);await log(c,d,gate.code==="suppressed"?"skipped":"blocked");return null
+      }
     }
     const lease=randomUUID()
     await c.query("UPDATE notification_deliveries SET status='sending',attempts=?,lease=?,started_at=UTC_TIMESTAMP() WHERE id=?",[d.attempts,lease,id]);await log(c,d,"sending")

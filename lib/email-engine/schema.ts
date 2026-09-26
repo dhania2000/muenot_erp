@@ -40,6 +40,10 @@ async function createSchema() {
     event_type VARCHAR(30) NOT NULL, detail JSON NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY(id), KEY idx_tenant_email_events(tenant_id,message_id,created_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+  // Spec41: caller idempotency so a retried request never creates a second message.
+  await query("ALTER TABLE tenant_email_messages ADD COLUMN idempotency_key VARCHAR(190) NULL, ADD UNIQUE KEY uq_tenant_email_idem (tenant_id, idempotency_key)").catch((error: any) => {
+    if (error?.code !== "ER_DUP_FIELDNAME" && error?.errno !== 1060) throw error
+  })
 }
 
 export function ensureEmailEngineSchema() {

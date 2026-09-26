@@ -5,6 +5,8 @@ import { enqueueEmailJob } from "@/lib/background-jobs"
 import { buildMessageId } from "@/lib/email"
 import { type EmailModule, type EmailRequest, trackingToken, validateEmailRequest } from "./model"
 import { ensureEmailEngineSchema } from "./schema"
+import { activeSuppressions, guardOutbound } from "@/lib/comms-governance/service"
+import { decideSend } from "@/lib/comms-governance/model"
 
 type Sender = { id: number; from_name: string | null; from_address: string | null; reply_to: string | null; transport_department: "sales" | "hr" | "finance" | "operations" | "recruit" }
 
@@ -25,6 +27,15 @@ async function resolveSender(tenantId: number, module: EmailModule): Promise<Sen
 export async function queueTenantEmail(raw: EmailRequest) {
   const input = validateEmailRequest(raw)
   await ensureEmailEngineSchema()
+  if (input.idempotencyKey) {
+    const existing = await query<any[]>("SELECT id,job_id,tracking_token FROM tenant_email_messages WHERE tenant_id=? AND idempotency_key=? LIMIT 1", [input.tenantId, input.idempotencyKey])
+    if (existing[0]) return { id: Number(existing[0].id), jobId: existing[0].job_id == null ? null : Number(existing[0].job_id), trackingToken: existing[0].tracking_token ?? null, duplicate: true as const }
+  }
+  const gate = await guardOutbound(input.tenantId, "email", input.to)
+  if (!gate.ok) {
+    const message = gate.code === "suppressed" ? `Recipient is suppressed (${gate.reason})` : gate.code === "rate_limited" ? "Tenant email send limit reached; retry later" : "Email provider is disabled for this tenant"
+    throw Object.assign(new Error(message), { code: `EMAIL_${gate.code.toUpperCase()}`, retryAt: gate.code === "rate_limited" ? gate.retryAt : undefined })
+  }
   const sender = await resolveSender(input.tenantId, input.module)
   const threadKey = keyFor(input.to)
   let prior: any = null
@@ -38,8 +49,8 @@ export async function queueTenantEmail(raw: EmailRequest) {
   const messageId = buildMessageId(token ?? crypto.randomUUID(), (sender?.transport_department ?? "sales"))
   const subject = prior ? `Re: ${String(prior.subject).replace(/^(\s*re:\s*)+/i, "").trim()}` : input.subject
   const insert = await query<any>(`INSERT INTO tenant_email_messages
-    (tenant_id,module,template_id,sender_id,to_email,to_name,subject,html,thread_key,in_reply_to_message_id,message_id,provider_thread_id,references_header,attachments_json,tracking_token,tracking_consent,sent_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [input.tenantId,input.module,input.templateId ?? null,sender?.id ?? null,input.to,input.toName ?? null,subject,html,prior?.thread_key ?? threadKey,input.replyToMessageId ?? null,messageId,prior?.provider_thread_id ?? null,prior?.references_header ? `${prior.references_header} ${prior.message_id}` : prior?.message_id ?? null,asJson(input.attachments ?? []),token,Boolean(input.trackingConsent),input.actorId ?? null])
+    (tenant_id,module,template_id,sender_id,to_email,to_name,subject,html,thread_key,in_reply_to_message_id,message_id,provider_thread_id,references_header,attachments_json,tracking_token,tracking_consent,sent_by,idempotency_key)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [input.tenantId,input.module,input.templateId ?? null,sender?.id ?? null,input.to,input.toName ?? null,subject,html,prior?.thread_key ?? threadKey,input.replyToMessageId ?? null,messageId,prior?.provider_thread_id ?? null,prior?.references_header ? `${prior.references_header} ${prior.message_id}` : prior?.message_id ?? null,asJson(input.attachments ?? []),token,Boolean(input.trackingConsent),input.actorId ?? null,input.idempotencyKey ?? null])
   const id = Number(insert.insertId)
   const job = await enqueueEmailJob({ tenantId: input.tenantId, createdBy: input.actorId ?? null, triggerSource: "system", idempotencyKey: input.idempotencyKey ?? `tenant-email:${id}`, concurrencyKey: `tenant-email:${input.tenantId}:${input.module}`, payload: { to: input.to, subject, html, from: sender?.from_address ?? undefined, department: sender?.transport_department ?? "sales", headers: { "X-Muenot-Email-Message": String(id) }, engineMessageId: id, messageId, inReplyTo: prior?.message_id ?? undefined, references: prior?.references_header ? `${prior.references_header} ${prior.message_id}` : prior?.message_id ?? undefined, providerThreadId: prior?.provider_thread_id ?? undefined, attachmentPaths: (input.attachments ?? []).map((a) => a.pathname) } })
   await query("UPDATE tenant_email_messages SET job_id=? WHERE tenant_id=? AND id=?", [job.id, input.tenantId, id])
@@ -55,6 +66,20 @@ export async function markTenantEmailAccepted(messageId: number, result: { messa
   if (!tenantId) return
   await query("UPDATE tenant_email_messages SET status='accepted',attempts=attempts+1,provider_message_id=?,provider_thread_id=COALESCE(?,provider_thread_id),accepted_at=UTC_TIMESTAMP(),last_error=NULL WHERE tenant_id=? AND id=? AND status IN ('queued','sending')", [result.messageId ?? null,result.providerThreadId ?? null,tenantId,messageId])
   await query("INSERT INTO tenant_email_events (tenant_id,message_id,event_type,detail) VALUES (?,?,?,?)", [tenantId,messageId,"accepted",asJson(result)])
+}
+
+/** Worker pre-send check. Returns true (and cancels) when the recipient became suppressed. */
+export async function cancelIfSuppressed(messageId: number): Promise<boolean> {
+  await ensureEmailEngineSchema()
+  const rows = await query<any[]>("SELECT tenant_id,to_email,status FROM tenant_email_messages WHERE id=? LIMIT 1", [messageId])
+  const row = rows[0]
+  if (!row) return false
+  if (row.status === "cancelled") return true
+  const decision = decideSend({ providerEnabled: true, suppressions: await activeSuppressions(Number(row.tenant_id), "email", String(row.to_email)) })
+  if (decision.ok) return false
+  await query("UPDATE tenant_email_messages SET status='cancelled',last_error=? WHERE tenant_id=? AND id=? AND status IN ('queued','sending')", [`suppressed:${decision.code === "suppressed" ? decision.reason : decision.code}`, Number(row.tenant_id), messageId])
+  await query("INSERT INTO tenant_email_events (tenant_id,message_id,event_type,detail) VALUES (?,?,?,?)", [Number(row.tenant_id), messageId, "cancelled", asJson({ reason: "suppressed" })])
+  return true
 }
 
 export async function markTenantEmailFailed(messageId: number, error: unknown) {

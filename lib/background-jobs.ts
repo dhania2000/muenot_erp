@@ -353,6 +353,11 @@ type JobHandler = (payload: BackgroundJobPayload, context: JobHandlerContext) =>
 const JOB_HANDLERS: Record<BackgroundJobType, JobHandler> = {
   async "email.send"(payload) {
     const email = payload as EmailPayload
+    if (email.engineMessageId) {
+      // Spec41: a bounce/complaint may have arrived after queueing; never send to it.
+      const { cancelIfSuppressed } = await import("@/lib/email-engine/service")
+      if (await cancelIfSuppressed(email.engineMessageId)) return { cancelled: "suppressed" }
+    }
     const { hydrateDepartmentSMTP, loadAttachment, sendEmail } = await import("@/lib/email")
     if (email.department) await hydrateDepartmentSMTP(email.department)
     const attachments = (await Promise.all((email.attachmentPaths ?? []).map(loadAttachment))).filter((attachment): attachment is NonNullable<typeof attachment> => Boolean(attachment))

@@ -6,6 +6,8 @@ import {
   type WhatsAppIntegrationRow,
 } from "@/lib/whatsapp"
 import { runForTenant } from "@/lib/tenant-scope"
+import { addSuppression, recordOptIn } from "@/lib/comms-governance/service"
+import { consentKeyword } from "@/lib/comms-governance/model"
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -306,6 +308,17 @@ async function processChange(input: {
       // never turn a delivered customer message into a webhook error.
       if (created) {
         const messageText = parsed.body ?? ""
+        // Spec41: STOP/START consent, recorded only for the owning tenant.
+        const keyword = consentKeyword(messageText)
+        if (keyword) {
+          try {
+            const tenantId = Number(integration.tenant_id)
+            if (keyword === "opt_out") await addSuppression(tenantId, { channel: "whatsapp", address: fromPhone, reason: "opt_out", source: "whatsapp:keyword", providerEventId: m.id })
+            else await recordOptIn(tenantId, "whatsapp", fromPhone, "whatsapp:keyword")
+          } catch (err) {
+            console.error("[whatsapp] consent keyword handling failed:", (err as Error).message)
+          }
+        }
         // A customer reply closes the loop on any campaign they were sent.
         // Awaited (not fire-and-forget) so it stays inside this tenant's context.
         try {

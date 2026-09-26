@@ -42,7 +42,7 @@ export function TenantCustomerSuccess() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 p-6 md:p-8">
       <header>
         <h1 className="text-2xl font-semibold text-balance">Customer health</h1>
         <p className="text-sm text-muted-foreground text-pretty">

@@ -289,6 +289,9 @@ export async function updateView(viewer: Viewer, id: number, input: SaveInput): 
   const existing = await getView(viewer, id)
   if (!existing) throw new SavedViewError("View not found", 404)
   if (!existing.canEdit) throw new SavedViewError("You cannot edit this view", 403)
+  // The route authorizes against input.tableKey, so it must be the view's own
+  // table — otherwise access to one table could be used to edit another's views.
+  if (existing.tableKey !== input.tableKey) throw new SavedViewError("View belongs to a different table", 400)
   assertVisibilityAllowed(viewer, input.visibility, input.roleKey, input.teamKey)
   const name = input.name.trim().slice(0, 160) || existing.name
   await query(

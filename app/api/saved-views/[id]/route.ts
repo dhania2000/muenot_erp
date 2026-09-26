@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { deleteView, SavedViewError, updateView } from "@/lib/saved-views/store"
+import { deleteView, getView, SavedViewError, updateView } from "@/lib/saved-views/store"
 import { assertTableAccess, resolveViewer, validateViewName } from "@/lib/saved-views/guard"
 import { VIEW_VISIBILITIES } from "@/lib/saved-views/types"
 import type { ViewVisibility } from "@/lib/saved-views/types"
@@ -67,6 +67,10 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const viewId = parseId((await params).id)
     if (!viewId) return NextResponse.json({ error: "Invalid id" }, { status: 400 })
 
+    // Losing access to a table also revokes managing its views.
+    const target = await getView(viewer, viewId)
+    if (!target) return NextResponse.json({ error: "View not found" }, { status: 404 })
+    await assertTableAccess(viewer, target.tableKey)
     const removed = await deleteView(viewer, viewId)
     const ctx = await captureAuditContext(request).catch(() => undefined)
     await recordAuditLog(

@@ -14,15 +14,19 @@ import {
   STATUS_LABELS,
   TERM_LABELS,
   addTerm,
+  canWrite,
   hasProductAccess,
   isBillingTerm,
+  isRenewalMode,
   isTerminal,
+  isUnpaidTrialConversion,
   normalizeLifecycleConfig,
   reconcileLifecycle,
   termMonths,
   toISODate,
   type BillingTerm,
   type LifecycleConfig,
+  type RenewalMode,
   type SubscriptionStatus,
 } from "@/lib/billing/subscription-lifecycle"
 
@@ -94,6 +98,7 @@ export type Subscription = {
   seats: number | null
   status: SubscriptionStatus
   auto_renew: boolean
+  renewal_mode: RenewalMode
   cancel_at_period_end: boolean
   trial_end_date: string | null
   start_date: string
@@ -212,6 +217,14 @@ async function runEnsure(): Promise<void> {
     KEY idx_saas_sub_status (status),
     KEY idx_saas_sub_period_end (current_period_end)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+  // Spec46: existing rows keep the legacy optimistic auto-renew; new
+  // subscriptions are created as charge_required (see subscribe()).
+  await ensureSubscriptionColumn(
+    "saas_subscriptions",
+    "renewal_mode",
+    "VARCHAR(20) NOT NULL DEFAULT 'optimistic' AFTER auto_renew",
+  )
 
   await query(`CREATE TABLE IF NOT EXISTS saas_subscription_events (
     id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -385,6 +398,7 @@ function mapSubscription(r: any): Subscription {
     seats: r.seats == null ? null : num(r.seats),
     status: String(r.status) as SubscriptionStatus,
     auto_renew: bool(r.auto_renew),
+    renewal_mode: isRenewalMode(r.renewal_mode) ? r.renewal_mode : "optimistic",
     cancel_at_period_end: bool(r.cancel_at_period_end),
     trial_end_date: dateOf(r.trial_end_date),
     start_date: dateOf(r.start_date)!,
@@ -721,6 +735,7 @@ export async function subscribe(input: SubscribeInput, session: SessionPayload):
     seats,
     status,
     auto_renew: input.auto_renew === false ? 0 : 1,
+    renewal_mode: "charge_required",
     cancel_at_period_end: 0,
     trial_end_date: trialEnd,
     start_date: startDate,
@@ -780,6 +795,8 @@ async function applyReconcile(
       currentPeriodStart: s.current_period_start,
       currentPeriodEnd: s.current_period_end,
       config: lifecycleConfigOf(s),
+      renewalMode: s.renewal_mode,
+      lastPaymentAt: s.last_payment_at,
     },
     now,
   )
@@ -847,9 +864,17 @@ export async function renewSubscription(
   // Recovering from a lapse renews from today; an in-good-standing renewal
   // extends from the current period end (no lost time).
   const now = today()
+  // Paying for an ended-but-unpaid trial settles the FIRST paid period (which
+  // already started at trial end) rather than stacking an extra term on top.
+  const trialConversion =
+    hasProductAccess(s.status) &&
+    isUnpaidTrialConversion(
+      { trialEndDate: s.trial_end_date, lastPaymentAt: s.last_payment_at, renewalMode: s.renewal_mode },
+      now,
+    )
   const base = hasProductAccess(s.status) ? s.current_period_end : now
-  const newPeriodStart = hasProductAccess(s.status) ? s.current_period_end : now
-  const newPeriodEnd = addTerm(base, s.term)
+  const newPeriodStart = trialConversion ? s.current_period_start : hasProductAccess(s.status) ? s.current_period_end : now
+  const newPeriodEnd = trialConversion ? s.current_period_end : addTerm(base, s.term)
 
   await tenantUpdate(
     "saas_subscriptions",
@@ -1011,7 +1036,19 @@ export async function updateSubscription(
   return (await getSubscriptionView(s.id))!
 }
 
-export type ChangePlanRecordInput = { plan_id: number; term?: string }
+export type ChangePlanRecordInput = {
+  plan_id: number
+  term?: string
+  /** When the term changes the billing period restarts on the change date. */
+  period_start?: string
+  period_end?: string
+}
+
+/** Current owned subscription record (raw, reconciled) for orchestration layers. */
+export async function loadSubscriptionForChange(id: number): Promise<Subscription> {
+  const s = await loadOwned(id)
+  return applyReconcile(s, today(), null)
+}
 
 /**
  * Persist a plan change on an owned subscription.
@@ -1028,6 +1065,12 @@ export async function changePlanRecord(
 ): Promise<{ subscription: SubscriptionView; plan: Plan; previousPlanName: string; previousAmount: number; newAmount: number }> {
   const s = await loadOwned(id)
   if (isTerminal(s.status)) throw new SubscriptionError("Cannot change the plan of a terminal subscription.", 409)
+  if (!canWrite(s.status)) {
+    throw new SubscriptionError(
+      "Settle the outstanding balance before changing plans (subscription is read-only or suspended).",
+      409,
+    )
+  }
 
   const plan = await getPlan(num(input.plan_id))
   if (!plan) throw new SubscriptionError("Plan not found.", 404, { plan_id: "Unknown plan" })
@@ -1052,6 +1095,9 @@ export async function changePlanRecord(
       amount: newAmount,
       seats: plan.seats,
       currency: plan.currency,
+      ...(input.period_start && input.period_end
+        ? { current_period_start: input.period_start, current_period_end: input.period_end }
+        : {}),
     },
     "id = ?",
     [s.id],

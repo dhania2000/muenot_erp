@@ -2,6 +2,22 @@ import { NextResponse } from "next/server"
 import { resolveTenantWriteAccess } from "@/lib/billing/write-access"
 import { BILLING_GATE_HEADER, billingWriteLockToken, safeEqual } from "@/lib/maintenance/gate-token"
 
+/**
+ * Plan entitlements for the middleware plan gate. null = the tenant has no
+ * platform subscription (legacy/unsubscribed → ungated), and a lookup failure
+ * also yields null so a plan-store outage never strips every tenant's modules.
+ */
+async function resolveTenantPlan(tenantId: number) {
+  try {
+    const { getSubscriptionForTenant } = await import("@/lib/platform-console")
+    if (!(await getSubscriptionForTenant(tenantId))) return null
+    const { getTenantEntitlements } = await import("@/lib/platform/entitlement-guard")
+    return await getTenantEntitlements(tenantId)
+  } catch {
+    return null
+  }
+}
+
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
@@ -22,7 +38,8 @@ export async function GET(req: Request) {
   }
   try {
     const state = await resolveTenantWriteAccess(tenantId)
-    return NextResponse.json(state, { headers: { "Cache-Control": "no-store" } })
+    const plan = await resolveTenantPlan(tenantId)
+    return NextResponse.json({ ...state, plan }, { headers: { "Cache-Control": "no-store" } })
   } catch {
     return NextResponse.json({ error: "Unavailable" }, { status: 503 })
   }

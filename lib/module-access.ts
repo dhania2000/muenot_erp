@@ -1,7 +1,7 @@
 import "server-only"
 import { getSettings } from "@/lib/settings/server"
 import type { SettingsMap } from "@/lib/settings/format"
-import { hasModule, type ModuleKey, type PlanEntitlements } from "@/lib/platform/entitlements"
+import { planAllowsModule, planModuleKey } from "@/lib/billing/plan-gate-model"
 
 /**
  * SPEC 45 — TENANT MODULE CONFIGURATION (server-side enforcement)
@@ -99,36 +99,9 @@ export async function isModuleEnabled(slug: string): Promise<boolean> {
  * Workspace module slugs map onto the plan catalog (lib/platform/entitlements);
  * a slug with no plan key (e.g. legal) is not plan-gated.
  */
-export const MODULE_PLAN_KEY: Readonly<Record<string, ModuleKey>> = {
-  hr: "hr",
-  recruitment: "hr",
-  finance: "finance",
-  sales: "crm",
-  tickets: "crm",
-  products: "inventory",
-  operations: "projects",
-}
-
-export function planModuleKey(slug: string): ModuleKey | null {
-  const base = String(slug ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/^\/+/, "")
-    .split(/[/?#]/)[0]
-  return MODULE_PLAN_KEY[base] ?? null
-}
-
-/**
- * Pure plan decision. `entitlements === null` means the tenant has no
- * subscription record: legacy/unsubscribed tenants keep every module (the same
- * "starter floor is writable" rule requireWriteAccess applies), so rolling out
- * plan gating never strips modules from tenants who were never put on a plan.
- */
-export function planAllowsModule(entitlements: PlanEntitlements | null, slug: string): boolean {
-  const key = planModuleKey(slug)
-  if (!key || !entitlements) return true
-  return hasModule(entitlements, key)
-}
+// Pure mapping/decision live in the edge-safe plan-gate model so middleware and
+// page guards share one table. `entitlements === null` = unsubscribed → ungated.
+export { MODULE_PLAN_KEY, planModuleKey, planAllowsModule } from "@/lib/billing/plan-gate-model"
 
 /** Server: does the tenant's plan include `slug`'s module? */
 export async function isModuleInPlan(slug: string, tenantId: number | null | undefined): Promise<boolean> {
@@ -153,5 +126,8 @@ export async function assertModuleEnabled(slug: string): Promise<void> {
  * disclosed to exist — matching guardCompanyOps' non-disclosure convention.
  */
 export async function requireModuleEnabled(slug: string): Promise<boolean> {
-  return isModuleEnabled(slug)
+  if (!(await isModuleEnabled(slug))) return false
+  const { getSession } = await import("@/lib/auth")
+  const session = await getSession()
+  return isModuleInPlan(slug, session?.tenantId)
 }

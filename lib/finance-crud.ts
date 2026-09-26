@@ -18,6 +18,17 @@ import { nextBankTransactionId, syncBankTransactionPosting, reverseBankTransacti
 import { nextFinanceAccountId, recomputeAccountBalance, recomputeBalancesForBankTxn } from "@/lib/finance-account-master"
 import { guardBankTransactionWrite, guardBankAccountClose } from "@/lib/finance-bank-guards"
 import { logFinanceEvent } from "@/lib/finance-audit"
+import {
+  ensureProcurementSchema,
+  guardRequisitionWrite,
+  guardRfqWrite,
+  guardPoWrite,
+  guardGrnWrite,
+  afterRequisitionWrite,
+  afterRfqWrite,
+  afterPoWrite,
+  afterGrnWrite,
+} from "@/lib/finance-procurement"
 import { assertPeriodOpen, PeriodLockedError } from "@/lib/finance-period-lock"
 import {
   syncGstInputForBill,
@@ -118,7 +129,22 @@ const ASYNC_GUARDS: Record<
   "bank-transactions": (merged) => guardBankTransactionWrite(merged),
   "bank-cash": (merged, ctx) => guardBankAccountClose(merged, ctx.existing),
   "chart-of-accounts": (merged, ctx) => guardChartOfAccountWrite(merged, ctx),
+  // SPEC 136 procurement guards — segregation of duties on approval, budget
+  // limits, chain linking (approved requisition / awarded RFQ / approved PO)
+  // and cancellation rules. All decisions are pure (finance-procurement-rules).
+  "purchase-requisition": (merged, ctx) => guardRequisitionWrite(merged, ctx),
+  "rfq": (merged, ctx) => guardRfqWrite(merged, ctx),
+  "purchase-orders": (merged, ctx) => guardPoWrite(merged, ctx),
+  "goods-receipt": (merged, ctx) => guardGrnWrite(merged, ctx),
 }
+
+/** SPEC 136 — the four procurement document modules (shared table ensure). */
+const PROCUREMENT_MODULE_KEYS = new Set<string>([
+  "purchase-requisition",
+  "rfq",
+  "purchase-orders",
+  "goods-receipt",
+])
 
 /**
  * Optional per-module delete guard. Runs in DELETE after the row is loaded but
@@ -178,6 +204,36 @@ const AFTER_WRITE: Record<
       await syncOpeningBalancePosting(String(accountId), { createdBy: userId })
     } catch (error) {
       console.log("[v0] syncOpeningBalancePosting failed:", (error as Error).message)
+    }
+  },
+  // SPEC 136 — procurement status propagation + audit. Failure-tolerant so a
+  // side-effect error never blocks the primary document write.
+  "purchase-requisition": async (ctx) => {
+    try {
+      await afterRequisitionWrite(ctx)
+    } catch (error) {
+      console.log("[v0] afterRequisitionWrite failed:", (error as Error).message)
+    }
+  },
+  "rfq": async (ctx) => {
+    try {
+      await afterRfqWrite(ctx)
+    } catch (error) {
+      console.log("[v0] afterRfqWrite failed:", (error as Error).message)
+    }
+  },
+  "purchase-orders": async (ctx) => {
+    try {
+      await afterPoWrite(ctx)
+    } catch (error) {
+      console.log("[v0] afterPoWrite failed:", (error as Error).message)
+    }
+  },
+  "goods-receipt": async (ctx) => {
+    try {
+      await afterGrnWrite(ctx)
+    } catch (error) {
+      console.log("[v0] afterGrnWrite failed:", (error as Error).message)
     }
   },
   "purchase-bills": async ({ finalRow, body, userId }) => {
@@ -546,6 +602,7 @@ export function createFinanceHandlers(moduleKey: string) {
       const { ensureInvestmentSchema } = await import("@/lib/finance-investments")
       await ensureInvestmentSchema()
     }
+    if (PROCUREMENT_MODULE_KEYS.has(moduleKey)) await ensureProcurementSchema()
   }
 
   const validate = VALIDATORS[moduleKey]

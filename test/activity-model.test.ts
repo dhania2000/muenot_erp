@@ -58,7 +58,7 @@ const finance: ActivityViewer = { userId: 4, role: "employee", features: ["finan
 // ---------------------------------------------------------------------------
 
 describe("taxonomy", () => {
-  it("covers the ten spec kinds", () => {
+  it("covers the spec kinds (SPEC 109 ten + Spec42 whatsapp)", () => {
     expect([...ACTIVITY_KINDS]).toEqual([
       "call",
       "email",
@@ -70,6 +70,7 @@ describe("taxonomy", () => {
       "payment",
       "document",
       "system",
+      "whatsapp",
     ])
   })
 

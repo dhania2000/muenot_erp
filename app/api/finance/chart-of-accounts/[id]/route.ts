@@ -145,7 +145,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
             MIN(transaction_date) AS date,
             COALESCE(SUM(debit),0) AS debit,
             COALESCE(SUM(credit),0) AS credit,
-            COUNT(*) AS lines
+            COUNT(*) AS \`lines\`
        FROM general_ledger
       WHERE account_id = ?
       GROUP BY voucher_no, source_module, source_reference, voucher_type

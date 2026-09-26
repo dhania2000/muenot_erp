@@ -102,7 +102,7 @@ async function aggregateVouchers(period?: string | null): Promise<VoucherAgg[]> 
         COALESCE(MAX(je.source_module), '')                       AS source_module,
         COALESCE(MAX(je.approval_status), '')                     AS approval_status,
         COALESCE(MAX(je.posting_status), '')                      AS posting_status,
-        COUNT(*)                                                  AS lines,
+        COUNT(*)                                                  AS \`lines\`,
         ROUND(SUM(je.debit), 2)                                   AS debit,
         ROUND(SUM(je.credit), 2)                                  AS credit,
         ROUND(SUM(je.gst_amount), 2)                              AS gst,

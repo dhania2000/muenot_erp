@@ -1,6 +1,7 @@
 import "server-only"
 import { getSettings } from "@/lib/settings/server"
 import type { SettingsMap } from "@/lib/settings/format"
+import { hasModule, type ModuleKey, type PlanEntitlements } from "@/lib/platform/entitlements"
 
 /**
  * SPEC 45 — TENANT MODULE CONFIGURATION (server-side enforcement)
@@ -92,8 +93,56 @@ export async function isModuleEnabled(slug: string): Promise<boolean> {
  * imported lazily so this file stays free of next/navigation at module load
  * (keeps the pure helpers unit-testable under Vitest).
  */
+/**
+ * Spec46 (#165, #170-171) — plan entitlement layer. A tenant toggle can only
+ * narrow what the PLAN includes; it can never grant a module the plan lacks.
+ * Workspace module slugs map onto the plan catalog (lib/platform/entitlements);
+ * a slug with no plan key (e.g. legal) is not plan-gated.
+ */
+export const MODULE_PLAN_KEY: Readonly<Record<string, ModuleKey>> = {
+  hr: "hr",
+  recruitment: "hr",
+  finance: "finance",
+  sales: "crm",
+  tickets: "crm",
+  products: "inventory",
+  operations: "projects",
+}
+
+export function planModuleKey(slug: string): ModuleKey | null {
+  const base = String(slug ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\/+/, "")
+    .split(/[/?#]/)[0]
+  return MODULE_PLAN_KEY[base] ?? null
+}
+
+/**
+ * Pure plan decision. `entitlements === null` means the tenant has no
+ * subscription record: legacy/unsubscribed tenants keep every module (the same
+ * "starter floor is writable" rule requireWriteAccess applies), so rolling out
+ * plan gating never strips modules from tenants who were never put on a plan.
+ */
+export function planAllowsModule(entitlements: PlanEntitlements | null, slug: string): boolean {
+  const key = planModuleKey(slug)
+  if (!key || !entitlements) return true
+  return hasModule(entitlements, key)
+}
+
+/** Server: does the tenant's plan include `slug`'s module? */
+export async function isModuleInPlan(slug: string, tenantId: number | null | undefined): Promise<boolean> {
+  if (!planModuleKey(slug) || !tenantId) return true
+  const { getSubscriptionForTenant } = await import("@/lib/platform-console")
+  if (!(await getSubscriptionForTenant(tenantId))) return true
+  const { getTenantEntitlements } = await import("@/lib/platform/entitlement-guard")
+  return planAllowsModule(await getTenantEntitlements(tenantId), slug)
+}
+
 export async function assertModuleEnabled(slug: string): Promise<void> {
-  if (await isModuleEnabled(slug)) return
+  const { getSession } = await import("@/lib/auth")
+  const session = await getSession()
+  if ((await isModuleEnabled(slug)) && (await isModuleInPlan(slug, session?.tenantId))) return
   const { notFound } = await import("next/navigation")
   notFound()
 }

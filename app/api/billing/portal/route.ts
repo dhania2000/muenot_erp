@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server"
 import { billingGuard } from "@/lib/billing-guard"
 import { getActiveSubscription, listPlans, planPriceForTerm, type BillingTerm } from "@/lib/billing/subscription-engine"
-import { listInvoices, listCredits, creditBalance, listTenantPayments } from "@/lib/billing/billing-engine"
+import {
+  listInvoices,
+  listCredits,
+  creditBalance,
+  listTenantPayments,
+  listBillingContacts,
+} from "@/lib/billing/billing-engine"
+import { isSubscriptionStatus } from "@/lib/billing/subscription-lifecycle"
+import { writeAccessFromStatus } from "@/lib/billing/write-lock-model"
 import { getUsageOverview } from "@/lib/billing/usage-metering"
 import { listGateways } from "@/lib/billing/gateways/registry"
 
@@ -20,7 +28,7 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   try {
-    const [subscription, plans, invoices, payments, credits, balance, usage] = await Promise.all([
+    const [subscription, plans, invoices, payments, credits, balance, usage, contacts] = await Promise.all([
       getActiveSubscription(),
       listPlans({ activeOnly: true }),
       listInvoices(),
@@ -28,7 +36,11 @@ export async function GET() {
       listCredits(),
       creditBalance(),
       getUsageOverview({ trendDays: 30 }).catch(() => null),
+      listBillingContacts().catch(() => []),
     ])
+    const access = writeAccessFromStatus(
+      subscription && isSubscriptionStatus(subscription.status) ? subscription.status : null,
+    )
 
     const currentTerm = (subscription?.term ?? "monthly") as BillingTerm
 
@@ -67,6 +79,8 @@ export async function GET() {
       creditBalance: balance,
       usage,
       paymentMethods: listGateways(),
+      contacts,
+      access,
     })
   } catch (err) {
     console.error("[v0] GET /api/billing/portal failed:", err)

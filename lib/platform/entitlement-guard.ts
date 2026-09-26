@@ -21,7 +21,6 @@ import "server-only"
  */
 import { query, tableColumns } from "@/lib/db"
 import { getSubscriptionForTenant } from "@/lib/platform-console"
-import { canWrite, isReadOnly, isSubscriptionStatus } from "@/lib/billing/subscription-lifecycle"
 import { cachedForTenant } from "@/lib/tenant-cache"
 import {
   type PlanEntitlements,
@@ -209,24 +208,13 @@ export async function requireQuota(
  * Only call this on mutating handlers (POST/PATCH/PUT/DELETE); never gate a GET.
  */
 export async function requireWriteAccess(tenantId: number): Promise<EntitlementResult> {
-  const sub = await getSubscriptionForTenant(tenantId)
-  // No subscription → tenant is on the starter floor, which is writable.
-  if (!sub) return ok
-  const status = isSubscriptionStatus(sub.status) ? sub.status : "active"
-  if (canWrite(status)) return ok
-  if (isReadOnly(status)) {
-    return {
-      ok: false,
-      status: 423,
-      reason: "Your subscription is past due and in read-only grace mode. Settle the outstanding balance to restore write access.",
-    }
-  }
-  // Suspended / expired / cancelled — no access at all.
-  return {
-    ok: false,
-    status: 423,
-    reason: "Your subscription is not active. Reactivate your plan to continue.",
-  }
+  // Spec46: the lifecycle (incl. `grace`) lives in the subscription engine's
+  // `saas_subscriptions`; the platform row can never express grace. No engine
+  // subscription → starter floor, which is writable.
+  const { resolveTenantWriteAccess } = await import("@/lib/billing/write-access")
+  const state = await resolveTenantWriteAccess(tenantId)
+  if (state.writable) return ok
+  return { ok: false, status: 423, reason: state.reason ?? "Your subscription does not allow changes right now." }
 }
 
 // ---------------------------------------------------------------------------
